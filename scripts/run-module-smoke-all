@@ -1,12 +1,14 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
-NGINX_VERSION="${NGINX_VERSION:-1.30.3}"
+NGINX_VERSION="${NGINX_VERSION:-1.30.4}"
 WORK_DIR="${NGINX_WORK_DIR:-${REPO_ROOT}/tmp/nginx/${NGINX_VERSION}}"
 BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
 SMOKE_DIR="${WORK_DIR}/smoke"
@@ -14,6 +16,11 @@ NGINX_BIN="${BUILD_DIR}/nginx"
 MODULE="${BUILD_DIR}/ngx_http_laghu_module.so"
 PORT="${LAGHU_SMOKE_PORT:-18080}"
 ORIGIN_PORT=$((PORT + 1))
+OPTIMIZER_BIN="${LAGHU_OPTIMIZER_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips}"
+nginx_user_directive=
+if [ "$(id -u)" -eq 0 ]; then
+  nginx_user_directive="user root;"
+fi
 
 if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
   "${SCRIPT_DIR}/build-nginx-module"
@@ -24,8 +31,22 @@ mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs"
 printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
   >"${SMOKE_DIR}/html/index.html"
 
+image_smoke=0
+optimizer_pid=""
+if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
+  vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
+  vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
+    --compression 0
+  rm -f "${SMOKE_DIR}/image.v"
+  mkdir -p "${SMOKE_DIR}/cache"
+  "${OPTIMIZER_BIN}" --init "${SMOKE_DIR}/jobs.queue" \
+    "${SMOKE_DIR}/cache"
+  image_smoke=1
+fi
+
 cat >"${SMOKE_DIR}/nginx.conf" <<EOF
 load_module ${MODULE};
+${nginx_user_directive}
 
 daemon off;
 pid ${SMOKE_DIR}/nginx.pid;
@@ -38,10 +59,17 @@ http {
 
   server {
     listen 127.0.0.1:${ORIGIN_PORT};
+    root ${SMOKE_DIR}/html;
 
     location = /private {
       add_header Cache-Control private;
       return 200 'private origin';
+    }
+
+    location = /encoded-image.png {
+      default_type image/png;
+      add_header Content-Encoding gzip;
+      try_files /image.png =404;
     }
   }
 
@@ -50,9 +78,38 @@ http {
     root ${SMOKE_DIR}/html;
     laghu on;
     laghu preset balanced;
+    laghu image_quality 82;
+    laghu worker_queue ${SMOKE_DIR}/jobs.queue;
+    laghu image_cache ${SMOKE_DIR}/cache;
+
+    location = /image.png {
+      default_type image/png;
+      try_files /image.png =404;
+    }
+
+    location = /image-no-backend.png {
+      laghu worker_queue ${SMOKE_DIR}/missing.queue;
+      default_type image/png;
+      alias ${SMOKE_DIR}/html/image.png;
+    }
+
+    location = /quality-image.png {
+      laghu image_quality 75;
+      default_type image/png;
+      alias ${SMOKE_DIR}/html/image.png;
+    }
+
+    location = /unsupported.svg {
+      default_type image/svg+xml;
+      return 200 '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    }
 
     location = /private {
       proxy_pass http://127.0.0.1:${ORIGIN_PORT}/private;
+    }
+
+    location = /encoded-image.png {
+      proxy_pass http://127.0.0.1:${ORIGIN_PORT}/encoded-image.png;
     }
 
     location = /api {
@@ -217,17 +274,60 @@ fi
 grep "cannot combine 'laghu preset' and 'laghu rewrite_level'" \
   "${SMOKE_DIR}/conflicting-policy-config-output" >/dev/null
 
+sed 's/laghu image_quality 82;/laghu image_quality 101;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-quality-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/invalid-quality-nginx.conf" \
+    >"${SMOKE_DIR}/invalid-quality-config-output" 2>&1; then
+  echo "NGINX accepted an invalid Laghu image quality." >&2
+  exit 1
+fi
+grep 'laghu image_quality expects an integer from 1 to 100' \
+  "${SMOKE_DIR}/invalid-quality-config-output" >/dev/null
+
+sed 's/laghu image_quality 82;/laghu image_quality 82; laghu image_quality 75;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-quality-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/duplicate-quality-nginx.conf" \
+    >"${SMOKE_DIR}/duplicate-quality-config-output" 2>&1; then
+  echo "NGINX accepted duplicate Laghu image quality directives." >&2
+  exit 1
+fi
+grep 'is duplicate' "${SMOKE_DIR}/duplicate-quality-config-output" >/dev/null
+
+for directive in worker_queue image_cache; do
+  sed "s#laghu ${directive} #laghu ${directive} /tmp/duplicate; laghu ${directive} #" \
+    "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-${directive}-nginx.conf"
+  if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+      -c "${SMOKE_DIR}/duplicate-${directive}-nginx.conf" \
+      >"${SMOKE_DIR}/duplicate-${directive}-config-output" 2>&1; then
+    echo "NGINX accepted duplicate Laghu ${directive} directives." >&2
+    exit 1
+  fi
+  grep 'is duplicate' \
+    "${SMOKE_DIR}/duplicate-${directive}-config-output" >/dev/null
+done
+
 if ! command -v curl >/dev/null 2>&1; then
   echo "Skipping runtime header check: curl is not installed"
   exit 0
 fi
 
 cleanup() {
+  if [ "${optimizer_pid}" != "" ]; then
+    kill "${optimizer_pid}" 2>/dev/null || true
+  fi
   if [ -f "${SMOKE_DIR}/nginx.pid" ]; then
     kill "$(cat "${SMOKE_DIR}/nginx.pid")" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT INT TERM
+
+if [ "${image_smoke}" -eq 1 ]; then
+  "${OPTIMIZER_BIN}" --serve "${SMOKE_DIR}/jobs.queue" \
+    "${SMOKE_DIR}/cache" &
+  optimizer_pid=$!
+fi
 
 "${NGINX_BIN}" -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/nginx.conf" &
 nginx_pid=$!
@@ -251,8 +351,132 @@ if [ "${attempt}" -eq 50 ]; then
   exit 1
 fi
 
-grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null
+grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null || {
+  echo "Unexpected Laghu decision for the base NGINX response:" >&2
+  cat "${SMOKE_DIR}/headers" >&2
+  exit 1
+}
 grep 'Laghu smoke test' "${SMOKE_DIR}/body" >/dev/null
+
+if [ "${image_smoke}" -eq 1 ]; then
+  curl --fail --silent --show-error \
+    --header 'Accept: image/webp' \
+    --output "${SMOKE_DIR}/image-cold-body" \
+    --dump-header "${SMOKE_DIR}/image-cold-headers" \
+    "http://127.0.0.1:${PORT}/image.png"
+  tr -d '\r' <"${SMOKE_DIR}/image-cold-headers" | \
+    grep -i -x 'X-Laghu: pass' >/dev/null || {
+      echo "Unexpected Laghu decision for the cold NGINX image:" >&2
+      cat "${SMOKE_DIR}/image-cold-headers" >&2
+      exit 1
+    }
+  cmp "${SMOKE_DIR}/html/image.png" "${SMOKE_DIR}/image-cold-body"
+
+  curl --fail --silent --show-error \
+    --header 'Authorization: Bearer smoke' \
+    --output "${SMOKE_DIR}/image-authorized-body" \
+    --dump-header "${SMOKE_DIR}/image-authorized-headers" \
+    "http://127.0.0.1:${PORT}/image.png"
+  tr -d '\r' <"${SMOKE_DIR}/image-authorized-headers" | \
+    grep -i -x 'X-Laghu: bypass-authorized' >/dev/null
+  cmp "${SMOKE_DIR}/html/image.png" "${SMOKE_DIR}/image-authorized-body"
+
+  curl --silent --show-error \
+    --output "${SMOKE_DIR}/image-encoded-body" \
+    --dump-header "${SMOKE_DIR}/image-encoded-headers" \
+    "http://127.0.0.1:${PORT}/encoded-image.png"
+  tr -d '\r' <"${SMOKE_DIR}/image-encoded-headers" | \
+    grep -i -x 'X-Laghu: bypass-encoded' >/dev/null
+  cmp "${SMOKE_DIR}/html/image.png" "${SMOKE_DIR}/image-encoded-body"
+
+  curl --fail --silent --show-error \
+    --output "${SMOKE_DIR}/quality-image-cold-body" \
+    --dump-header "${SMOKE_DIR}/quality-image-cold-headers" \
+    "http://127.0.0.1:${PORT}/quality-image.png"
+  tr -d '\r' <"${SMOKE_DIR}/quality-image-cold-headers" | \
+    grep -i -x 'X-Laghu: pass' >/dev/null
+  cmp "${SMOKE_DIR}/html/image.png" "${SMOKE_DIR}/quality-image-cold-body"
+
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    if find "${SMOKE_DIR}/cache" -name 'index-*.meta' -print -quit | \
+        grep . >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  if [ "${attempt}" -eq 100 ]; then
+    echo "Laghu optimizer did not publish an image variant." >&2
+    exit 1
+  fi
+
+  curl --fail --silent --show-error \
+    --header 'Accept: image/webp' \
+    --output "${SMOKE_DIR}/image-warm-body" \
+    --dump-header "${SMOKE_DIR}/image-warm-headers" \
+    "http://127.0.0.1:${PORT}/image.png"
+  tr -d '\r' <"${SMOKE_DIR}/image-warm-headers" | \
+    grep -i -x 'X-Laghu: image-hit' >/dev/null
+  tr -d '\r' <"${SMOKE_DIR}/image-warm-headers" | \
+    grep -i -E -x 'ETag: "laghu-[0-9a-f]{64}"' >/dev/null
+  tr -d '\r' <"${SMOKE_DIR}/image-warm-headers" | \
+    grep -i -x 'Vary: Accept' >/dev/null
+  test "$(wc -c <"${SMOKE_DIR}/image-warm-body")" -lt \
+    "$(wc -c <"${SMOKE_DIR}/html/image.png")"
+  vipsheader "${SMOKE_DIR}/image-warm-body" >/dev/null
+
+  curl --fail --silent --show-error \
+    --header 'Accept: image/webp;q=0, image/png' \
+    --output "${SMOKE_DIR}/image-no-webp-body" \
+    --dump-header "${SMOKE_DIR}/image-no-webp-headers" \
+    "http://127.0.0.1:${PORT}/image.png"
+  attempt=0
+  while ! tr -d '\r' <"${SMOKE_DIR}/image-no-webp-headers" | \
+      grep -i -x 'X-Laghu: image-hit' >/dev/null; do
+    attempt=$((attempt + 1))
+    if [ "${attempt}" -eq 100 ]; then
+      echo "Laghu did not publish a non-WebP variant for q=0." >&2
+      exit 1
+    fi
+    sleep 0.1
+    curl --fail --silent --show-error \
+      --header 'Accept: image/webp;q=0, image/png' \
+      --output "${SMOKE_DIR}/image-no-webp-body" \
+      --dump-header "${SMOKE_DIR}/image-no-webp-headers" \
+      "http://127.0.0.1:${PORT}/image.png"
+  done
+  tr -d '\r' <"${SMOKE_DIR}/image-no-webp-headers" | \
+    grep -i -x 'Content-Type: image/png' >/dev/null
+
+  for variant_file in "${SMOKE_DIR}"/cache/variant-*.bin; do
+    printf '\377' | dd of="${variant_file}" bs=1 count=1 conv=notrunc \
+      2>/dev/null
+  done
+  curl --fail --silent --show-error \
+    --header 'Accept: image/webp' \
+    --output "${SMOKE_DIR}/image-corrupt-body" \
+    --dump-header "${SMOKE_DIR}/image-corrupt-headers" \
+    "http://127.0.0.1:${PORT}/image.png"
+  tr -d '\r' <"${SMOKE_DIR}/image-corrupt-headers" | \
+    grep -i -x 'X-Laghu: pass' >/dev/null
+  cmp "${SMOKE_DIR}/html/image.png" "${SMOKE_DIR}/image-corrupt-body"
+
+  curl --fail --silent --show-error \
+    --output "${SMOKE_DIR}/image-no-backend-body" \
+    --dump-header "${SMOKE_DIR}/image-no-backend-headers" \
+    "http://127.0.0.1:${PORT}/image-no-backend.png"
+  tr -d '\r' <"${SMOKE_DIR}/image-no-backend-headers" | \
+    grep -i -x 'X-Laghu: bypass-image-backend' >/dev/null
+  cmp "${SMOKE_DIR}/html/image.png" "${SMOKE_DIR}/image-no-backend-body"
+
+  curl --fail --silent --show-error \
+    --output "${SMOKE_DIR}/unsupported-image-body" \
+    --dump-header "${SMOKE_DIR}/unsupported-image-headers" \
+    "http://127.0.0.1:${PORT}/unsupported.svg"
+  tr -d '\r' <"${SMOKE_DIR}/unsupported-image-headers" | \
+    grep -i -x 'X-Laghu: bypass-image-backend' >/dev/null
+fi
 
 check_rewrite_level() {
   level="$1"
@@ -385,6 +609,11 @@ fi
 
 kill "${nginx_pid}"
 wait "${nginx_pid}"
+if [ "${optimizer_pid}" != "" ]; then
+  kill "${optimizer_pid}"
+  wait "${optimizer_pid}" || true
+  optimizer_pid=""
+fi
 rm -f "${SMOKE_DIR}/nginx.pid"
 trap - EXIT INT TERM
 

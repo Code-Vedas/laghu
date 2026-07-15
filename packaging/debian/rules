@@ -1,0 +1,73 @@
+#!/usr/bin/make -f
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --with apache2,nginx
+
+override_dh_auto_configure:
+	dh_auto_configure --builddirectory=debian/build -- \
+		-DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
+		-DCMAKE_BUILD_TYPE=Release
+	dh_auto_configure --buildsystem=nginx_mod \
+		--sourcedirectory=packaging/nginx-module \
+		--builddirectory=debian/nginx-module-build
+
+override_dh_auto_build:
+	dh_auto_build --buildsystem=cmake --builddirectory=debian/build
+	dh_auto_build --buildsystem=nginx_mod \
+		--sourcedirectory=packaging/nginx-module \
+		--builddirectory=debian/nginx-module-build
+	APACHE_BUILD_DIR=$(CURDIR)/debian/apache-module \
+		scripts/build-apache-module
+
+override_dh_auto_test:
+	nginx -V
+	apache2ctl -V
+
+override_dh_auto_clean:
+	dh_auto_clean --buildsystem=cmake --builddirectory=debian/build
+	dh_auto_clean --buildsystem=nginx_mod \
+		--sourcedirectory=packaging/nginx-module \
+		--builddirectory=debian/nginx-module-build
+	rm -rf debian/apache-module
+
+override_dh_auto_install:
+	install -D -m 0644 \
+		debian/nginx-module-build/ngx_http_laghu_module.so \
+		debian/ngx-laghu/usr/lib/nginx/modules/ngx_http_laghu_module.so
+	install -D -m 0644 packaging/nginx/mod-http-laghu.conf \
+		debian/ngx-laghu/etc/nginx/modules-available/50-mod-http-laghu.conf
+	install -D -m 0755 \
+		debian/build/workers/laghu-libvips/laghu-libvips \
+		debian/laghu-libvips/usr/bin/laghu-libvips
+	install -D -m 0644 packaging/systemd/laghu-libvips.service \
+		debian/laghu-libvips/lib/systemd/system/laghu-libvips.service
+	install -D -m 0644 packaging/tmpfiles/laghu.conf \
+		debian/laghu-libvips/usr/lib/tmpfiles.d/laghu.conf
+	install -D -m 0644 packaging/NOTICE-libvips.md \
+		debian/laghu-libvips/usr/share/doc/laghu-libvips/NOTICE-libvips.md
+	install -D -m 0644 LICENSE \
+		debian/laghu-libvips/usr/share/doc/laghu-libvips/LICENSE
+	install -D -m 0644 packaging/nginx/laghu.conf \
+		debian/ngx-laghu/etc/nginx/conf.d/laghu.conf
+	install -D -m 0644 debian/apache-module/.libs/mod_laghu.so \
+		debian/mod-laghu/usr/lib/apache2/modules/mod_laghu.so
+	install -D -m 0644 packaging/apache/laghu.load \
+		debian/mod-laghu/etc/apache2/mods-available/laghu.load
+	install -D -m 0644 packaging/apache/laghu.conf \
+		debian/mod-laghu/etc/apache2/mods-available/laghu.conf
+
+override_dh_gencontrol:
+	nginx_abi=$$(dpkg-query -W -f='$${Provides}' nginx | tr ',' '\n' | \
+		sed -n 's/^ *\(nginx-abi-[^ ]*\) *$$/\1/p' | head -n 1); \
+	apache_api=$$(dpkg-query -W -f='$${Provides}' apache2-bin | tr ',' '\n' | \
+		sed -n 's/^ *\(apache2-api-[0-9]*\) *$$/\1/p' | head -n 1); \
+	test -n "$$nginx_abi"; \
+	test -n "$$apache_api"; \
+	dh_gencontrol -- -Vlaghu:nginx-abi="$$nginx_abi" \
+		-Vlaghu:apache-api="$$apache_api"

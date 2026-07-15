@@ -1,0 +1,51 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+case "${PACKAGE_FAMILY}" in
+  apt)
+    apt-get update
+    apt-get install --no-install-recommends -y \
+      apache2 apache2-dev build-essential bundler clang-format cmake curl \
+      debhelper devscripts dh-apache2 dh-sequence-nginx libpcre2-dev \
+      libssl-dev nginx nginx-dev pkgconf ruby-dev \
+      shellcheck zlib1g-dev
+    if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
+      apt-get install --no-install-recommends -y libvips-dev libvips-tools
+    fi
+    ;;
+  dnf)
+    dnf install -y bsdtar httpd-devel cmake gcc git gzip httpd make \
+      nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
+      tar which
+    [ "${LAGHU_WITH_VIPS}" = OFF ] || dnf install -y vips-devel vips-tools
+    ;;
+  yum)
+    yum install -y dnf-plugins-core epel-release
+    yum config-manager --set-enabled crb 2>/dev/null || true
+    if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
+      yum install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+      yum config-manager --set-enabled remi-safe
+    fi
+    yum install -y bsdtar cmake gcc git gzip httpd httpd-devel make \
+      nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
+      tar which
+    if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
+      yum install -y vips-devel vips-tools
+      dnf repoquery --installed --qf '%{from_repo}' vips | grep -q '^remi-safe$'
+      signature_dir=$(mktemp -d)
+      dnf download --destdir "${signature_dir}" vips >/dev/null
+      rpmkeys --checksig "${signature_dir}"/vips-*.rpm |
+        grep -q 'digests signatures OK'
+      rm -rf "${signature_dir}"
+    fi
+    ;;
+  *)
+    echo "Unknown package family: ${PACKAGE_FAMILY}" >&2
+    exit 2
+    ;;
+esac

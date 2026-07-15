@@ -1,42 +1,51 @@
 # Laghu
 
-Laghu is a native NGINX content-optimization module. It is designed to rewrite
-HTML, CSS, JavaScript, images, and fonts at the edge while remaining fail-open,
-observable, and compatible with current NGINX releases.
+Laghu is a server-level content optimizer with equal native adapters for NGINX
+and Apache HTTP Server. It rewrites responses at the edge while remaining
+fail-open, observable, and compatible with current server releases.
 
-This repository is an initial engineering skeleton. It establishes the native
-module boundary, a server-independent policy library, tests, documentation, and
-automation. It does not yet optimize response bodies.
+The image path uses an out-of-process libvips worker: a cold request serves the
+original while the adapter publishes a try-only job, and a later request can
+use a validated, strictly smaller cached variant. Codec work never runs inside
+NGINX or Apache.
 
 ## Product Shape
 
-Laghu keeps three deliberate ownership boundaries:
+Laghu keeps six deliberate ownership boundaries:
 
 - `laghu-core` owns server-independent configuration and optimization policy.
+- `laghu-image` owns explicit-codec image transforms and markup primitives.
+- `laghu-runtime` owns the bounded queue and atomic disk publication protocol.
+- `laghu-libvips` owns isolated libvips execution and deadline enforcement.
 - `ngx_http_laghu_module` owns NGINX configuration, filter integration, and
+  fail-open request handling.
+- `mod_laghu` owns Apache configuration, bucket-brigade integration, and
   fail-open request handling.
 - `docs/` owns installation, configuration, architecture, compatibility, and
   security documentation.
 
-The future optimization worker, shared cache, CLI, and benchmark rail will use
-the same core boundary rather than embedding heavy work in an NGINX event loop.
-
 ## Repository Map
 
 - `libs/laghu-core/`: canonical native policy library and unit tests
+- `libs/laghu-image/`: server-independent image and image-markup pipeline
+- `libs/laghu-runtime/`: shared queue and content-addressed cache protocol
+- `workers/laghu-libvips/`: asynchronous libvips worker
 - `modules/ngx_http_laghu_module/`: NGINX dynamic module integration
+- `modules/mod_laghu/`: Apache HTTP Server output-filter integration
 - `examples/`: runnable configuration examples
 - `docs/`: product documentation site built with Jekyll and Just the Docs
 - `.github/`: issue templates, workflows, dependency updates, and review rules
 - `scripts/`: root-level build and validation commands
+- `packaging/`: Debian, RPM, NGINX-module, systemd, and bundled-container inputs
 
-## Current Skeleton
+## Current Runtime
 
 The module currently:
 
 - builds against stable and mainline NGINX
 - accepts `laghu on|off`, `laghu preset <name>`,
-  `laghu rewrite_level <name>`, and `laghu allow_api on|off`
+  `laghu rewrite_level <name>`, `laghu allow_api on|off`, inherited image
+  quality, queue, and cache configuration
 - supports `http`, `server`, and `location` inheritance
 - resolves every preset to a tested filter-family and safety policy
 - resolves passthrough, core, bandwidth, all, and experimental rewrite levels
@@ -45,11 +54,14 @@ The module currently:
   authenticated requests, and unsupported content types
 - provides stable SHA-256 variant keys and an original-preserving,
   never-larger candidate-selection contract for future transforms
-- emits an `X-Laghu` decision header when enabled
-- passes the original body through unchanged
+- probes explicit JPEG, PNG, GIF, animated-image, and WebP operations
+- queues bounded image jobs without waiting and publishes cache files atomically
+- emits `pass`, `image-hit`, or a specific fail-open bypass in `X-Laghu`
+- preserves the original on a cold miss, backend loss, queue contention,
+  malformed input, timeout, invalid output, or non-smaller output
 
-No transformation, variant cache, worker, metrics endpoint, CLI, or package is
-claimed as implemented yet.
+HTML/CSS/JavaScript optimization, general cache controls, administration,
+purging, and metrics remain outside the completed image-delivery path.
 
 ## Local Development
 
@@ -69,8 +81,19 @@ make module
 make docs
 ```
 
-Use `scripts/run-in-docker scripts/run-all` for the Linux validation image.
-Set `NGINX_VERSION` to build against another NGINX release.
+Use `scripts/run-in-docker` for the default Linux test or `--all` for the
+complete local distro/server matrix. Set `NGINX_VERSION` to build another
+NGINX release.
+
+Users install one server offering: `ngx-laghu` or `mod-laghu`. Each pulls the
+internal `laghu-libvips` service and loads its adapter with optimization off.
+Server modules are architecture- and ABI-specific and are rebuilt whenever the
+corresponding server ABI changes.
+
+Version tags assemble Linux x86_64/arm64 raw modules for the pinned stable and
+mainline NGINX releases, attach deb/rpm package sets to the GitHub release, and
+publish separate multi-architecture images to `ghcr.io/code-vedas/ngx-laghu`
+and `ghcr.io/code-vedas/mod-laghu`.
 
 ## Documentation
 

@@ -1,0 +1,65 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+MISSING_FILE=$(mktemp "${TMPDIR:-/tmp}/laghu-license-headers.XXXXXX")
+trap 'rm -f "${MISSING_FILE}"' EXIT HUP INT TERM
+
+requires_header() {
+  path="$1"
+  base=${path##*/}
+
+  case "${path}" in
+    *.c|*.h|*.conf|*.yml|*.yaml|*.html|*.scss|*.svg)
+      return 0
+      ;;
+    scripts/*|*/CMakeLists.txt|CMakeLists.txt|*/Dockerfile|Dockerfile.*)
+      return 0
+      ;;
+    */config|examples/nginx.conf|packaging/container/entrypoint)
+      return 0
+      ;;
+    packaging/debian/control|packaging/debian/laghu-libvips.postinst|packaging/debian/rules)
+      return 0
+      ;;
+    packaging/rpm/*.spec|packaging/systemd/*.service|packaging/tmpfiles/*.conf)
+      return 0
+      ;;
+  esac
+
+  case "${base}" in
+    Makefile|Gemfile|.clang-format|.editorconfig|.gitignore)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard |
+  while IFS= read -r path; do
+    requires_header "${path}" || continue
+    file="${REPO_ROOT}/${path}"
+    [ -f "${file}" ] || continue
+
+    copyright_count=$(head -n 14 "${file}" | grep -Fc "Copyright Codevedas Inc. 2026-present" || true)
+    if [ "${copyright_count}" -ne 1 ] ||
+       ! head -n 14 "${file}" | grep -Fq "This source code is licensed under the MIT license found in the" ||
+       ! head -n 14 "${file}" | grep -Fq "LICENSE file in the root directory of this source tree."; then
+      printf '%s\n' "${path}" >>"${MISSING_FILE}"
+    fi
+  done
+
+if [ -s "${MISSING_FILE}" ]; then
+  echo "Missing or incomplete license headers:" >&2
+  sed 's/^/  /' "${MISSING_FILE}" >&2
+  exit 1
+fi
+
+echo "License headers are complete"

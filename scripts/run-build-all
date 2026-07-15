@@ -1,6 +1,8 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
@@ -12,6 +14,6 @@ BUILD_DIR="${BUILD_DIR:-${REPO_ROOT}/tmp/build}"
 run_cmd core-configure cmake \
   -S "${REPO_ROOT}" \
   -B "${BUILD_DIR}" \
-  -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Debug}"
+  -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Debug}" \
+  -DLAGHU_WITH_VIPS="${LAGHU_WITH_VIPS:-AUTO}"
 run_cmd core-build cmake --build "${BUILD_DIR}" --parallel
-

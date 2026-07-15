@@ -1,27 +1,95 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
-
-if [ "$#" -eq 0 ]; then
-  set -- scripts/run-all
-fi
+target=ubuntu-nginx
+targets=
+architectures=
 
 command -v docker >/dev/null 2>&1 || {
   echo "Docker is required for scripts/run-in-docker." >&2
   exit 127
 }
 
-image="${LAGHU_DOCKER_IMAGE:-laghu-test:local}"
-docker build -f "${REPO_ROOT}/Dockerfile.test" -t "${image}" "${REPO_ROOT}"
-docker run --rm \
-  -e BUNDLE_PATH=/workspace/tmp/docker/vendor/bundle \
-  -v "${REPO_ROOT}:/workspace" \
-  -w /workspace \
-  "${image}" \
-  "$@"
+list_targets() {
+  docker buildx bake --file "${REPO_ROOT}/docker-bake.hcl" --list=targets 2>/dev/null |
+    awk 'NR > 1 && $1 != "base" && $1 != "default" { print $1 }'
+}
 
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --list)
+      list_targets
+      exit 0
+      ;;
+    --target)
+      [ "$#" -ge 2 ] || { echo "--target requires a name" >&2; exit 2; }
+      target=$2
+      shift 2
+      ;;
+    --all)
+      targets=$(list_targets)
+      shift
+      ;;
+    --architectures)
+      [ "$#" -ge 2 ] || { echo "--architectures requires a list" >&2; exit 2; }
+      architectures=$2
+      shift 2
+      ;;
+    *)
+      echo "usage: scripts/run-in-docker [--list | --target NAME | --all] [--architectures amd64,arm64]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+[ -n "${targets}" ] || targets=${target}
+if [ -z "${architectures}" ]; then
+  case "$(docker version --format '{{.Server.Arch}}')" in
+    amd64|x86_64) architectures=amd64 ;;
+    arm64|aarch64) architectures=arm64 ;;
+    *) echo "Unsupported Docker architecture" >&2; exit 2 ;;
+  esac
+fi
+
+results="${REPO_ROOT}/tmp/docker-tests"
+mkdir -p "${results}"
+failed=0
+summary_files=
+old_ifs=$IFS
+IFS=,
+for architecture in ${architectures}; do
+  IFS=$old_ifs
+  for current in ${targets}; do
+    directory="${results}/${current}/${architecture}"
+    mkdir -p "${directory}"
+    summary_files="${summary_files} ${directory}/result"
+    echo "==> ${current} (${architecture})"
+    if docker buildx bake --file "${REPO_ROOT}/docker-bake.hcl" "${current}" \
+        --set "${current}.platform=linux/${architecture}" \
+        --set "${current}.tags=laghu-test:${current}-${architecture}" \
+        --progress=plain >"${directory}/build.log" 2>&1; then
+      cat "${directory}/build.log"
+      printf '%s\n' PASS >"${directory}/result"
+    else
+      cat "${directory}/build.log"
+      printf '%s\n' FAIL >"${directory}/result"
+      failed=1
+    fi
+  done
+  IFS=,
+done
+IFS=$old_ifs
+
+echo "==> Docker test summary"
+for result_file in ${summary_files}; do
+  printf '%s\n' "${result_file}"
+  cat "${result_file}"
+done
+exit "${failed}"

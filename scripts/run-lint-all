@@ -1,17 +1,23 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/run-common"
 
+run_cmd license-headers "${SCRIPT_DIR}/run-license-headers-all"
+
 run_cmd shell-syntax sh -c '
   for script in "${1}"/scripts/*; do
     [ -f "${script}" ] || continue
     sh -n "${script}"
   done
+  sh -n "${1}/workers/laghu-libvips/tests/worker_test.sh"
+  sh -n "${1}/packaging/debian/laghu-libvips.postinst"
 ' sh "${REPO_ROOT}"
 
 if has_command shellcheck; then
@@ -33,6 +39,17 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-core/include/laghu/core.h \
     "${REPO_ROOT}"/libs/laghu-core/src/core.c \
     "${REPO_ROOT}"/libs/laghu-core/tests/core_test.c \
+    "${REPO_ROOT}"/libs/laghu-image/include/laghu/image.h \
+    "${REPO_ROOT}"/libs/laghu-image/src/image.c \
+    "${REPO_ROOT}"/libs/laghu-image/src/markup.c \
+    "${REPO_ROOT}"/libs/laghu-image/tests/image_test.c \
+    "${REPO_ROOT}"/libs/laghu-image/tests/image_fuzz.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/include/laghu/runtime.h \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_posix.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_win32.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_test.c \
+    "${REPO_ROOT}"/workers/laghu-libvips/main.c \
+    "${REPO_ROOT}"/modules/mod_laghu/mod_laghu.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/ngx_http_laghu_module.c
 else
   echo "Skipping clang-format: clang-format is not installed"

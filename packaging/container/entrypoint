@@ -1,0 +1,37 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+QUEUE_PATH=${LAGHU_WORKER_QUEUE:-/run/laghu/jobs.queue}
+CACHE_PATH=${LAGHU_IMAGE_CACHE:-/var/cache/laghu/images}
+OPTIMIZER_PID=""
+NGINX_PID=""
+
+terminate() {
+  [ "${NGINX_PID}" = "" ] || kill -TERM "${NGINX_PID}" 2>/dev/null || true
+  [ "${OPTIMIZER_PID}" = "" ] || kill -TERM "${OPTIMIZER_PID}" 2>/dev/null || true
+}
+trap terminate EXIT HUP INT QUIT TERM
+
+laghu-libvips --init "${QUEUE_PATH}" "${CACHE_PATH}"
+laghu-libvips --serve "${QUEUE_PATH}" "${CACHE_PATH}" &
+OPTIMIZER_PID=$!
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+
+while kill -0 "${OPTIMIZER_PID}" 2>/dev/null &&
+      kill -0 "${NGINX_PID}" 2>/dev/null; do
+  sleep 1
+done
+
+status=0
+if ! kill -0 "${NGINX_PID}" 2>/dev/null; then
+  wait "${NGINX_PID}" || status=$?
+elif ! kill -0 "${OPTIMIZER_PID}" 2>/dev/null; then
+  wait "${OPTIMIZER_PID}" || status=$?
+fi
+exit "${status}"

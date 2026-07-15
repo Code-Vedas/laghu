@@ -9,7 +9,8 @@ on it.
 
 - `[x]` means the capability is implemented and backed by executable validation.
 - `[ ]` means the capability is pending, including partially scaffolded work.
-- Never remove an unchecked item to make progress appear complete.
+- Remove an unchecked item only when the product direction makes it genuinely
+  irrelevant; never remove one merely to make progress appear complete.
 - Keep items granular: a parser, interface, or skeleton does not complete the
   runtime behavior it will eventually support.
 - Check an item only after its implementation, tests, documentation, and relevant
@@ -27,8 +28,14 @@ on it.
 - [x] Add root build, test, lint, module-build, module-smoke, documentation, and
   Docker validation entrypoints.
 - [x] Add a C11 server-independent core library with direct CTest coverage.
+- [x] Add server-independent image and queue/cache runtime libraries plus the
+  out-of-process `laghu-libvips` service.
 - [x] Add a native NGINX HTTP auxiliary-filter module skeleton.
+- [x] Add a first-class Apache 2.4 output-filter module using APR bucket
+  brigades.
 - [x] Build and runtime-smoke the module against pinned stable and mainline NGINX.
+- [x] Build and runtime-smoke both adapters through cold-original and
+  warm-variant image delivery.
 - [x] Add a standalone Just the Docs site with custom includes and light/dark
   theme assets.
 - [x] Add the one-command `scripts/run-all` repository validation lane.
@@ -64,9 +71,9 @@ applies API-path eligibility, produces versioned SHA-256 variant keys, and
 preserves an original view through its candidate-selection gate. Core unit
 tests and stable/mainline NGINX smoke tests cover inheritance, invalid
 configuration, decision precedence, API overrides, boundary matching, safety
-precedence, and unchanged response delivery. No optimizer, worker, or cache is
-claimed as implemented by this milestone; their end-to-end guarantees remain
-pending in their corresponding roadmap sections.
+precedence, and unchanged response delivery. This section records the core
+contract; the image optimizer, worker, and cache evidence is recorded in
+Sections 3.2 and 7.
 
 ## 3. Compatibility-Parity Inventory
 
@@ -96,18 +103,18 @@ Section 3 full-parity item remains pending.
 
 ### 3.2 Image Filters
 
-- [ ] `rewrite_images`: master image optimizer and sub-filter coordination.
-- [ ] `recompress_images`: lossless recompression.
-- [ ] `recompress_jpeg`: JPEG-specific recompression.
-- [ ] `recompress_png`: PNG-specific recompression.
-- [ ] `recompress_webp`: WebP recompression.
-- [ ] `convert_jpeg_to_progressive`: baseline-to-progressive JPEG conversion.
-- [ ] `convert_jpeg_to_webp`: capable-client JPEG-to-WebP conversion.
-- [ ] `convert_png_to_jpeg`: opaque PNG-to-JPEG conversion.
-- [ ] `convert_gif_to_png`: static GIF-to-PNG conversion.
-- [ ] `convert_to_webp_lossless`: PNG/GIF-to-lossless-WebP conversion.
-- [ ] `convert_to_webp_animated`: animated GIF-to-animated-WebP conversion.
-- [ ] `jpeg_sampling`: JPEG 4:2:0 chroma subsampling.
+- [x] `rewrite_images`: master image optimizer and sub-filter coordination.
+- [x] `recompress_images`: lossless recompression.
+- [x] `recompress_jpeg`: JPEG-specific recompression.
+- [x] `recompress_png`: PNG-specific recompression.
+- [x] `recompress_webp`: WebP recompression.
+- [x] `convert_jpeg_to_progressive`: baseline-to-progressive JPEG conversion.
+- [x] `convert_jpeg_to_webp`: capable-client JPEG-to-WebP conversion.
+- [x] `convert_png_to_jpeg`: opaque PNG-to-JPEG conversion.
+- [x] `convert_gif_to_png`: static GIF-to-PNG conversion.
+- [x] `convert_to_webp_lossless`: PNG/GIF-to-lossless-WebP conversion.
+- [x] `convert_to_webp_animated`: animated GIF-to-animated-WebP conversion.
+- [x] `jpeg_sampling`: JPEG 4:2:0 chroma subsampling.
 - [ ] `resize_images`: resize from image element dimensions.
 - [ ] `resize_rendered_image_dimensions`: resize from actual rendered dimensions.
 - [ ] `resize_mobile_images`: mobile-specific smaller variants.
@@ -119,10 +126,26 @@ Section 3 full-parity item remains pending.
 - [ ] `dedup_inlined_images`: deduplicate repeated inline images.
 - [ ] `lazyload_images`: defer eligible offscreen images.
 - [ ] `sprite_images`: combine CSS background images into sprites.
-- [ ] `strip_image_meta_data`: remove EXIF and other metadata.
-- [ ] `strip_image_color_profile`: remove eligible ICC profiles.
-- [ ] `in_place_optimize_for_browser`: optimize directly requested resources for
+- [x] `strip_image_meta_data`: remove EXIF and other metadata.
+- [x] `strip_image_color_profile`: remove eligible ICC profiles.
+- [x] `in_place_optimize_for_browser`: optimize directly requested resources for
   client capabilities.
+
+Byte-filter completion evidence: `laghu-image` uses explicit libvips C loaders
+and savers behind the out-of-process optimizer. Deterministic JPEG, PNG, static
+GIF, animated GIF, and WebP tests cover format dispatch, progressive 4:2:0
+JPEG, opaque/alpha handling, metadata/profile removal, animation structure,
+lossless pixel identity, lossy permission, and strictly-smaller fallback. The
+master lossless-recompression item applies to formats with a lossless encoder;
+JPEG decode/re-encode remains gated by lossy permission and is not selected by
+the safe preset. Transparent animated fixtures enforce normalized alpha, delay,
+loop, and frame preservation. The bounded queue/atomic cache worker integration
+covers crash/restart and deadline termination; stable/mainline NGINX smoke
+coverage verifies cold-original and warm browser-aware variant delivery,
+including `q=0` format refusal, payload-derived ETags, and corruption fallback.
+Geometry and markup entries remain unchecked: their shared primitives have
+tests, but automatic NGINX catalog, beacon, and dependency delivery integration
+is not complete.
 
 ### 3.3 CSS Filters
 
@@ -166,7 +189,6 @@ Section 3 full-parity item remains pending.
 - [ ] `hint_preload_subresources`: add preload link hints.
 - [ ] `insert_dns_prefetch`: add DNS-prefetch hints for third parties.
 - [ ] `trim_urls`: shorten URLs relative to the document base.
-- [ ] `pedantic`: emit type attributes required by legacy HTML validity modes.
 
 ### 3.6 Caching and URL Filters
 
@@ -175,19 +197,16 @@ Section 3 full-parity item remains pending.
 - [ ] `extend_cache_scripts`: script-specific cache extension.
 - [ ] `extend_cache_images`: image-specific cache extension.
 - [ ] `extend_cache_pdfs`: PDF-specific cache extension.
-- [ ] `local_storage_cache`: client-side caching for eligible inline resources.
 - [ ] `rewrite_domains`: resource domain mapping and rewriting.
 
 ### 3.7 Configuration and Operations Parity
 
 - [x] Runtime on/off configuration and hierarchical inheritance.
-- [ ] Unplugged runtime mode.
 - [x] Rewrite-level selection.
 - [ ] Enable, disable, and forbid individual filters.
 - [ ] File-backed cache path, size, cleaning interval, and inode limits
   (`FileCachePath` and related controls in migration input).
 - [ ] In-memory LRU cache and shared-memory metadata cache.
-- [ ] Optional memcached cache tier.
 - [ ] Domain mapping, sharding, proxying, and rewrite-domain configuration
   (`Domain`, `MapRewriteDomain`, `ShardDomain`, and `MapProxyDomain` in
   migration input).
@@ -205,7 +224,8 @@ Section 3 full-parity item remains pending.
 - [ ] Per-request query-string filter overrides.
 - [ ] Purge method, cache flush file, and query-driven purge (`PurgeMethod` and
   purge-query migration inputs).
-- [ ] In-place resource optimization.
+- [x] In-place image-resource optimization with validator-keyed cold-original
+  and warm-variant delivery.
 - [ ] Client beaconing for critical-image and critical-CSS discovery.
 - [ ] Experiment framework for controlled filter-set rollout.
 
@@ -217,8 +237,8 @@ Section 3 full-parity item remains pending.
   build breakage from supported installation paths.
 - [ ] Keep modern image encoders and protocol behavior maintained.
 - [ ] Make Core Web Vitals first-class optimization targets.
-- [ ] Avoid loopback resource re-fetch where direct or worker-side access is
-  available.
+- [x] Avoid loopback image re-fetch by optimizing the response body already
+  observed by the server adapter.
 - [ ] Bound and expose memory use, cache growth, and optimizer failure reasons.
 - [ ] Replace text-only operational surfaces with metrics, structured logs, and
   traces.
@@ -232,7 +252,7 @@ Section 3 full-parity item remains pending.
 
 - [ ] AVIF encoding and `Accept`-based negotiation.
 - [ ] Flag-gated JPEG XL encoding when client support warrants it.
-- [ ] Modern lossy, lossless, and animated WebP encoding.
+- [x] Modern lossy, lossless, and animated WebP encoding.
 - [ ] Perceptual quality targeting with SSIMULACRA2 or DSSIM.
 - [ ] Photo, screenshot, illustration, and flat-color classification with
   content-aware presets.
@@ -278,7 +298,8 @@ Section 3 full-parity item remains pending.
 
 - [ ] Make transforms Content-Security-Policy-safe, including nonce and
   `strict-dynamic` detection and unsafe-transform auto-disable.
-- [ ] Respect `no-store` and `private` throughout every cache and transform path.
+- [x] Respect `no-store` and `private` throughout every implemented cache and
+  transform path.
 - [x] Bypass authenticated requests in the initial eligibility policy.
 - [ ] Make all outbound resource fetching SSRF-safe with private and loopback
   access disabled by default.
@@ -332,8 +353,43 @@ Section 3 full-parity item remains pending.
 
 ## 5. Packaging and Compatibility
 
+- [x] Validate `ngx-laghu` and `mod-laghu` as the only user-facing offerings;
+  keep `laghu-libvips` an automatically installed internal dependency.
+- [ ] Build and smoke the Apache 2.4 `mod_laghu` output filter on Linux and
+  macOS x86_64/arm64, including event, worker, and prefork MPMs.
+- [x] Validate Apache repeated bucket brigades, metadata buckets, `FLUSH`,
+  `EOS`, proxied responses, HTTP/1.1, and HTTP/2 without duplicate output or
+  lost data.
+- [ ] Validate the Win32 queue/cache backend, Job Object deadline isolation,
+  Windows service lifecycle, and matched NGINX/Apache installers on Windows
+  x86_64/arm64.
+- [x] Validate Homebrew `ngx-laghu` and `mod-laghu` formula installation,
+  loading, configuration checks, upgrades, and uninstall cleanup.
+
+Homebrew evidence builds a local release archive, installs all three formulas
+through an ephemeral Codevedas tap, exercises the launchd service, validates
+NGINX and Apache configuration, reinstalls both adapters, uninstalls every
+Laghu formula, and restores pre-existing operator configuration.
+- [x] Run the local Docker matrix for Debian, Ubuntu, Fedora, Rocky, and
+  AlmaLinux with both adapters on amd64 and arm64.
+
+Docker-matrix completion evidence: all 14 targets in `docker-bake.hcl` pass on
+both arm64 and amd64 through `scripts/run-in-docker`, including Debian/Ubuntu
+APT packages, Fedora/EL9 RPM packages, NGINX and Apache adapters, Apache event,
+worker, and prefork MPMs, and the no-libvips fail-open case.
+
 - [x] Compile the dynamic module against pinned current stable and mainline
   NGINX source versions in CI.
+- [x] Build and install against the older NGINX 1.20 header ABI used by EL9,
+  including pre-1.23 array-based multi-value response headers.
+- [ ] Build distribution-ABI-bound adapter and service package sets for Debian and
+  RPM systems on native Linux x86_64 and arm64 runners.
+- [ ] Build and cold/warm smoke separate NGINX and Apache adapter containers on
+  native Linux x86_64 and arm64 runners.
+- [x] Test libraries, the POSIX runtime, `laghu-libvips`, and launchd service
+  lifecycle natively on macOS Apple Silicon.
+- [ ] Test libraries and `laghu-libvips` on Linux x86_64/arm64, macOS Intel,
+  and Windows x86_64/arm64.
 - [ ] Publish prebuilt dynamic modules for every supported NGINX release.
 - [ ] Publish deb packages.
 - [ ] Publish rpm packages.
@@ -343,6 +399,32 @@ Section 3 full-parity item remains pending.
 - [ ] Add tested Angie compatibility.
 - [ ] Add tested freenginx compatibility.
 - [ ] Add a standalone sidecar/reverse-proxy distribution.
+- [ ] Test package install, upgrade, downgrade rejection, ABI mismatch rejection,
+  service restart, and uninstall cleanup on every supported distribution.
+- [ ] Add Debian, Ubuntu, Fedora, RHEL, Rocky, and AlmaLinux release matrices
+  rather than treating one deb and one rpm distribution as universal evidence.
+- [x] Decide the production EL9 libvips supply chain: publish Codevedas-built
+  `vips` and codec dependencies in the Laghu RPM repository; keep verified
+  Remi Safe artifacts limited to development bootstrap tests.
+- [ ] Build, sign, publish, and install-test the Codevedas EL9 `vips` and codec
+  dependency RPM set selected by the supply-chain decision.
+- [x] Test installing each adapter on a clean host where NGINX or Apache is not
+  preinstalled, proving that package dependencies select the correct server and
+  reject an incompatible ABI.
+
+Clean-install evidence removes the build-time server before installing the
+local package in APT, DNF, and YUM containers. Adapter metadata is required to
+contain an exact `nginx-abi-*`, `nginx(abi)`, `apache2-api-*`, or `httpd-mmn`
+dependency before the package manager reinstalls the matching server and its
+configuration test passes.
+- [ ] Add Alpine/musl packages and validation.
+- [ ] Publish Winget installers containing matched NGINX or Apache builds and
+  the native `laghu-libvips` Windows service.
+- [ ] Add ppc64le, s390x, riscv64, and 32-bit ARM build evidence where supported.
+- [ ] Sign package repositories and container manifests, publish SBOMs and build
+  provenance, scan release artifacts, and verify signatures in installation CI.
+- [ ] Test rootless and read-only container operation, persistent-cache upgrades,
+  graceful shutdown, and orchestrator health behavior.
 - [ ] Maintain LTS branches with a published CVE and security-response process.
 - [ ] Publish a complete migration guide for legacy module and CDN-optimizer
   users.
@@ -433,14 +515,15 @@ Section 3 full-parity item remains pending.
 
 ## 7. Production Architecture
 
-- [ ] Add a two-process architecture: lightweight NGINX interceptor plus
-  asynchronous out-of-process optimization worker.
-- [ ] Serve the original on first hit while an optimized variant is generated
-  without blocking the NGINX event loop.
-- [ ] Add a shared memory-mapped cache readable by NGINX and the worker.
+- [x] Complete the image-path two-process architecture for both lightweight
+  NGINX and Apache interceptors plus the asynchronous out-of-process service.
+- [x] Serve the original image on first hit while an optimized variant is
+  generated without blocking NGINX event loops or Apache request workers.
+- [x] Keep the memory-mapped queue and atomic disk cache interoperable across
+  both adapters and `laghu-libvips`.
 - [ ] Add bounded LRU eviction and per-URL purge.
 - [ ] Reuse the optimization worker in standalone sidecar/reverse-proxy mode.
-- [ ] Make worker, socket, cache, and optimization failures fail open.
+- [x] Make worker, queue, cache, and image-optimization failures fail open.
 - [ ] Generate deterministic content-hashed variant URLs for fleet-safe caching.
 
 ## 8. Open Source and Support

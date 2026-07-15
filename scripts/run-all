@@ -1,6 +1,8 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
@@ -13,6 +15,12 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ "${SKIP_NGINX_MODULE_BUILD:-0}" != "1" ]; then
   "${SCRIPT_DIR}/run-module-build-all"
   "${SCRIPT_DIR}/run-module-smoke-all"
+fi
+
+if [ "${SKIP_APACHE_MODULE_BUILD:-0}" != "1" ] &&
+    { command -v apxs >/dev/null 2>&1 || command -v apxs2 >/dev/null 2>&1; } &&
+    { command -v httpd >/dev/null 2>&1 || command -v apache2 >/dev/null 2>&1; }; then
+  "${SCRIPT_DIR}/run-apache-module-smoke-all"
 fi
 
 if [ "${SKIP_DOCS_BUILD:-0}" != "1" ]; then

@@ -1,0 +1,6 @@
+laghu (0.1.0) unstable; urgency=medium
+
+  * Package the ABI-matched ngx-laghu and mod-laghu adapters with their shared
+    laghu-libvips service dependency.
+
+ -- Codevedas Inc. <opensource@codevedas.com>  Wed, 15 Jul 2026 13:00:00 -0400

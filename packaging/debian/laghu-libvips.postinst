@@ -1,0 +1,20 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -e
+
+if ! getent group laghu >/dev/null; then
+  addgroup --system laghu
+fi
+if ! getent passwd laghu >/dev/null; then
+  adduser --system --ingroup laghu --home /nonexistent --no-create-home laghu
+fi
+if getent passwd www-data >/dev/null; then
+  adduser www-data laghu
+fi
+systemd-tmpfiles --create laghu.conf >/dev/null 2>&1 || true
+
+#DEBHELPER#

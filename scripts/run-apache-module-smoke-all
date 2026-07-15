@@ -1,0 +1,224 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+APXS=${APXS:-}
+HTTPD=${HTTPD:-}
+
+if [ -z "${APXS}" ]; then
+  APXS=$(command -v apxs 2>/dev/null || command -v apxs2 2>/dev/null || true)
+fi
+if [ -z "${HTTPD}" ]; then
+  HTTPD=$(command -v apache2 2>/dev/null || command -v httpd 2>/dev/null || true)
+fi
+if [ -z "${APXS}" ] || [ -z "${HTTPD}" ]; then
+  echo "Apache httpd and apxs are required for the mod_laghu smoke test." >&2
+  exit 127
+fi
+
+"${SCRIPT_DIR}/build-apache-module"
+
+work=${APACHE_SMOKE_DIR:-"${REPO_ROOT}/tmp/apache-smoke"}
+module="${REPO_ROOT}/tmp/apache-module/.libs/mod_laghu.so"
+modules=$(${APXS} -q LIBEXECDIR)
+service=${LAGHU_SERVICE:-"${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips"}
+service_pid=
+origin_pid=
+rm -rf "${work}"
+mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache"
+printf '%s\n' 'apache laghu smoke' >"${work}/htdocs/index.html"
+
+load_if_present() {
+  name=$1
+  file=$2
+  if [ -f "${modules}/${file}" ]; then
+    printf 'LoadModule %s_module "%s/%s"\n' "${name}" "${modules}" "${file}"
+  fi
+}
+
+load_first_mpm() {
+  if [ -n "${APACHE_MPM:-}" ]; then
+    file="mod_mpm_${APACHE_MPM}.so"
+    if "${HTTPD}" -l 2>/dev/null | grep -q "mpm_${APACHE_MPM}\.c"; then
+      return
+    fi
+    if [ ! -f "${modules}/${file}" ]; then
+      echo "Apache MPM ${APACHE_MPM} is unavailable in ${modules}." >&2
+      exit 2
+    fi
+    printf 'LoadModule mpm_%s_module "%s/%s"\n' "${APACHE_MPM}" "${modules}" "${file}"
+    return
+  fi
+  for specification in \
+      "mpm_event mod_mpm_event.so" \
+      "mpm_worker mod_mpm_worker.so" \
+      "mpm_prefork mod_mpm_prefork.so"; do
+    name=${specification%% *}
+    file=${specification#* }
+    if [ -f "${modules}/${file}" ]; then
+      printf 'LoadModule %s_module "%s/%s"\n' "${name}" "${modules}" "${file}"
+      return
+    fi
+  done
+}
+
+{
+  printf 'ServerRoot "%s"\n' "${work}"
+  printf 'PidFile "%s/logs/httpd.pid"\n' "${work}"
+  printf 'Listen 127.0.0.1:18081\n'
+  printf 'ServerName localhost\n'
+  load_first_mpm
+  load_if_present unixd mod_unixd.so
+  load_if_present authz_core mod_authz_core.so
+  load_if_present mime mod_mime.so
+  load_if_present log_config mod_log_config.so
+  load_if_present proxy mod_proxy.so
+  load_if_present proxy_http mod_proxy_http.so
+  load_if_present http2 mod_http2.so
+  if [ -f /etc/mime.types ]; then
+    printf 'TypesConfig "/etc/mime.types"\n'
+  fi
+  printf 'LoadModule laghu_module "%s"\n' "${module}"
+  printf 'DocumentRoot "%s/htdocs"\n' "${work}"
+  printf '<Directory "%s/htdocs">\nRequire all granted\n</Directory>\n' "${work}"
+  printf 'ErrorLog "%s/logs/error.log"\n' "${work}"
+  printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
+  printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
+  if [ -f "${modules}/mod_http2.so" ]; then
+    printf 'Protocols h2c http/1.1\nH2Direct on\n'
+  fi
+  if [ -x "${service}" ] && command -v vips >/dev/null 2>&1; then
+    printf 'Laghu WorkerQueue "%s/jobs.queue"\n' "${work}"
+    printf 'Laghu ImageCache "%s/cache"\n' "${work}"
+    printf '<Location "/image.png">\nLaghu RewriteLevel core\n</Location>\n'
+    printf 'AddType image/png .png\n'
+  fi
+} >"${work}/httpd.conf"
+
+cat >"${work}/origin.rb" <<'RUBY'
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+require "socket"
+
+server = TCPServer.new("127.0.0.1", 18_082)
+loop do
+  socket = server.accept
+  socket.gets
+  loop do
+    line = socket.gets
+    break if line.nil? || line == "\r\n"
+  end
+  socket.write("HTTP/1.1 200 OK\r\n")
+  socket.write("Content-Type: text/plain\r\n")
+  socket.write("Transfer-Encoding: chunked\r\n")
+  socket.write("Connection: close\r\n\r\n")
+  ["brigade-", "flush-", "eos\n"].each do |part|
+    socket.write("#{part.bytesize.to_s(16)}\r\n#{part}\r\n")
+    socket.flush
+    sleep(0.03)
+  end
+  socket.write("0\r\n\r\n")
+  socket.close
+end
+RUBY
+ruby "${work}/origin.rb" >"${work}/logs/origin.log" 2>&1 &
+origin_pid=$!
+
+if [ -x "${service}" ] && command -v vips >/dev/null 2>&1; then
+  vips black "${work}/source.v" 512 512 --bands 3
+  vips pngsave "${work}/source.v" "${work}/htdocs/image.png" --compression 0
+  rm -f "${work}/source.v"
+  "${service}" --init-and-serve "${work}/jobs.queue" "${work}/cache" &
+  service_pid=$!
+fi
+
+"${HTTPD}" -t -f "${work}/httpd.conf"
+cp "${work}/httpd.conf" "${work}/duplicate.conf"
+printf 'Laghu On\n' >>"${work}/duplicate.conf"
+if "${HTTPD}" -t -f "${work}/duplicate.conf" >/dev/null 2>&1; then
+  echo "Apache accepted a duplicate Laghu directive." >&2
+  exit 1
+fi
+cp "${work}/httpd.conf" "${work}/conflict.conf"
+printf 'Laghu Preset balanced\n' >>"${work}/conflict.conf"
+if "${HTTPD}" -t -f "${work}/conflict.conf" >/dev/null 2>&1; then
+  echo "Apache accepted conflicting Laghu selectors." >&2
+  exit 1
+fi
+if command -v setsid >/dev/null 2>&1; then
+  setsid "${HTTPD}" -f "${work}/httpd.conf" -DFOREGROUND &
+else
+  "${HTTPD}" -f "${work}/httpd.conf" -DFOREGROUND &
+fi
+pid=$!
+trap 'kill "${pid}" ${service_pid:-} ${origin_pid:-} 2>/dev/null || true; wait "${pid}" ${service_pid:-} ${origin_pid:-} 2>/dev/null || true' EXIT
+
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  if curl --fail --silent --dump-header "${work}/headers" \
+      http://127.0.0.1:18081/index.html >"${work}/body"; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+[ "${attempt}" -lt 50 ] || {
+  echo "Apache did not serve the smoke-test response." >&2
+  if [ -f "${work}/logs/error.log" ]; then
+    cat "${work}/logs/error.log" >&2
+  fi
+  exit 1
+}
+cmp "${work}/htdocs/index.html" "${work}/body"
+grep -i '^X-Laghu: bypass-passthrough' "${work}/headers"
+
+printf 'brigade-flush-eos\n' >"${work}/expected-stream"
+curl --fail --silent --http1.1 --dump-header "${work}/proxy-http1.headers" \
+  http://127.0.0.1:18081/proxied/stream >"${work}/proxy-http1.body"
+cmp "${work}/expected-stream" "${work}/proxy-http1.body"
+grep -i '^X-Laghu: bypass-passthrough' "${work}/proxy-http1.headers"
+
+if [ -f "${modules}/mod_http2.so" ] && curl --version | grep -q 'Features:.*HTTP2'; then
+  http_version=$(curl --fail --silent --http2-prior-knowledge \
+    --write-out '%{http_version}' --output "${work}/proxy-http2.body" \
+    http://127.0.0.1:18081/proxied/stream)
+  [ "${http_version}" = 2 ]
+  cmp "${work}/expected-stream" "${work}/proxy-http2.body"
+fi
+
+if [ "${service_pid}" != "" ]; then
+  curl --fail --silent --dump-header "${work}/image-cold.headers" \
+    http://127.0.0.1:18081/image.png >"${work}/image-cold.png"
+  cmp "${work}/htdocs/image.png" "${work}/image-cold.png"
+  attempt=0
+  while [ "${attempt}" -lt 100 ] &&
+      ! find "${work}/cache" -name '*.meta' -type f | grep -q .; do
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ] || {
+    echo "laghu-libvips did not publish the Apache image variant." >&2
+    exit 1
+  }
+  curl --fail --silent --dump-header "${work}/image-warm.headers" \
+    http://127.0.0.1:18081/image.png >"${work}/image-warm.png"
+  grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers"
+  test "$(wc -c <"${work}/image-warm.png")" -lt \
+    "$(wc -c <"${work}/htdocs/image.png")"
+fi
+
+trap - EXIT
+kill -WINCH "${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
+kill "${origin_pid}" 2>/dev/null || true
+if [ "${service_pid}" != "" ]; then
+  kill "${service_pid}" 2>/dev/null || true
+fi

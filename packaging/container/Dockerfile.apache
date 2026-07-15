@@ -1,0 +1,55 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+FROM ubuntu:24.04 AS build
+
+ARG LAGHU_VERSION=0.1.0
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+      apache2-dev build-essential cmake libvips-dev pkgconf \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+RUN cmake -S . -B build -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target laghu-libvips --parallel \
+    && APACHE_BUILD_DIR=/src/apache-module scripts/build-apache-module
+
+FROM ubuntu:24.04
+
+ARG LAGHU_VERSION=0.1.0
+ENV DEBIAN_FRONTEND=noninteractive
+
+LABEL org.opencontainers.image.title="mod-laghu" \
+      org.opencontainers.image.description="Apache HTTP Server with the native mod_laghu adapter" \
+      org.opencontainers.image.url="https://laghu.codevedas.com" \
+      org.opencontainers.image.source="https://github.com/Code-Vedas/laghu" \
+      org.opencontainers.image.version="${LAGHU_VERSION}" \
+      org.opencontainers.image.licenses="MIT"
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y apache2 libvips42 tini util-linux \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system laghu \
+    && useradd --system --gid laghu --home-dir /nonexistent --shell /usr/sbin/nologin laghu \
+    && usermod -a -G laghu www-data \
+    && mkdir -p /run/laghu /var/cache/laghu/images \
+    && chown -R laghu:laghu /run/laghu /var/cache/laghu
+
+COPY --from=build /src/build/workers/laghu-libvips/laghu-libvips /usr/bin/laghu-libvips
+COPY --from=build /src/apache-module/.libs/mod_laghu.so /usr/lib/apache2/modules/mod_laghu.so
+COPY packaging/apache/laghu.load /etc/apache2/mods-available/laghu.load
+COPY packaging/apache/laghu.conf /etc/apache2/mods-available/laghu.conf
+COPY packaging/container/entrypoint.apache /usr/bin/mod-laghu-entrypoint
+
+RUN a2enmod laghu \
+    && chmod 0755 /usr/bin/mod-laghu-entrypoint \
+    && apache2ctl configtest
+
+EXPOSE 80
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/bin/mod-laghu-entrypoint"]

@@ -1,0 +1,36 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+[Unit]
+Description=Laghu asynchronous libvips service
+After=local-fs.target
+Before=nginx.service apache2.service httpd.service
+
+[Service]
+Type=simple
+User=laghu
+Group=laghu
+RuntimeDirectory=laghu
+RuntimeDirectoryMode=0770
+CacheDirectory=laghu/images
+CacheDirectoryMode=0750
+ExecStartPre=/usr/bin/laghu-libvips --init /run/laghu/jobs.queue /var/cache/laghu/images
+ExecStart=/usr/bin/laghu-libvips --serve /run/laghu/jobs.queue /var/cache/laghu/images
+Restart=on-failure
+RestartPreventExitStatus=3
+RestartSec=1s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/laghu /var/cache/laghu/images
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+MemoryMax=1G
+LimitAS=1536M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

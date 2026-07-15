@@ -1,0 +1,14 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: laghu
+Source: https://github.com/code-vedas/laghu
+
+Files: *
+Copyright: 2026-present Codevedas Inc.
+License: MIT
+ The full MIT license is installed from the repository LICENSE file.
+
+Files: libs/laghu-image/src/probe_fixtures.h
+Copyright: 2026-present Codevedas Inc.
+License: MIT
+ The embedded images are tiny generated codec-probe fixtures distributed as
+ part of Laghu under the MIT license.

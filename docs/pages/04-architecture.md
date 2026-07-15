@@ -11,16 +11,15 @@ Laghu separates server integration from optimization policy and expensive
 execution.
 
 ```text
-NGINX response filters
-        |
-        v
-ngx_http_laghu_module  ---> original response (always available)
-        |
-        v
-laghu-core policy      ---> decision, cache key, transform plan
-        |
-        v
-optimization worker   ---> deterministic variant cache (planned)
+NGINX response filters ---- ngx-laghu ----+
+                                          |
+Apache bucket brigades --- mod_laghu -----+--> laghu-core policy
+                                                   |
+                                      bounded shared queue
+                                                   |
+                                           laghu-libvips
+                                                   |
+                                      atomic disk variant cache
 ```
 
 ## NGINX Module
@@ -28,6 +27,13 @@ optimization worker   ---> deterministic variant cache (planned)
 The module owns directive parsing, configuration inheritance, response filter
 registration, NGINX memory-pool use, and delivery of the original chain. It must
 not perform blocking network or codec work in the event loop.
+
+## Apache Module
+
+`mod_laghu` is an Apache 2.4 resource output filter. It retains request state
+across repeated brigade calls, forwards metadata and `FLUSH` buckets, detects
+`EOS`, and uses nonblocking bucket reads while copying a bounded cold response.
+It shares every policy and delivery gate with `ngx-laghu`.
 
 ## Core Library
 
@@ -52,24 +58,35 @@ encoding of the original content and resolved policy, so the same input and
 policy produce the same fleet-safe key. The key encoding is versioned; adding
 rewrite-level identity and experimental permission advanced it to version 2.
 
-## Worker and Cache
+## libvips Service and Cache
 
-The planned worker performs expensive transforms asynchronously. A first cache
+The `laghu-libvips` service performs image transforms asynchronously through
+the libvips C API.
+It probes explicit codec operations at startup and publishes the capability
+mask in the queue header; neither server adapter links libvips nor shells out.
+For Apache static files, the source modification time and size provide the
+stable source validator when Apache weakens an origin ETag after inserting an
+output filter. Proxied responses still require a strong origin validator for
+an immediate warm lookup.
+A first cache
 miss serves the original response; a successful optimization writes a
 content-addressed variant for later requests. Worker absence, timeouts, parse
 errors, and codec failures all preserve the original.
 
-The shared cache contract must provide deterministic keys, bounded storage,
-atomic publication, per-URL purge, and enough metadata for an explain surface.
+Image variant key version 4 includes source bytes, resolved policy and quality,
+service build/libvips identity, frozen encoder options, capability mask,
+complete transform flags, geometry, lossy permission, and browser-format
+acceptance. Temp-file, fsync, and rename publication prevents readers from
+observing partial variants; a separate payload SHA-256 rejects same-length
+corruption before headers change. The queue heartbeat makes a stopped worker
+unavailable after the liveness window. General cache size/cleaning controls and
+purge remain pending.
 
 ## Current Request Path
 
-The scaffold installs header and body filters. The header filter asks
-`laghu-core` whether a response is eligible and records the decision. The body
-filter forwards the original chain directly to the next NGINX filter.
-
-No body buffering or mutation occurs.
-
-The current path is therefore idempotent and reversible: it always forwards the
-same original chain. Future transform, worker, and cache implementations must
-use the core candidate and key contracts before joining this path.
+Each adapter asks `laghu-core` whether a response is eligible. It streams the
+cold original while copying a bounded image into a queue slot. A warm
+strong-validator hit is read before response headers are committed and replaces
+the origin body. Queue publication uses an immediate-fail platform lock, so
+contention cannot hold a server request. POSIX and Win32 runtime backends expose
+the same queue/cache contract.

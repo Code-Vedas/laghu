@@ -22,9 +22,8 @@ Link the issue or design discussion, if applicable.
 ## Validation
 
 - [ ] Core build and tests pass.
-- [ ] The NGINX module builds for affected compatibility targets.
+- [ ] The NGINX and Apache adapters build for affected compatibility targets.
 - [ ] Documentation was updated for public behavior or support changes.
 - [ ] No unimplemented capability is presented as shipped.
 
 <!-- Pull request titles should use feat:, bugfix:, docs:, chore:, refactor:, test:, ci:, perf:, build:, or release:. -->
-

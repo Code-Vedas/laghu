@@ -1,0 +1,45 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+Source: laghu
+Section: httpd
+Priority: optional
+Maintainer: Codevedas Inc. <opensource@codevedas.com>
+Build-Depends: debhelper-compat (= 13), apache2-dev, cmake,
+ dh-sequence-apache2, dh-sequence-nginx, pkgconf, libvips-dev (>= 8.15)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://laghu.codevedas.com
+
+Package: ngx-laghu
+Architecture: any
+Multi-Arch: foreign
+Depends: ${misc:Depends}, ${shlibs:Depends}, nginx, ${laghu:nginx-abi},
+ laghu-libvips (= ${binary:Version})
+Provides: libnginx-mod-http-laghu
+Replaces: libnginx-mod-http-laghu (<< ${binary:Version})
+Conflicts: libnginx-mod-http-laghu (<< ${binary:Version})
+Description: native Laghu HTTP optimization module for NGINX
+ Installs a precompiled NGINX dynamic module built against the distribution's
+ NGINX ABI and enables its load-module configuration. Transformation remains
+ disabled until the operator enables Laghu in the HTTP configuration.
+
+Package: laghu-libvips
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
+Replaces: laghu-optimizer (<< ${binary:Version})
+Breaks: laghu-optimizer (<< ${binary:Version})
+Description: shared asynchronous libvips service for Laghu
+ Converts Laghu image jobs outside NGINX and publishes validated variants.
+ The official Ubuntu 24.04 build requires the distribution libvips runtime and
+ its JPEG, PNG, GIF, and WebP codec dependencies.
+
+Package: mod-laghu
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, apache2, ${laghu:apache-api},
+ laghu-libvips (= ${binary:Version})
+Description: native Laghu output-filter module for Apache HTTP Server
+ Installs and loads mod_laghu for the distribution Apache 2.4 ABI. Laghu is
+ loaded with optimization disabled until the operator explicitly enables it.

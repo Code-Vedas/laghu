@@ -1,4 +1,9 @@
-.PHONY: all build test lint module module-smoke docs docker clean
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+.PHONY: all build test lint nginx nginx-smoke apache apache-smoke docs docker clean
 
 all:
 	scripts/run-all
@@ -12,11 +17,17 @@ test:
 lint:
 	scripts/run-lint-all
 
-module:
+nginx:
 	scripts/run-module-build-all
 
-module-smoke:
+nginx-smoke:
 	scripts/run-module-smoke-all
+
+apache:
+	scripts/build-apache-module
+
+apache-smoke:
+	scripts/run-apache-module-smoke-all
 
 docs:
 	scripts/run-docs-build-all

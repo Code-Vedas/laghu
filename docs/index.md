@@ -6,27 +6,28 @@ permalink: /
 
 # Laghu
 
-Laghu is a native NGINX content-optimization module designed to make edge
-responses smaller and faster without application changes.
+Laghu provides equal native content-optimization adapters for NGINX and Apache
+HTTP Server, making edge responses smaller without application changes.
 
 The project is being built around four non-negotiable properties:
 
-- **fail-open delivery:** optimizer failures preserve the original response
-- **event-loop safety:** expensive work belongs outside NGINX workers
+- **fail-open delivery:** service failures preserve the original response
+- **server safety:** expensive work remains outside web-server processes
 - **deterministic output:** identical inputs produce fleet-safe variants
 - **measured value:** transforms ship with correctness, resource, and latency
   evidence
 
 ## Current Status
 
-Laghu is an engineering skeleton, not a production optimizer. The current code
-provides a buildable dynamic module, configuration inheritance, response
-eligibility, preset and rewrite-level policy, deterministic variant-key and
-candidate-safety contracts, a pass-through filter seam, and an `X-Laghu`
-decision header. Response bodies are not rewritten yet.
+Laghu now has a production-shaped image lane: each adapter streams cold
+originals into a try-only bounded queue, the isolated libvips service validates
+and atomically publishes smaller variants, and strong-validator warm requests
+can deliver them. Missing codecs, worker loss, queue contention, malformed
+input, deadlines, and cache failures preserve the original.
 
-That distinction is intentional: the docs mark delivered behavior separately
-from planned product capabilities.
+The broader HTML, CSS, JavaScript, administration, and cache-management surface
+is still being built. Documentation claims only behavior with executable
+coverage.
 
 ## Start Here
 

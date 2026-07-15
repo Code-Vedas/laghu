@@ -6,9 +6,17 @@ permalink: /configuration/
 
 # Configuration
 
-The initial module exposes only configuration that has executable coverage.
-Unsupported commands fail NGINX configuration validation instead of being
-silently ignored.
+Both server adapters expose the same configuration semantics. NGINX uses the
+lowercase `laghu` directive with semicolons; Apache uses `Laghu` without
+semicolons. Unsupported settings fail server configuration validation.
+
+| NGINX | Apache HTTP Server |
+| --- | --- |
+| `laghu on;` | `Laghu On` |
+| `laghu preset balanced;` | `Laghu Preset balanced` |
+| `laghu rewrite_level core;` | `Laghu RewriteLevel core` |
+| `laghu allow_api off;` | `Laghu AllowApi Off` |
+| `laghu image_quality 82;` | `Laghu ImageQuality 82` |
 
 ## `laghu on|off`
 
@@ -22,8 +30,8 @@ laghu on;
 - Default: `off`
 - Inheritance: child scopes inherit their parent unless overridden
 
-When enabled, the skeleton evaluates the response and emits an `X-Laghu`
-decision. The response body remains unchanged.
+When enabled, Laghu evaluates the response and may enqueue eligible images or
+serve an already-published image variant.
 
 ## `laghu preset <name>`
 
@@ -80,6 +88,23 @@ preset with a rewrite level, or an inherited rewrite level with a preset.
 Rewrite levels select policy only. Filters that have not been implemented and
 validated remain unavailable regardless of which level selects their family.
 
+## Image Runtime Directives
+
+```nginx
+laghu image_quality 82;
+laghu worker_queue /run/laghu/jobs.queue;
+laghu image_cache /var/cache/laghu/images;
+```
+
+All three directives inherit through `http`, `server`, and `location`. Quality
+must be `1..100`. Without an override, ecommerce uses 85;
+balanced/core/blog/bandwidth use 82; and aggressive/static/all/experimental use
+75. Safe permits no lossy output, so an inherited quality does not relax it.
+
+The queue and cache paths default to the values above. `laghu-libvips` must
+have write access; the selected server needs queue access and read access to
+published cache entries.
+
 ## `laghu allow_api on|off`
 
 Laghu bypasses `/api`, `/api/...`, `/graphql`, and `/graphql/...` by default.
@@ -115,9 +140,13 @@ An enabled location returns one of these `X-Laghu` values:
 | `bypass-private` | Response is marked `private` or `no-store` |
 | `bypass-api` | Request path is API-classified and has no explicit override |
 | `bypass-content-type` | Content type is outside the optimization surface |
+| `bypass-encoded` | Origin bytes already carry a content encoding and cannot be safely substituted |
+| `bypass-image-backend` | No selected transform is supported by the published worker capability mask |
+| `image-hit` | A strong-validator lookup selected an atomic cached image variant |
 | `bypass-error` | Policy metadata could not be inspected safely |
 
-The header reports policy only. It does not claim that a transform occurred.
+Only `image-hit` claims variant delivery. `pass` on an image cold miss means the
+original was streamed and an optimization job may have been published.
 
 When multiple conditions apply, Laghu evaluates disabled configuration,
 invalid policy data, intentional passthrough, status, authorization, private

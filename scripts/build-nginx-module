@@ -1,17 +1,20 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
-NGINX_VERSION="${NGINX_VERSION:-1.30.3}"
+NGINX_VERSION="${NGINX_VERSION:-1.30.4}"
 WORK_DIR="${NGINX_WORK_DIR:-${REPO_ROOT}/tmp/nginx/${NGINX_VERSION}}"
 SOURCE_DIR="${NGINX_SOURCE_DIR:-${WORK_DIR}/source}"
 BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
-MODULE_DIR="${REPO_ROOT}/modules/ngx_http_laghu_module"
+MODULE_DIR="${NGINX_MODULE_DIR:-${REPO_ROOT}/modules/ngx_http_laghu_module}"
+TAR="${TAR:-tar}"
 
 if [ ! -x "${SOURCE_DIR}/configure" ]; then
   archive="${WORK_DIR}/nginx-${NGINX_VERSION}.tar.gz"
@@ -27,7 +30,7 @@ if [ ! -x "${SOURCE_DIR}/configure" ]; then
     --output "${archive}" \
     "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
   rm -rf "${unpacked}" "${SOURCE_DIR}"
-  tar -xzf "${archive}" -C "${WORK_DIR}"
+  "${TAR}" -xzf "${archive}" -C "${WORK_DIR}"
   mv "${unpacked}" "${SOURCE_DIR}"
 fi
 
@@ -50,4 +53,3 @@ if [ ! -f "${artifact}" ]; then
 fi
 
 echo "Built ${artifact}"
-

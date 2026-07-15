@@ -1,0 +1,47 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+APXS=${APXS:-}
+
+if [ -z "${APXS}" ]; then
+  APXS=$(command -v apxs 2>/dev/null || command -v apxs2 2>/dev/null || true)
+fi
+if [ -z "${APXS}" ]; then
+  echo "Apache apxs is required to build mod_laghu." >&2
+  exit 127
+fi
+
+build_dir=${APACHE_BUILD_DIR:-"${REPO_ROOT}/tmp/apache-module"}
+rm -rf "${build_dir}"
+mkdir -p "${build_dir}"
+cp "${REPO_ROOT}/modules/mod_laghu/mod_laghu.c" "${build_dir}/mod_laghu.c"
+cp "${REPO_ROOT}/libs/laghu-core/src/core.c" "${build_dir}/laghu_core.c"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_win32.c" \
+      "${build_dir}/laghu_runtime.c"
+    ;;
+  *)
+    cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_posix.c" \
+      "${build_dir}/laghu_runtime.c"
+    ;;
+esac
+
+cd "${build_dir}"
+"${APXS}" -c \
+  -Wc,-std=c11 \
+  -I"${REPO_ROOT}/libs/laghu-core/include" \
+  -I"${REPO_ROOT}/libs/laghu-image/include" \
+  -I"${REPO_ROOT}/libs/laghu-runtime/include" \
+  mod_laghu.c \
+  laghu_core.c \
+  laghu_runtime.c
+
+test -f "${build_dir}/.libs/mod_laghu.so"

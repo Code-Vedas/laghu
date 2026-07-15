@@ -1,8 +1,8 @@
-# 5. ngx-laghu
+# 5. Laghu
 
 ## One-line positioning
 
-**ngx-laghu is the modern, maintained successor to the discontinued `ngx_pagespeed` — a native NGINX content-optimization module that rewrites HTML, CSS, JavaScript, images, and fonts at the edge in real time, restoring the "install once, pages get faster" experience that the web lost when Google archived mod_pagespeed / ngx_pagespeed.**
+**Laghu is the modern, maintained successor to the discontinued PageSpeed server modules, with equal native `ngx-laghu` and `mod_laghu` adapters that rewrite HTML, CSS, JavaScript, images, and fonts at the edge in real time.**
 
 ## Core promise
 
@@ -15,11 +15,11 @@ Then Google **archived the project (EOL, no more releases, no security patches, 
 * PSOL (the shared optimization library) is frozen and unmaintained.
 * Operators running it are stuck on old NGINX and carry unpatched C++ in their edge.
 
-ngx-laghu answers a simple question that thousands of sysadmins, hosts, and agencies still ask every week:
+Laghu answers a simple question that thousands of sysadmins, hosts, and agencies still ask every week:
 
-> "ngx_pagespeed is dead. What do I install instead that does the same thing, but works on current NGINX, understands Core Web Vitals, supports AVIF, and is actually maintained?"
+> "The PageSpeed modules are dead. What do I install instead for current NGINX or Apache?"
 
-ngx-laghu is that answer. It does **not** just port the old module — it audits every single thing the old module did, re-implements it on a modern, safe, maintainable architecture, and then adds the optimizations, formats, protocols, observability, and usability that the last five years of web performance made mandatory.
+Laghu is that answer. It does **not** just port the old modules — it implements one shared engine behind first-class NGINX and Apache adapters, then adds current formats, protocols, observability, and usability.
 
 The name: **laghu (लघु)** is Sanskrit for *light, quick, small, nimble* — the exact property the module gives every page it touches. It fits the Codevedas naming family and reads cleanly on a CLI (`laghu status`, `laghu purge`, `laghu doctor`).
 
@@ -50,7 +50,7 @@ The name is referenced in exactly **one place**: a short **"Why ngx-laghu exists
 
 ## Business outcomes
 
-* Restore a maintained, native NGINX optimization path for the entire ex-PageSpeed userbase.
+* Restore maintained, native NGINX and Apache optimization paths for the entire ex-PageSpeed userbase.
 * Improve Core Web Vitals (LCP, INP, CLS) at the server, measurably, per template.
 * Cut origin egress and image bandwidth (WebP/AVIF) without app changes.
 * Give hosts a per-tenant speed feature they can upsell.
@@ -184,7 +184,7 @@ The old module grouped filters into levels. ngx-laghu keeps the same mental mode
 
 ---
 
-# Part B — ngx-laghu features (parity + expansion)
+# Part B — Laghu features (parity + expansion)
 
 ## B1. Everything above, re-implemented and maintained
 
@@ -262,10 +262,10 @@ The old module optimized bytes. ngx-laghu optimizes **the metrics Google actuall
 
 ## B8. Packaging & support (added — the reason it survives where the old one died)
 
-* **Prebuilt dynamic modules** for every supported NGINX release + a build matrix in CI (no more "compile it yourself against an exact version").
+* **Prebuilt server adapters** for every supported NGINX and Apache release/ABI, with a build matrix in CI.
 * **Distro packages** (deb/rpm), **Docker images**, and a **Helm chart**.
-* **OpenResty / Angie / FreeNginx** compatibility targets.
-* **A sidecar / reverse-proxy mode** for environments that cannot load a custom NGINX module (runs as a standalone optimizing proxy in front of any origin).
+* **Apache 2.4**, **OpenResty / Angie / FreeNginx** compatibility targets.
+* **A sidecar / reverse-proxy mode** for environments that cannot load a custom server module (runs as a standalone optimizing proxy in front of any origin).
 * **LTS branches** with a published security-response policy and CVE process — the thing the archived project fatally lacked.
 * **Migration guide** from `ngx_pagespeed` and from Cloudflare Polish/Mirage.
 
@@ -408,7 +408,7 @@ Output as machine-readable JSON + a rendered HTML report and Grafana snapshots. 
 
 # Part D — Architecture notes
 
-* **Two-process model option** (like the modern rebuilds): a lightweight NGINX-side interceptor that serves from a shared cache, plus an out-of-process **optimize worker** that does the heavy CPU (image transcode, critical CSS, minify) asynchronously — so a slow optimize never blocks the response. First hit serves the original; the optimized variant lands in cache for subsequent hits.
+* **Two-process model**: lightweight NGINX and Apache adapters serve from a shared cache, while the out-of-process **`laghu-libvips` service** performs heavy CPU work asynchronously — so slow optimization never blocks the response. First hit serves the original; the optimized variant lands in cache for subsequent hits.
 * **Shared memory-mapped cache** readable by both NGINX and the worker; LRU eviction; per-URL purge.
 * **Sidecar mode** for no-custom-module environments: the same worker runs as a standalone reverse proxy.
 * **Fail-open everywhere**: worker down, socket missing, optimize error → original content is served unchanged.
@@ -418,7 +418,7 @@ Output as machine-readable JSON + a rendered HTML report and Grafana snapshots. 
 
 # Part E — Licensing & monetization
 
-**ngx-laghu is fully open source (MIT), like the rest of the Codevedas family (e.g. [Kaal](https://kaal.codevedas.com)).** There is no open-core, no paid tier, no SaaS, no license key, and no feature gating. Every optimization, the CLI, the benchmark rail, and all packages ship free.
+**Laghu is fully open source (MIT), like the rest of the Codevedas family (e.g. [Kaal](https://kaal.codevedas.com)).** There is no open-core, no paid tier, no SaaS, no license key, and no feature gating. Every optimization, the CLI, the benchmark rail, and all packages ship free.
 
 The **only** monetization is **organic professional-support leads** — the same model as `kaal.codevedas.com`:
 
@@ -431,4 +431,4 @@ The **only** monetization is **organic professional-support leads** — the same
 
 # Part F — Positioning summary
 
-> `ngx_pagespeed` is dead. ngx-laghu is the maintained successor: full parity with every filter the old module ran, rebuilt for current NGINX with AVIF, Core Web Vitals awareness, Early Hints, HTTP/3, real observability, and a one-command CLI — and every single optimization is proven with k6 across every content type and data size, benchmarked against both plain NGINX and the last NGINX release that could still run the original.
+> The PageSpeed modules are dead. Laghu is the maintained successor: one shared engine behind first-class `ngx-laghu` and `mod_laghu` adapters, with every optimization proven across both server families.

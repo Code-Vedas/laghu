@@ -1,0 +1,132 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+if [ "$(uname -s)" != Darwin ]; then
+  echo "The Homebrew package smoke test requires macOS." >&2
+  exit 77
+fi
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/laghu-homebrew-XXXXXX")
+tap="codevedas/laghu-smoke"
+tap_repo=
+formula_dir=
+archive="${work}/laghu-0.1.0.tar.gz"
+nginx_was_installed=0
+nginx_config_existed=0
+httpd_config_existed=0
+ngx_config_existed=0
+mod_config_existed=0
+
+brew list --formula nginx >/dev/null 2>&1 && nginx_was_installed=1
+[ -f "$(brew --prefix)/etc/nginx/nginx.conf" ] && nginx_config_existed=1
+[ -f "$(brew --prefix)/etc/httpd/httpd.conf" ] && httpd_config_existed=1
+[ -f "$(brew --prefix)/etc/nginx/conf.d/ngx-laghu.conf" ] && ngx_config_existed=1
+[ -f "$(brew --prefix)/etc/httpd/extra/mod-laghu.conf" ] && mod_config_existed=1
+if [ "${nginx_config_existed}" = 1 ]; then
+  cp "$(brew --prefix)/etc/nginx/nginx.conf" "${work}/nginx.conf"
+fi
+if [ "${httpd_config_existed}" = 1 ]; then
+  cp "$(brew --prefix)/etc/httpd/httpd.conf" "${work}/httpd.conf"
+fi
+if [ "${ngx_config_existed}" = 1 ]; then
+  cp "$(brew --prefix)/etc/nginx/conf.d/ngx-laghu.conf" "${work}/ngx-laghu.conf"
+fi
+if [ "${mod_config_existed}" = 1 ]; then
+  cp "$(brew --prefix)/etc/httpd/extra/mod-laghu.conf" "${work}/mod-laghu.conf"
+fi
+
+cleanup() {
+  if [ "${LAGHU_KEEP_HOMEBREW_SMOKE:-0}" = 1 ]; then
+    echo "Keeping Homebrew smoke state in ${work}" >&2
+    return
+  fi
+  brew services stop laghu-libvips >/dev/null 2>&1 || true
+  for formula in ngx-laghu mod-laghu laghu-libvips; do
+    brew uninstall --force "${formula}" >/dev/null 2>&1 || true
+  done
+  if [ "${nginx_config_existed}" = 1 ]; then
+    cp "${work}/nginx.conf" "$(brew --prefix)/etc/nginx/nginx.conf"
+  elif [ "${nginx_was_installed}" = 0 ]; then
+    rm -f "$(brew --prefix)/etc/nginx/nginx.conf"
+  fi
+  if [ "${httpd_config_existed}" = 1 ]; then
+    cp "${work}/httpd.conf" "$(brew --prefix)/etc/httpd/httpd.conf"
+  fi
+  if [ "${ngx_config_existed}" = 1 ]; then
+    cp "${work}/ngx-laghu.conf" "$(brew --prefix)/etc/nginx/conf.d/ngx-laghu.conf"
+  else
+    rm -f "$(brew --prefix)/etc/nginx/conf.d/ngx-laghu.conf"
+  fi
+  if [ "${mod_config_existed}" = 1 ]; then
+    cp "${work}/mod-laghu.conf" "$(brew --prefix)/etc/httpd/extra/mod-laghu.conf"
+  else
+    rm -f "$(brew --prefix)/etc/httpd/extra/mod-laghu.conf"
+  fi
+  if [ "${nginx_was_installed}" = 0 ]; then
+    brew uninstall --force nginx >/dev/null 2>&1 || true
+  fi
+  brew untap "${tap}" >/dev/null 2>&1 || true
+  rm -rf "${work}"
+}
+trap cleanup EXIT HUP INT TERM
+
+brew untap "${tap}" >/dev/null 2>&1 || true
+brew tap-new --no-git "${tap}" >/dev/null
+tap_repo=$(brew --repo "${tap}")
+formula_dir="${tap_repo}/Formula"
+COPYFILE_DISABLE=1 tar -C "${REPO_ROOT}" --exclude=.git --exclude=tmp \
+  -czf "${archive}" .
+archive_sha=$(shasum -a 256 "${archive}" | awk '{print $1}')
+cp "${REPO_ROOT}"/packaging/homebrew/*.rb "${formula_dir}/"
+
+export LAGHU_LOCAL_ARCHIVE="${archive}" LAGHU_LOCAL_SHA="${archive_sha}"
+for formula in "${formula_dir}"/*.rb; do
+  perl -0pi -e \
+    's!  url "https://github.com/Code-Vedas/laghu.git", tag: "v0.1.0"!  url "file://$ENV{LAGHU_LOCAL_ARCHIVE}"\n  sha256 "$ENV{LAGHU_LOCAL_SHA}"!' \
+    "${formula}"
+done
+
+brew style "${formula_dir}"/*.rb
+brew install --build-from-source "${tap}/laghu-libvips"
+brew test laghu-libvips
+brew services start laghu-libvips
+attempt=0
+while [ "${attempt}" -lt 50 ] &&
+    ! brew services list | grep -E '^laghu-libvips[[:space:]]+started' >/dev/null; do
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+[ "${attempt}" -lt 50 ]
+brew services restart laghu-libvips
+brew services stop laghu-libvips
+
+brew install --build-from-source "${tap}/ngx-laghu"
+brew postinstall "${tap}/ngx-laghu"
+brew test ngx-laghu
+"$(brew --prefix nginx)/bin/nginx" -t
+brew reinstall --build-from-source "${tap}/ngx-laghu"
+"$(brew --prefix nginx)/bin/nginx" -t
+
+brew install --build-from-source "${tap}/mod-laghu"
+brew postinstall "${tap}/mod-laghu"
+brew test mod-laghu
+"$(brew --prefix httpd)/bin/httpd" -t
+brew reinstall --build-from-source "${tap}/mod-laghu"
+"$(brew --prefix httpd)/bin/httpd" -t
+
+brew uninstall ngx-laghu mod-laghu laghu-libvips
+for formula in ngx-laghu mod-laghu laghu-libvips; do
+  if brew list --formula "${formula}" >/dev/null 2>&1; then
+    echo "Homebrew retained ${formula} after uninstall." >&2
+    exit 1
+  fi
+done
+
+echo "Homebrew install, service, reinstall, and uninstall smoke passed"

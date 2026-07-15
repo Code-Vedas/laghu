@@ -1,0 +1,92 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+if command -v bsdtar >/dev/null 2>&1; then
+  export TAR=bsdtar
+fi
+
+scripts/run-build-all
+scripts/run-test-all
+
+if [ "${SERVER}" = nginx ]; then
+  scripts/run-module-build-all
+  scripts/run-module-smoke-all
+else
+  scripts/run-apache-module-smoke-all
+fi
+
+if [ "${LAGHU_WITH_VIPS}" = OFF ]; then
+  echo "Custom no-libvips build passed; official package construction is intentionally skipped."
+  exit 0
+fi
+
+case "${PACKAGE_FAMILY}" in
+  apt)
+    cp -R packaging/debian debian
+    dpkg-buildpackage --build=binary --no-sign
+    if [ "${SERVER}" = nginx ]; then
+      dependencies=$(dpkg-deb -f ../ngx-laghu_*.deb Depends)
+      printf '%s\n' "${dependencies}" | grep -q 'nginx-abi-'
+      printf '%s\n' "${dependencies}" | grep -q 'laghu-libvips'
+      installed=$(dpkg-query -W -f='${binary:Package}\n' 2>/dev/null |
+        sed 's/:.*//' | grep -E '^(nginx|nginx-(common|core|dev|full|light))$' || true)
+      if [ -n "${installed}" ]; then
+        # shellcheck disable=SC2086
+        apt-get purge -y ${installed}
+      fi
+      ! command -v nginx >/dev/null 2>&1
+      apt-get install -y ../laghu-libvips_*.deb ../ngx-laghu_*.deb
+      nginx -t
+    else
+      dependencies=$(dpkg-deb -f ../mod-laghu_*.deb Depends)
+      printf '%s\n' "${dependencies}" | grep -q 'apache2-api-'
+      printf '%s\n' "${dependencies}" | grep -q 'laghu-libvips'
+      installed=$(dpkg-query -W -f='${binary:Package}\n' 2>/dev/null |
+        sed 's/:.*//' | grep -E '^apache2($|-bin$|-data$|-dev$|-utils$)' || true)
+      if [ -n "${installed}" ]; then
+        # shellcheck disable=SC2086
+        apt-get purge -y ${installed}
+      fi
+      ! command -v apache2 >/dev/null 2>&1
+      apt-get install -y ../laghu-libvips_*.deb ../mod-laghu_*.deb
+      apache2ctl configtest
+    fi
+    ;;
+  dnf|yum)
+    mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
+    version=$(awk '/^Version:/ { print $2; exit }' packaging/rpm/laghu.spec)
+    staging=$(mktemp -d)
+    mkdir -p "${staging}/laghu-${version}"
+    find . -mindepth 1 -maxdepth 1 ! -name .git ! -name tmp \
+      -exec cp -a '{}' "${staging}/laghu-${version}/" ';'
+    "${TAR:-tar}" -C "${staging}" -czf \
+      "$HOME/rpmbuild/SOURCES/laghu-${version}.tar.gz" "laghu-${version}"
+    rm -rf "${staging}"
+    cp packaging/rpm/laghu.spec "$HOME/rpmbuild/SPECS/laghu.spec"
+    rpmbuild -ba "$HOME/rpmbuild/SPECS/laghu.spec"
+    if [ "${SERVER}" = nginx ]; then
+      requirements=$(rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm)
+      printf '%s\n' "${requirements}" | grep -q 'nginx(abi)'
+      printf '%s\n' "${requirements}" | grep -q 'laghu-libvips'
+      "${PACKAGE_FAMILY}" remove -y nginx nginx-mod-devel
+      ! command -v nginx >/dev/null 2>&1
+      "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
+        "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm
+      nginx -t
+    else
+      requirements=$(rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/mod-laghu-*.rpm)
+      printf '%s\n' "${requirements}" | grep -q 'httpd-mmn'
+      printf '%s\n' "${requirements}" | grep -q 'laghu-libvips'
+      "${PACKAGE_FAMILY}" remove -y httpd httpd-core httpd-devel
+      ! command -v httpd >/dev/null 2>&1
+      "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
+        "$HOME"/rpmbuild/RPMS/*/mod-laghu-*.rpm
+      httpd -t
+    fi
+    ;;
+esac

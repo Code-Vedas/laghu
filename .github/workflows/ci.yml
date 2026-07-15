@@ -1,3 +1,8 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 name: CI
 
 on:
@@ -15,7 +20,7 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install tools
@@ -24,32 +29,150 @@ jobs:
           sudo apt-get install --no-install-recommends -y clang-format shellcheck
       - run: scripts/run-lint-all
 
-  core:
-    name: Core · ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  test:
+    name: Test · ${{ matrix.label }} · vips=${{ matrix.vips }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            vips: "ON"
+          - label: Linux x86_64 no-libvips
+            runner: ubuntu-24.04
+            architecture: x86_64
+            vips: "OFF"
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+            vips: "ON"
+          - label: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            vips: "ON"
+          - label: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            vips: "ON"
+          - label: Windows x86_64
+            runner: windows-2025
+            architecture: AMD64
+            vips: "ON"
+            triplet: x64-windows
+          - label: Windows arm64
+            runner: windows-11-arm
+            architecture: ARM64
+            vips: "ON"
+            triplet: arm64-windows
     steps:
       - uses: actions/checkout@v7
-      - run: scripts/run-build-all
-      - run: scripts/run-test-all
+      - name: Verify Unix architecture
+        if: runner.os != 'Windows'
+        shell: bash
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+      - name: Verify Windows architecture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne '${{ matrix.architecture }}') {
+            throw "Expected ${{ matrix.architecture }}, got $env:PROCESSOR_ARCHITECTURE"
+          }
+      - name: Install libvips on Ubuntu
+        if: runner.os == 'Linux' && matrix.vips == 'ON'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libvips-dev libvips-tools
+      - name: Install libvips on macOS
+        if: runner.os == 'macOS' && matrix.vips == 'ON'
+        run: brew install vips
+      - name: Install libvips on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: vcpkg install "libvips[jpeg,png,webp]:${{ matrix.triplet }}"
+      - name: Build libraries and runtime
+        if: runner.os != 'Windows'
+        run: scripts/run-build-all
+        env:
+          LAGHU_WITH_VIPS: ${{ matrix.vips }}
+      - name: Test libraries and runtime
+        if: runner.os != 'Windows'
+        run: scripts/run-test-all
+        env:
+          BUILD_DIR: tmp/build
+      - name: Test launchd service lifecycle
+        if: runner.os == 'macOS'
+        run: scripts/run-macos-service-smoke
+        env:
+          BUILD_DIR: tmp/build
+      - name: Test Homebrew packages
+        if: runner.os == 'macOS'
+        run: scripts/run-homebrew-smoke
+      - name: Configure tests on Windows
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B tmp/windows
+          -DLAGHU_WITH_VIPS=ON
+          -DLAGHU_BUILD_SERVICE=ON
+          -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          -DCMAKE_BUILD_TYPE=Debug
+      - name: Build tests on Windows
+        if: runner.os == 'Windows'
+        run: cmake --build tmp/windows --config Debug --parallel
+      - name: Run tests on Windows
+        if: runner.os == 'Windows'
+        run: ctest --test-dir tmp/windows -C Debug --output-on-failure
 
   nginx_module:
-    name: NGINX ${{ matrix.nginx_version }} module
-    runs-on: ubuntu-latest
+    name: NGINX ${{ matrix.nginx_version }} · ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        nginx_version: ["1.30.3", "1.31.2"]
+        include:
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            nginx_version: "1.30.4"
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            nginx_version: "1.31.3"
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+            nginx_version: "1.30.4"
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+            nginx_version: "1.31.3"
+          - label: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            nginx_version: "1.30.4"
+          - label: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            nginx_version: "1.30.4"
     steps:
       - uses: actions/checkout@v7
-      - name: Install NGINX build dependencies
+      - name: Verify architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            build-essential libpcre2-dev libssl-dev zlib1g-dev
+            build-essential libpcre2-dev libssl-dev zlib1g-dev \
+            libvips-dev libvips-tools
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install pcre2 vips
+      - run: scripts/run-build-all
+        env:
+          LAGHU_WITH_VIPS: "ON"
       - run: scripts/run-module-build-all
         env:
           NGINX_VERSION: ${{ matrix.nginx_version }}
@@ -57,9 +180,294 @@ jobs:
         env:
           NGINX_VERSION: ${{ matrix.nginx_version }}
 
+  apache_module:
+    name: Apache 2.4 · ${{ matrix.label }} · ${{ matrix.mpm }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            mpm: event
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            mpm: worker
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            mpm: prefork
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+            mpm: event
+          - label: macOS Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            mpm: event
+          - label: macOS Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            mpm: event
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y apache2 apache2-dev libvips-dev
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install httpd vips
+      - run: scripts/run-build-all
+        env:
+          LAGHU_WITH_VIPS: "ON"
+      - run: scripts/run-apache-module-smoke-all
+        env:
+          APACHE_MPM: ${{ matrix.mpm }}
+
+  docker_matrix:
+    name: Docker package · ${{ matrix.target }} · ${{ matrix.architecture }}
+    runs-on: ${{ matrix.architecture == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian-nginx
+          - debian-apache
+          - ubuntu-nginx
+          - ubuntu-apache-event
+          - ubuntu-apache-worker
+          - ubuntu-apache-prefork
+          - ubuntu-nginx-no-libvips
+          - fedora-nginx
+          - fedora-apache
+          - rocky-nginx
+          - rocky-apache
+          - alma-nginx
+          - alma-apache
+        architecture: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Verify native runner architecture
+        run: |
+          case "${{ matrix.architecture }}:$(uname -m)" in
+            amd64:x86_64|arm64:aarch64) ;;
+            *) exit 1 ;;
+          esac
+      - run: >-
+          scripts/run-in-docker --target ${{ matrix.target }}
+          --architectures ${{ matrix.architecture }}
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: docker-${{ matrix.target }}-${{ matrix.architecture }}
+          path: tmp/docker-tests/${{ matrix.target }}/${{ matrix.architecture }}
+
+  sanitizer_fuzz:
+    name: Sanitizers and image fuzzing
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang
+      - name: Build sanitizer tests and fuzz harness
+        run: >-
+          CC=clang cmake -S . -B tmp/sanitizers
+          -DLAGHU_WITH_VIPS=OFF
+          -DLAGHU_ENABLE_SANITIZERS=ON
+          -DLAGHU_BUILD_FUZZERS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+      - run: cmake --build tmp/sanitizers --parallel
+      - run: ctest --test-dir tmp/sanitizers --output-on-failure
+      - run: tmp/sanitizers/libs/laghu-image/laghu_image_fuzz -runs=2000
+
+  minimum_vips:
+    name: Minimum libvips 8.15 baseline
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - name: Install checkout and build dependencies
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y \
+            ca-certificates cmake git libvips-dev pkgconf
+      - uses: actions/checkout@v7
+      - run: cmake -S . -B tmp/minimum-vips -DLAGHU_WITH_VIPS=ON
+      - run: cmake --build tmp/minimum-vips --parallel
+      - run: ctest --test-dir tmp/minimum-vips --output-on-failure
+
+  bundled_container:
+    name: ${{ matrix.offering }} container · ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            offering: ngx-laghu
+            dockerfile: packaging/container/Dockerfile
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+            offering: ngx-laghu
+            dockerfile: packaging/container/Dockerfile
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            architecture: x86_64
+            offering: mod-laghu
+            dockerfile: packaging/container/Dockerfile.apache
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            architecture: aarch64
+            offering: mod-laghu
+            dockerfile: packaging/container/Dockerfile.apache
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install fixture generator
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libvips-tools
+      - run: test "$(uname -m)" = "${{ matrix.architecture }}"
+      - run: docker build -f ${{ matrix.dockerfile }} -t laghu:test .
+      - name: Verify architecture and codec contract
+        run: |
+          test "$(docker run --rm --entrypoint uname laghu:test -m)" = \
+            "${{ matrix.architecture }}"
+          docker run --rm --entrypoint laghu-libvips laghu:test --probe | \
+            grep -x 'backend=.* available=yes capabilities=000001ff'
+      - name: Exercise bundled NGINX
+        if: matrix.offering == 'ngx-laghu'
+        run: |
+          mkdir -p tmp/container
+          vips black tmp/container/source.v 512 512 --bands 3
+          vips pngsave tmp/container/source.v tmp/container/image.png --compression 0
+          docker run --detach --name laghu-full -p 18080:8080 laghu:test
+          trap 'docker logs laghu-full || true; docker rm --force laghu-full >/dev/null 2>&1 || true' EXIT
+          docker cp tmp/container/image.png laghu-full:/usr/share/nginx/html/image.png
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:18080/ >/dev/null && break
+            sleep 0.25
+          done
+          curl --fail --silent --show-error --head http://127.0.0.1:18080/ | \
+            grep -i '^X-Laghu: pass'
+          curl --fail --silent http://127.0.0.1:18080/image.png >/dev/null
+          for attempt in $(seq 1 100); do
+            if curl --fail --silent --head http://127.0.0.1:18080/image.png | \
+                grep -qi '^X-Laghu: image-hit'; then
+              exit 0
+            fi
+            sleep 0.25
+          done
+          echo 'The bundled container did not publish a warm image variant.' >&2
+          exit 1
+      - name: Exercise bundled Apache
+        if: matrix.offering == 'mod-laghu'
+        run: |
+          docker run --detach --name laghu-full -p 18080:80 laghu:test
+          trap 'docker logs laghu-full || true; docker rm --force laghu-full >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:18080/ >/dev/null && break
+            sleep 0.25
+          done
+          docker exec laghu-full apache2ctl -M | grep 'laghu_module'
+
+  deb_package:
+    name: Debian package · ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Ubuntu 24.04 x86_64
+            runner: ubuntu-24.04
+          - label: Ubuntu 24.04 arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install package dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            apache2 apache2-dev cmake debhelper devscripts dh-apache2 \
+            dh-sequence-nginx libvips-dev nginx nginx-dev pkgconf
+      - name: Build, install, and inspect packages
+        run: |
+          cp -R packaging/debian debian
+          dpkg-buildpackage --build=binary --no-sign
+          dpkg-deb --contents ../ngx-laghu_0.1.0_*.deb | \
+            grep '/usr/lib/nginx/modules/ngx_http_laghu_module.so'
+          dpkg-deb --contents ../mod-laghu_0.1.0_*.deb | \
+            grep '/usr/lib/apache2/modules/mod_laghu.so'
+          dpkg-deb --contents ../laghu-libvips_0.1.0_*.deb | \
+            grep '/usr/bin/laghu-libvips'
+          sudo apt-get install -y \
+            ../ngx-laghu_0.1.0_*.deb ../mod-laghu_0.1.0_*.deb \
+            ../laghu-libvips_0.1.0_*.deb
+          nginx -t
+          apache2ctl configtest
+          laghu-libvips --probe | \
+            grep -x 'backend=.* available=yes capabilities=000001ff'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: laghu-deb-${{ runner.arch }}
+          path: ../*laghu*.deb
+
+  rpm_package:
+    name: RPM package · ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    container: fedora:44
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Fedora x86_64
+            runner: ubuntu-24.04
+          - label: Fedora arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Install package dependencies
+        run: >-
+          dnf install -y cmake gcc git gzip httpd httpd-devel make nginx nginx-mod-devel
+          pkgconf-pkg-config rpm-build shadow-utils systemd-rpm-macros tar
+          vips-devel
+      - uses: actions/checkout@v7
+      - name: Build, install, and inspect packages
+        run: |
+          mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
+          tar --exclude=.git --exclude=tmp \
+            --transform='s,^\.,laghu-0.1.0,' -czf \
+            "$HOME/rpmbuild/SOURCES/laghu-0.1.0.tar.gz" .
+          cp packaging/rpm/laghu.spec "$HOME/rpmbuild/SPECS/laghu.spec"
+          rpmbuild -ba "$HOME/rpmbuild/SPECS/laghu.spec"
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm | \
+            grep '/ngx_http_laghu_module.so'
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/mod-laghu-*.rpm | \
+            grep '/mod_laghu.so'
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep '/usr/bin/laghu-libvips'
+          dnf install -y "$HOME"/rpmbuild/RPMS/*/*laghu*.rpm
+          nginx -t
+          httpd -t
+          laghu-libvips --probe | \
+            grep -x 'backend=.* available=yes capabilities=000001ff'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: laghu-rpm-${{ runner.arch }}
+          path: ~/rpmbuild/RPMS/**/*.rpm
+
   docs:
     name: Documentation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: ruby/setup-ruby@v1

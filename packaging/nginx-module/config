@@ -1,0 +1,26 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+ngx_addon_name=ngx_http_laghu_module
+
+LAGHU_REPO_DIR="$ngx_addon_dir/../.."
+LAGHU_MODULE_DIR="$LAGHU_REPO_DIR/modules/ngx_http_laghu_module"
+LAGHU_CORE_DIR="$LAGHU_REPO_DIR/libs/laghu-core"
+LAGHU_RUNTIME_DIR="$LAGHU_REPO_DIR/libs/laghu-runtime"
+LAGHU_IMAGE_DIR="$LAGHU_REPO_DIR/libs/laghu-image"
+LAGHU_MODULE_SRCS="$LAGHU_MODULE_DIR/ngx_http_laghu_module.c $LAGHU_CORE_DIR/src/core.c $LAGHU_RUNTIME_DIR/src/runtime_posix.c"
+
+if test -n "$ngx_module_link"; then
+    ngx_module_type=HTTP_AUX_FILTER
+    ngx_module_name=ngx_http_laghu_module
+    ngx_module_incs="$LAGHU_CORE_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
+    ngx_module_srcs="$LAGHU_MODULE_SRCS"
+
+    . auto/module
+else
+    HTTP_AUX_FILTER_MODULES="$HTTP_AUX_FILTER_MODULES ngx_http_laghu_module"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $LAGHU_MODULE_SRCS"
+    CORE_INCS="$CORE_INCS $LAGHU_CORE_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
+fi

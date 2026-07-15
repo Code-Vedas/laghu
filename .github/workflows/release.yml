@@ -1,0 +1,226 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+name: Release Packages
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+  attestations: write
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Match the tag to the project version
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          grep -F "project(laghu VERSION ${version} LANGUAGES C)" CMakeLists.txt
+
+  modules:
+    name: Module · NGINX ${{ matrix.nginx_version }} · ${{ matrix.architecture }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x86_64
+            nginx_version: "1.30.4"
+          - runner: ubuntu-24.04
+            architecture: x86_64
+            nginx_version: "1.31.3"
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            nginx_version: "1.30.4"
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            nginx_version: "1.31.3"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential libpcre2-dev libssl-dev zlib1g-dev
+      - run: scripts/run-module-build-all
+        env:
+          NGINX_VERSION: ${{ matrix.nginx_version }}
+      - name: Assemble module archive
+        run: |
+          archive="ngx-laghu-${{ matrix.nginx_version }}-${{ matrix.architecture }}-linux"
+          mkdir -p "tmp/release/${archive}"
+          cp "tmp/nginx/${{ matrix.nginx_version }}/build/ngx_http_laghu_module.so" \
+            "tmp/release/${archive}/"
+          cp packaging/nginx/mod-http-laghu.conf packaging/nginx/laghu.conf \
+            "tmp/release/${archive}/"
+          tar -C tmp/release -czf "tmp/release/${archive}.tar.gz" "${archive}"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-module-${{ matrix.nginx_version }}-${{ matrix.architecture }}
+          path: tmp/release/*.tar.gz
+
+  apache_module:
+    name: Module · Apache 2.4 · ${{ matrix.architecture }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x86_64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y apache2-dev
+      - run: scripts/build-apache-module
+      - name: Assemble module archive
+        run: |
+          archive="mod-laghu-apache-2.4-${{ matrix.architecture }}-linux"
+          mkdir -p "tmp/release/${archive}"
+          cp tmp/apache-module/.libs/mod_laghu.so packaging/apache/laghu.load \
+            packaging/apache/laghu.conf "tmp/release/${archive}/"
+          tar -C tmp/release -czf "tmp/release/${archive}.tar.gz" "${archive}"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-apache-${{ matrix.architecture }}
+          path: tmp/release/*.tar.gz
+
+  deb:
+    name: Debian · ${{ matrix.architecture }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install package dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            apache2 apache2-dev cmake debhelper devscripts dh-apache2 \
+            dh-sequence-nginx libvips-dev nginx nginx-dev pkgconf
+      - name: Build package set
+        run: |
+          cp -R packaging/debian debian
+          dpkg-buildpackage --build=binary --no-sign
+          nginx -t
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-deb-${{ matrix.architecture }}
+          path: ../*laghu*.deb
+
+  rpm:
+    name: RPM · ${{ matrix.architecture }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    container: fedora:44
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x86_64
+          - runner: ubuntu-24.04-arm
+            architecture: aarch64
+    steps:
+      - name: Install package dependencies
+        run: >-
+          dnf install -y cmake gcc git gzip httpd httpd-devel make nginx nginx-mod-devel
+          pkgconf-pkg-config rpm-build shadow-utils systemd-rpm-macros tar
+          vips-devel
+      - uses: actions/checkout@v7
+      - name: Build package set
+        run: |
+          mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
+          tar --exclude=.git --exclude=tmp \
+            --transform='s,^\.,laghu-0.1.0,' -czf \
+            "$HOME/rpmbuild/SOURCES/laghu-0.1.0.tar.gz" .
+          cp packaging/rpm/laghu.spec "$HOME/rpmbuild/SPECS/laghu.spec"
+          rpmbuild -ba "$HOME/rpmbuild/SPECS/laghu.spec"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-rpm-${{ matrix.architecture }}
+          path: ~/rpmbuild/RPMS/**/*.rpm
+
+  container:
+    name: ${{ matrix.offering }} multi-architecture container
+    needs: validate
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - offering: ngx-laghu
+            dockerfile: packaging/container/Dockerfile
+          - offering: mod-laghu
+            dockerfile: packaging/container/Dockerfile.apache
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/code-vedas/${{ matrix.offering }}:${{ github.ref_name }}
+            ghcr.io/code-vedas/${{ matrix.offering }}:stable
+
+  publish_assets:
+    name: Publish release assets
+    needs: [modules, apache_module, deb, rpm]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - uses: anchore/sbom-action@v0
+        with:
+          path: release-assets
+          format: spdx-json
+          output-file: release-assets/laghu.spdx.json
+      - uses: sigstore/cosign-installer@v4
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          (cd release-assets && sha256sum * >SHA256SUMS)
+          cosign sign-blob --yes --output-signature release-assets/SHA256SUMS.sig \
+            --output-certificate release-assets/SHA256SUMS.pem \
+            release-assets/SHA256SUMS
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release-assets/*

@@ -1,3 +1,8 @@
+// Copyright Codevedas Inc. 2026-present
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
 #include "laghu/core.h"
 
 #include <ctype.h>
@@ -239,6 +244,7 @@ static void laghu_policy_init(laghu_policy *policy) {
   policy->allow_resource_inlining = false;
   policy->allow_script_reordering = false;
   policy->allow_experimental = false;
+  policy->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
 }
 
 static bool laghu_config_has_policy_selector(const laghu_config *config) {
@@ -332,6 +338,7 @@ void laghu_config_init(laghu_config *config) {
   config->preset = LAGHU_PRESET_UNSET;
   config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   config->allow_api = LAGHU_MODE_UNSET;
+  config->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
 }
 
 void laghu_config_merge(laghu_config *result, const laghu_config *parent,
@@ -340,6 +347,7 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   laghu_preset parent_preset = LAGHU_PRESET_BALANCED;
   laghu_rewrite_level parent_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   laghu_mode parent_allow_api = LAGHU_MODE_OFF;
+  unsigned int parent_image_quality = LAGHU_IMAGE_QUALITY_UNSET;
 
   if (result == NULL) {
     return;
@@ -356,6 +364,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     if (parent->allow_api != LAGHU_MODE_UNSET) {
       parent_allow_api = parent->allow_api;
     }
+    if (parent->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
+      parent_image_quality = parent->image_quality;
+    }
   }
 
   result->mode = child != NULL && child->mode != LAGHU_MODE_UNSET ? child->mode
@@ -370,6 +381,10 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   result->allow_api = child != NULL && child->allow_api != LAGHU_MODE_UNSET
                           ? child->allow_api
                           : parent_allow_api;
+  result->image_quality =
+      child != NULL && child->image_quality != LAGHU_IMAGE_QUALITY_UNSET
+          ? child->image_quality
+          : parent_image_quality;
 }
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset) {
@@ -432,12 +447,14 @@ bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy) {
     case LAGHU_PRESET_SAFE:
       policy->filter_families = LAGHU_FILTER_SAFE;
       policy->risk_level = LAGHU_RISK_CONSERVATIVE;
+      policy->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
       return true;
     case LAGHU_PRESET_BALANCED:
       policy->filter_families = LAGHU_FILTER_BALANCED;
       policy->risk_level = LAGHU_RISK_MODERATE;
       policy->allow_lossy = true;
       policy->allow_structural_rewrite = true;
+      policy->image_quality = 82U;
       return true;
     case LAGHU_PRESET_AGGRESSIVE:
       policy->filter_families = LAGHU_FILTER_AGGRESSIVE;
@@ -446,12 +463,14 @@ bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy) {
       policy->allow_structural_rewrite = true;
       policy->allow_resource_inlining = true;
       policy->allow_script_reordering = true;
+      policy->image_quality = 75U;
       return true;
     case LAGHU_PRESET_ECOMMERCE:
       policy->filter_families = LAGHU_FILTER_ECOMMERCE;
       policy->risk_level = LAGHU_RISK_CONSERVATIVE;
       policy->allow_lossy = true;
       policy->allow_structural_rewrite = true;
+      policy->image_quality = 85U;
       return true;
     case LAGHU_PRESET_BLOG:
       policy->filter_families = LAGHU_FILTER_BLOG;
@@ -460,6 +479,7 @@ bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy) {
       policy->allow_structural_rewrite = true;
       policy->allow_resource_inlining = true;
       policy->allow_script_reordering = true;
+      policy->image_quality = 82U;
       return true;
     case LAGHU_PRESET_STATIC:
       policy->filter_families = LAGHU_FILTER_STATIC;
@@ -468,6 +488,7 @@ bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy) {
       policy->allow_structural_rewrite = true;
       policy->allow_resource_inlining = true;
       policy->allow_script_reordering = true;
+      policy->image_quality = 75U;
       return true;
     case LAGHU_PRESET_UNSET:
     default:
@@ -545,6 +566,7 @@ bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
       policy->filter_families = LAGHU_FILTER_BANDWIDTH;
       policy->risk_level = LAGHU_RISK_MODERATE;
       policy->allow_lossy = true;
+      policy->image_quality = 82U;
       return true;
     case LAGHU_REWRITE_LEVEL_ALL:
     case LAGHU_REWRITE_LEVEL_EXPERIMENTAL:
@@ -556,6 +578,7 @@ bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
       policy->allow_script_reordering = true;
       policy->allow_experimental =
           rewrite_level == LAGHU_REWRITE_LEVEL_EXPERIMENTAL;
+      policy->image_quality = 75U;
       return true;
     case LAGHU_REWRITE_LEVEL_UNSET:
     default:
@@ -567,6 +590,7 @@ bool laghu_resolve_config_policy(const laghu_config *config,
                                  laghu_policy *policy) {
   bool has_preset;
   bool has_rewrite_level;
+  bool resolved;
 
   if (config == NULL || policy == NULL) {
     return false;
@@ -578,9 +602,18 @@ bool laghu_resolve_config_policy(const laghu_config *config,
     return false;
   }
 
-  return has_preset
-             ? laghu_resolve_policy(config->preset, policy)
-             : laghu_resolve_rewrite_level(config->rewrite_level, policy);
+  resolved = has_preset
+                 ? laghu_resolve_policy(config->preset, policy)
+                 : laghu_resolve_rewrite_level(config->rewrite_level, policy);
+  if (resolved && config->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
+    if (config->image_quality > 100U) {
+      return false;
+    }
+    if (policy->allow_lossy) {
+      policy->image_quality = config->image_quality;
+    }
+  }
+  return resolved;
 }
 
 laghu_decision laghu_decide(const laghu_config *config,
@@ -646,6 +679,12 @@ const char *laghu_decision_name(laghu_decision decision) {
       return "bypass-api";
     case LAGHU_DECISION_BYPASS_CONTENT_TYPE:
       return "bypass-content-type";
+    case LAGHU_DECISION_BYPASS_ENCODED:
+      return "bypass-encoded";
+    case LAGHU_DECISION_BYPASS_IMAGE_BACKEND:
+      return "bypass-image-backend";
+    case LAGHU_DECISION_IMAGE_HIT:
+      return "image-hit";
     case LAGHU_DECISION_BYPASS_ERROR:
     default:
       return "bypass-error";
@@ -711,7 +750,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   static const unsigned char namespace_value[] = "laghu-variant";
   laghu_sha256_context context;
   unsigned char digest[LAGHU_SHA256_DIGEST_SIZE];
-  unsigned char fields[13];
+  unsigned char fields[14];
   bool has_preset;
   bool has_rewrite_level;
   bool preset_is_valid;
@@ -737,6 +776,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
       has_preset == has_rewrite_level ||
       policy->risk_level < LAGHU_RISK_CONSERVATIVE ||
       policy->risk_level > LAGHU_RISK_EXPANSIVE ||
+      policy->image_quality > 100U ||
       (policy->filter_families & ~((uint32_t)LAGHU_FILTER_ALL)) != 0U) {
     output[0] = '\0';
     return false;
@@ -756,6 +796,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   fields[10] = policy->allow_resource_inlining ? 1U : 0U;
   fields[11] = policy->allow_script_reordering ? 1U : 0U;
   fields[12] = policy->allow_experimental ? 1U : 0U;
+  fields[13] = (unsigned char)policy->image_quality;
 
   laghu_sha256_init(&context);
   laghu_sha256_update(&context, namespace_value, sizeof(namespace_value) - 1U);

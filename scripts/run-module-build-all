@@ -1,12 +1,13 @@
 #!/bin/sh
 # Copyright Codevedas Inc. 2026-present
-# Licensed under the MIT license in the repository root.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/run-common"
 
-run_cmd "nginx-${NGINX_VERSION:-1.30.3}-module" \
+run_cmd "nginx-${NGINX_VERSION:-1.30.4}-module" \
   "${SCRIPT_DIR}/build-nginx-module"
-

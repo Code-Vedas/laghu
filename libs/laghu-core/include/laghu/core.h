@@ -1,3 +1,8 @@
+// Copyright Codevedas Inc. 2026-present
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
 #ifndef LAGHU_CORE_H
 #define LAGHU_CORE_H
 
@@ -12,7 +17,8 @@ extern "C" {
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
-#define LAGHU_VARIANT_KEY_VERSION 2U
+#define LAGHU_VARIANT_KEY_VERSION 3U
+#define LAGHU_IMAGE_QUALITY_UNSET 0U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -74,6 +80,7 @@ typedef struct {
   bool allow_resource_inlining;
   bool allow_script_reordering;
   bool allow_experimental;
+  unsigned int image_quality;
 } laghu_policy;
 
 typedef struct {
@@ -81,6 +88,7 @@ typedef struct {
   laghu_preset preset;
   laghu_rewrite_level rewrite_level;
   laghu_mode allow_api;
+  unsigned int image_quality;
 } laghu_config;
 
 typedef struct {
@@ -100,6 +108,9 @@ typedef enum {
   LAGHU_DECISION_BYPASS_PRIVATE,
   LAGHU_DECISION_BYPASS_API,
   LAGHU_DECISION_BYPASS_CONTENT_TYPE,
+  LAGHU_DECISION_BYPASS_ENCODED,
+  LAGHU_DECISION_BYPASS_IMAGE_BACKEND,
+  LAGHU_DECISION_IMAGE_HIT,
   LAGHU_DECISION_BYPASS_ERROR
 } laghu_decision;
 

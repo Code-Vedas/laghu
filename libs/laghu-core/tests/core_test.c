@@ -1,3 +1,8 @@
+// Copyright Codevedas Inc. 2026-present
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
 #include "laghu/core.h"
 
 #include <assert.h>
@@ -44,6 +49,12 @@ static void assert_policy(laghu_preset preset, uint32_t expected_filters,
   assert(policy.allow_resource_inlining == allow_resource_inlining);
   assert(policy.allow_script_reordering == allow_script_reordering);
   assert(!policy.allow_experimental);
+  assert(policy.image_quality ==
+         (preset == LAGHU_PRESET_SAFE        ? 0U
+          : preset == LAGHU_PRESET_ECOMMERCE ? 85U
+          : preset == LAGHU_PRESET_BALANCED || preset == LAGHU_PRESET_BLOG
+              ? 82U
+              : 75U));
 }
 
 static void assert_rewrite_policy(
@@ -63,6 +74,12 @@ static void assert_rewrite_policy(
   assert(policy.allow_resource_inlining == allow_resource_inlining);
   assert(policy.allow_script_reordering == allow_script_reordering);
   assert(policy.allow_experimental == allow_experimental);
+  assert(policy.image_quality ==
+         (rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH ? 0U
+          : rewrite_level == LAGHU_REWRITE_LEVEL_CORE ||
+                  rewrite_level == LAGHU_REWRITE_LEVEL_BANDWIDTH
+              ? 82U
+              : 75U));
 }
 
 static void test_config_defaults_and_inheritance(void) {
@@ -77,16 +94,19 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.preset == LAGHU_PRESET_BALANCED);
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
   assert(result.allow_api == LAGHU_MODE_OFF);
+  assert(result.image_quality == LAGHU_IMAGE_QUALITY_UNSET);
 
   parent.mode = LAGHU_MODE_ON;
   parent.preset = LAGHU_PRESET_SAFE;
   parent.allow_api = LAGHU_MODE_ON;
+  parent.image_quality = 91U;
   child.preset = LAGHU_PRESET_STATIC;
   laghu_config_merge(&result, &parent, &child);
   assert(result.mode == LAGHU_MODE_ON);
   assert(result.preset == LAGHU_PRESET_STATIC);
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
   assert(result.allow_api == LAGHU_MODE_ON);
+  assert(result.image_quality == 91U);
 
   child.mode = LAGHU_MODE_OFF;
   child.allow_api = LAGHU_MODE_OFF;
@@ -95,6 +115,7 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.preset == LAGHU_PRESET_STATIC);
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
   assert(result.allow_api == LAGHU_MODE_OFF);
+  assert(result.image_quality == 91U);
 
   laghu_config_init(&child);
   child.rewrite_level = LAGHU_REWRITE_LEVEL_BANDWIDTH;
@@ -102,6 +123,7 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.preset == LAGHU_PRESET_UNSET);
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_BANDWIDTH);
   assert(result.allow_api == LAGHU_MODE_ON);
+  assert(result.image_quality == 91U);
 
   parent.preset = LAGHU_PRESET_UNSET;
   parent.rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
@@ -244,6 +266,13 @@ static void test_rewrite_level_parser_and_policies(void) {
 
   assert(laghu_resolve_config_policy(&config, &policy));
   assert(policy.preset == LAGHU_PRESET_BALANCED);
+  assert(policy.image_quality == 82U);
+  config.image_quality = 91U;
+  assert(laghu_resolve_config_policy(&config, &policy));
+  assert(policy.image_quality == 91U);
+  config.image_quality = 101U;
+  assert(!laghu_resolve_config_policy(&config, &policy));
+  config.image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   config.rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
   assert(!laghu_resolve_config_policy(&config, &policy));
   config.preset = LAGHU_PRESET_UNSET;
@@ -463,8 +492,8 @@ static void test_hashing(void) {
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
   assert(strcmp(key,
-                "91db1e9f3312356aaa43c618e71395ea4414b9e5ad58f548574dae7dedb"
-                "76110") == 0);
+                "b5d11f4a05489db0bbd252a8f09ba527aacfcb69069bdaf4270326a05585"
+                "9bc5") == 0);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,

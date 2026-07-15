@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -e
+
+if [ "$1" = configure ]; then
+  mkdir -p /etc/nginx/modules-enabled
+  ln -sfn /etc/nginx/modules-available/50-mod-http-laghu.conf \
+    /etc/nginx/modules-enabled/50-mod-http-laghu.conf
+  nginx -t
+fi
+
+#DEBHELPER#

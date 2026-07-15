@@ -1,0 +1,112 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+if [ "$(uname -s)" != Darwin ]; then
+  echo "The launchd service smoke test requires macOS." >&2
+  exit 77
+fi
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+BUILD_DIR=${BUILD_DIR:-"${REPO_ROOT}/tmp/build"}
+service="${BUILD_DIR}/workers/laghu-libvips/laghu-libvips"
+work=$(mktemp -d "${TMPDIR:-/tmp}/laghu-launchd-XXXXXX")
+label="com.codevedas.laghu-libvips.smoke.$$"
+domain="gui/$(id -u)"
+target="${domain}/${label}"
+plist="${work}/${label}.plist"
+queue="${work}/jobs.queue"
+cache="${work}/cache"
+
+cleanup() {
+  launchctl bootout "${target}" >/dev/null 2>&1 || true
+  rm -rf "${work}"
+}
+trap cleanup EXIT HUP INT TERM
+
+if [ ! -x "${service}" ]; then
+  cmake --build "${BUILD_DIR}" --target laghu-libvips --parallel
+fi
+command -v vips >/dev/null 2>&1 || {
+  echo "vips is required for the launchd service smoke test." >&2
+  exit 77
+}
+
+cat >"${plist}" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${service}</string>
+    <string>--init-and-serve</string>
+    <string>${queue}</string>
+    <string>${cache}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>WorkingDirectory</key><string>${work}</string>
+  <key>StandardOutPath</key><string>${work}/service.log</string>
+  <key>StandardErrorPath</key><string>${work}/service.log</string>
+</dict>
+</plist>
+EOF
+
+plutil -lint "${plist}" >/dev/null
+launchctl bootstrap "${domain}" "${plist}"
+
+attempt=0
+while [ "${attempt}" -lt 50 ] && [ ! -f "${queue}" ]; do
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+[ -f "${queue}" ] || {
+  cat "${work}/service.log" >&2 || true
+  echo "launchd did not start laghu-libvips." >&2
+  exit 1
+}
+
+vips black "${work}/source.v" 512 512 --bands 3
+vips pngsave "${work}/source.v" "${work}/source.png" --compression 0
+"${service}" --submit "${queue}" "${work}/source.png" /source.png '"launchd-1"'
+
+attempt=0
+while [ "${attempt}" -lt 100 ] &&
+    ! find "${cache}" -name '*.meta' -type f 2>/dev/null | grep -q .; do
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+[ "${attempt}" -lt 100 ] || {
+  cat "${work}/service.log" >&2 || true
+  echo "launchd service did not process a queued image." >&2
+  exit 1
+}
+
+launchctl kickstart -k "${target}"
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  if launchctl print "${target}" 2>/dev/null | grep -q 'state = running'; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+[ "${attempt}" -lt 50 ] || {
+  echo "launchd did not restart laghu-libvips." >&2
+  exit 1
+}
+
+launchctl bootout "${target}"
+if launchctl print "${target}" >/dev/null 2>&1; then
+  echo "launchd retained laghu-libvips after bootout." >&2
+  exit 1
+fi
+
+echo "macOS launchd service lifecycle passed"

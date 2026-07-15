@@ -4,8 +4,8 @@
 configuration inheritance, preset and rewrite-level policy resolution,
 conservative response eligibility, dependency-free SHA-256 content and variant
 keys, and a candidate gate that preserves a borrowed view of the caller-owned
-original unless validated output is strictly smaller. Transformation engines,
-cache storage, and the worker protocol will be added behind this boundary.
+original unless validated output is strictly smaller. Version 3 keys include
+the resolved image quality used by the asynchronous image pipeline.
 
 Preset and rewrite-level selectors are mutually exclusive within one scope.
 Rewrite levels provide passthrough, core, bandwidth, all, and experimental
