@@ -12,7 +12,10 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Pass-through NGINX dynamic module with configuration inheritance.
 - Resolved preset policies, default API-path exclusion with scoped overrides,
   and API bypass decisions.
+- Native passthrough, core, bandwidth, all, and experimental rewrite-level
+  policies with hierarchical selector replacement.
 - Dependency-free SHA-256 content/variant keys and an original-preserving,
-  never-larger candidate-selection contract.
+  never-larger candidate-selection contract; variant keys now use the version
+  2 selector-aware encoding.
 - Repository-wide build, test, lint, module, docs, and Docker commands.
 - Product documentation and GitHub project automation.

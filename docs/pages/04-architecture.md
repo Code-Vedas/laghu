@@ -33,8 +33,15 @@ not perform blocking network or codec work in the event loop.
 
 The C library owns policy that can be shared by the module, worker, CLI, and
 sidecar. Its current responsibilities are configuration merge, preset-policy
-resolution, conservative response eligibility, SHA-256 content and variant
-keys, and final acceptance or rejection of transform candidates.
+and rewrite-level resolution, conservative response eligibility, SHA-256
+content and variant keys, and final acceptance or rejection of transform
+candidates.
+
+Presets and rewrite levels are mutually exclusive selectors at one scope. A
+child may replace the inherited selector type. Passthrough resolves to an empty
+policy and stops before response inspection; the remaining levels select tested
+family and safety masks, while filter execution remains independently gated by
+its implementation evidence.
 
 The candidate gate preserves a borrowed view of the original and selects
 optimized output only when the producer reports it valid and it is strictly
@@ -42,7 +49,8 @@ smaller and non-identical. The caller owns both buffers and must keep their
 storage alive while the result is used. Equal, larger, invalid, or failed
 candidates resolve to the original. Variant keys use a versioned canonical
 encoding of the original content and resolved policy, so the same input and
-policy produce the same fleet-safe key.
+policy produce the same fleet-safe key. The key encoding is versioned; adding
+rewrite-level identity and experimental permission advanced it to version 2.
 
 ## Worker and Cache
 

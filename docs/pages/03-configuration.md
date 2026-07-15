@@ -53,6 +53,33 @@ implemented yet.
 Universal authorization, privacy, fail-open, deterministic-output, and
 never-larger safeguards cannot be disabled by a preset.
 
+## `laghu rewrite_level <name>`
+
+Selects a compatibility-oriented filter-family policy:
+
+```nginx
+laghu rewrite_level core;
+```
+
+| Level | Selected policy |
+| --- | --- |
+| `passthrough` | No filter families; the enabled module always preserves the original |
+| `core` | The current balanced, recommended-default family set |
+| `bandwidth` | Image recompression/modern formats, metadata removal, text minification, and cache extension without structural, inline, combine, critical-CSS, or script-order changes |
+| `all` | Every currently defined family with expansive permissions |
+| `experimental` | `all` plus explicit permission for experimental filters |
+
+- Context: `http`, `server`, `location`
+- Inheritance: child scopes inherit their parent unless overridden
+- Default: no rewrite level; the default selector remains `preset balanced`
+
+`laghu preset` and `laghu rewrite_level` are alternative policy selectors and
+cannot appear together in one scope. A child scope may replace an inherited
+preset with a rewrite level, or an inherited rewrite level with a preset.
+
+Rewrite levels select policy only. Filters that have not been implemented and
+validated remain unavailable regardless of which level selects their family.
+
 ## `laghu allow_api on|off`
 
 Laghu bypasses `/api`, `/api/...`, `/graphql`, and `/graphql/...` by default.
@@ -82,6 +109,7 @@ An enabled location returns one of these `X-Laghu` values:
 | Value | Meaning |
 | --- | --- |
 | `pass` | Response is eligible for the future optimization path |
+| `bypass-passthrough` | Passthrough level intentionally selected no filter families |
 | `bypass-status` | Response status is not eligible |
 | `bypass-authorized` | Request carried authorization credentials |
 | `bypass-private` | Response is marked `private` or `no-store` |
@@ -92,8 +120,8 @@ An enabled location returns one of these `X-Laghu` values:
 The header reports policy only. It does not claim that a transform occurred.
 
 When multiple conditions apply, Laghu evaluates disabled configuration,
-invalid policy data, status, authorization, private caching, API path, and
-content type in that order.
+invalid policy data, intentional passthrough, status, authorization, private
+caching, API path, and content type in that order.
 
 ## Scoped Configuration
 
@@ -102,7 +130,7 @@ server {
   laghu on;
 
   location /unoptimized/ {
-    laghu off;
+    laghu rewrite_level passthrough;
   }
 
   location /api/public-assets/ {

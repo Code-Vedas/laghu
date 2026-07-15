@@ -138,6 +138,17 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
     return ngx_http_laghu_next_header_filter(request);
   }
 
+  if (conf->core.rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH) {
+    decision = LAGHU_DECISION_BYPASS_PASSTHROUGH;
+    if (ngx_http_laghu_add_status_header(request, decision) != NGX_OK) {
+      ngx_log_error(
+          NGX_LOG_WARN, request->connection->log, 0,
+          "laghu could not allocate its response status header; serving the "
+          "original response");
+    }
+    return ngx_http_laghu_next_header_filter(request);
+  }
+
   response.status = (unsigned int)request->headers_out.status;
   response.request_path = ngx_http_laghu_copy_string(request, &request->uri);
   response.content_type =
@@ -237,7 +248,7 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
 
     ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
                        "laghu expects 'on', 'off', 'preset <name>', or "
-                       "'allow_api on|off'");
+                       "'rewrite_level <name>', or 'allow_api on|off'");
     return NGX_CONF_ERROR;
   }
 
@@ -247,6 +258,10 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     if (location->core.preset != LAGHU_PRESET_UNSET) {
       return "is duplicate";
     }
+    if (location->core.rewrite_level != LAGHU_REWRITE_LEVEL_UNSET) {
+      return "cannot combine 'laghu preset' and 'laghu rewrite_level' in the "
+             "same context";
+    }
 
     if (laghu_parse_preset((const char *)values[2].data, &preset)) {
       location->core.preset = preset;
@@ -255,6 +270,28 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
 
     ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
                        "unknown laghu preset \"%V\"", &values[2]);
+    return NGX_CONF_ERROR;
+  }
+
+  if (ngx_strcmp(values[1].data, "rewrite_level") == 0) {
+    laghu_rewrite_level rewrite_level;
+
+    if (location->core.rewrite_level != LAGHU_REWRITE_LEVEL_UNSET) {
+      return "is duplicate";
+    }
+    if (location->core.preset != LAGHU_PRESET_UNSET) {
+      return "cannot combine 'laghu preset' and 'laghu rewrite_level' in the "
+             "same context";
+    }
+
+    if (laghu_parse_rewrite_level((const char *)values[2].data,
+                                  &rewrite_level)) {
+      location->core.rewrite_level = rewrite_level;
+      return NGX_CONF_OK;
+    }
+
+    ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                       "unknown laghu rewrite level \"%V\"", &values[2]);
     return NGX_CONF_ERROR;
   }
 

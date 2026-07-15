@@ -11,6 +11,7 @@ Laghu treats response rewriting as a privileged parsing boundary.
 ## Current Defaults
 
 - disabled unless `laghu on` is configured
+- honors `rewrite_level passthrough` before entering any transformation path
 - bypasses requests carrying authorization credentials
 - bypasses responses marked `private` or `no-store`
 - bypasses `/api` and `/graphql` path segments unless narrowly overridden
@@ -21,6 +22,8 @@ Laghu treats response rewriting as a privileged parsing boundary.
   validation, is identical, or is not strictly smaller
 - derives fleet-stable variant keys with dependency-free SHA-256 and a
   versioned canonical input
+- keeps experimental filter permission disabled except for the explicit
+  `experimental` rewrite level
 
 ## Required Properties for Future Transforms
 

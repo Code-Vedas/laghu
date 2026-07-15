@@ -3,11 +3,12 @@
 This directory contains the thin NGINX integration layer. The skeleton:
 
 - builds as a static or dynamic HTTP auxiliary filter module
-- accepts `laghu on|off`, `laghu preset <name>`, and
-  `laghu allow_api on|off` at `http`, `server`, and `location` scope
+- accepts `laghu on|off`, `laghu preset <name>`,
+  `laghu rewrite_level <name>`, and `laghu allow_api on|off` at `http`,
+  `server`, and `location` scope
 - inherits configuration through NGINX's normal location hierarchy
-- delegates preset resolution and response eligibility, including default API
-  path exclusion, to `laghu-core`
+- delegates preset/rewrite-level resolution and response eligibility, including
+  intentional passthrough and default API exclusion, to `laghu-core`
 - emits `X-Laghu` with the pass/bypass decision while leaving the body untouched
 - installs a fail-open body-filter seam for future optimization work
 

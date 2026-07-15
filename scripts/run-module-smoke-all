@@ -96,9 +96,57 @@ http {
       return 200 'graphql boundary';
     }
 
+    location = /level/passthrough {
+      laghu rewrite_level passthrough;
+      default_type text/html;
+      return 200 'level passthrough';
+    }
+
+    location = /level/core {
+      laghu rewrite_level core;
+      default_type text/html;
+      return 200 'level core';
+    }
+
+    location = /level/bandwidth {
+      laghu rewrite_level bandwidth;
+      default_type text/html;
+      return 200 'level bandwidth';
+    }
+
+    location = /level/all {
+      laghu rewrite_level all;
+      default_type text/html;
+      return 200 'level all';
+    }
+
+    location = /level/experimental {
+      laghu rewrite_level experimental;
+      default_type text/html;
+      return 200 'level experimental';
+    }
+
     location = /off {
       laghu off;
       try_files /index.html =404;
+    }
+  }
+
+  server {
+    listen 127.0.0.1:${PORT};
+    server_name rewrite-inheritance;
+    laghu on;
+    laghu rewrite_level passthrough;
+
+    location = /inherited-rewrite {
+      default_type text/html;
+      return 200 'inherited rewrite';
+    }
+
+    location = /preset-override {
+      laghu preset safe;
+      default_type text/html;
+      return 200 'preset override';
     }
   }
 }
@@ -137,6 +185,38 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
 fi
 grep 'is duplicate' "${SMOKE_DIR}/duplicate-api-config-output" >/dev/null
 
+sed 's/laghu preset balanced;/laghu rewrite_level invalid;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-level-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/invalid-level-nginx.conf" \
+    >"${SMOKE_DIR}/invalid-level-config-output" 2>&1; then
+  echo "NGINX accepted an invalid Laghu rewrite level." >&2
+  exit 1
+fi
+grep 'unknown laghu rewrite level' \
+  "${SMOKE_DIR}/invalid-level-config-output" >/dev/null
+
+sed 's/laghu preset balanced;/laghu rewrite_level core; laghu rewrite_level all;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-level-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/duplicate-level-nginx.conf" \
+    >"${SMOKE_DIR}/duplicate-level-config-output" 2>&1; then
+  echo "NGINX accepted duplicate Laghu rewrite levels." >&2
+  exit 1
+fi
+grep 'is duplicate' "${SMOKE_DIR}/duplicate-level-config-output" >/dev/null
+
+sed 's/laghu preset balanced;/laghu preset balanced; laghu rewrite_level core;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/conflicting-policy-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/conflicting-policy-nginx.conf" \
+    >"${SMOKE_DIR}/conflicting-policy-config-output" 2>&1; then
+  echo "NGINX accepted conflicting Laghu policy selectors." >&2
+  exit 1
+fi
+grep "cannot combine 'laghu preset' and 'laghu rewrite_level'" \
+  "${SMOKE_DIR}/conflicting-policy-config-output" >/dev/null
+
 if ! command -v curl >/dev/null 2>&1; then
   echo "Skipping runtime header check: curl is not installed"
   exit 0
@@ -173,6 +253,43 @@ fi
 
 grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null
 grep 'Laghu smoke test' "${SMOKE_DIR}/body" >/dev/null
+
+check_rewrite_level() {
+  level="$1"
+  expected_decision="$2"
+
+  curl --fail --silent --show-error \
+    --output "${SMOKE_DIR}/level-${level}-body" \
+    --dump-header "${SMOKE_DIR}/level-${level}-headers" \
+    "http://127.0.0.1:${PORT}/level/${level}"
+  tr -d '\r' <"${SMOKE_DIR}/level-${level}-headers" | \
+    grep -i -x "X-Laghu: ${expected_decision}" >/dev/null
+  test "$(cat "${SMOKE_DIR}/level-${level}-body")" = "level ${level}"
+}
+
+check_rewrite_level passthrough bypass-passthrough
+check_rewrite_level core pass
+check_rewrite_level bandwidth pass
+check_rewrite_level all pass
+check_rewrite_level experimental pass
+
+curl --fail --silent --show-error \
+  --header 'Host: rewrite-inheritance' \
+  --output "${SMOKE_DIR}/inherited-rewrite-body" \
+  --dump-header "${SMOKE_DIR}/inherited-rewrite-headers" \
+  "http://127.0.0.1:${PORT}/inherited-rewrite"
+tr -d '\r' <"${SMOKE_DIR}/inherited-rewrite-headers" | \
+  grep -i -x 'X-Laghu: bypass-passthrough' >/dev/null
+test "$(cat "${SMOKE_DIR}/inherited-rewrite-body")" = 'inherited rewrite'
+
+curl --fail --silent --show-error \
+  --header 'Host: rewrite-inheritance' \
+  --output "${SMOKE_DIR}/preset-override-body" \
+  --dump-header "${SMOKE_DIR}/preset-override-headers" \
+  "http://127.0.0.1:${PORT}/preset-override"
+tr -d '\r' <"${SMOKE_DIR}/preset-override-headers" | \
+  grep -i -x 'X-Laghu: pass' >/dev/null
+test "$(cat "${SMOKE_DIR}/preset-override-body")" = 'preset override'
 
 curl --fail --silent --show-error \
   --output /dev/null \

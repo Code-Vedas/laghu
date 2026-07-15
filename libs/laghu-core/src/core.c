@@ -33,6 +33,12 @@
   (LAGHU_FILTER_BALANCED | LAGHU_FILTER_RESOURCE_INLINE | \
    LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER)
 
+#define LAGHU_FILTER_BANDWIDTH                                 \
+  (LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA | \
+   LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_HTML_MINIFY |      \
+   LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY |  \
+   LAGHU_FILTER_CACHE_EXTENSION)
+
 #define LAGHU_FILTER_STATIC \
   (LAGHU_FILTER_AGGRESSIVE | LAGHU_FILTER_IMMUTABLE_CACHE)
 
@@ -223,6 +229,23 @@ static bool laghu_buffer_is_valid(laghu_buffer buffer) {
   return buffer.data != NULL || buffer.length == 0U;
 }
 
+static void laghu_policy_init(laghu_policy *policy) {
+  policy->preset = LAGHU_PRESET_UNSET;
+  policy->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
+  policy->filter_families = 0U;
+  policy->risk_level = LAGHU_RISK_CONSERVATIVE;
+  policy->allow_lossy = false;
+  policy->allow_structural_rewrite = false;
+  policy->allow_resource_inlining = false;
+  policy->allow_script_reordering = false;
+  policy->allow_experimental = false;
+}
+
+static bool laghu_config_has_policy_selector(const laghu_config *config) {
+  return config != NULL && (config->preset != LAGHU_PRESET_UNSET ||
+                            config->rewrite_level != LAGHU_REWRITE_LEVEL_UNSET);
+}
+
 static bool laghu_starts_with(const char *value, const char *prefix) {
   size_t prefix_length;
 
@@ -307,6 +330,7 @@ void laghu_config_init(laghu_config *config) {
 
   config->mode = LAGHU_MODE_UNSET;
   config->preset = LAGHU_PRESET_UNSET;
+  config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   config->allow_api = LAGHU_MODE_UNSET;
 }
 
@@ -314,6 +338,7 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
                         const laghu_config *child) {
   laghu_mode parent_mode = LAGHU_MODE_OFF;
   laghu_preset parent_preset = LAGHU_PRESET_BALANCED;
+  laghu_rewrite_level parent_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   laghu_mode parent_allow_api = LAGHU_MODE_OFF;
 
   if (result == NULL) {
@@ -324,8 +349,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     if (parent->mode != LAGHU_MODE_UNSET) {
       parent_mode = parent->mode;
     }
-    if (parent->preset != LAGHU_PRESET_UNSET) {
+    if (laghu_config_has_policy_selector(parent)) {
       parent_preset = parent->preset;
+      parent_rewrite_level = parent->rewrite_level;
     }
     if (parent->allow_api != LAGHU_MODE_UNSET) {
       parent_allow_api = parent->allow_api;
@@ -334,9 +360,13 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
 
   result->mode = child != NULL && child->mode != LAGHU_MODE_UNSET ? child->mode
                                                                   : parent_mode;
-  result->preset = child != NULL && child->preset != LAGHU_PRESET_UNSET
-                       ? child->preset
-                       : parent_preset;
+  if (laghu_config_has_policy_selector(child)) {
+    result->preset = child->preset;
+    result->rewrite_level = child->rewrite_level;
+  } else {
+    result->preset = parent_preset;
+    result->rewrite_level = parent_rewrite_level;
+  }
   result->allow_api = child != NULL && child->allow_api != LAGHU_MODE_UNSET
                           ? child->allow_api
                           : parent_allow_api;
@@ -395,11 +425,8 @@ bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy) {
     return false;
   }
 
+  laghu_policy_init(policy);
   policy->preset = preset;
-  policy->allow_lossy = false;
-  policy->allow_structural_rewrite = false;
-  policy->allow_resource_inlining = false;
-  policy->allow_script_reordering = false;
 
   switch (preset) {
     case LAGHU_PRESET_SAFE:
@@ -444,10 +471,116 @@ bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy) {
       return true;
     case LAGHU_PRESET_UNSET:
     default:
-      policy->filter_families = 0U;
-      policy->risk_level = LAGHU_RISK_CONSERVATIVE;
       return false;
   }
+}
+
+bool laghu_parse_rewrite_level(const char *value,
+                               laghu_rewrite_level *rewrite_level) {
+  static const struct {
+    const char *name;
+    laghu_rewrite_level value;
+  } rewrite_levels[] = {
+      {"passthrough", LAGHU_REWRITE_LEVEL_PASSTHROUGH},
+      {"core", LAGHU_REWRITE_LEVEL_CORE},
+      {"bandwidth", LAGHU_REWRITE_LEVEL_BANDWIDTH},
+      {"all", LAGHU_REWRITE_LEVEL_ALL},
+      {"experimental", LAGHU_REWRITE_LEVEL_EXPERIMENTAL},
+  };
+  size_t index;
+
+  if (value == NULL || rewrite_level == NULL) {
+    return false;
+  }
+
+  for (index = 0U; index < sizeof(rewrite_levels) / sizeof(rewrite_levels[0]);
+       ++index) {
+    if (strcmp(value, rewrite_levels[index].name) == 0) {
+      *rewrite_level = rewrite_levels[index].value;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+const char *laghu_rewrite_level_name(laghu_rewrite_level rewrite_level) {
+  switch (rewrite_level) {
+    case LAGHU_REWRITE_LEVEL_PASSTHROUGH:
+      return "passthrough";
+    case LAGHU_REWRITE_LEVEL_CORE:
+      return "core";
+    case LAGHU_REWRITE_LEVEL_BANDWIDTH:
+      return "bandwidth";
+    case LAGHU_REWRITE_LEVEL_ALL:
+      return "all";
+    case LAGHU_REWRITE_LEVEL_EXPERIMENTAL:
+      return "experimental";
+    case LAGHU_REWRITE_LEVEL_UNSET:
+    default:
+      return "unset";
+  }
+}
+
+bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
+                                 laghu_policy *policy) {
+  if (policy == NULL) {
+    return false;
+  }
+
+  laghu_policy_init(policy);
+  policy->rewrite_level = rewrite_level;
+
+  switch (rewrite_level) {
+    case LAGHU_REWRITE_LEVEL_PASSTHROUGH:
+      return true;
+    case LAGHU_REWRITE_LEVEL_CORE:
+      if (!laghu_resolve_policy(LAGHU_PRESET_BALANCED, policy)) {
+        return false;
+      }
+      policy->preset = LAGHU_PRESET_UNSET;
+      policy->rewrite_level = rewrite_level;
+      return true;
+    case LAGHU_REWRITE_LEVEL_BANDWIDTH:
+      policy->filter_families = LAGHU_FILTER_BANDWIDTH;
+      policy->risk_level = LAGHU_RISK_MODERATE;
+      policy->allow_lossy = true;
+      return true;
+    case LAGHU_REWRITE_LEVEL_ALL:
+    case LAGHU_REWRITE_LEVEL_EXPERIMENTAL:
+      policy->filter_families = LAGHU_FILTER_ALL;
+      policy->risk_level = LAGHU_RISK_EXPANSIVE;
+      policy->allow_lossy = true;
+      policy->allow_structural_rewrite = true;
+      policy->allow_resource_inlining = true;
+      policy->allow_script_reordering = true;
+      policy->allow_experimental =
+          rewrite_level == LAGHU_REWRITE_LEVEL_EXPERIMENTAL;
+      return true;
+    case LAGHU_REWRITE_LEVEL_UNSET:
+    default:
+      return false;
+  }
+}
+
+bool laghu_resolve_config_policy(const laghu_config *config,
+                                 laghu_policy *policy) {
+  bool has_preset;
+  bool has_rewrite_level;
+
+  if (config == NULL || policy == NULL) {
+    return false;
+  }
+
+  has_preset = config->preset != LAGHU_PRESET_UNSET;
+  has_rewrite_level = config->rewrite_level != LAGHU_REWRITE_LEVEL_UNSET;
+  if (has_preset == has_rewrite_level) {
+    return false;
+  }
+
+  return has_preset
+             ? laghu_resolve_policy(config->preset, policy)
+             : laghu_resolve_rewrite_level(config->rewrite_level, policy);
 }
 
 laghu_decision laghu_decide(const laghu_config *config,
@@ -458,7 +591,15 @@ laghu_decision laghu_decide(const laghu_config *config,
     return LAGHU_DECISION_BYPASS_DISABLED;
   }
 
-  if (response == NULL || !laghu_resolve_policy(config->preset, &policy)) {
+  if (!laghu_resolve_config_policy(config, &policy)) {
+    return LAGHU_DECISION_BYPASS_ERROR;
+  }
+
+  if (policy.rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH) {
+    return LAGHU_DECISION_BYPASS_PASSTHROUGH;
+  }
+
+  if (response == NULL) {
     return LAGHU_DECISION_BYPASS_ERROR;
   }
 
@@ -493,6 +634,8 @@ const char *laghu_decision_name(laghu_decision decision) {
       return "pass";
     case LAGHU_DECISION_BYPASS_DISABLED:
       return "bypass-disabled";
+    case LAGHU_DECISION_BYPASS_PASSTHROUGH:
+      return "bypass-passthrough";
     case LAGHU_DECISION_BYPASS_STATUS:
       return "bypass-status";
     case LAGHU_DECISION_BYPASS_AUTHORIZED:
@@ -568,14 +711,30 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   static const unsigned char namespace_value[] = "laghu-variant";
   laghu_sha256_context context;
   unsigned char digest[LAGHU_SHA256_DIGEST_SIZE];
-  unsigned char fields[11];
+  unsigned char fields[13];
+  bool has_preset;
+  bool has_rewrite_level;
+  bool preset_is_valid;
+  bool rewrite_level_is_valid;
 
   if (output == NULL) {
     return false;
   }
-  if (!laghu_buffer_is_valid(original) || policy == NULL ||
-      policy->preset < LAGHU_PRESET_SAFE ||
-      policy->preset > LAGHU_PRESET_STATIC ||
+  if (!laghu_buffer_is_valid(original) || policy == NULL) {
+    output[0] = '\0';
+    return false;
+  }
+
+  has_preset = policy->preset >= LAGHU_PRESET_SAFE &&
+               policy->preset <= LAGHU_PRESET_STATIC;
+  has_rewrite_level =
+      policy->rewrite_level >= LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
+      policy->rewrite_level <= LAGHU_REWRITE_LEVEL_EXPERIMENTAL;
+  preset_is_valid = policy->preset == LAGHU_PRESET_UNSET || has_preset;
+  rewrite_level_is_valid =
+      policy->rewrite_level == LAGHU_REWRITE_LEVEL_UNSET || has_rewrite_level;
+  if (!preset_is_valid || !rewrite_level_is_valid ||
+      has_preset == has_rewrite_level ||
       policy->risk_level < LAGHU_RISK_CONSERVATIVE ||
       policy->risk_level > LAGHU_RISK_EXPANSIVE ||
       (policy->filter_families & ~((uint32_t)LAGHU_FILTER_ALL)) != 0U) {
@@ -584,16 +743,19 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   }
 
   fields[0] = (unsigned char)LAGHU_VARIANT_KEY_VERSION;
-  fields[1] = (unsigned char)policy->preset;
-  fields[2] = (unsigned char)(policy->filter_families >> 24U);
-  fields[3] = (unsigned char)(policy->filter_families >> 16U);
-  fields[4] = (unsigned char)(policy->filter_families >> 8U);
-  fields[5] = (unsigned char)policy->filter_families;
-  fields[6] = (unsigned char)policy->risk_level;
-  fields[7] = policy->allow_lossy ? 1U : 0U;
-  fields[8] = policy->allow_structural_rewrite ? 1U : 0U;
-  fields[9] = policy->allow_resource_inlining ? 1U : 0U;
-  fields[10] = policy->allow_script_reordering ? 1U : 0U;
+  fields[1] = has_preset ? (unsigned char)(policy->preset + 1) : 0U;
+  fields[2] =
+      has_rewrite_level ? (unsigned char)(policy->rewrite_level + 1) : 0U;
+  fields[3] = (unsigned char)(policy->filter_families >> 24U);
+  fields[4] = (unsigned char)(policy->filter_families >> 16U);
+  fields[5] = (unsigned char)(policy->filter_families >> 8U);
+  fields[6] = (unsigned char)policy->filter_families;
+  fields[7] = (unsigned char)policy->risk_level;
+  fields[8] = policy->allow_lossy ? 1U : 0U;
+  fields[9] = policy->allow_structural_rewrite ? 1U : 0U;
+  fields[10] = policy->allow_resource_inlining ? 1U : 0U;
+  fields[11] = policy->allow_script_reordering ? 1U : 0U;
+  fields[12] = policy->allow_experimental ? 1U : 0U;
 
   laghu_sha256_init(&context);
   laghu_sha256_update(&context, namespace_value, sizeof(namespace_value) - 1U);

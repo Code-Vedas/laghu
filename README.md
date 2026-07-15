@@ -35,10 +35,12 @@ the same core boundary rather than embedding heavy work in an NGINX event loop.
 The module currently:
 
 - builds against stable and mainline NGINX
-- accepts `laghu on|off`, `laghu preset <name>`, and
-  `laghu allow_api on|off`
+- accepts `laghu on|off`, `laghu preset <name>`,
+  `laghu rewrite_level <name>`, and `laghu allow_api on|off`
 - supports `http`, `server`, and `location` inheritance
 - resolves every preset to a tested filter-family and safety policy
+- resolves passthrough, core, bandwidth, all, and experimental rewrite levels
+  without claiming their pending filters execute
 - conservatively bypasses API paths, ineligible statuses, private responses,
   authenticated requests, and unsupported content types
 - provides stable SHA-256 variant keys and an original-preserving,

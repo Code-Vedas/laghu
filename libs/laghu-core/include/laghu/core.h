@@ -12,7 +12,7 @@ extern "C" {
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
-#define LAGHU_VARIANT_KEY_VERSION 1U
+#define LAGHU_VARIANT_KEY_VERSION 2U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -29,6 +29,15 @@ typedef enum {
   LAGHU_PRESET_BLOG,
   LAGHU_PRESET_STATIC
 } laghu_preset;
+
+typedef enum {
+  LAGHU_REWRITE_LEVEL_UNSET = -1,
+  LAGHU_REWRITE_LEVEL_PASSTHROUGH = 0,
+  LAGHU_REWRITE_LEVEL_CORE,
+  LAGHU_REWRITE_LEVEL_BANDWIDTH,
+  LAGHU_REWRITE_LEVEL_ALL,
+  LAGHU_REWRITE_LEVEL_EXPERIMENTAL
+} laghu_rewrite_level;
 
 typedef enum {
   LAGHU_RISK_CONSERVATIVE = 0,
@@ -57,17 +66,20 @@ typedef enum {
 
 typedef struct {
   laghu_preset preset;
+  laghu_rewrite_level rewrite_level;
   uint32_t filter_families;
   laghu_risk_level risk_level;
   bool allow_lossy;
   bool allow_structural_rewrite;
   bool allow_resource_inlining;
   bool allow_script_reordering;
+  bool allow_experimental;
 } laghu_policy;
 
 typedef struct {
   laghu_mode mode;
   laghu_preset preset;
+  laghu_rewrite_level rewrite_level;
   laghu_mode allow_api;
 } laghu_config;
 
@@ -82,6 +94,7 @@ typedef struct {
 typedef enum {
   LAGHU_DECISION_PASS = 0,
   LAGHU_DECISION_BYPASS_DISABLED,
+  LAGHU_DECISION_BYPASS_PASSTHROUGH,
   LAGHU_DECISION_BYPASS_STATUS,
   LAGHU_DECISION_BYPASS_AUTHORIZED,
   LAGHU_DECISION_BYPASS_PRIVATE,
@@ -118,6 +131,14 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
 bool laghu_parse_preset(const char *value, laghu_preset *preset);
 const char *laghu_preset_name(laghu_preset preset);
 bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy);
+
+bool laghu_parse_rewrite_level(const char *value,
+                               laghu_rewrite_level *rewrite_level);
+const char *laghu_rewrite_level_name(laghu_rewrite_level rewrite_level);
+bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
+                                 laghu_policy *policy);
+bool laghu_resolve_config_policy(const laghu_config *config,
+                                 laghu_policy *policy);
 
 laghu_decision laghu_decide(const laghu_config *config,
                             const laghu_response *response);

@@ -76,10 +76,23 @@ pending in their corresponding roadmap sections.
 
 ### 3.1 Rewrite Levels
 
-- [ ] `PassThrough`: module loaded with no rewriting.
-- [ ] `CoreFilters`: safe recommended default filter set.
-- [ ] `OptimizeForBandwidth`: byte savings without HTML structure changes.
-- [ ] `All` / `Experimental`: every filter, including explicitly risky filters.
+- [x] `PassThrough`: select an empty policy while keeping the module loaded and
+  the original response unchanged.
+- [x] `CoreFilters`: select the balanced, recommended-default filter-family and
+  safety policy.
+- [x] `OptimizeForBandwidth`: select byte-saving families without structural,
+  inline, combine, critical-CSS, or script-order changes.
+- [x] `All` / `Experimental`: select every current family, with experimental
+  permission enabled only by the explicit experimental level.
+
+Completion evidence: the native `laghu rewrite_level` directive parses,
+inherits, and resolves passthrough, core, bandwidth, all, and experimental
+policies. Core tests cover exact masks, safety permissions, selector conflicts,
+cross-kind inheritance, passthrough enforcement, and variant-key versioning.
+Stable/mainline NGINX smoke tests cover accepted values, invalid/duplicate/
+conflicting configuration, child overrides, decision headers, and unchanged
+response delivery. Actual filter execution remains tracked below, so the
+Section 3 full-parity item remains pending.
 
 ### 3.2 Image Filters
 
@@ -169,7 +182,7 @@ pending in their corresponding roadmap sections.
 
 - [x] Runtime on/off configuration and hierarchical inheritance.
 - [ ] Unplugged runtime mode.
-- [ ] Rewrite-level selection.
+- [x] Rewrite-level selection.
 - [ ] Enable, disable, and forbid individual filters.
 - [ ] File-backed cache path, size, cleaning interval, and inode limits
   (`FileCachePath` and related controls in migration input).
