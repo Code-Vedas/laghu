@@ -39,7 +39,7 @@ http {
   server {
     listen 127.0.0.1:${ORIGIN_PORT};
 
-    location / {
+    location = /private {
       add_header Cache-Control private;
       return 200 'private origin';
     }
@@ -52,7 +52,48 @@ http {
     laghu preset balanced;
 
     location = /private {
-      proxy_pass http://127.0.0.1:${ORIGIN_PORT}/;
+      proxy_pass http://127.0.0.1:${ORIGIN_PORT}/private;
+    }
+
+    location = /api {
+      default_type text/html;
+      return 200 'api exact';
+    }
+
+    location /api/ {
+      default_type text/html;
+      return 200 'api default';
+    }
+
+    location = /api/allowed {
+      laghu allow_api on;
+      default_type text/html;
+      return 200 'api allowed';
+    }
+
+    location = /api/private {
+      laghu allow_api on;
+      proxy_pass http://127.0.0.1:${ORIGIN_PORT}/private;
+    }
+
+    location = /graphql {
+      default_type text/html;
+      return 200 'graphql exact';
+    }
+
+    location = /graphql/query {
+      default_type text/html;
+      return 200 'graphql nested';
+    }
+
+    location = /apiary {
+      default_type text/html;
+      return 200 'api boundary';
+    }
+
+    location = /graphql-ui {
+      default_type text/html;
+      return 200 'graphql boundary';
     }
 
     location = /off {
@@ -74,6 +115,27 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   exit 1
 fi
 grep 'unknown laghu preset' "${SMOKE_DIR}/invalid-config-output" >/dev/null
+
+sed 's/laghu preset balanced;/laghu allow_api invalid;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-api-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/invalid-api-nginx.conf" \
+    >"${SMOKE_DIR}/invalid-api-config-output" 2>&1; then
+  echo "NGINX accepted an invalid Laghu API policy." >&2
+  exit 1
+fi
+grep "laghu allow_api expects 'on' or 'off'" \
+  "${SMOKE_DIR}/invalid-api-config-output" >/dev/null
+
+sed 's/laghu preset balanced;/laghu allow_api on; laghu allow_api off;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-api-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/duplicate-api-nginx.conf" \
+    >"${SMOKE_DIR}/duplicate-api-config-output" 2>&1; then
+  echo "NGINX accepted duplicate Laghu API policy directives." >&2
+  exit 1
+fi
+grep 'is duplicate' "${SMOKE_DIR}/duplicate-api-config-output" >/dev/null
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "Skipping runtime header check: curl is not installed"
@@ -118,6 +180,74 @@ curl --fail --silent --show-error \
   "http://127.0.0.1:${PORT}/private"
 grep -i '^X-Laghu: bypass-private' \
   "${SMOKE_DIR}/private-headers" >/dev/null
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/api-exact-body" \
+  --dump-header "${SMOKE_DIR}/api-exact-headers" \
+  "http://127.0.0.1:${PORT}/api"
+grep -i '^X-Laghu: bypass-api' "${SMOKE_DIR}/api-exact-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/api-exact-body")" = 'api exact'
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/api-nested-body" \
+  --dump-header "${SMOKE_DIR}/api-nested-headers" \
+  "http://127.0.0.1:${PORT}/api/v1/products"
+grep -i '^X-Laghu: bypass-api' \
+  "${SMOKE_DIR}/api-nested-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/api-nested-body")" = 'api default'
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/graphql-body" \
+  --dump-header "${SMOKE_DIR}/graphql-headers" \
+  "http://127.0.0.1:${PORT}/graphql"
+grep -i '^X-Laghu: bypass-api' "${SMOKE_DIR}/graphql-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/graphql-body")" = 'graphql exact'
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/graphql-nested-body" \
+  --dump-header "${SMOKE_DIR}/graphql-nested-headers" \
+  "http://127.0.0.1:${PORT}/graphql/query"
+grep -i '^X-Laghu: bypass-api' \
+  "${SMOKE_DIR}/graphql-nested-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/graphql-nested-body")" = 'graphql nested'
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/api-boundary-body" \
+  --dump-header "${SMOKE_DIR}/api-boundary-headers" \
+  "http://127.0.0.1:${PORT}/apiary"
+grep -i '^X-Laghu: pass' "${SMOKE_DIR}/api-boundary-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/api-boundary-body")" = 'api boundary'
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/graphql-boundary-body" \
+  --dump-header "${SMOKE_DIR}/graphql-boundary-headers" \
+  "http://127.0.0.1:${PORT}/graphql-ui"
+grep -i '^X-Laghu: pass' \
+  "${SMOKE_DIR}/graphql-boundary-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/graphql-boundary-body")" = 'graphql boundary'
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/api-allowed-body" \
+  --dump-header "${SMOKE_DIR}/api-allowed-headers" \
+  "http://127.0.0.1:${PORT}/api/allowed"
+grep -i '^X-Laghu: pass' "${SMOKE_DIR}/api-allowed-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/api-allowed-body")" = 'api allowed'
+
+curl --fail --silent --show-error \
+  --header 'Authorization: Bearer smoke-test' \
+  --output /dev/null \
+  --dump-header "${SMOKE_DIR}/api-authorized-headers" \
+  "http://127.0.0.1:${PORT}/api/allowed"
+grep -i '^X-Laghu: bypass-authorized' \
+  "${SMOKE_DIR}/api-authorized-headers" >/dev/null
+
+curl --fail --silent --show-error \
+  --output "${SMOKE_DIR}/api-private-body" \
+  --dump-header "${SMOKE_DIR}/api-private-headers" \
+  "http://127.0.0.1:${PORT}/api/private"
+grep -i '^X-Laghu: bypass-private' \
+  "${SMOKE_DIR}/api-private-headers" >/dev/null
+test "$(cat "${SMOKE_DIR}/api-private-body")" = 'private origin'
 
 curl --fail --silent --show-error \
   --header 'Authorization: Bearer smoke-test' \

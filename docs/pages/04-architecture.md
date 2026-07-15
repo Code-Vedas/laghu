@@ -32,11 +32,17 @@ not perform blocking network or codec work in the event loop.
 ## Core Library
 
 The C library owns policy that can be shared by the module, worker, CLI, and
-sidecar. Its current responsibilities are preset parsing, configuration merge,
-and conservative response eligibility.
+sidecar. Its current responsibilities are configuration merge, preset-policy
+resolution, conservative response eligibility, SHA-256 content and variant
+keys, and final acceptance or rejection of transform candidates.
 
-Future cache-key and transform-plan APIs belong here only when they are free of
-NGINX types.
+The candidate gate preserves a borrowed view of the original and selects
+optimized output only when the producer reports it valid and it is strictly
+smaller and non-identical. The caller owns both buffers and must keep their
+storage alive while the result is used. Equal, larger, invalid, or failed
+candidates resolve to the original. Variant keys use a versioned canonical
+encoding of the original content and resolved policy, so the same input and
+policy produce the same fleet-safe key.
 
 ## Worker and Cache
 
@@ -56,3 +62,6 @@ filter forwards the original chain directly to the next NGINX filter.
 
 No body buffering or mutation occurs.
 
+The current path is therefore idempotent and reversible: it always forwards the
+same original chain. Future transform, worker, and cache implementations must
+use the core candidate and key contracts before joining this path.

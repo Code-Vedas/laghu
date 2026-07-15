@@ -21,8 +21,9 @@ The project is being built around four non-negotiable properties:
 
 Laghu is an engineering skeleton, not a production optimizer. The current code
 provides a buildable dynamic module, configuration inheritance, response
-eligibility policy, a pass-through filter seam, and an `X-Laghu` decision
-header. Response bodies are not rewritten yet.
+eligibility and preset policy, deterministic variant-key and candidate-safety
+contracts, a pass-through filter seam, and an `X-Laghu` decision header.
+Response bodies are not rewritten yet.
 
 That distinction is intentional: the docs mark delivered behavior separately
 from planned product capabilities.

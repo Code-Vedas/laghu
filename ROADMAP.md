@@ -43,17 +43,30 @@ on it.
 - [x] Support `laghu on|off` with `http`, `server`, and `location` inheritance.
 - [x] Parse the `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, and
   `static` preset identifiers and reject invalid values during configuration.
-- [ ] Make every preset activate its documented filter and safety policy set.
+- [x] Resolve every preset to its documented filter-family and safety policy
+  set without claiming that pending filters execute.
 - [x] Preserve the original response body in the initial filter skeleton.
 - [x] Conservatively bypass unsupported statuses, authenticated requests,
   private responses, and unsupported content types.
-- [ ] Exclude API paths by default with configurable overrides.
-- [ ] Guarantee fail-open behavior through every completed optimizer, worker,
-  cache, and delivery path.
-- [ ] Guarantee idempotent and reversible transforms with the original always
-  recoverable.
-- [ ] Guarantee deterministic output and fleet-stable content hashes.
-- [ ] Guarantee that no served optimized variant is larger than its original.
+- [x] Exclude API paths by default with configurable overrides.
+- [x] Validate fail-open behavior for the completed pass-through delivery path
+  and establish the mandatory fallback contract for future components.
+- [x] Keep the completed pass-through path idempotent and reversible, and
+  preserve a borrowed view of the original in every candidate-selection
+  result.
+- [x] Produce versioned, deterministic, fleet-stable variant keys from original
+  content and resolved policy.
+- [x] Establish a candidate-selection gate that accepts only validated,
+  non-identical output that is strictly smaller than the original.
+
+Completion evidence: the server-independent core resolves all preset policies,
+applies API-path eligibility, produces versioned SHA-256 variant keys, and
+preserves an original view through its candidate-selection gate. Core unit
+tests and stable/mainline NGINX smoke tests cover inheritance, invalid
+configuration, decision precedence, API overrides, boundary matching, safety
+precedence, and unchanged response delivery. No optimizer, worker, or cache is
+claimed as implemented by this milestone; their end-to-end guarantees remain
+pending in their corresponding roadmap sections.
 
 ## 3. Compatibility-Parity Inventory
 

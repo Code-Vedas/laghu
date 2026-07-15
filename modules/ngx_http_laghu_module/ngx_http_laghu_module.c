@@ -139,14 +139,18 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
   }
 
   response.status = (unsigned int)request->headers_out.status;
+  response.request_path = ngx_http_laghu_copy_string(request, &request->uri);
   response.content_type =
       ngx_http_laghu_copy_string(request, &request->headers_out.content_type);
   response.cache_control = ngx_http_laghu_copy_header_chain(
       request, request->headers_out.cache_control);
   response.has_authorization = request->headers_in.authorization != NULL;
 
-  if (request->headers_out.cache_control != NULL &&
-      response.cache_control == NULL) {
+  if ((request->uri.len != 0 && response.request_path == NULL) ||
+      (request->headers_out.content_type.len != 0 &&
+       response.content_type == NULL) ||
+      (request->headers_out.cache_control != NULL &&
+       response.cache_control == NULL)) {
     decision = LAGHU_DECISION_BYPASS_ERROR;
   } else {
     decision = laghu_decide(&conf->core, &response);
@@ -232,7 +236,8 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     }
 
     ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
-                       "laghu expects 'on', 'off', or 'preset <name>'");
+                       "laghu expects 'on', 'off', 'preset <name>', or "
+                       "'allow_api on|off'");
     return NGX_CONF_ERROR;
   }
 
@@ -250,6 +255,26 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
 
     ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
                        "unknown laghu preset \"%V\"", &values[2]);
+    return NGX_CONF_ERROR;
+  }
+
+  if (ngx_strcmp(values[1].data, "allow_api") == 0) {
+    if (location->core.allow_api != LAGHU_MODE_UNSET) {
+      return "is duplicate";
+    }
+
+    if (ngx_strcmp(values[2].data, "on") == 0) {
+      location->core.allow_api = LAGHU_MODE_ON;
+      return NGX_CONF_OK;
+    }
+
+    if (ngx_strcmp(values[2].data, "off") == 0) {
+      location->core.allow_api = LAGHU_MODE_OFF;
+      return NGX_CONF_OK;
+    }
+
+    ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                       "laghu allow_api expects 'on' or 'off'");
     return NGX_CONF_ERROR;
   }
 
