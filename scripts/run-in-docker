@@ -1,0 +1,27 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+
+if [ "$#" -eq 0 ]; then
+  set -- scripts/run-all
+fi
+
+command -v docker >/dev/null 2>&1 || {
+  echo "Docker is required for scripts/run-in-docker." >&2
+  exit 127
+}
+
+image="${LAGHU_DOCKER_IMAGE:-laghu-test:local}"
+docker build -f "${REPO_ROOT}/Dockerfile.test" -t "${image}" "${REPO_ROOT}"
+docker run --rm \
+  -e BUNDLE_PATH=/workspace/tmp/docker/vendor/bundle \
+  -v "${REPO_ROOT}:/workspace" \
+  -w /workspace \
+  "${image}" \
+  "$@"
+

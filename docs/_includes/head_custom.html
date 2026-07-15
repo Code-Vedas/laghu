@@ -1,0 +1,69 @@
+<link rel="icon" href="/assets/images/favicon.svg" type="image/svg+xml" />
+<meta name="theme-color" content="#2f6b3b" />
+
+<script>
+  (function () {
+    var STORAGE_KEY = "jtd-theme";
+    var mediaQuery = window.matchMedia
+      ? window.matchMedia("(prefers-color-scheme: dark)")
+      : null;
+
+    function readSavedTheme() {
+      try {
+        return window.localStorage.getItem(STORAGE_KEY);
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    function saveTheme(theme) {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, theme);
+      } catch (_error) {
+        // Storage can be unavailable in privacy-restricted environments.
+      }
+    }
+
+    function applyTheme(theme) {
+      if (
+        (theme === "dark" || theme === "light") &&
+        window.jtd &&
+        typeof window.jtd.setTheme === "function"
+      ) {
+        window.jtd.setTheme(theme);
+        document.documentElement.dataset.theme = theme;
+      }
+    }
+
+    function preferredTheme() {
+      var saved = readSavedTheme();
+      if (saved === "dark" || saved === "light") return saved;
+      return mediaQuery && mediaQuery.matches ? "dark" : "light";
+    }
+
+    applyTheme(preferredTheme());
+
+    if (mediaQuery) {
+      mediaQuery.addEventListener("change", function (event) {
+        if (!readSavedTheme()) applyTheme(event.matches ? "dark" : "light");
+      });
+    }
+
+    window.toggleTheme = function () {
+      var next = preferredTheme() === "dark" ? "light" : "dark";
+      saveTheme(next);
+      applyTheme(next);
+    };
+
+    document.addEventListener("click", function (event) {
+      if (!(event.target instanceof Element)) return;
+
+      var themeLink = event.target.closest('a[href="#toggle-theme"]');
+      if (!themeLink) return;
+
+      event.preventDefault();
+      window.toggleTheme();
+    });
+  })();
+</script>
+

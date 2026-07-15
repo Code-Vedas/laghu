@@ -1,0 +1,19 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+
+if ! command -v bundle >/dev/null 2>&1; then
+  echo "Bundler is required to install documentation dependencies." >&2
+  exit 127
+fi
+
+(
+  cd "${REPO_ROOT}/docs"
+  bundle check || bundle install
+)
+

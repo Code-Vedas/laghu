@@ -1,0 +1,12 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "${SCRIPT_DIR}/run-common"
+
+run_cmd "nginx-${NGINX_VERSION:-1.30.3}-module" \
+  "${SCRIPT_DIR}/build-nginx-module"
+

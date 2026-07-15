@@ -1,0 +1,17 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "${SCRIPT_DIR}/run-common"
+
+BUILD_DIR="${BUILD_DIR:-${REPO_ROOT}/tmp/build}"
+
+run_cmd core-configure cmake \
+  -S "${REPO_ROOT}" \
+  -B "${BUILD_DIR}" \
+  -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Debug}"
+run_cmd core-build cmake --build "${BUILD_DIR}" --parallel
+

@@ -1,0 +1,39 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "${SCRIPT_DIR}/run-common"
+
+run_cmd shell-syntax sh -c '
+  for script in "${1}"/scripts/*; do
+    [ -f "${script}" ] || continue
+    sh -n "${script}"
+  done
+' sh "${REPO_ROOT}"
+
+if has_command shellcheck; then
+  # SC1091 is disabled because the shared helper path is calculated at runtime.
+  run_cmd shellcheck shellcheck -e SC1091 "${REPO_ROOT}"/scripts/*
+else
+  echo "Skipping shellcheck: shellcheck is not installed"
+fi
+
+clang_format=""
+if has_command clang-format; then
+  clang_format="clang-format"
+elif has_command xcrun && xcrun --find clang-format >/dev/null 2>&1; then
+  clang_format="$(xcrun --find clang-format)"
+fi
+
+if [ "${clang_format}" != "" ]; then
+  run_cmd clang-format "${clang_format}" --dry-run --Werror \
+    "${REPO_ROOT}"/libs/laghu-core/include/laghu/core.h \
+    "${REPO_ROOT}"/libs/laghu-core/src/core.c \
+    "${REPO_ROOT}"/libs/laghu-core/tests/core_test.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/ngx_http_laghu_module.c
+else
+  echo "Skipping clang-format: clang-format is not installed"
+fi

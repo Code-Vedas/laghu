@@ -1,0 +1,144 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+NGINX_VERSION="${NGINX_VERSION:-1.30.3}"
+WORK_DIR="${NGINX_WORK_DIR:-${REPO_ROOT}/tmp/nginx/${NGINX_VERSION}}"
+BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
+SMOKE_DIR="${WORK_DIR}/smoke"
+NGINX_BIN="${BUILD_DIR}/nginx"
+MODULE="${BUILD_DIR}/ngx_http_laghu_module.so"
+PORT="${LAGHU_SMOKE_PORT:-18080}"
+ORIGIN_PORT=$((PORT + 1))
+
+if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
+  "${SCRIPT_DIR}/build-nginx-module"
+fi
+
+rm -rf "${SMOKE_DIR}"
+mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs"
+printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
+  >"${SMOKE_DIR}/html/index.html"
+
+cat >"${SMOKE_DIR}/nginx.conf" <<EOF
+load_module ${MODULE};
+
+daemon off;
+pid ${SMOKE_DIR}/nginx.pid;
+error_log ${SMOKE_DIR}/logs/error.log notice;
+
+events {}
+
+http {
+  access_log off;
+
+  server {
+    listen 127.0.0.1:${ORIGIN_PORT};
+
+    location / {
+      add_header Cache-Control private;
+      return 200 'private origin';
+    }
+  }
+
+  server {
+    listen 127.0.0.1:${PORT};
+    root ${SMOKE_DIR}/html;
+    laghu on;
+    laghu preset balanced;
+
+    location = /private {
+      proxy_pass http://127.0.0.1:${ORIGIN_PORT}/;
+    }
+
+    location = /off {
+      laghu off;
+      try_files /index.html =404;
+    }
+  }
+}
+EOF
+
+"${NGINX_BIN}" -t -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/nginx.conf"
+
+sed 's/laghu preset balanced;/laghu preset invalid;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/invalid-nginx.conf" \
+    >"${SMOKE_DIR}/invalid-config-output" 2>&1; then
+  echo "NGINX accepted an invalid Laghu preset." >&2
+  exit 1
+fi
+grep 'unknown laghu preset' "${SMOKE_DIR}/invalid-config-output" >/dev/null
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "Skipping runtime header check: curl is not installed"
+  exit 0
+fi
+
+cleanup() {
+  if [ -f "${SMOKE_DIR}/nginx.pid" ]; then
+    kill "$(cat "${SMOKE_DIR}/nginx.pid")" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+"${NGINX_BIN}" -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/nginx.conf" &
+nginx_pid=$!
+printf '%s\n' "${nginx_pid}" >"${SMOKE_DIR}/nginx.pid"
+
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  if curl --fail --silent --show-error \
+      --output "${SMOKE_DIR}/body" \
+      --dump-header "${SMOKE_DIR}/headers" \
+      "http://127.0.0.1:${PORT}/"; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+
+if [ "${attempt}" -eq 50 ]; then
+  echo "NGINX did not become ready for the Laghu smoke test." >&2
+  cat "${SMOKE_DIR}/logs/error.log" >&2
+  exit 1
+fi
+
+grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null
+grep 'Laghu smoke test' "${SMOKE_DIR}/body" >/dev/null
+
+curl --fail --silent --show-error \
+  --output /dev/null \
+  --dump-header "${SMOKE_DIR}/private-headers" \
+  "http://127.0.0.1:${PORT}/private"
+grep -i '^X-Laghu: bypass-private' \
+  "${SMOKE_DIR}/private-headers" >/dev/null
+
+curl --fail --silent --show-error \
+  --header 'Authorization: Bearer smoke-test' \
+  --output /dev/null \
+  --dump-header "${SMOKE_DIR}/authorized-headers" \
+  "http://127.0.0.1:${PORT}/"
+grep -i '^X-Laghu: bypass-authorized' \
+  "${SMOKE_DIR}/authorized-headers" >/dev/null
+
+curl --fail --silent --show-error \
+  --output /dev/null \
+  --dump-header "${SMOKE_DIR}/off-headers" \
+  "http://127.0.0.1:${PORT}/off"
+if grep -i '^X-Laghu:' "${SMOKE_DIR}/off-headers" >/dev/null; then
+  echo "Laghu emitted a decision header in a disabled location." >&2
+  exit 1
+fi
+
+kill "${nginx_pid}"
+wait "${nginx_pid}"
+rm -f "${SMOKE_DIR}/nginx.pid"
+trap - EXIT INT TERM
+
+echo "Laghu NGINX module smoke test passed on ${NGINX_VERSION}."

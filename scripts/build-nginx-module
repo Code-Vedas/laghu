@@ -1,0 +1,53 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+# Licensed under the MIT license in the repository root.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+
+NGINX_VERSION="${NGINX_VERSION:-1.30.3}"
+WORK_DIR="${NGINX_WORK_DIR:-${REPO_ROOT}/tmp/nginx/${NGINX_VERSION}}"
+SOURCE_DIR="${NGINX_SOURCE_DIR:-${WORK_DIR}/source}"
+BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
+MODULE_DIR="${REPO_ROOT}/modules/ngx_http_laghu_module"
+
+if [ ! -x "${SOURCE_DIR}/configure" ]; then
+  archive="${WORK_DIR}/nginx-${NGINX_VERSION}.tar.gz"
+  unpacked="${WORK_DIR}/nginx-${NGINX_VERSION}"
+
+  command -v curl >/dev/null 2>&1 || {
+    echo "curl is required to download NGINX ${NGINX_VERSION}." >&2
+    exit 127
+  }
+
+  mkdir -p "${WORK_DIR}"
+  curl --fail --location --retry 3 \
+    --output "${archive}" \
+    "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
+  rm -rf "${unpacked}" "${SOURCE_DIR}"
+  tar -xzf "${archive}" -C "${WORK_DIR}"
+  mv "${unpacked}" "${SOURCE_DIR}"
+fi
+
+rm -rf "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}"
+
+(
+  cd "${SOURCE_DIR}"
+  ./configure \
+    --builddir="${BUILD_DIR}" \
+    --with-compat \
+    --add-dynamic-module="${MODULE_DIR}"
+  make -f "${BUILD_DIR}/Makefile" "${MAKE_JOBS:--j2}"
+)
+
+artifact="${BUILD_DIR}/ngx_http_laghu_module.so"
+if [ ! -f "${artifact}" ]; then
+  echo "Expected module artifact was not produced: ${artifact}" >&2
+  exit 1
+fi
+
+echo "Built ${artifact}"
+

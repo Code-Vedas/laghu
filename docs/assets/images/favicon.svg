@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">Laghu</title>
+  <style>
+    rect { fill: #f1f5ea; }
+    path { fill: #2f6b3b; }
+    @media (prefers-color-scheme: dark) {
+      rect { fill: #172117; }
+      path { fill: #91d09c; }
+    }
+  </style>
+  <rect width="100" height="100" rx="20" />
+  <path d="M25 20h16v44h34v16H25z" />
+</svg>
+

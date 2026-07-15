@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose an optimization, integration, or operational capability.
+title: "feat: "
+labels: [feature]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operator problem
+      description: Describe the concrete workload or operational gap.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include configuration, failure, cache, and observability expectations.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Correctness and performance evidence
+      description: Explain how the behavior could be proven safe and beneficial.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Design boundaries
+      options:
+        - label: The proposal preserves a fail-open path.
+          required: true
+        - label: The proposal does not require blocking work in the NGINX event loop.
+          required: true
+

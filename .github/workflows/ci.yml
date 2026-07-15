@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('ref-{0}', github.ref) }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang-format shellcheck
+      - run: scripts/run-lint-all
+
+  core:
+    name: Core · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/run-build-all
+      - run: scripts/run-test-all
+
+  nginx_module:
+    name: NGINX ${{ matrix.nginx_version }} module
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        nginx_version: ["1.30.3", "1.31.2"]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install NGINX build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential libpcre2-dev libssl-dev zlib1g-dev
+      - run: scripts/run-module-build-all
+        env:
+          NGINX_VERSION: ${{ matrix.nginx_version }}
+      - run: scripts/run-module-smoke-all
+        env:
+          NGINX_VERSION: ${{ matrix.nginx_version }}
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+          working-directory: docs
+      - run: scripts/run-docs-build-all

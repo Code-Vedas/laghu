@@ -1,0 +1,16 @@
+build/
+tmp/
+docs/_site/
+docs/.jekyll-cache/
+docs/.sass-cache/
+docs/.jekyll-metadata
+docs/vendor/
+*.log
+*.so
+*.dylib
+*.a
+.DS_Store
+.idea/
+.vscode/
+.ruby-lsp/
+.agents/
