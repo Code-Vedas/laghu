@@ -115,16 +115,16 @@ Section 3 full-parity item remains pending.
 - [x] `convert_to_webp_lossless`: PNG/GIF-to-lossless-WebP conversion.
 - [x] `convert_to_webp_animated`: animated GIF-to-animated-WebP conversion.
 - [x] `jpeg_sampling`: JPEG 4:2:0 chroma subsampling.
-- [ ] `resize_images`: resize from image element dimensions.
-- [ ] `resize_rendered_image_dimensions`: resize from actual rendered dimensions.
-- [ ] `resize_mobile_images`: mobile-specific smaller variants.
-- [ ] `responsive_images`: generate multi-resolution `srcset` variants.
-- [ ] `responsive_images_zoom`: zoom-aware responsive variants.
-- [ ] `insert_image_dimensions`: inject image dimensions to prevent layout shift.
-- [ ] `inline_images`: inline small images as data URIs.
-- [ ] `inline_preview_images`: generate and inline low-quality previews.
-- [ ] `dedup_inlined_images`: deduplicate repeated inline images.
-- [ ] `lazyload_images`: defer eligible offscreen images.
+- [x] `resize_images`: resize from image element dimensions.
+- [x] `resize_rendered_image_dimensions`: resize from actual rendered dimensions.
+- [x] `resize_mobile_images`: mobile-specific smaller variants.
+- [x] `responsive_images`: generate multi-resolution `srcset` variants.
+- [x] `responsive_images_zoom`: zoom-aware responsive variants.
+- [x] `insert_image_dimensions`: inject image dimensions to prevent layout shift.
+- [x] `inline_images`: inline small images as data URIs.
+- [x] `inline_preview_images`: generate and inline low-quality previews.
+- [x] `dedup_inlined_images`: deduplicate repeated inline images.
+- [x] `lazyload_images`: defer eligible offscreen images.
 - [ ] `sprite_images`: combine CSS background images into sprites.
 - [x] `strip_image_meta_data`: remove EXIF and other metadata.
 - [x] `strip_image_color_profile`: remove eligible ICC profiles.
@@ -143,9 +143,15 @@ loop, and frame preservation. The bounded queue/atomic cache worker integration
 covers crash/restart and deadline termination; stable/mainline NGINX smoke
 coverage verifies cold-original and warm browser-aware variant delivery,
 including `q=0` format refusal, payload-derived ETags, and corruption fallback.
-Geometry and markup entries remain unchecked: their shared primitives have
-tests, but automatic NGINX catalog, beacon, and dependency delivery integration
-is not complete.
+Geometry and markup completion evidence: queue v4 batches exact 1x/2x targets;
+the bounded, checksummed catalog publishes natural dimensions and ready
+variants atomically with try-only record locking, TTL/LRU bounds, and corruption
+recovery. Both adapters exercise cold-original discovery, asynchronous image
+requests, warm all-dependencies-ready HTML substitution, immutable hash-only
+delivery, native DPR/client-hint selection, opt-in rendered/mobile beacon data,
+CSP-gated final/LQIP inlining, repeated-inline deduplication, native lazy
+loading, dependency ETags, and the page-bundle never-larger gate. CSS sprites
+remain pending until Section 3.3 supplies the shared CSS parser.
 
 ### 3.3 CSS Filters
 

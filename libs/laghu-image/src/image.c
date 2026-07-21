@@ -825,6 +825,8 @@ bool laghu_image_optimize(const laghu_image_backend *backend,
     g_object_unref(input);
     return true;
   }
+  result->natural_width = width;
+  result->natural_height = height;
   result->width = width;
   result->height = height;
   result->frames = frames;

@@ -3,6 +3,7 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -131,9 +132,29 @@ static const unsigned char *laghu_find(const unsigned char *start,
   return NULL;
 }
 
+static const unsigned char *laghu_find_case(const unsigned char *start,
+                                            size_t length, const char *needle) {
+  size_t needle_length = strlen(needle);
+  size_t index;
+  size_t character;
+  for (index = 0U; needle_length != 0U && index + needle_length <= length;
+       ++index) {
+    for (character = 0U; character < needle_length; ++character) {
+      if (tolower(start[index + character]) !=
+          tolower((unsigned char)needle[character])) {
+        break;
+      }
+    }
+    if (character == needle_length) {
+      return start + index;
+    }
+  }
+  return NULL;
+}
+
 static bool laghu_tag_has(const unsigned char *tag, size_t length,
                           const char *attribute) {
-  return laghu_find(tag, length, attribute) != NULL;
+  return laghu_find_case(tag, length, attribute) != NULL;
 }
 
 static const laghu_image_resource *laghu_find_resource(
@@ -158,7 +179,7 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder,
                                   const laghu_image_markup_options *options,
                                   bool *seen, size_t image_index,
                                   laghu_image_filter_mask *applied) {
-  const unsigned char *source = laghu_find(tag, tag_length, "src=");
+  const unsigned char *source = laghu_find_case(tag, tag_length, "src=");
   const laghu_image_resource *resource;
   const char *replacement;
   size_t resource_index;
@@ -169,14 +190,21 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder,
   if (source == NULL || (size_t)(source - tag) + 5U >= tag_length) {
     return laghu_builder_append(builder, tag, tag_length);
   }
-  quote = source[4];
-  if (quote != '\'' && quote != '"') {
-    return laghu_builder_append(builder, tag, tag_length);
+  source += 4;
+  while ((size_t)(source - tag) < tag_length && isspace(*source)) {
+    ++source;
   }
-  source += 5;
+  quote = (size_t)(source - tag) < tag_length ? *source : 0U;
+  if (quote == '\'' || quote == '"') {
+    ++source;
+  } else {
+    quote = 0U;
+  }
   url_length = 0U;
   while ((size_t)(source - tag) + url_length < tag_length &&
-         source[url_length] != quote) {
+         (quote != 0U
+              ? source[url_length] != quote
+              : !isspace(source[url_length]) && source[url_length] != '>')) {
     ++url_length;
   }
   if ((size_t)(source - tag) + url_length >= tag_length) {
@@ -188,7 +216,10 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder,
   }
 
   replacement = resource->optimized_url;
-  if (options->inline_images && resource->inline_data_uri != NULL &&
+  *applied |= LAGHU_IMAGE_REWRITE_IMAGES;
+  if (options->inline_images && options->csp_allows_data_images &&
+      resource->inline_data_uri != NULL &&
+      resource->inline_payload_length <= options->inline_limit &&
       (!options->deduplicate_inline || !seen[resource_index])) {
     replacement = resource->inline_data_uri;
     *applied |= LAGHU_IMAGE_INLINE;
@@ -209,22 +240,43 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder,
   --builder->length;
   if (options->insert_dimensions && resource->width > 0U &&
       resource->height > 0U) {
+    unsigned int inserted_width = resource->width;
+    unsigned int inserted_height = resource->height;
+    if (resource->declared_width > 0U && resource->declared_height == 0U) {
+      inserted_width = resource->declared_width;
+      inserted_height = (unsigned int)(((uint64_t)resource->declared_width *
+                                            resource->height +
+                                        resource->width / 2U) /
+                                       resource->width);
+    } else if (resource->declared_height > 0U &&
+               resource->declared_width == 0U) {
+      inserted_height = resource->declared_height;
+      inserted_width = (unsigned int)(((uint64_t)resource->declared_height *
+                                           resource->width +
+                                       resource->height / 2U) /
+                                      resource->height);
+    }
     if (!laghu_tag_has(tag, tag_length, " width=") &&
-        !laghu_builder_format(builder, " width=\"%u\"", resource->width)) {
+        !laghu_builder_format(builder, " width=\"%u\"", inserted_width)) {
       return false;
     }
     if (!laghu_tag_has(tag, tag_length, " height=") &&
-        !laghu_builder_format(builder, " height=\"%u\"", resource->height)) {
+        !laghu_builder_format(builder, " height=\"%u\"", inserted_height)) {
       return false;
     }
     *applied |= LAGHU_IMAGE_INSERT_DIMENSIONS;
   }
   if (options->responsive && resource->responsive_1x_url != NULL &&
       resource->responsive_2x_url != NULL &&
+      resource->responsive_1x_width > 0U &&
+      resource->responsive_2x_width >= resource->responsive_1x_width &&
       !laghu_tag_has(tag, tag_length, " srcset=")) {
-    if (!laghu_builder_format(builder, " srcset=\"%s 1x, %s 2x\"",
-                              resource->responsive_1x_url,
-                              resource->responsive_2x_url)) {
+    if (!laghu_builder_format(
+            builder, " srcset=\"%s %uw, %s %uw\" sizes=\"%upx\"",
+            resource->responsive_1x_url, resource->responsive_1x_width,
+            resource->responsive_2x_url, resource->responsive_2x_width,
+            resource->declared_width > 0U ? resource->declared_width
+                                          : resource->responsive_1x_width)) {
       return false;
     }
     *applied |= LAGHU_IMAGE_RESPONSIVE;
@@ -232,14 +284,17 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder,
       *applied |= LAGHU_IMAGE_RESPONSIVE_ZOOM;
     }
   }
-  if (options->lazyload && image_index > 0U &&
+  if (options->lazyload && image_index > 0U && !resource->above_fold &&
+      !laghu_tag_has(tag, tag_length, "fetchpriority=\"high\"") &&
+      !laghu_tag_has(tag, tag_length, "fetchpriority='high'") &&
       !laghu_tag_has(tag, tag_length, " loading=")) {
     if (!laghu_builder_append(builder, " loading=\"lazy\"", 15U)) {
       return false;
     }
     *applied |= LAGHU_IMAGE_LAZYLOAD;
   }
-  if (options->inline_previews && resource->preview_data_uri != NULL) {
+  if (options->inline_previews && options->csp_allows_data_images &&
+      resource->preview_data_uri != NULL) {
     if (!laghu_builder_format(builder, " data-laghu-preview=\"%s\"",
                               resource->preview_data_uri)) {
       return false;
@@ -274,7 +329,7 @@ bool laghu_image_rewrite_html(laghu_buffer input,
   end = cursor + input.length;
   while (cursor < end) {
     const unsigned char *tag =
-        laghu_find(cursor, (size_t)(end - cursor), "<img");
+        laghu_find_case(cursor, (size_t)(end - cursor), "<img");
     const unsigned char *tag_end;
     if (tag == NULL) {
       if (!laghu_builder_append(&builder, cursor, (size_t)(end - cursor))) {
@@ -298,6 +353,16 @@ bool laghu_image_rewrite_html(laghu_buffer input,
   free(seen);
   result->data = builder.data;
   result->length = builder.length;
+  if (options->enforce_bundle_gate && result->length > input.length) {
+    size_t growth = result->length - input.length;
+    size_t savings = options->unique_variant_savings_1x;
+    if (options->unique_variant_savings_2x < savings) {
+      savings = options->unique_variant_savings_2x;
+    }
+    if (growth >= savings) {
+      goto failed_result;
+    }
+  }
   if (!laghu_markup_dependency_key(options, result->dependency_key)) {
     goto failed_result;
   }
@@ -404,6 +469,299 @@ void laghu_image_markup_result_release(laghu_image_markup_result *result) {
     free(result->data);
     memset(result, 0, sizeof(*result));
   }
+}
+
+static bool laghu_ascii_equal(const unsigned char *value, size_t length,
+                              const char *expected) {
+  size_t index;
+  if (strlen(expected) != length) {
+    return false;
+  }
+  for (index = 0U; index < length; ++index) {
+    if (tolower(value[index]) != tolower((unsigned char)expected[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool laghu_attribute(const unsigned char *tag, size_t length,
+                            const char *name, const unsigned char **value,
+                            size_t *value_length) {
+  size_t cursor = 1U;
+  while (cursor < length) {
+    size_t attribute_start;
+    size_t value_start;
+    size_t name_end;
+    unsigned char quote = 0U;
+    while (cursor < length &&
+           (isspace(tag[cursor]) || tag[cursor] == '/' || tag[cursor] == '>')) {
+      ++cursor;
+    }
+    attribute_start = cursor;
+    while (cursor < length && !isspace(tag[cursor]) && tag[cursor] != '=' &&
+           tag[cursor] != '>' && tag[cursor] != '/') {
+      ++cursor;
+    }
+    name_end = cursor;
+    while (cursor < length && isspace(tag[cursor])) {
+      ++cursor;
+    }
+    if (cursor >= length || tag[cursor] != '=') {
+      continue;
+    }
+    ++cursor;
+    while (cursor < length && isspace(tag[cursor])) {
+      ++cursor;
+    }
+    if (cursor < length && (tag[cursor] == '\'' || tag[cursor] == '"')) {
+      quote = tag[cursor++];
+    }
+    value_start = cursor;
+    while (cursor < length &&
+           (quote != 0U ? tag[cursor] != quote
+                        : !isspace(tag[cursor]) && tag[cursor] != '>')) {
+      ++cursor;
+    }
+    if (laghu_ascii_equal(tag + attribute_start, name_end - attribute_start,
+                          name)) {
+      *value = tag + value_start;
+      *value_length = cursor - value_start;
+      return true;
+    }
+    if (quote != 0U && cursor < length) {
+      ++cursor;
+    }
+  }
+  return false;
+}
+
+static unsigned int laghu_positive_integer(const unsigned char *value,
+                                           size_t length) {
+  uint64_t parsed = 0U;
+  size_t index;
+  if (length == 0U) {
+    return 0U;
+  }
+  for (index = 0U; index < length; ++index) {
+    if (value[index] < '0' || value[index] > '9') {
+      return 0U;
+    }
+    parsed = parsed * 10U + (uint64_t)(value[index] - '0');
+    if (parsed > LAGHU_IMAGE_MAX_DIMENSION) {
+      return 0U;
+    }
+  }
+  return (unsigned int)parsed;
+}
+
+static bool laghu_normalize_image_url(const unsigned char *url, size_t length,
+                                      const char *page_path,
+                                      const char *page_origin,
+                                      char output[LAGHU_IMAGE_URL_SIZE]) {
+  const char *base;
+  const char *slash;
+  size_t prefix = 0U;
+  size_t origin_length = page_origin == NULL ? 0U : strlen(page_origin);
+  size_t index;
+  if (length == 0U || length >= LAGHU_IMAGE_URL_SIZE || url[0] == '#' ||
+      (length >= 2U && url[0] == '/' && url[1] == '/') ||
+      (length >= 5U && laghu_ascii_equal(url, 5U, "data:")) ||
+      (length >= 5U && laghu_ascii_equal(url, 5U, "blob:"))) {
+    return false;
+  }
+  for (index = 0U; index + 2U < length; ++index) {
+    if (url[index] == ':' && url[index + 1U] == '/' && url[index + 2U] == '/') {
+      if (origin_length == 0U || length <= origin_length ||
+          memcmp(url, page_origin, origin_length) != 0 ||
+          url[origin_length] != '/') {
+        return false;
+      }
+      url += origin_length;
+      length -= origin_length;
+      break;
+    }
+  }
+  if (url[0] != '/') {
+    base = page_path != NULL && page_path[0] == '/' ? page_path : "/";
+    slash = strrchr(base, '/');
+    prefix = slash == NULL ? 1U : (size_t)(slash - base + 1U);
+    if (prefix + length >= LAGHU_IMAGE_URL_SIZE) {
+      return false;
+    }
+    memcpy(output, base, prefix);
+  }
+  memcpy(output + prefix, url, length);
+  output[prefix + length] = '\0';
+  if ((strncmp(output, "/api", 4U) == 0 &&
+       (output[4] == '\0' || output[4] == '/')) ||
+      (strncmp(output, "/graphql", 8U) == 0 &&
+       (output[8] == '\0' || output[8] == '/'))) {
+    return false;
+  }
+  return true;
+}
+
+bool laghu_image_discover_html(laghu_buffer input, const char *page_path,
+                               const char *page_origin,
+                               laghu_image_discovery_result *result) {
+  size_t cursor = 0U;
+  if (result == NULL || (input.data == NULL && input.length != 0U)) {
+    return false;
+  }
+  memset(result, 0, sizeof(*result));
+  while (cursor < input.length) {
+    size_t end;
+    size_t name_start;
+    size_t name_end;
+    const unsigned char *source;
+    size_t source_length;
+    laghu_image_discovery resource = {0};
+    if (input.data[cursor] != '<') {
+      ++cursor;
+      continue;
+    }
+    if (cursor + 3U < input.length &&
+        memcmp(input.data + cursor, "<!--", 4U) == 0) {
+      const unsigned char *close = laghu_find(
+          input.data + cursor + 4U, input.length - cursor - 4U, "-->");
+      cursor = close == NULL ? input.length : (size_t)(close - input.data) + 3U;
+      continue;
+    }
+    end = cursor + 1U;
+    while (end < input.length && input.data[end] != '>') {
+      ++end;
+    }
+    if (end == input.length) {
+      break;
+    }
+    name_start = cursor + 1U;
+    while (name_start < end && isspace(input.data[name_start])) {
+      ++name_start;
+    }
+    name_end = name_start;
+    while (name_end < end && isalpha(input.data[name_end])) {
+      ++name_end;
+    }
+    if (!laghu_ascii_equal(input.data + name_start, name_end - name_start,
+                           "img")) {
+      cursor = end + 1U;
+      continue;
+    }
+    if (!laghu_attribute(input.data + cursor, end - cursor + 1U, "src", &source,
+                         &source_length) ||
+        !laghu_normalize_image_url(source, source_length, page_path,
+                                   page_origin, resource.source_url)) {
+      cursor = end + 1U;
+      continue;
+    }
+    {
+      size_t index;
+      bool duplicate = false;
+      for (index = 0U; index < result->resource_count; ++index) {
+        if (strcmp(result->resources[index].source_url, resource.source_url) ==
+            0) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) {
+        cursor = end + 1U;
+        continue;
+      }
+    }
+    if (result->resource_count == LAGHU_IMAGE_MAX_PAGE_RESOURCES) {
+      result->truncated = true;
+      return true;
+    }
+    if (laghu_attribute(input.data + cursor, end - cursor + 1U, "width",
+                        &source, &source_length)) {
+      resource.declared_width = laghu_positive_integer(source, source_length);
+    }
+    if (laghu_attribute(input.data + cursor, end - cursor + 1U, "height",
+                        &source, &source_length)) {
+      resource.declared_height = laghu_positive_integer(source, source_length);
+    }
+    resource.has_loading =
+        laghu_attribute(input.data + cursor, end - cursor + 1U, "loading",
+                        &source, &source_length);
+    resource.has_srcset =
+        laghu_attribute(input.data + cursor, end - cursor + 1U, "srcset",
+                        &source, &source_length);
+    resource.has_sizes = laghu_attribute(input.data + cursor, end - cursor + 1U,
+                                         "sizes", &source, &source_length);
+    resource.fetchpriority_high =
+        laghu_attribute(input.data + cursor, end - cursor + 1U, "fetchpriority",
+                        &source, &source_length) &&
+        laghu_ascii_equal(source, source_length, "high");
+    result->resources[result->resource_count++] = resource;
+    cursor = end + 1U;
+  }
+  return true;
+}
+
+bool laghu_image_variant_url(
+    const char *hash,
+    char output[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE]) {
+  size_t index;
+  if (hash == NULL || output == NULL ||
+      strlen(hash) != LAGHU_SHA256_HEX_SIZE - 1U) {
+    return false;
+  }
+  for (index = 0U; index < LAGHU_SHA256_HEX_SIZE - 1U; ++index) {
+    if (!((hash[index] >= '0' && hash[index] <= '9') ||
+          (hash[index] >= 'a' && hash[index] <= 'f'))) {
+      return false;
+    }
+  }
+  (void)snprintf(output, sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE,
+                 "/.laghu/image/%s", hash);
+  return true;
+}
+
+bool laghu_image_plan_geometry(const laghu_image_geometry_input *input,
+                               laghu_image_geometry_plan *plan) {
+  unsigned int width;
+  uint64_t doubled;
+  if (input == NULL || plan == NULL || input->natural_width == 0U ||
+      input->natural_height == 0U) {
+    return false;
+  }
+  memset(plan, 0, sizeof(*plan));
+  if (input->use_rendered_dimensions && input->learned_width > 0U) {
+    width = input->learned_width;
+  } else if (input->declared_width > 0U) {
+    width = input->declared_width;
+  } else {
+    width = input->natural_width;
+  }
+  if (input->use_mobile_dimensions) {
+    unsigned int mobile = input->learned_width > 0U ? input->learned_width
+                                                    : input->viewport_width;
+    if (mobile > 0U && mobile < width) {
+      width = mobile;
+    }
+  }
+  if (width > input->natural_width) {
+    width = input->natural_width;
+  }
+  plan->width[0] = width;
+  plan->height[0] = (unsigned int)(((uint64_t)width * input->natural_height +
+                                    input->natural_width / 2U) /
+                                   input->natural_width);
+  plan->count = 1U;
+  doubled = (uint64_t)width * 2U;
+  if (doubled > input->natural_width) {
+    doubled = input->natural_width;
+  }
+  if ((unsigned int)doubled > width) {
+    plan->width[1] = (unsigned int)doubled;
+    plan->height[1] = (unsigned int)((doubled * input->natural_height +
+                                      input->natural_width / 2U) /
+                                     input->natural_width);
+    plan->count = 2U;
+  }
+  return true;
 }
 
 bool laghu_image_data_uri(laghu_image_format format, laghu_buffer input,

@@ -95,11 +95,19 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
   assert(result.allow_api == LAGHU_MODE_OFF);
   assert(result.image_quality == LAGHU_IMAGE_QUALITY_UNSET);
+  assert(result.image_beacon == LAGHU_MODE_OFF);
+  assert(result.image_inline_limit == LAGHU_IMAGE_INLINE_LIMIT_DEFAULT);
+  assert(result.image_metadata_limit == LAGHU_IMAGE_METADATA_LIMIT_DEFAULT);
+  assert(result.image_metadata_ttl == LAGHU_IMAGE_METADATA_TTL_DEFAULT);
 
   parent.mode = LAGHU_MODE_ON;
   parent.preset = LAGHU_PRESET_SAFE;
   parent.allow_api = LAGHU_MODE_ON;
   parent.image_quality = 91U;
+  parent.image_beacon = LAGHU_MODE_ON;
+  parent.image_inline_limit = 4096U;
+  parent.image_metadata_limit = 5000U;
+  parent.image_metadata_ttl = 86400U;
   child.preset = LAGHU_PRESET_STATIC;
   laghu_config_merge(&result, &parent, &child);
   assert(result.mode == LAGHU_MODE_ON);
@@ -107,6 +115,10 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
   assert(result.allow_api == LAGHU_MODE_ON);
   assert(result.image_quality == 91U);
+  assert(result.image_beacon == LAGHU_MODE_ON);
+  assert(result.image_inline_limit == 4096U);
+  assert(result.image_metadata_limit == 5000U);
+  assert(result.image_metadata_ttl == 86400U);
 
   child.mode = LAGHU_MODE_OFF;
   child.allow_api = LAGHU_MODE_OFF;

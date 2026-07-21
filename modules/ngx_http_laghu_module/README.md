@@ -5,7 +5,10 @@ This directory contains the thin NGINX integration layer. It:
 - builds as a static or dynamic HTTP auxiliary filter module
 - accepts `laghu on|off`, `laghu preset <name>`,
   `laghu rewrite_level <name>`, `laghu allow_api on|off`,
-  `laghu image_quality 1..100`, `laghu worker_queue <path>`, and
+  `laghu image_quality 1..100`, `laghu image_beacon on|off`,
+  `laghu image_inline_limit 0..16384`,
+  `laghu image_metadata_limit 1..100000`, `laghu image_metadata_ttl 1h..30d`,
+  `laghu worker_queue <path>`, and
   `laghu image_cache <path>` at `http`, `server`, and `location` scope
 - inherits configuration through NGINX's normal location hierarchy
 - delegates preset/rewrite-level resolution and response eligibility, including

@@ -33,17 +33,27 @@ typedef struct {
   bool capture_enabled;
   bool cache_hit;
   bool cache_sent;
+  unsigned int target_count;
+  unsigned int target_width[LAGHU_RUNTIME_MAX_TARGETS];
+  unsigned int target_height[LAGHU_RUNTIME_MAX_TARGETS];
+  uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
+  bool html_capture;
+  bool header_deferred;
 } ngx_http_laghu_request_ctx_t;
 
 static ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;
 static ngx_http_output_body_filter_pt ngx_http_laghu_next_body_filter;
 static ngx_uint_t ngx_http_laghu_backend_warning_emitted;
 static time_t ngx_http_laghu_last_queue_warning;
+static time_t ngx_http_laghu_beacon_window;
+static ngx_uint_t ngx_http_laghu_beacon_count;
 
 static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request);
 static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                                             ngx_chain_t *chain);
 static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration);
+static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request);
+static void ngx_http_laghu_beacon_body(ngx_http_request_t *request);
 static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration);
 static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
                                            void *parent, void *child);
@@ -305,8 +315,7 @@ static laghu_image_filter_mask ngx_http_laghu_image_filters(
     filters |= LAGHU_IMAGE_LAZYLOAD | LAGHU_IMAGE_INLINE_PREVIEW;
   }
   if ((policy->filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U) {
-    filters |=
-        LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE | LAGHU_IMAGE_SPRITE;
+    filters |= LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE;
   }
   return filters;
 }
@@ -337,6 +346,160 @@ static bool ngx_http_laghu_type_equals(const ngx_str_t *content_type,
 
   return content_type != NULL && content_type->len == length &&
          ngx_strncasecmp(content_type->data, (u_char *)expected, length) == 0;
+}
+
+static bool ngx_http_laghu_is_html_type(const ngx_str_t *content_type) {
+  static const char html[] = "text/html";
+  return content_type != NULL && content_type->len >= sizeof(html) - 1U &&
+         ngx_strncasecmp(content_type->data, (u_char *)html,
+                         sizeof(html) - 1U) == 0;
+}
+
+static bool ngx_http_laghu_csp_allows_data(ngx_http_request_t *request) {
+  ngx_list_part_t *part = &request->headers_out.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        return true;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash != 0U &&
+        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
+        ngx_strncasecmp(headers[index].key.data,
+                        (u_char *)"Content-Security-Policy",
+                        sizeof("Content-Security-Policy") - 1U) == 0) {
+      size_t offset;
+      for (offset = 0U;
+           offset + sizeof("data:") - 1U <= headers[index].value.len;
+           ++offset) {
+        if (ngx_strncasecmp(headers[index].value.data + offset,
+                            (u_char *)"data:", sizeof("data:") - 1U) == 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+}
+
+static bool ngx_http_laghu_same_origin(ngx_http_request_t *request) {
+  ngx_list_part_t *part = &request->headers_in.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        return false;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash != 0U &&
+        headers[index].key.len == sizeof("Sec-Fetch-Site") - 1U &&
+        ngx_strncasecmp(headers[index].key.data, (u_char *)"Sec-Fetch-Site",
+                        sizeof("Sec-Fetch-Site") - 1U) == 0 &&
+        headers[index].value.len == sizeof("same-origin") - 1U &&
+        ngx_strncasecmp(headers[index].value.data, (u_char *)"same-origin",
+                        sizeof("same-origin") - 1U) == 0) {
+      return true;
+    }
+  }
+}
+
+static unsigned int ngx_http_laghu_unsigned_header(ngx_http_request_t *request,
+                                                   const char *name,
+                                                   size_t name_length,
+                                                   unsigned int minimum,
+                                                   unsigned int maximum) {
+  ngx_list_part_t *part = &request->headers_in.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    ngx_int_t parsed;
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        return 0U;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash == 0U || headers[index].key.len != name_length ||
+        ngx_strncasecmp(headers[index].key.data, (u_char *)name, name_length) !=
+            0) {
+      continue;
+    }
+    parsed = ngx_atoi(headers[index].value.data, headers[index].value.len);
+    if (parsed < (ngx_int_t)minimum || parsed > (ngx_int_t)maximum) {
+      return 0U;
+    }
+    return (unsigned int)parsed;
+  }
+}
+
+static unsigned int ngx_http_laghu_dpr_header(ngx_http_request_t *request) {
+  ngx_list_part_t *part = &request->headers_in.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    unsigned int whole = 0U;
+    unsigned int fraction = 0U;
+    size_t cursor;
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        return 100U;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash == 0U || headers[index].key.len != 3U ||
+        ngx_strncasecmp(headers[index].key.data, (u_char *)"DPR", 3U) != 0) {
+      continue;
+    }
+    for (cursor = 0U; cursor < headers[index].value.len &&
+                      headers[index].value.data[cursor] >= '0' &&
+                      headers[index].value.data[cursor] <= '9';
+         ++cursor) {
+      whole = whole * 10U + (headers[index].value.data[cursor] - '0');
+    }
+    if (cursor < headers[index].value.len &&
+        headers[index].value.data[cursor++] == '.') {
+      if (cursor < headers[index].value.len &&
+          headers[index].value.data[cursor] >= '0' &&
+          headers[index].value.data[cursor] <= '9') {
+        fraction = (headers[index].value.data[cursor++] - '0') * 10U;
+      }
+      if (cursor < headers[index].value.len &&
+          headers[index].value.data[cursor] >= '0' &&
+          headers[index].value.data[cursor] <= '9') {
+        fraction += headers[index].value.data[cursor++] - '0';
+      }
+    }
+    if (cursor != headers[index].value.len || whole < 1U || whole > 4U ||
+        (whole == 4U && fraction != 0U)) {
+      return 100U;
+    }
+    return whole * 100U + fraction;
+  }
+}
+
+static unsigned int ngx_http_laghu_viewport_header(
+    ngx_http_request_t *request) {
+  unsigned int width = ngx_http_laghu_unsigned_header(
+      request, "Sec-CH-Viewport-Width", sizeof("Sec-CH-Viewport-Width") - 1U,
+      1U, LAGHU_IMAGE_MAX_DIMENSION);
+  return width != 0U
+             ? width
+             : ngx_http_laghu_unsigned_header(request, "Viewport-Width",
+                                              sizeof("Viewport-Width") - 1U, 1U,
+                                              LAGHU_IMAGE_MAX_DIMENSION);
 }
 
 static bool ngx_http_laghu_backend_supports(
@@ -411,6 +574,18 @@ static bool ngx_http_laghu_queue_available(ngx_http_laghu_loc_conf_t *conf,
                     content_type, filters, queue->capabilities, allow_lossy);
   }
   return available;
+}
+
+static bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue *queue = &conf->runtime_queue;
+  uint64_t now = (uint64_t)ngx_time();
+  if (queue->mapping == NULL &&
+      !laghu_runtime_queue_open(queue, (const char *)conf->worker_queue.data)) {
+    return false;
+  }
+  return laghu_runtime_queue_refresh(queue) && queue->capabilities != 0U &&
+         queue->worker_heartbeat != 0U && queue->worker_heartbeat <= now &&
+         now - queue->worker_heartbeat <= 45U;
 }
 
 static bool ngx_http_laghu_load_cache(ngx_http_request_t *request,
@@ -524,6 +699,11 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
   laghu_image_filter_mask image_filters;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+  if (request->uri.len >= sizeof("/.laghu/") - 1U &&
+      ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) ==
+          0) {
+    return ngx_http_laghu_next_header_filter(request);
+  }
   if (conf->core.mode != LAGHU_MODE_ON) {
     return ngx_http_laghu_next_header_filter(request);
   }
@@ -574,6 +754,27 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
       request->headers_out.content_encoding->value.len != 0U) {
     decision = LAGHU_DECISION_BYPASS_ENCODED;
   } else if (decision == LAGHU_DECISION_PASS &&
+             ngx_http_laghu_is_html_type(&request->headers_out.content_type) &&
+             request->headers_out.content_encoding == NULL &&
+             request->headers_out.content_length_n > 0 &&
+             request->headers_out.content_length_n <=
+                 (off_t)LAGHU_IMAGE_MAX_INPUT_BYTES) {
+    context = ngx_pcalloc(request->pool, sizeof(*context));
+    if (context != NULL && ngx_http_laghu_queue_refresh(conf) &&
+        laghu_resolve_config_policy(&conf->core, &context->policy) &&
+        laghu_variant_key((laghu_buffer){NULL, 0U}, &context->policy,
+                          context->policy_key)) {
+      context->capture_capacity = (size_t)request->headers_out.content_length_n;
+      context->capture = ngx_pnalloc(request->pool, context->capture_capacity);
+      if (context->capture != NULL) {
+        context->capture_enabled = true;
+        context->html_capture = true;
+        context->header_deferred = true;
+        request->filter_need_in_memory = 1U;
+        ngx_http_set_ctx(request, context, ngx_http_laghu_module);
+      }
+    }
+  } else if (decision == LAGHU_DECISION_PASS &&
              ngx_http_laghu_is_image_type(&request->headers_out.content_type)) {
     context = ngx_pcalloc(request->pool, sizeof(*context));
     if (context == NULL ||
@@ -590,8 +791,32 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
               context->validator, context->policy_key, context->accept_webp,
               context->index_key)) {
         decision = LAGHU_DECISION_BYPASS_ERROR;
-      } else if (ngx_http_laghu_load_cache(request, conf, context) &&
-                 ngx_http_laghu_prepare_variant_headers(request, context)) {
+      } else {
+        laghu_catalog_record catalog;
+        if (laghu_catalog_lookup_url(
+                (const char *)conf->image_cache.data,
+                response.request_path != NULL ? response.request_path : "",
+                context->policy_key, conf->runtime_queue.capabilities,
+                (uint64_t)ngx_time(), conf->core.image_metadata_ttl,
+                &catalog)) {
+          unsigned int index;
+          for (index = 0U; index < catalog.variant_count &&
+                           context->target_count < LAGHU_RUNTIME_MAX_TARGETS;
+               ++index) {
+            if (!catalog.variants[index].ready &&
+                !catalog.variants[index].terminally_excluded &&
+                catalog.variants[index].width > 0U) {
+              unsigned int target = context->target_count++;
+              context->target_width[target] = catalog.variants[index].width;
+              context->target_height[target] = catalog.variants[index].height;
+              context->resize_filter[target] = LAGHU_IMAGE_RESIZE_ATTRIBUTE;
+            }
+          }
+        }
+      }
+      if (decision == LAGHU_DECISION_PASS && context->target_count == 0U &&
+          ngx_http_laghu_load_cache(request, conf, context) &&
+          ngx_http_laghu_prepare_variant_headers(request, context)) {
         context->cache_hit = true;
         request->headers_out.content_type.data =
             (u_char *)context->cache_entry.content_type;
@@ -607,11 +832,12 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
         }
         decision = LAGHU_DECISION_IMAGE_HIT;
         ngx_http_set_ctx(request, context, ngx_http_laghu_module);
-      } else if ((image_filters =
-                      ngx_http_laghu_image_filters(&context->policy)) == 0U ||
-                 !ngx_http_laghu_queue_available(
-                     conf, &request->headers_out.content_type, image_filters,
-                     context->policy.allow_lossy)) {
+      } else if (decision == LAGHU_DECISION_PASS &&
+                 (((image_filters = ngx_http_laghu_image_filters(
+                        &context->policy)) == 0U) ||
+                  !ngx_http_laghu_queue_available(
+                      conf, &request->headers_out.content_type, image_filters,
+                      context->policy.allow_lossy))) {
         decision = LAGHU_DECISION_BYPASS_IMAGE_BACKEND;
         if (ngx_http_laghu_backend_warning_emitted == 0U) {
           ngx_http_laghu_backend_warning_emitted = 1U;
@@ -640,6 +866,11 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
         NGX_LOG_WARN, request->connection->log, 0,
         "laghu could not allocate its response status header; serving the "
         "original response");
+  }
+
+  context = ngx_http_get_module_ctx(request, ngx_http_laghu_module);
+  if (context != NULL && context->header_deferred) {
+    return NGX_OK;
   }
 
   return ngx_http_laghu_next_header_filter(request);
@@ -691,9 +922,126 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
       break;
     }
     context->capture_length += length;
+    if (context->html_capture) {
+      if (ngx_buf_in_memory(buffer)) {
+        buffer->pos = buffer->last;
+      }
+      if (buffer->in_file) {
+        buffer->file_pos = buffer->file_last;
+      }
+    }
     if (buffer->last_buf || buffer->last_in_chain) {
       final_buffer = true;
     }
+  }
+
+  if (context->html_capture) {
+    if (!final_buffer) {
+      return NGX_OK;
+    }
+    if (context->capture_enabled) {
+      laghu_runtime_html_result rewritten;
+      laghu_image_filter_mask filters =
+          ngx_http_laghu_image_filters(&context->policy);
+      char origin[LAGHU_RUNTIME_PATH_SIZE];
+      char page_path[LAGHU_RUNTIME_PATH_SIZE];
+      const char *origin_value = NULL;
+      unsigned char *selected = context->capture;
+      size_t selected_length = context->capture_length;
+      ngx_buf_t *buffer;
+      ngx_chain_t output;
+      ngx_table_elt_t *etag;
+      conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+      if (request->uri.len < sizeof(page_path)) {
+        ngx_memcpy(page_path, request->uri.data, request->uri.len);
+        page_path[request->uri.len] = '\0';
+      } else {
+        page_path[0] = '\0';
+      }
+      if (request->headers_in.host != NULL &&
+          request->headers_in.host->value.len + sizeof("https://") <
+              sizeof(origin)) {
+        const char *scheme = "http://";
+#if (NGX_HTTP_SSL)
+        if (request->connection->ssl != NULL) {
+          scheme = "https://";
+        }
+#endif
+        (void)ngx_snprintf((u_char *)origin, sizeof(origin), "%s%V%Z", scheme,
+                           &request->headers_in.host->value);
+        origin_value = origin;
+      }
+      if (laghu_runtime_rewrite_html(
+              (const char *)conf->image_cache.data,
+              (laghu_buffer){context->capture, context->capture_length},
+              page_path, origin_value, context->policy_key,
+              conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
+              conf->core.image_metadata_ttl, filters,
+              context->policy.allow_resource_inlining,
+              ngx_http_laghu_csp_allows_data(request),
+              conf->core.image_beacon == LAGHU_MODE_ON,
+              conf->core.image_inline_limit,
+              ngx_http_laghu_viewport_header(request),
+              ngx_http_laghu_dpr_header(request), &rewritten)) {
+        if (rewritten.rewritten) {
+          selected = ngx_pnalloc(request->pool, rewritten.length);
+          if (selected != NULL) {
+            ngx_memcpy(selected, rewritten.data, rewritten.length);
+            selected_length = rewritten.length;
+            etag = request->headers_out.etag;
+            if (etag == NULL) {
+              etag = ngx_list_push(&request->headers_out.headers);
+            }
+            if (etag != NULL) {
+              u_char *value =
+                  ngx_pnalloc(request->pool, sizeof("\"laghu-html-\"") +
+                                                 LAGHU_SHA256_HEX_LENGTH);
+              if (value != NULL) {
+                etag->hash = 1U;
+                ngx_str_set(&etag->key, "ETag");
+                etag->value.data = value;
+                etag->value.len =
+                    (size_t)(ngx_snprintf(value,
+                                          sizeof("\"laghu-html-\"") +
+                                              LAGHU_SHA256_HEX_LENGTH,
+                                          "\"laghu-html-%s\"",
+                                          rewritten.dependency_key) -
+                             value);
+                request->headers_out.etag = etag;
+              }
+            }
+          }
+        }
+        laghu_runtime_html_result_release(&rewritten);
+      }
+      request->headers_out.content_length_n = (off_t)selected_length;
+      if (request->headers_out.content_length != NULL) {
+        request->headers_out.content_length->hash = 0U;
+        request->headers_out.content_length = NULL;
+      }
+      context->header_deferred = false;
+      if (ngx_http_laghu_next_header_filter(request) == NGX_ERROR) {
+        return NGX_ERROR;
+      }
+      buffer = ngx_calloc_buf(request->pool);
+      if (buffer == NULL) {
+        return NGX_ERROR;
+      }
+      buffer->pos = selected;
+      buffer->last = selected + selected_length;
+      buffer->memory = 1U;
+      buffer->last_buf = request == request->main;
+      buffer->last_in_chain = 1U;
+      output.buf = buffer;
+      output.next = NULL;
+      context->capture_enabled = false;
+      return ngx_http_laghu_next_body_filter(request, &output);
+    }
+    context->header_deferred = false;
+    if (ngx_http_laghu_next_header_filter(request) == NGX_ERROR) {
+      return NGX_ERROR;
+    }
+    return ngx_http_laghu_next_body_filter(request, chain);
   }
 
   if (context->capture_enabled && final_buffer &&
@@ -720,8 +1068,17 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
       job.quality = context->policy.image_quality != 0U
                         ? context->policy.image_quality
                         : 100U;
+      job.metadata_limit = conf->core.image_metadata_limit;
+      job.metadata_ttl = conf->core.image_metadata_ttl;
       job.allow_lossy = context->policy.allow_lossy;
       job.accept_webp = context->accept_webp;
+      job.target_count = context->target_count;
+      ngx_memcpy(job.target_width, context->target_width,
+                 sizeof(job.target_width));
+      ngx_memcpy(job.target_height, context->target_height,
+                 sizeof(job.target_height));
+      ngx_memcpy(job.resize_filter, context->resize_filter,
+                 sizeof(job.resize_filter));
       job.payload = (laghu_buffer){context->capture, context->capture_length};
       if (!laghu_runtime_queue_try_publish(&conf->runtime_queue, &job)) {
         time_t now = ngx_time();
@@ -739,7 +1096,16 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
 }
 
 static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {
-  (void)configuration;
+  ngx_http_core_main_conf_t *core;
+  ngx_http_handler_pt *handler;
+
+  core =
+      ngx_http_conf_get_module_main_conf(configuration, ngx_http_core_module);
+  handler = ngx_array_push(&core->phases[NGX_HTTP_CONTENT_PHASE].handlers);
+  if (handler == NULL) {
+    return NGX_ERROR;
+  }
+  *handler = ngx_http_laghu_variant_handler;
 
   ngx_http_laghu_next_header_filter = ngx_http_top_header_filter;
   ngx_http_top_header_filter = ngx_http_laghu_header_filter;
@@ -748,6 +1114,179 @@ static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {
   ngx_http_top_body_filter = ngx_http_laghu_body_filter;
 
   return NGX_OK;
+}
+
+static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
+  static const char prefix[] = "/.laghu/image/";
+  static const char beacon_script_path[] = "/.laghu/beacon/images.js";
+  static const char beacon_post_path[] = "/.laghu/beacon/images";
+  static const unsigned char beacon_script[] =
+      "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
+      "forEach"
+      "(i=>{const r=i.getBoundingClientRect();if(r.width<1||r.height<1)return;"
+      "fetch('/.laghu/beacon/images',{method:'POST',headers:{'Content-Type':"
+      "'application/json'},body:JSON.stringify({url:new "
+      "URL(i.currentSrc||i.src,"
+      "location.href).pathname,width:Math.round(r.width),height:Math.round(r."
+      "height),viewport_width:innerWidth,dpr_hundredths:Math.min(400,Math.max("
+      "100,Math.round(devicePixelRatio*100))),above_fold:r.top<innerHeight,"
+      "mobile:innerWidth<768}),keepalive:true})})});";
+  ngx_http_laghu_loc_conf_t *conf;
+  laghu_runtime_cache_entry entry;
+  ngx_buf_t *buffer;
+  ngx_chain_t output;
+  ngx_table_elt_t *header;
+  unsigned char *body;
+  char key[LAGHU_RUNTIME_KEY_SIZE];
+
+  conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+  if (request->uri.len == sizeof(beacon_script_path) - 1U &&
+      ngx_strncmp(request->uri.data, beacon_script_path,
+                  sizeof(beacon_script_path) - 1U) == 0) {
+    if (conf->core.mode != LAGHU_MODE_ON ||
+        conf->core.image_beacon != LAGHU_MODE_ON) {
+      return NGX_HTTP_NOT_FOUND;
+    }
+    request->headers_out.status = NGX_HTTP_OK;
+    ngx_str_set(&request->headers_out.content_type, "application/javascript");
+    request->headers_out.content_length_n = sizeof(beacon_script) - 1U;
+    if (ngx_http_send_header(request) == NGX_ERROR ||
+        request->method == NGX_HTTP_HEAD) {
+      return NGX_OK;
+    }
+    buffer = ngx_calloc_buf(request->pool);
+    if (buffer == NULL) {
+      return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    buffer->pos = (u_char *)beacon_script;
+    buffer->last = (u_char *)beacon_script + sizeof(beacon_script) - 1U;
+    buffer->memory = 1U;
+    buffer->last_buf = 1U;
+    output.buf = buffer;
+    output.next = NULL;
+    return ngx_http_output_filter(request, &output);
+  }
+  if (request->uri.len == sizeof(beacon_post_path) - 1U &&
+      ngx_strncmp(request->uri.data, beacon_post_path,
+                  sizeof(beacon_post_path) - 1U) == 0) {
+    time_t now = ngx_time();
+    if (conf->core.mode != LAGHU_MODE_ON ||
+        conf->core.image_beacon != LAGHU_MODE_ON) {
+      return NGX_HTTP_NOT_FOUND;
+    }
+    if (request->method != NGX_HTTP_POST ||
+        request->headers_in.content_type == NULL ||
+        request->headers_in.content_type->value.len <
+            sizeof("application/json") - 1U ||
+        ngx_strncasecmp(request->headers_in.content_type->value.data,
+                        (u_char *)"application/json",
+                        sizeof("application/json") - 1U) != 0 ||
+        request->headers_in.content_length_n <= 0 ||
+        request->headers_in.content_length_n > 16384 ||
+        !ngx_http_laghu_same_origin(request)) {
+      return NGX_HTTP_BAD_REQUEST;
+    }
+    if (ngx_http_laghu_beacon_window != now) {
+      ngx_http_laghu_beacon_window = now;
+      ngx_http_laghu_beacon_count = 0U;
+    }
+    if (++ngx_http_laghu_beacon_count > 32U) {
+      return NGX_HTTP_TOO_MANY_REQUESTS;
+    }
+    if (ngx_http_read_client_request_body(
+            request, ngx_http_laghu_beacon_body) >= NGX_HTTP_SPECIAL_RESPONSE) {
+      return NGX_HTTP_BAD_REQUEST;
+    }
+    return NGX_DONE;
+  }
+  if (request->uri.len != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
+      ngx_strncmp(request->uri.data, prefix, sizeof(prefix) - 1U) != 0) {
+    return NGX_DECLINED;
+  }
+  if (!(request->method & (NGX_HTTP_GET | NGX_HTTP_HEAD))) {
+    return NGX_HTTP_NOT_ALLOWED;
+  }
+  if (conf->core.mode != LAGHU_MODE_ON) {
+    return NGX_HTTP_NOT_FOUND;
+  }
+  ngx_memcpy(key, request->uri.data + sizeof(prefix) - 1U,
+             LAGHU_SHA256_HEX_LENGTH);
+  key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+  if (!laghu_runtime_cache_lookup_variant((const char *)conf->image_cache.data,
+                                          key, &entry) ||
+      entry.length == 0U || entry.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
+    return NGX_HTTP_NOT_FOUND;
+  }
+  body = ngx_pnalloc(request->pool, entry.length);
+  if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
+    return NGX_HTTP_NOT_FOUND;
+  }
+  request->headers_out.status = NGX_HTTP_OK;
+  request->headers_out.content_length_n = (off_t)entry.length;
+  request->headers_out.content_type.data = (u_char *)entry.content_type;
+  request->headers_out.content_type.len = ngx_strlen(entry.content_type);
+  header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+  header->hash = 1U;
+  ngx_str_set(&header->key, "Cache-Control");
+  ngx_str_set(&header->value, "public, max-age=31536000, immutable");
+  if (ngx_http_send_header(request) == NGX_ERROR ||
+      request->method == NGX_HTTP_HEAD) {
+    return NGX_OK;
+  }
+  buffer = ngx_calloc_buf(request->pool);
+  if (buffer == NULL) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+  buffer->pos = body;
+  buffer->last = body + entry.length;
+  buffer->memory = 1U;
+  buffer->last_buf = 1U;
+  output.buf = buffer;
+  output.next = NULL;
+  return ngx_http_output_filter(request, &output);
+}
+
+static void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
+  ngx_http_laghu_loc_conf_t *conf =
+      ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+  laghu_image_beacon_record beacon;
+  laghu_policy policy;
+  char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned char *body;
+  size_t length = (size_t)request->headers_in.content_length_n;
+  size_t offset = 0U;
+  ngx_chain_t *chain;
+  bool valid = false;
+  body = ngx_pnalloc(request->pool, length);
+  if (body != NULL && request->request_body != NULL) {
+    for (chain = request->request_body->bufs; chain != NULL;
+         chain = chain->next) {
+      size_t part = (size_t)ngx_buf_size(chain->buf);
+      if (!ngx_buf_in_memory(chain->buf) || part > length - offset) {
+        offset = 0U;
+        break;
+      }
+      ngx_memcpy(body + offset, chain->buf->pos, part);
+      offset += part;
+    }
+    valid = offset == length &&
+            laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
+                                             &beacon) &&
+            laghu_resolve_config_policy(&conf->core, &policy) &&
+            laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
+            ngx_http_laghu_queue_refresh(conf) &&
+            laghu_catalog_apply_beacon(
+                (const char *)conf->image_cache.data, policy_key,
+                conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
+                conf->core.image_metadata_ttl, &beacon);
+  }
+  request->headers_out.status =
+      valid ? NGX_HTTP_NO_CONTENT : NGX_HTTP_BAD_REQUEST;
+  request->headers_out.content_length_n = 0;
+  ngx_http_finalize_request(request, ngx_http_send_header(request));
 }
 
 static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
@@ -892,6 +1431,59 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return NGX_CONF_ERROR;
     }
     location->core.image_quality = (unsigned int)quality;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "image_beacon") == 0) {
+    if (location->core.image_beacon != LAGHU_MODE_UNSET) {
+      return "is duplicate";
+    }
+    if (ngx_strcmp(values[2].data, "on") == 0) {
+      location->core.image_beacon = LAGHU_MODE_ON;
+      return NGX_CONF_OK;
+    }
+    if (ngx_strcmp(values[2].data, "off") == 0) {
+      location->core.image_beacon = LAGHU_MODE_OFF;
+      return NGX_CONF_OK;
+    }
+    return "laghu image_beacon expects 'on' or 'off'";
+  }
+
+  if (ngx_strcmp(values[1].data, "image_inline_limit") == 0) {
+    ngx_int_t limit = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET) {
+      return "is duplicate";
+    }
+    if (limit < 0 || limit > 16384) {
+      return "laghu image_inline_limit expects an integer from 0 to 16384";
+    }
+    location->core.image_inline_limit = (unsigned int)limit;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "image_metadata_limit") == 0) {
+    ngx_int_t limit = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.image_metadata_limit !=
+        LAGHU_IMAGE_METADATA_LIMIT_UNSET) {
+      return "is duplicate";
+    }
+    if (limit < 1 || limit > 100000) {
+      return "laghu image_metadata_limit expects an integer from 1 to 100000";
+    }
+    location->core.image_metadata_limit = (unsigned int)limit;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "image_metadata_ttl") == 0) {
+    time_t ttl;
+    if (location->core.image_metadata_ttl != LAGHU_IMAGE_METADATA_TTL_UNSET) {
+      return "is duplicate";
+    }
+    ttl = ngx_parse_time(&values[2], 1);
+    if (ttl == (time_t)NGX_ERROR || ttl < 3600 || ttl > 2592000) {
+      return "laghu image_metadata_ttl expects a duration from 1h to 30d";
+    }
+    location->core.image_metadata_ttl = (unsigned int)ttl;
     return NGX_CONF_OK;
   }
 

@@ -17,6 +17,10 @@ semicolons. Unsupported settings fail server configuration validation.
 | `laghu rewrite_level core;` | `Laghu RewriteLevel core` |
 | `laghu allow_api off;` | `Laghu AllowApi Off` |
 | `laghu image_quality 82;` | `Laghu ImageQuality 82` |
+| `laghu image_beacon off;` | `Laghu ImageBeacon Off` |
+| `laghu image_inline_limit 2048;` | `Laghu ImageInlineLimit 2048` |
+| `laghu image_metadata_limit 10000;` | `Laghu ImageMetadataLimit 10000` |
+| `laghu image_metadata_ttl 7d;` | `Laghu ImageMetadataTtl 7d` |
 
 ## `laghu on|off`
 
@@ -92,11 +96,15 @@ validated remain unavailable regardless of which level selects their family.
 
 ```nginx
 laghu image_quality 82;
+laghu image_beacon off;
+laghu image_inline_limit 2048;
+laghu image_metadata_limit 10000;
+laghu image_metadata_ttl 7d;
 laghu worker_queue /run/laghu/jobs.queue;
 laghu image_cache /var/cache/laghu/images;
 ```
 
-All three directives inherit through `http`, `server`, and `location`. Quality
+All image runtime directives inherit through `http`, `server`, and `location`. Quality
 must be `1..100`. Without an override, ecommerce uses 85;
 balanced/core/blog/bandwidth use 82; and aggressive/static/all/experimental use
 75. Safe permits no lossy output, so an inherited quality does not relax it.
@@ -104,6 +112,20 @@ balanced/core/blog/bandwidth use 82; and aggressive/static/all/experimental use
 The queue and cache paths default to the values above. `laghu-libvips` must
 have write access; the selected server needs queue access and read access to
 published cache entries.
+
+Beaconing is inherited and disabled by default. Inline payloads default to a
+2 KiB maximum and may be configured from `0..16384`. Image metadata defaults
+to 10,000 entries with a seven-day TTL; accepted TTLs range from `1h..30d`.
+The same settings are exposed by Apache as `Laghu ImageBeacon`,
+`Laghu ImageInlineLimit`, `Laghu ImageMetadataLimit`, and
+`Laghu ImageMetadataTtl`.
+
+Cold HTML is preserved while Laghu discovers image dependencies. Warm HTML is
+rewritten only after every dependency is ready or terminally excluded. When
+enabled, `image_beacon` serves a fixed same-origin script and accepts bounded
+same-origin JSON observations at `/.laghu/beacon/images`; it does not store
+cookies, IP addresses, client identifiers, or page content. The reserved
+`/.laghu/image/<hash>` route serves only validated content-addressed variants.
 
 ## `laghu allow_api on|off`
 

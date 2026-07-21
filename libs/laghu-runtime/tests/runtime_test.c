@@ -37,6 +37,9 @@ int main(void) {
   laghu_runtime_job submitted;
   laghu_runtime_job taken;
   laghu_runtime_cache_entry entry;
+  laghu_catalog_record catalog = {0};
+  laghu_catalog_record loaded;
+  char catalog_key[LAGHU_RUNTIME_KEY_SIZE];
 
   laghu_runtime_queue_init(&producer);
   laghu_runtime_queue_init(&consumer);
@@ -78,6 +81,13 @@ int main(void) {
   strcpy(submitted.content_type, "image/png");
   strcpy(submitted.policy_key, policy_key);
   submitted.quality = 82U;
+  submitted.metadata_limit = 10000U;
+  submitted.metadata_ttl = 604800U;
+  submitted.target_count = 2U;
+  submitted.target_width[0] = 320U;
+  submitted.target_width[1] = 640U;
+  submitted.resize_filter[0] = UINT64_C(1) << 12;
+  submitted.resize_filter[1] = UINT64_C(1) << 12;
   submitted.payload = (laghu_buffer){payload, sizeof(payload) - 1U};
   assert(laghu_runtime_queue_try_publish(&producer, &submitted));
   assert(!laghu_runtime_queue_try_publish(&producer, &submitted));
@@ -85,14 +95,163 @@ int main(void) {
                                       sizeof(received)));
   assert(taken.payload.length == sizeof(payload) - 1U);
   assert(memcmp(taken.payload.data, payload, taken.payload.length) == 0);
+  assert(taken.target_count == 2U && taken.target_width[0] == 320U &&
+         taken.target_width[1] == 640U);
+  assert(taken.metadata_limit == 10000U && taken.metadata_ttl == 604800U);
+  assert(laghu_catalog_key("/image.png", index_key, policy_key, 0x55aaU,
+                           catalog_key));
+  catalog.version = LAGHU_CATALOG_VERSION;
+  strcpy(catalog.normalized_url, "/image.png");
+  strcpy(catalog.source_hash, index_key);
+  strcpy(catalog.policy_key, policy_key);
+  catalog.capability_mask = 0x55aaU;
+  catalog.natural_width = 800U;
+  catalog.natural_height = 600U;
+  catalog.variant_count = 2U;
+  catalog.variants[0].width = 320U;
+  catalog.variants[0].ready = true;
+  catalog.updated_at = 1000U;
+  catalog.last_accessed_at = 1000U;
+  assert(laghu_catalog_publish(temporary, catalog_key, &catalog));
+  assert(laghu_catalog_lookup(temporary, catalog_key, 1001U, 604800U, &loaded));
+  assert(loaded.natural_width == 800U && loaded.variant_count == 2U);
+  {
+    static const unsigned char json[] =
+        "{\"url\":\"/image.png\",\"width\":240,\"height\":180,"
+        "\"viewport_width\":390,\"dpr_hundredths\":200,"
+        "\"above_fold\":true,\"mobile\":true}";
+    laghu_image_beacon_record beacon;
+    assert(laghu_runtime_parse_image_beacon(
+        (laghu_buffer){json, sizeof(json) - 1U}, &beacon));
+    assert(beacon.mobile && beacon.above_fold && beacon.width == 240U);
+    assert(laghu_catalog_apply_beacon(temporary, policy_key, 0x55aaU, 1002U,
+                                      604800U, &beacon));
+    assert(laghu_catalog_lookup_url(temporary, "/image.png", policy_key,
+                                    0x55aaU, 1003U, 604800U, &loaded));
+    assert(loaded.learned_mobile_width == 240U && loaded.learned_above_fold);
+    {
+      static const unsigned char invalid[] = "{\"url\":\"https://x\"}";
+      assert(!laghu_runtime_parse_image_beacon(
+          (laghu_buffer){invalid, sizeof(invalid) - 1U}, &beacon));
+    }
+  }
+  assert(
+      !laghu_catalog_lookup(temporary, catalog_key, 700000U, 604800U, &loaded));
+  {
+    char lock_path[LAGHU_RUNTIME_PATH_SIZE];
+    FILE *lock;
+    memset(&catalog, 0, sizeof(catalog));
+    catalog.version = LAGHU_CATALOG_VERSION;
+    strcpy(catalog.normalized_url, "/locked.png");
+    strcpy(catalog.source_hash, index_key);
+    strcpy(catalog.policy_key, policy_key);
+    catalog.capability_mask = 0x55aaU;
+    catalog.updated_at = 800000U;
+    catalog.last_accessed_at = 800000U;
+    assert(laghu_catalog_key(catalog.normalized_url, catalog.source_hash,
+                             catalog.policy_key, catalog.capability_mask,
+                             catalog_key));
+    assert(snprintf(lock_path, sizeof(lock_path), "%s/catalog/%s.meta.lock",
+                    temporary, catalog_key) > 0);
+    lock = fopen(lock_path, "wb");
+    assert(lock != NULL && fclose(lock) == 0);
+    assert(!laghu_catalog_publish(temporary, catalog_key, &catalog));
+    assert(remove(lock_path) == 0);
+    assert(laghu_catalog_publish(temporary, catalog_key, &catalog));
+
+    strcpy(catalog.normalized_url, "/newest.png");
+    catalog.updated_at = 800100U;
+    catalog.last_accessed_at = 800100U;
+    assert(laghu_catalog_publish_url(temporary, &catalog));
+    assert(laghu_catalog_prune(temporary, 800101U, 1U, 604800U));
+    assert(!laghu_catalog_lookup_url(temporary, "/locked.png", policy_key,
+                                     0x55aaU, 800101U, 604800U, &loaded));
+    assert(laghu_catalog_lookup_url(temporary, "/newest.png", policy_key,
+                                    0x55aaU, 800101U, 604800U, &loaded));
+  }
   assert(laghu_runtime_cache_publish(temporary, index_key, policy_key, "etag",
                                      "image/png", "test-backend", taken.payload,
                                      &entry));
+  {
+    static const unsigned char html[] =
+        "<html><body><img src=\"/image.png\" width=\"320\"></body></html>";
+    static const unsigned char inline_html[] =
+        "<img src=\"/image.png\" width=\"320\"><img src=\"/image.png\" "
+        "width=\"320\">";
+    static const unsigned char tiny_png[] = {0x89U, 'P',   'N',   'G',
+                                             0x0dU, 0x0aU, 0x1aU, 0x0aU};
+    char first_key[LAGHU_RUNTIME_KEY_SIZE];
+    char second_key[LAGHU_RUNTIME_KEY_SIZE];
+    laghu_runtime_html_result page;
+    assert(laghu_sha256_hex((laghu_buffer){tiny_png, sizeof(tiny_png)},
+                            first_key));
+    assert(laghu_sha256_hex((laghu_buffer){(const unsigned char *)"second", 6U},
+                            second_key));
+    assert(laghu_runtime_cache_publish(
+        temporary, no_webp_index_key, first_key, "page", "image/png",
+        "test-backend", (laghu_buffer){tiny_png, sizeof(tiny_png)}, &entry));
+    assert(laghu_runtime_cache_publish(
+        temporary, catalog_key, second_key, "page", "image/png", "test-backend",
+        (laghu_buffer){payload, sizeof(payload) - 1U}, &entry));
+    memset(&catalog, 0, sizeof(catalog));
+    catalog.version = LAGHU_CATALOG_VERSION;
+    strcpy(catalog.normalized_url, "/image.png");
+    strcpy(catalog.source_hash, index_key);
+    strcpy(catalog.policy_key, policy_key);
+    catalog.capability_mask = 0x55aaU;
+    catalog.natural_width = 1000U;
+    catalog.natural_height = 500U;
+    catalog.variant_count = 2U;
+    catalog.updated_at = 2000U;
+    catalog.last_accessed_at = 2000U;
+    catalog.variants[0].width = 320U;
+    catalog.variants[0].height = 160U;
+    strcpy(catalog.variants[0].variant_key, first_key);
+    catalog.variants[0].original_length = 1000U;
+    catalog.variants[0].variant_length = sizeof(tiny_png);
+    catalog.variants[0].ready = true;
+    catalog.variants[1].width = 640U;
+    catalog.variants[1].height = 320U;
+    strcpy(catalog.variants[1].variant_key, second_key);
+    catalog.variants[1].original_length = 1000U;
+    catalog.variants[1].variant_length = sizeof(payload) - 1U;
+    catalog.variants[1].ready = true;
+    assert(laghu_catalog_publish_url(temporary, &catalog));
+    assert(laghu_runtime_rewrite_html(
+        temporary, (laghu_buffer){html, sizeof(html) - 1U}, "/index.html",
+        "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,
+        LAGHU_IMAGE_INSERT_DIMENSIONS | LAGHU_IMAGE_RESPONSIVE |
+            LAGHU_IMAGE_RESPONSIVE_ZOOM | LAGHU_IMAGE_LAZYLOAD,
+        false, false, false, 2048U, 0U, 100U, &page));
+    assert(page.rewritten && !page.dependencies_pending);
+    assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
+    assert(strstr((const char *)page.data, " 320w") != NULL);
+    assert(strstr((const char *)page.data, " 640w") != NULL);
+    laghu_runtime_html_result_release(&page);
+    assert(laghu_runtime_rewrite_html(
+        temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
+        "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+        604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, true,
+        false, 2048U, 0U, 100U, &page));
+    assert(page.rewritten);
+    assert(strstr((const char *)page.data, "data:image/png;base64,") != NULL);
+    assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
+    laghu_runtime_html_result_release(&page);
+    assert(laghu_runtime_rewrite_html(
+        temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
+        "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+        604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
+        false, 2048U, 0U, 100U, &page));
+    assert(page.rewritten);
+    assert(strstr((const char *)page.data, "data:image/") == NULL);
+    laghu_runtime_html_result_release(&page);
+  }
   assert(!laghu_runtime_cache_publish(NULL, index_key, policy_key, "etag",
                                       "image/png", "test-backend",
                                       taken.payload, &entry));
   assert(!laghu_runtime_cache_lookup(temporary, index_key, NULL, &entry));
   assert(laghu_runtime_cache_lookup(temporary, index_key, "etag", &entry));
+  assert(laghu_runtime_cache_lookup_variant(temporary, policy_key, &entry));
   assert(laghu_runtime_cache_read(&entry, cached, sizeof(cached)));
   assert(memcmp(cached, payload, sizeof(payload) - 1U) == 0);
   assert(!laghu_runtime_cache_lookup(temporary, index_key, "changed", &entry));

@@ -37,6 +37,8 @@ if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
     --compression 0
+  printf '%s\n' '<!doctype html><img src="/image.png" width="320"><img src="/image.png" width="320">' \
+    >"${SMOKE_DIR}/html/image-page.html"
   rm -f "${SMOKE_DIR}/image.v"
   mkdir -p "${SMOKE_DIR}/cache"
   "${OPTIMIZER_BIN}" --init "${SMOKE_DIR}/jobs.queue" \
@@ -79,6 +81,10 @@ http {
     laghu on;
     laghu preset balanced;
     laghu image_quality 82;
+    laghu image_beacon on;
+    laghu image_inline_limit 2048;
+    laghu image_metadata_limit 10000;
+    laghu image_metadata_ttl 7d;
     laghu worker_queue ${SMOKE_DIR}/jobs.queue;
     laghu image_cache ${SMOKE_DIR}/cache;
 
@@ -425,6 +431,60 @@ if [ "${image_smoke}" -eq 1 ]; then
   test "$(wc -c <"${SMOKE_DIR}/image-warm-body")" -lt \
     "$(wc -c <"${SMOKE_DIR}/html/image.png")"
   vipsheader "${SMOKE_DIR}/image-warm-body" >/dev/null
+
+  curl --fail --silent --show-error \
+    --output "${SMOKE_DIR}/image-page-discovery" \
+    "http://127.0.0.1:${PORT}/image-page.html"
+  cmp "${SMOKE_DIR}/html/image-page.html" \
+    "${SMOKE_DIR}/image-page-discovery"
+  curl --fail --silent --show-error --header 'Accept: image/webp' \
+    --output "${SMOKE_DIR}/image-target-body" \
+    "http://127.0.0.1:${PORT}/image.png"
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --show-error \
+      --dump-header "${SMOKE_DIR}/image-page-warm-headers" \
+      --output "${SMOKE_DIR}/image-page-warm" \
+      "http://127.0.0.1:${PORT}/image-page.html"
+    if grep 'srcset=' "${SMOKE_DIR}/image-page-warm" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ]
+  grep ' 320w' "${SMOKE_DIR}/image-page-warm" >/dev/null
+  grep ' 512w' "${SMOKE_DIR}/image-page-warm" >/dev/null
+  grep 'loading="lazy"' "${SMOKE_DIR}/image-page-warm" >/dev/null
+  grep '/.laghu/beacon/images.js' "${SMOKE_DIR}/image-page-warm" >/dev/null
+  tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
+    grep -i -E -x 'ETag: "laghu-html-[0-9a-f]{64}"' >/dev/null
+  curl --fail --silent --show-error \
+    "http://127.0.0.1:${PORT}/.laghu/beacon/images.js" | \
+    grep 'getBoundingClientRect' >/dev/null
+  beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'Content-Type: application/json' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --data '{"url":"/image.png","width":240,"height":240,"viewport_width":390,"dpr_hundredths":200,"above_fold":true,"mobile":true}' \
+    "http://127.0.0.1:${PORT}/.laghu/beacon/images")
+  [ "${beacon_status}" = 204 ]
+  beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'Content-Type: application/json' \
+    --header 'Sec-Fetch-Site: cross-site' \
+    --data '{"url":"/image.png","width":240,"height":240,"viewport_width":390,"dpr_hundredths":200,"above_fold":true,"mobile":true}' \
+    "http://127.0.0.1:${PORT}/.laghu/beacon/images")
+  [ "${beacon_status}" = 400 ]
+
+  variant_file=$(find "${SMOKE_DIR}/cache" -name 'variant-*.bin' -type f | head -1)
+  variant_key=${variant_file##*/variant-}
+  variant_key=${variant_key%.bin}
+  curl --fail --silent --show-error \
+    --dump-header "${SMOKE_DIR}/hashed-variant-headers" \
+    --output "${SMOKE_DIR}/hashed-variant-body" \
+    "http://127.0.0.1:${PORT}/.laghu/image/${variant_key}"
+  cmp "${variant_file}" "${SMOKE_DIR}/hashed-variant-body"
+  tr -d '\r' <"${SMOKE_DIR}/hashed-variant-headers" | \
+    grep -i -x 'Cache-Control: public, max-age=31536000, immutable' >/dev/null
 
   curl --fail --silent --show-error \
     --header 'Accept: image/webp;q=0, image/png' \

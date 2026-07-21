@@ -338,7 +338,11 @@ void laghu_config_init(laghu_config *config) {
   config->preset = LAGHU_PRESET_UNSET;
   config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   config->allow_api = LAGHU_MODE_UNSET;
+  config->image_beacon = LAGHU_MODE_UNSET;
   config->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
+  config->image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_UNSET;
+  config->image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_UNSET;
+  config->image_metadata_ttl = LAGHU_IMAGE_METADATA_TTL_UNSET;
 }
 
 void laghu_config_merge(laghu_config *result, const laghu_config *parent,
@@ -347,7 +351,11 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   laghu_preset parent_preset = LAGHU_PRESET_BALANCED;
   laghu_rewrite_level parent_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   laghu_mode parent_allow_api = LAGHU_MODE_OFF;
+  laghu_mode parent_image_beacon = LAGHU_MODE_OFF;
   unsigned int parent_image_quality = LAGHU_IMAGE_QUALITY_UNSET;
+  unsigned int parent_image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_DEFAULT;
+  unsigned int parent_image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_DEFAULT;
+  unsigned int parent_image_metadata_ttl = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
 
   if (result == NULL) {
     return;
@@ -367,6 +375,18 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     if (parent->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
       parent_image_quality = parent->image_quality;
     }
+    if (parent->image_beacon != LAGHU_MODE_UNSET) {
+      parent_image_beacon = parent->image_beacon;
+    }
+    if (parent->image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET) {
+      parent_image_inline_limit = parent->image_inline_limit;
+    }
+    if (parent->image_metadata_limit != LAGHU_IMAGE_METADATA_LIMIT_UNSET) {
+      parent_image_metadata_limit = parent->image_metadata_limit;
+    }
+    if (parent->image_metadata_ttl != LAGHU_IMAGE_METADATA_TTL_UNSET) {
+      parent_image_metadata_ttl = parent->image_metadata_ttl;
+    }
   }
 
   result->mode = child != NULL && child->mode != LAGHU_MODE_UNSET ? child->mode
@@ -385,6 +405,25 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       child != NULL && child->image_quality != LAGHU_IMAGE_QUALITY_UNSET
           ? child->image_quality
           : parent_image_quality;
+  result->image_beacon =
+      child != NULL && child->image_beacon != LAGHU_MODE_UNSET
+          ? child->image_beacon
+          : parent_image_beacon;
+  result->image_inline_limit =
+      child != NULL &&
+              child->image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET
+          ? child->image_inline_limit
+          : parent_image_inline_limit;
+  result->image_metadata_limit =
+      child != NULL &&
+              child->image_metadata_limit != LAGHU_IMAGE_METADATA_LIMIT_UNSET
+          ? child->image_metadata_limit
+          : parent_image_metadata_limit;
+  result->image_metadata_ttl =
+      child != NULL &&
+              child->image_metadata_ttl != LAGHU_IMAGE_METADATA_TTL_UNSET
+          ? child->image_metadata_ttl
+          : parent_image_metadata_ttl;
 }
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset) {

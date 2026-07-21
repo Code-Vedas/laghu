@@ -19,6 +19,12 @@ extern "C" {
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
 #define LAGHU_VARIANT_KEY_VERSION 3U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
+#define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
+#define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
+#define LAGHU_IMAGE_METADATA_TTL_UNSET 0U
+#define LAGHU_IMAGE_INLINE_LIMIT_DEFAULT 2048U
+#define LAGHU_IMAGE_METADATA_LIMIT_DEFAULT 10000U
+#define LAGHU_IMAGE_METADATA_TTL_DEFAULT 604800U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -88,7 +94,11 @@ typedef struct {
   laghu_preset preset;
   laghu_rewrite_level rewrite_level;
   laghu_mode allow_api;
+  laghu_mode image_beacon;
   unsigned int image_quality;
+  unsigned int image_inline_limit;
+  unsigned int image_metadata_limit;
+  unsigned int image_metadata_ttl;
 } laghu_config;
 
 typedef struct {

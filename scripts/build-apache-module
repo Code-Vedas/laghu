@@ -23,6 +23,11 @@ rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
 cp "${REPO_ROOT}/modules/mod_laghu/mod_laghu.c" "${build_dir}/mod_laghu.c"
 cp "${REPO_ROOT}/libs/laghu-core/src/core.c" "${build_dir}/laghu_core.c"
+cp "${REPO_ROOT}/libs/laghu-image/src/image.c" "${build_dir}/laghu_image.c"
+cp "${REPO_ROOT}/libs/laghu-image/src/markup.c" "${build_dir}/laghu_markup.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/catalog.c" "${build_dir}/laghu_catalog.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/html.c" "${build_dir}/laghu_html.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/beacon.c" "${build_dir}/laghu_beacon.c"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_win32.c" \
@@ -37,11 +42,17 @@ esac
 cd "${build_dir}"
 "${APXS}" -c \
   -Wc,-std=c11 \
+  -Wc,-DLAGHU_HAVE_VIPS=0 \
   -I"${REPO_ROOT}/libs/laghu-core/include" \
   -I"${REPO_ROOT}/libs/laghu-image/include" \
   -I"${REPO_ROOT}/libs/laghu-runtime/include" \
   mod_laghu.c \
   laghu_core.c \
+  laghu_image.c \
+  laghu_markup.c \
+  laghu_catalog.c \
+  laghu_html.c \
+  laghu_beacon.c \
   laghu_runtime.c
 
 test -f "${build_dir}/.libs/mod_laghu.so"

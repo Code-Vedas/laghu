@@ -145,6 +145,20 @@ static int laghu_write_file(const char *path, laghu_buffer buffer) {
   return success ? 0 : 1;
 }
 
+static laghu_catalog_variant *laghu_libvips_catalog_variant(
+    laghu_catalog_record *catalog, unsigned int width) {
+  unsigned int index;
+  for (index = 0U; index < catalog->variant_count; ++index) {
+    if (catalog->variants[index].width == width) {
+      return &catalog->variants[index];
+    }
+  }
+  if (catalog->variant_count == LAGHU_CATALOG_MAX_WIDTHS) {
+    return NULL;
+  }
+  return &catalog->variants[catalog->variant_count++];
+}
+
 static int laghu_libvips_transform(const char *input_path,
                                    const char *output_path) {
   laghu_image_backend backend;
@@ -183,8 +197,13 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
   laghu_image_request request;
   laghu_image_result result;
   laghu_runtime_cache_entry entry;
+  laghu_catalog_record catalog = {0};
+  char catalog_key[LAGHU_RUNTIME_KEY_SIZE];
+  char source_hash[LAGHU_RUNTIME_KEY_SIZE];
   char variant_key[LAGHU_SHA256_HEX_SIZE];
-  int status = 0;
+  unsigned int target_count;
+  unsigned int target;
+  int status = 4;
 
 #if LAGHU_TEST_HOOKS
   const char *delay = getenv("LAGHU_TEST_JOB_DELAY_SECONDS");
@@ -200,31 +219,125 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
   if (!laghu_image_backend_probe(&backend) || !backend.available) {
     return 1;
   }
-  laghu_image_request_init(&request);
-  request.original = job->payload;
-  request.filters = job->filters;
-  request.allow_lossy = job->allow_lossy;
-  request.accept_webp = job->accept_webp;
-  request.quality = job->quality;
-  request.target_width = job->target_width;
-  request.target_height = job->target_height;
-  request.resize_filter = job->resize_filter;
-  if (!laghu_image_optimize(&backend, &request, &result)) {
+  if (!laghu_sha256_hex(job->payload, source_hash) ||
+      !laghu_catalog_key(job->request_path, source_hash, job->policy_key,
+                         backend.capabilities, catalog_key)) {
     return 1;
   }
-  if (result.used_candidate &&
-      laghu_image_variant_key(&backend, &request, job->policy_key,
-                              variant_key)) {
-    status = laghu_runtime_cache_publish(
-                 cache_path, job->index_key, variant_key, job->validator,
-                 laghu_image_content_type(result.output_format),
-                 backend.backend_id, result.selected, &entry)
-                 ? 0
-                 : 1;
-  } else if (!result.used_candidate) {
-    status = 4;
+  {
+    laghu_catalog_record existing;
+    uint64_t now = (uint64_t)time(NULL);
+    if (laghu_catalog_lookup_url(cache_path, job->request_path, job->policy_key,
+                                 backend.capabilities, now, 2592000U,
+                                 &existing) &&
+        strcmp(existing.source_hash, source_hash) == 0) {
+      catalog = existing;
+    }
   }
-  laghu_image_result_release(&result);
+  catalog.version = LAGHU_CATALOG_VERSION;
+  (void)snprintf(catalog.normalized_url, sizeof(catalog.normalized_url), "%s",
+                 job->request_path);
+  memcpy(catalog.source_hash, source_hash, sizeof(catalog.source_hash));
+  memcpy(catalog.policy_key, job->policy_key, sizeof(catalog.policy_key));
+  catalog.capability_mask = backend.capabilities;
+  catalog.updated_at = (uint64_t)time(NULL);
+  catalog.last_accessed_at = catalog.updated_at;
+  target_count = job->target_count == 0U ? 1U : job->target_count;
+  if (target_count > LAGHU_RUNTIME_MAX_TARGETS) {
+    return 1;
+  }
+  for (target = 0U; target < target_count; ++target) {
+    char index_key[LAGHU_RUNTIME_KEY_SIZE];
+    laghu_image_request_init(&request);
+    request.original = job->payload;
+    request.filters = job->filters;
+    request.allow_lossy = job->allow_lossy;
+    request.accept_webp = job->accept_webp;
+    request.quality = job->quality;
+    request.target_width = job->target_width[target];
+    request.target_height = job->target_height[target];
+    request.resize_filter = job->resize_filter[target];
+    if (!laghu_image_optimize(&backend, &request, &result)) {
+      return 1;
+    }
+    if (target == 0U) {
+      catalog.natural_width = result.natural_width;
+      catalog.natural_height = result.natural_height;
+    }
+    if (target == 0U) {
+      memcpy(index_key, job->index_key, sizeof(index_key));
+    } else {
+      char material[LAGHU_RUNTIME_KEY_SIZE + 32U];
+      int length =
+          snprintf(material, sizeof(material), "%s:%u:%u", job->index_key,
+                   request.target_width, request.target_height);
+      if (length < 0 || (size_t)length >= sizeof(material) ||
+          !laghu_sha256_hex(
+              (laghu_buffer){(const unsigned char *)material, (size_t)length},
+              index_key)) {
+        laghu_image_result_release(&result);
+        return 1;
+      }
+    }
+    if (result.used_candidate &&
+        laghu_image_variant_key(&backend, &request, job->policy_key,
+                                variant_key)) {
+      status = laghu_runtime_cache_publish(
+                   cache_path, index_key, variant_key, job->validator,
+                   laghu_image_content_type(result.output_format),
+                   backend.backend_id, result.selected, &entry)
+                   ? 0
+                   : 1;
+    }
+    {
+      laghu_catalog_variant *variant =
+          laghu_libvips_catalog_variant(&catalog, result.width);
+      if (variant != NULL) {
+        memset(variant, 0, sizeof(*variant));
+        variant->width = result.width;
+        variant->height = result.height;
+        variant->original_length = job->payload.length;
+        variant->variant_length = result.selected.length;
+        variant->ready = result.used_candidate && status == 0;
+        variant->terminally_excluded = !result.used_candidate;
+        if (result.used_candidate) {
+          memcpy(variant->variant_key, variant_key,
+                 sizeof(variant->variant_key));
+          (void)snprintf(variant->content_type, sizeof(variant->content_type),
+                         "%s", laghu_image_content_type(result.output_format));
+        }
+      }
+    }
+    laghu_image_result_release(&result);
+    if (status == 1) {
+      return 1;
+    }
+  }
+  if ((job->filters & LAGHU_IMAGE_INLINE_PREVIEW) != 0U) {
+    laghu_image_markup_result preview;
+    laghu_image_request_init(&request);
+    request.original = job->payload;
+    request.filters = job->filters | LAGHU_IMAGE_RESIZE_ATTRIBUTE;
+    request.allow_lossy = job->allow_lossy;
+    request.accept_webp = job->accept_webp;
+    request.quality = job->quality;
+    if (laghu_image_preview_data_uri(&backend, &request,
+                                     LAGHU_IMAGE_PREVIEW_DIMENSION, &preview)) {
+      if (preview.length < sizeof(catalog.preview_data_uri)) {
+        memcpy(catalog.preview_data_uri, preview.data, preview.length);
+        catalog.preview_data_uri[preview.length] = '\0';
+      }
+      laghu_image_markup_result_release(&preview);
+    }
+  }
+  if (!laghu_catalog_publish(cache_path, catalog_key, &catalog)) {
+    return 1;
+  }
+  (void)laghu_catalog_prune(
+      cache_path, catalog.updated_at,
+      job->metadata_limit != 0U ? job->metadata_limit
+                                : LAGHU_CATALOG_DEFAULT_LIMIT,
+      job->metadata_ttl != 0U ? job->metadata_ttl : LAGHU_CATALOG_DEFAULT_TTL);
   return status;
 }
 

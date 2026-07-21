@@ -11,18 +11,24 @@
 #include <stdint.h>
 
 #include "laghu/core.h"
+#include "laghu/image.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define LAGHU_QUEUE_VERSION 3U
+#define LAGHU_QUEUE_VERSION 4U
 #define LAGHU_QUEUE_DEFAULT_SLOTS 4U
 #define LAGHU_RUNTIME_KEY_SIZE LAGHU_SHA256_HEX_SIZE
 #define LAGHU_RUNTIME_PATH_SIZE 1024U
 #define LAGHU_RUNTIME_TYPE_SIZE 64U
 #define LAGHU_RUNTIME_VALIDATOR_SIZE 256U
 #define LAGHU_RUNTIME_BACKEND_SIZE 128U
+#define LAGHU_RUNTIME_MAX_TARGETS 2U
+#define LAGHU_CATALOG_VERSION 1U
+#define LAGHU_CATALOG_MAX_WIDTHS 8U
+#define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
+#define LAGHU_CATALOG_DEFAULT_TTL 604800U
 
 typedef struct {
   char index_key[LAGHU_RUNTIME_KEY_SIZE];
@@ -32,9 +38,12 @@ typedef struct {
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t filters;
   unsigned int quality;
-  unsigned int target_width;
-  unsigned int target_height;
-  uint64_t resize_filter;
+  unsigned int metadata_limit;
+  unsigned int metadata_ttl;
+  unsigned int target_count;
+  unsigned int target_width[LAGHU_RUNTIME_MAX_TARGETS];
+  unsigned int target_height[LAGHU_RUNTIME_MAX_TARGETS];
+  uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
   bool allow_lossy;
   bool accept_webp;
   laghu_buffer payload;
@@ -61,6 +70,58 @@ typedef struct {
   char variant_path[LAGHU_RUNTIME_PATH_SIZE];
   size_t length;
 } laghu_runtime_cache_entry;
+
+typedef struct {
+  unsigned int width;
+  unsigned int height;
+  char variant_key[LAGHU_RUNTIME_KEY_SIZE];
+  char content_type[LAGHU_RUNTIME_TYPE_SIZE];
+  size_t original_length;
+  size_t variant_length;
+  bool ready;
+  bool terminally_excluded;
+} laghu_catalog_variant;
+
+typedef struct {
+  uint32_t version;
+  char normalized_url[LAGHU_RUNTIME_PATH_SIZE];
+  char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+  char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  uint32_t capability_mask;
+  unsigned int natural_width;
+  unsigned int natural_height;
+  laghu_catalog_variant variants[LAGHU_CATALOG_MAX_WIDTHS];
+  unsigned int variant_count;
+  uint64_t updated_at;
+  uint64_t last_accessed_at;
+  char preview_data_uri[4096U];
+  unsigned int learned_width;
+  unsigned int learned_height;
+  unsigned int learned_mobile_width;
+  unsigned int learned_mobile_height;
+  unsigned int learned_viewport_width;
+  unsigned int learned_dpr_hundredths;
+  uint64_t learned_at;
+  bool learned_above_fold;
+} laghu_catalog_record;
+
+typedef struct {
+  char normalized_url[LAGHU_RUNTIME_PATH_SIZE];
+  unsigned int width;
+  unsigned int height;
+  unsigned int viewport_width;
+  unsigned int dpr_hundredths;
+  bool above_fold;
+  bool mobile;
+} laghu_image_beacon_record;
+
+typedef struct {
+  unsigned char *data;
+  size_t length;
+  char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  bool rewritten;
+  bool dependencies_pending;
+} laghu_runtime_html_result;
 
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
@@ -92,8 +153,42 @@ bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
 bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key,
                                 const char *validator,
                                 laghu_runtime_cache_entry *entry);
+bool laghu_runtime_cache_lookup_variant(const char *cache_path,
+                                        const char *variant_key,
+                                        laghu_runtime_cache_entry *entry);
 bool laghu_runtime_cache_read(const laghu_runtime_cache_entry *entry,
                               unsigned char *output, size_t output_capacity);
+bool laghu_catalog_key(const char *normalized_url, const char *source_hash,
+                       const char *policy_key, uint32_t capability_mask,
+                       char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
+                           const laghu_catalog_record *record);
+bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key,
+                          uint64_t now, unsigned int ttl_seconds,
+                          laghu_catalog_record *record);
+bool laghu_catalog_lookup_url(const char *cache_path,
+                              const char *normalized_url,
+                              const char *policy_key, uint32_t capability_mask,
+                              uint64_t now, unsigned int ttl_seconds,
+                              laghu_catalog_record *record);
+bool laghu_catalog_publish_url(const char *cache_path,
+                               const laghu_catalog_record *record);
+bool laghu_runtime_rewrite_html(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
+    bool allow_inline, bool csp_allows_data, bool beacon_enabled,
+    size_t inline_limit, unsigned int viewport_width,
+    unsigned int dpr_hundredths, laghu_runtime_html_result *result);
+void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
+bool laghu_runtime_parse_image_beacon(laghu_buffer json,
+                                      laghu_image_beacon_record *record);
+bool laghu_catalog_apply_beacon(const char *cache_path, const char *policy_key,
+                                uint32_t capability_mask, uint64_t now,
+                                unsigned int ttl_seconds,
+                                const laghu_image_beacon_record *beacon);
+bool laghu_catalog_prune(const char *cache_path, uint64_t now,
+                         unsigned int metadata_limit, unsigned int ttl_seconds);
 
 #ifdef __cplusplus
 }

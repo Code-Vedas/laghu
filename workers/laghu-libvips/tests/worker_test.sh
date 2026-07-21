@@ -25,7 +25,8 @@ rm -f "${work}/source.v"
 "${optimizer}" --init "${queue}" "${cache}"
 "${optimizer}" --submit "${queue}" "${source_image}" /source.png '"v1"'
 "${optimizer}" --once "${queue}" "${cache}"
-test "$(find "${cache}" -name 'index-*.meta' -type f | wc -l | tr -d ' ')" = 1
+# One request index and one hash-only reverse index back immutable delivery.
+test "$(find "${cache}" -name 'index-*.meta' -type f | wc -l | tr -d ' ')" = 2
 test "$(find "${cache}" -name 'variant-*.bin' -type f | wc -l | tr -d ' ')" = 1
 test "$(find "${cache}" -name '*.tmp-*' -type f | wc -l | tr -d ' ')" = 0
 

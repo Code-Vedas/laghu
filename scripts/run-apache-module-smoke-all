@@ -89,6 +89,8 @@ load_first_mpm() {
   printf '<Directory "%s/htdocs">\nRequire all granted\n</Directory>\n' "${work}"
   printf 'ErrorLog "%s/logs/error.log"\n' "${work}"
   printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
+  printf 'Laghu ImageBeacon On\nLaghu ImageInlineLimit 2048\n'
+  printf 'Laghu ImageMetadataLimit 10000\nLaghu ImageMetadataTtl 7d\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
   if [ -f "${modules}/mod_http2.so" ]; then
     printf 'Protocols h2c http/1.1\nH2Direct on\n'
@@ -97,6 +99,8 @@ load_first_mpm() {
     printf 'Laghu WorkerQueue "%s/jobs.queue"\n' "${work}"
     printf 'Laghu ImageCache "%s/cache"\n' "${work}"
     printf '<Location "/image.png">\nLaghu RewriteLevel core\n</Location>\n'
+    printf '<Location "/image-page.html">\nLaghu RewriteLevel core\n</Location>\n'
+    printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
     printf 'AddType image/png .png\n'
   fi
 } >"${work}/httpd.conf"
@@ -136,6 +140,8 @@ origin_pid=$!
 if [ -x "${service}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${work}/source.v" 512 512 --bands 3
   vips pngsave "${work}/source.v" "${work}/htdocs/image.png" --compression 0
+  printf '%s\n' '<!doctype html><img src="/image.png" width="320"><img src="/image.png" width="320">' \
+    >"${work}/htdocs/image-page.html"
   rm -f "${work}/source.v"
   "${service}" --init-and-serve "${work}/jobs.queue" "${work}/cache" &
   service_pid=$!
@@ -214,6 +220,46 @@ if [ "${service_pid}" != "" ]; then
   grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers"
   test "$(wc -c <"${work}/image-warm.png")" -lt \
     "$(wc -c <"${work}/htdocs/image.png")"
+  curl --fail --silent \
+    http://127.0.0.1:18081/image-page.html >"${work}/image-page-discovery.html"
+  cmp "${work}/htdocs/image-page.html" "${work}/image-page-discovery.html"
+  curl --fail --silent http://127.0.0.1:18081/image.png \
+    >"${work}/image-target.png"
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --dump-header "${work}/image-page-warm.headers" \
+      http://127.0.0.1:18081/image-page.html >"${work}/image-page-warm.html"
+    if grep 'srcset=' "${work}/image-page-warm.html" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ]
+  grep ' 320w' "${work}/image-page-warm.html" >/dev/null
+  grep ' 512w' "${work}/image-page-warm.html" >/dev/null
+  grep 'loading="lazy"' "${work}/image-page-warm.html" >/dev/null
+  grep '/.laghu/beacon/images.js' "${work}/image-page-warm.html" >/dev/null
+  grep -i -E '^ETag: "laghu-html-[0-9a-f]{64}"' \
+    "${work}/image-page-warm.headers"
+  curl --fail --silent \
+    http://127.0.0.1:18081/.laghu/beacon/images.js | \
+    grep 'getBoundingClientRect' >/dev/null
+  beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'Content-Type: application/json' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --data '{"url":"/image.png","width":240,"height":240,"viewport_width":390,"dpr_hundredths":200,"above_fold":true,"mobile":true}' \
+    http://127.0.0.1:18081/.laghu/beacon/images)
+  [ "${beacon_status}" = 204 ]
+  variant_file=$(find "${work}/cache" -name 'variant-*.bin' -type f | head -1)
+  variant_key=${variant_file##*/variant-}
+  variant_key=${variant_key%.bin}
+  curl --fail --silent --dump-header "${work}/hashed-variant.headers" \
+    "http://127.0.0.1:18081/.laghu/image/${variant_key}" \
+    >"${work}/hashed-variant.bin"
+  cmp "${variant_file}" "${work}/hashed-variant.bin"
+  grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+    "${work}/hashed-variant.headers"
 fi
 
 trap - EXIT

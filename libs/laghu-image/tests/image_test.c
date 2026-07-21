@@ -322,8 +322,7 @@ static void test_backend_and_fail_open(void) {
 }
 
 static void test_markup_filters(void) {
-  static const unsigned char html[] =
-      "<img src=\"/a.png\"><img src=\"/a.png\">";
+  static const unsigned char html[] = "<IMG SRC=/a.png><img src=\"/a.png\">";
   static const unsigned char css[] = ".a{background:url(/a.png)}";
   const laghu_image_resource resource = {
       .source_url = "/a.png",
@@ -339,6 +338,10 @@ static void test_markup_filters(void) {
       .height = 180U,
       .sprite_x = 12U,
       .sprite_y = 8U,
+      .responsive_1x_width = 320U,
+      .responsive_2x_width = 640U,
+      .declared_width = 320U,
+      .inline_payload_length = 1U,
   };
   const laghu_image_markup_options options = {
       .resources = &resource,
@@ -351,6 +354,8 @@ static void test_markup_filters(void) {
       .inline_previews = true,
       .deduplicate_inline = true,
       .sprites = true,
+      .csp_allows_data_images = true,
+      .inline_limit = LAGHU_IMAGE_DEFAULT_INLINE_LIMIT,
   };
   laghu_image_markup_result result;
   char dependency_key[LAGHU_SHA256_HEX_SIZE];
@@ -380,6 +385,62 @@ static void test_markup_filters(void) {
   assert(laghu_image_rewrite_html((laghu_buffer){NULL, 0U}, &options, &result));
   assert(result.length == 0U && result.dependency_key[0] != '\0');
   laghu_image_markup_result_release(&result);
+}
+
+static void test_html_discovery(void) {
+  static const unsigned char html[] =
+      "<!-- <img src='/ignored.png'> --><IMG SRC=\"hero.png\" WIDTH=320 "
+      "height='180' fetchpriority=HIGH srcset='hero.png 1x' sizes=320px>"
+      "<img src=/api/private.png>"
+      "<img src=https://example.test/assets/logo.png loading=lazy>"
+      "<img src=//cdn.example.test/a.png><img src=data:image/png,x>";
+  laghu_image_discovery_result result;
+  char url[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];
+  static const char hash[] =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  assert(laghu_image_discover_html((laghu_buffer){html, sizeof(html) - 1U},
+                                   "/pages/index.html", "https://example.test",
+                                   &result));
+  assert(result.resource_count == 2U && !result.truncated);
+  assert(strcmp(result.resources[0].source_url, "/pages/hero.png") == 0);
+  assert(result.resources[0].declared_width == 320U);
+  assert(result.resources[0].declared_height == 180U);
+  assert(result.resources[0].fetchpriority_high);
+  assert(result.resources[0].has_srcset && result.resources[0].has_sizes);
+  assert(strcmp(result.resources[1].source_url, "/assets/logo.png") == 0);
+  assert(result.resources[1].has_loading);
+  assert(laghu_image_variant_url(hash, url));
+  assert(strcmp(url,
+                "/.laghu/image/0123456789abcdef0123456789abcdef"
+                "0123456789abcdef0123456789abcdef") == 0);
+  assert(!laghu_image_variant_url("ABC", url));
+}
+
+static void test_geometry_planning(void) {
+  laghu_image_geometry_input input = {
+      .natural_width = 1000U,
+      .natural_height = 500U,
+      .declared_width = 320U,
+      .declared_height = 160U,
+      .dpr_hundredths = 300U,
+  };
+  laghu_image_geometry_plan plan;
+  assert(laghu_image_plan_geometry(&input, &plan));
+  assert(plan.count == 2U && plan.width[0] == 320U && plan.height[0] == 160U &&
+         plan.width[1] == 640U && plan.height[1] == 320U);
+  input.declared_width = 2000U;
+  assert(laghu_image_plan_geometry(&input, &plan));
+  assert(plan.count == 1U && plan.width[0] == 1000U);
+  input.use_rendered_dimensions = true;
+  input.learned_width = 240U;
+  assert(laghu_image_plan_geometry(&input, &plan));
+  assert(plan.width[0] == 240U && plan.width[1] == 480U);
+  input.use_mobile_dimensions = true;
+  input.learned_width = 0U;
+  input.viewport_width = 180U;
+  assert(laghu_image_plan_geometry(&input, &plan));
+  assert(plan.width[0] == 180U && plan.width[1] == 360U);
 }
 
 #if LAGHU_HAVE_VIPS
@@ -694,6 +755,8 @@ int main(void) {
   test_image_key_v4_vector();
   test_backend_and_fail_open();
   test_markup_filters();
+  test_html_discovery();
+  test_geometry_planning();
 #if LAGHU_HAVE_VIPS
   test_byte_filters();
   test_geometry_inline_and_sprites();

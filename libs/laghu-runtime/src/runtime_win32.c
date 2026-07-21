@@ -42,9 +42,12 @@ typedef struct {
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t filters;
   uint32_t quality;
-  uint32_t target_width;
-  uint32_t target_height;
-  uint64_t resize_filter;
+  uint32_t metadata_limit;
+  uint32_t metadata_ttl;
+  uint32_t target_count;
+  uint32_t target_width[LAGHU_RUNTIME_MAX_TARGETS];
+  uint32_t target_height[LAGHU_RUNTIME_MAX_TARGETS];
+  uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
   uint8_t allow_lossy;
   uint8_t accept_webp;
   uint8_t padding[6];
@@ -375,6 +378,7 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
   laghu_queue_slot *slot;
   bool success = false;
   if (queue == NULL || job == NULL || queue->mapping == NULL ||
+      job->target_count > LAGHU_RUNTIME_MAX_TARGETS ||
       job->payload.data == NULL || job->payload.length == 0U ||
       job->payload.length > queue->slot_payload_size ||
       !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key)) {
@@ -396,9 +400,14 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
     memcpy(slot->policy_key, job->policy_key, sizeof(slot->policy_key));
     slot->filters = job->filters;
     slot->quality = job->quality;
-    slot->target_width = job->target_width;
-    slot->target_height = job->target_height;
-    slot->resize_filter = job->resize_filter;
+    slot->metadata_limit = job->metadata_limit;
+    slot->metadata_ttl = job->metadata_ttl;
+    slot->target_count = job->target_count;
+    memcpy(slot->target_width, job->target_width, sizeof(slot->target_width));
+    memcpy(slot->target_height, job->target_height,
+           sizeof(slot->target_height));
+    memcpy(slot->resize_filter, job->resize_filter,
+           sizeof(slot->resize_filter));
     slot->allow_lossy = job->allow_lossy ? 1U : 0U;
     slot->accept_webp = job->accept_webp ? 1U : 0U;
     memcpy(laghu_payload(slot), job->payload.data, job->payload.length);
@@ -429,6 +438,7 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
   header = laghu_header(queue);
   slot = laghu_slot(queue, header->next_read % queue->slot_count);
   if (slot->state == LAGHU_SLOT_READY &&
+      slot->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
       slot->payload_length <= payload_capacity) {
     memset(job, 0, sizeof(*job));
     memcpy(job->index_key, slot->index_key, sizeof(job->index_key));
@@ -438,9 +448,12 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
     memcpy(job->policy_key, slot->policy_key, sizeof(job->policy_key));
     job->filters = slot->filters;
     job->quality = slot->quality;
-    job->target_width = slot->target_width;
-    job->target_height = slot->target_height;
-    job->resize_filter = slot->resize_filter;
+    job->metadata_limit = slot->metadata_limit;
+    job->metadata_ttl = slot->metadata_ttl;
+    job->target_count = slot->target_count;
+    memcpy(job->target_width, slot->target_width, sizeof(job->target_width));
+    memcpy(job->target_height, slot->target_height, sizeof(job->target_height));
+    memcpy(job->resize_filter, slot->resize_filter, sizeof(job->resize_filter));
     job->allow_lossy = slot->allow_lossy != 0U;
     job->accept_webp = slot->accept_webp != 0U;
     memcpy(payload, laghu_payload(slot), (size_t)slot->payload_length);
@@ -553,6 +566,11 @@ bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
       !laghu_write_atomic(metadata_path, &metadata, sizeof(metadata))) {
     return false;
   }
+  if (strcmp(index_key, variant_key) != 0 &&
+      (!laghu_path(metadata_path, cache_path, variant_key, ".meta") ||
+       !laghu_write_atomic(metadata_path, &metadata, sizeof(metadata)))) {
+    return false;
+  }
   memset(entry, 0, sizeof(*entry));
   (void)laghu_copy(entry->variant_key, sizeof(entry->variant_key), variant_key);
   (void)laghu_copy(entry->payload_hash, sizeof(entry->payload_hash),
@@ -563,6 +581,55 @@ bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
   (void)laghu_copy(entry->backend_id, sizeof(entry->backend_id), backend_id);
   (void)laghu_copy(entry->variant_path, sizeof(entry->variant_path), body_path);
   entry->length = payload.length;
+  return true;
+}
+
+bool laghu_runtime_cache_lookup_variant(const char *cache_path,
+                                        const char *variant_key,
+                                        laghu_runtime_cache_entry *entry) {
+  char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
+  char body_path[LAGHU_RUNTIME_PATH_SIZE];
+  laghu_cache_metadata metadata;
+  HANDLE file = INVALID_HANDLE_VALUE;
+  LARGE_INTEGER size;
+  if (cache_path == NULL || !laghu_hash_valid(variant_key) || entry == NULL ||
+      !laghu_path(metadata_path, cache_path, variant_key, ".meta") ||
+      !laghu_open(metadata_path, GENERIC_READ, OPEN_EXISTING, &file)) {
+    return false;
+  }
+  if (!laghu_read(file, &metadata, sizeof(metadata))) {
+    CloseHandle(file);
+    return false;
+  }
+  CloseHandle(file);
+  file = INVALID_HANDLE_VALUE;
+  if (metadata.magic != LAGHU_CACHE_MAGIC ||
+      metadata.version != LAGHU_CACHE_VERSION || metadata.length == 0U ||
+      !laghu_hash_valid(metadata.variant_key) ||
+      !laghu_hash_valid(metadata.payload_hash) ||
+      strcmp(metadata.variant_key, variant_key) != 0 ||
+      !laghu_path(body_path, cache_path, metadata.variant_key, ".body") ||
+      !laghu_open(body_path, GENERIC_READ, OPEN_EXISTING, &file) ||
+      !GetFileSizeEx(file, &size) ||
+      size.QuadPart != (LONGLONG)metadata.length) {
+    if (file != INVALID_HANDLE_VALUE) {
+      CloseHandle(file);
+    }
+    return false;
+  }
+  CloseHandle(file);
+  memset(entry, 0, sizeof(*entry));
+  (void)laghu_copy(entry->variant_key, sizeof(entry->variant_key), variant_key);
+  (void)laghu_copy(entry->payload_hash, sizeof(entry->payload_hash),
+                   metadata.payload_hash);
+  (void)laghu_copy(entry->validator, sizeof(entry->validator),
+                   metadata.validator);
+  (void)laghu_copy(entry->content_type, sizeof(entry->content_type),
+                   metadata.content_type);
+  (void)laghu_copy(entry->backend_id, sizeof(entry->backend_id),
+                   metadata.backend_id);
+  (void)laghu_copy(entry->variant_path, sizeof(entry->variant_path), body_path);
+  entry->length = (size_t)metadata.length;
   return true;
 }
 

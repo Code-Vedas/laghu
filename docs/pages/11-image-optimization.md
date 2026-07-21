@@ -12,7 +12,7 @@ executes `vips`, `magick`, or another codec command.
 
 ## Delivery Lifecycle
 
-1. On a cold eligible image response, NGINX streams the original to the client
+1. On a cold eligible image response, either adapter streams the original to the client
    and attempts a non-blocking queue publication.
 2. The worker detects JPEG, PNG, GIF, or WebP from magic, selects the matching
    explicit loader, applies the resolved plan, and validates each candidate.
@@ -21,10 +21,10 @@ executes `vips`, `magick`, or another codec command.
 4. A later request with the same strong origin validator, policy, and browser
    format capability can receive the published variant as `X-Laghu: image-hit`.
 
-Without a strong `ETag`, the current
-NGINX path still queues the cold body but does not substitute a cache entry in
-the header filter. This conservative behavior avoids associating stale bytes
-with a URL. Content-hash-only buffered warm substitution is not yet exposed.
+Without a strong validator, Laghu buffers only within the encoded-input bound,
+hashes the source, and never guesses that an older URL variant still matches.
+HTML discovery never fetches a resource: normal image requests supply its bytes
+and publish the matching catalog variants asynchronously.
 
 ## Formats and Safety
 
@@ -43,11 +43,42 @@ and alpha. Lossless candidates must also decode to the same normalized pixels.
 Lossy output requires preset or rewrite-level permission. EXIF and eligible ICC
 profiles are removed only when selected by policy.
 
-The shared image library also provides ready-catalog markup operations for
-dimensions, responsive 1x/2x sources, zoom flags, native lazy loading, small
-data URIs, low-quality previews, inline deduplication, and CSS sprite
-coordinates. Those primitives do not imply that general HTML or CSS rewriting
-is enabled in the NGINX delivery path.
+The shared image library provides a bounded, case-insensitive HTML discovery
+tokenizer, same-origin URL normalization, no-upscale geometry planning, exact
+1x/2x width variants, dimension injection, native lazy loading, CSP-gated data
+URIs and 24-pixel previews, and repeated-inline deduplication. Responsive
+markup uses width descriptors and deterministic `sizes`; browser DPR and zoom
+selection requires no injected JavaScript.
+
+Catalog metadata is versioned and checksummed beneath the image cache. It is
+keyed by normalized URL, source hash, resolved policy, and backend capability
+mask, records natural dimensions even when no smaller candidate exists, caps a
+source at eight widths, and expires after seven days by default. Queue protocol
+v4 carries at most two geometry targets in one bounded source payload. Catalog
+corruption and expiry are fail-open.
+
+Eligible HTML is delivered unchanged during cold discovery and while any
+dependency is pending. Once every referenced image is ready or terminally
+excluded, both adapters can atomically inject dimensions, exact 1x/2x `srcset`
+and `sizes`, native lazy loading, CSP-permitted small final images, and 24-pixel
+previews. Repeated final-image inlining occurs once per unique variant. The
+rewrite is rejected unless its byte growth is smaller than the minimum unique
+image savings at both 1x and 2x selection, and its ETag includes every source
+and selected variant dependency.
+
+Rendered and mobile dimensions can be learned through the opt-in fixed
+same-origin beacon. Its 16 KiB JSON requests contain only normalized image URL,
+dimensions, viewport width, DPR, and above-fold state; Laghu stores no cookie,
+IP address, client identifier, or page body. `Sec-CH-Viewport-Width` and `DPR`
+provide beacon-free mobile sizing inputs when present.
+
+Ready bytes are addressable on both adapters at
+`/.laghu/image/<64-lowercase-hex-variant-key>`. The route accepts only a hash,
+performs no caller-controlled filesystem lookup, revalidates the cached payload
+hash before sending it, and returns `Cache-Control: public,
+max-age=31536000, immutable`.
+
+CSS sprites remain pending until the Section 3.3 CSS parser is available.
 
 ## Bounds and Failure Behavior
 
@@ -57,10 +88,10 @@ deadline. The queue has four fixed 10 MiB slots by default. A full queue,
 worker crash, timeout, decode failure, oversized input, unsupported operation,
 cache corruption, or non-smaller candidate preserves the original response.
 
-Variant key version 3 includes the original hash, resolved policy and quality,
+Variant key version 4 includes the original hash, resolved policy and quality,
 worker build/libvips identity, frozen encoder options, capability mask,
 transform flags, dimensions, lossy permission, and browser WebP acceptance.
 Cache metadata includes a separate hash of the published bytes, and the served
-strong ETag is derived from that payload hash. Markup helpers separately expose
-a dependency hash over every ready resource source-content hash, so a changed
-image invalidates the derived markup key used by a future delivery integration.
+strong ETag is derived from that payload hash. Warm markup uses a dependency
+hash over every ready resource source-content hash and selected variant, so an
+image or policy change invalidates the page.
