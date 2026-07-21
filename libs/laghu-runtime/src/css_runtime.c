@@ -125,7 +125,8 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
                                const char *page_origin, const char *policy_key,
                                uint32_t capability_mask, uint64_t now,
                                unsigned int ttl_seconds, bool minify,
-                               bool allow_sprites,
+                               bool allow_sprites, unsigned int inline_limit,
+                               unsigned int outline_threshold,
                                laghu_runtime_css_result *result) {
   laghu_css_parse_result *discovery = NULL;
   laghu_image_resource *resources = NULL;
@@ -133,6 +134,8 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   laghu_image_markup_options options = {0};
   laghu_image_markup_result rewritten;
   laghu_runtime_cache_entry entry;
+  laghu_runtime_cache_entry source_entry;
+  laghu_stylesheet_record stylesheet = {0};
   char derivation_key[LAGHU_RUNTIME_KEY_SIZE];
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
   size_t index;
@@ -140,7 +143,8 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   size_t byte_savings = 0U;
   bool success = false;
   if (result == NULL || cache_path == NULL || stylesheet_path == NULL ||
-      policy_key == NULL || ttl_seconds == 0U ||
+      policy_key == NULL || ttl_seconds == 0U || inline_limit > 65536U ||
+      outline_threshold < 1024U || outline_threshold > 1048576U ||
       css.length > LAGHU_CSS_MAX_INPUT_BYTES) {
     return false;
   }
@@ -160,6 +164,23 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   if (resources == NULL || storage == NULL) {
     goto finished;
   }
+  if (!laghu_runtime_cache_publish(cache_path, source_hash, source_hash,
+                                   source_hash, "text/css",
+                                   "laghu-css-source-v1", css, &source_entry)) {
+    goto finished;
+  }
+  stylesheet.version = LAGHU_STYLESHEET_CATALOG_VERSION;
+  (void)snprintf(stylesheet.normalized_url, sizeof(stylesheet.normalized_url),
+                 "%s", stylesheet_path);
+  memcpy(stylesheet.source_hash, source_hash, sizeof(stylesheet.source_hash));
+  memcpy(stylesheet.source_key, source_hash, sizeof(stylesheet.source_key));
+  memcpy(stylesheet.policy_key, policy_key, sizeof(stylesheet.policy_key));
+  stylesheet.capability_mask = capability_mask;
+  stylesheet.parser_version = LAGHU_CSS_DERIVATION_VERSION;
+  stylesheet.inline_limit = inline_limit;
+  stylesheet.outline_threshold = outline_threshold;
+  stylesheet.source_length = css.length;
+  stylesheet.updated_at = now;
   for (index = 0U; index < discovery->dependency_count; ++index) {
     laghu_catalog_record catalog;
     laghu_catalog_variant *variant;
@@ -205,6 +226,7 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   }
   if (pending) {
     result->dependencies_pending = true;
+    (void)laghu_stylesheet_publish(cache_path, &stylesheet);
     success = true;
     goto finished;
   }
@@ -270,6 +292,7 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
         }
         (void)laghu_runtime_queue_try_publish(queue, &job);
         result->dependencies_pending = true;
+        (void)laghu_stylesheet_publish(cache_path, &stylesheet);
         success = true;
         goto finished;
       }
@@ -283,6 +306,13 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   memcpy(result->dependency_key, derivation_key,
          sizeof(result->dependency_key));
   if (laghu_runtime_cache_lookup_variant(cache_path, derivation_key, &entry)) {
+    memcpy(stylesheet.derived_key, derivation_key,
+           sizeof(stylesheet.derived_key));
+    memcpy(stylesheet.dependency_key, derivation_key,
+           sizeof(stylesheet.dependency_key));
+    stylesheet.derived_length = entry.length;
+    stylesheet.ready = true;
+    (void)laghu_stylesheet_publish(cache_path, &stylesheet);
     result->data = malloc(entry.length + 1U);
     if (result->data == NULL ||
         !laghu_runtime_cache_read(&entry, result->data, entry.length)) {
@@ -311,6 +341,8 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   if ((rewritten.length >= css.length &&
        rewritten.length - css.length >= byte_savings) ||
       rewritten.applied_filters == 0U) {
+    stylesheet.terminally_excluded = true;
+    (void)laghu_stylesheet_publish(cache_path, &stylesheet);
     laghu_image_markup_result_release(&rewritten);
     success = true;
     goto finished;
@@ -324,6 +356,13 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
     goto finished;
   }
   laghu_image_markup_result_release(&rewritten);
+  memcpy(stylesheet.derived_key, derivation_key,
+         sizeof(stylesheet.derived_key));
+  memcpy(stylesheet.dependency_key, derivation_key,
+         sizeof(stylesheet.dependency_key));
+  stylesheet.derived_length = entry.length;
+  stylesheet.ready = true;
+  (void)laghu_stylesheet_publish(cache_path, &stylesheet);
   result->published = true;
   success = true;
 

@@ -31,6 +31,7 @@ extern "C" {
 #define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
 #define LAGHU_CATALOG_DEFAULT_TTL 604800U
 #define LAGHU_CSS_DERIVATION_VERSION 1U
+#define LAGHU_STYLESHEET_CATALOG_VERSION 1U
 
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
@@ -147,6 +148,25 @@ typedef struct {
   bool used_fallback;
 } laghu_runtime_css_result;
 
+typedef struct {
+  uint32_t version;
+  char normalized_url[LAGHU_RUNTIME_PATH_SIZE];
+  char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+  char source_key[LAGHU_RUNTIME_KEY_SIZE];
+  char derived_key[LAGHU_RUNTIME_KEY_SIZE];
+  char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  uint32_t capability_mask;
+  uint32_t parser_version;
+  unsigned int inline_limit;
+  unsigned int outline_threshold;
+  size_t source_length;
+  size_t derived_length;
+  uint64_t updated_at;
+  bool ready;
+  bool terminally_excluded;
+} laghu_stylesheet_record;
+
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
                                 unsigned int slot_count,
@@ -201,19 +221,37 @@ bool laghu_runtime_rewrite_html(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
-    bool allow_inline, bool csp_allows_data, bool beacon_enabled,
-    size_t inline_limit, unsigned int viewport_width,
+    bool allow_inline, bool allow_css_inline, bool allow_css_outline,
+    bool csp_allows_data, bool csp_allows_inline_styles, bool beacon_enabled,
+    size_t inline_limit, unsigned int css_inline_limit,
+    unsigned int css_outline_threshold, unsigned int viewport_width,
     unsigned int dpr_hundredths, laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
+bool laghu_runtime_rewrite_css_markup(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, bool allow_inline,
+    bool allow_outline, bool csp_allows_inline_styles,
+    unsigned int inline_limit, unsigned int outline_threshold,
+    laghu_runtime_html_result *result);
 bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
                                const char *cache_path, laghu_buffer css,
                                const char *stylesheet_path,
                                const char *page_origin, const char *policy_key,
                                uint32_t capability_mask, uint64_t now,
                                unsigned int ttl_seconds, bool minify,
-                               bool allow_sprites,
+                               bool allow_sprites, unsigned int inline_limit,
+                               unsigned int outline_threshold,
                                laghu_runtime_css_result *result);
 void laghu_runtime_css_result_release(laghu_runtime_css_result *result);
+bool laghu_stylesheet_publish(const char *cache_path,
+                              const laghu_stylesheet_record *record);
+bool laghu_stylesheet_lookup(const char *cache_path, const char *normalized_url,
+                             const char *policy_key, uint32_t capability_mask,
+                             unsigned int inline_limit,
+                             unsigned int outline_threshold, uint64_t now,
+                             unsigned int ttl_seconds,
+                             laghu_stylesheet_record *record);
 bool laghu_runtime_parse_image_beacon(laghu_buffer json,
                                       laghu_image_beacon_record *record);
 bool laghu_catalog_apply_beacon(const char *cache_path, const char *policy_key,

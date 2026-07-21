@@ -35,6 +35,12 @@ mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache"
 printf '%s\n' 'apache laghu smoke' >"${work}/htdocs/index.html"
 printf '%s\n' '/*! keep */ .card { color: red; margin: 0  0; } /* remove */' \
   >"${work}/htdocs/site.css"
+printf '%s\n' '.inline { color: blue; margin: 0  0; } /* remove */' \
+  >"${work}/htdocs/inline.css"
+printf '%s\n' '<link rel="stylesheet" href="/inline.css"><p class="inline">inline</p>' \
+  >"${work}/htdocs/inline-page.html"
+awk 'BEGIN { printf "<style>"; for (i=0;i<400;i++) printf ".x { color: red; margin: 0 0; } "; printf "</style>\n" }' \
+  >"${work}/htdocs/outline-page.html"
 
 load_if_present() {
   name=$1
@@ -92,8 +98,12 @@ load_first_mpm() {
   printf 'ErrorLog "%s/logs/error.log"\n' "${work}"
   printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
   printf 'Laghu ImageBeacon On\nLaghu ImageInlineLimit 2048\n'
+  printf 'Laghu CssInlineLimit 2048\nLaghu CssOutlineThreshold 8192\n'
   printf 'Laghu ImageMetadataLimit 10000\nLaghu ImageMetadataTtl 7d\n'
   printf '<Location "/site.css">\nLaghu RewriteLevel core\n</Location>\n'
+  printf '<Location "/inline.css">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<Location "/inline-page.html">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<Location "/outline-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
   if [ -f "${modules}/mod_http2.so" ]; then
     printf 'Protocols h2c http/1.1\nH2Direct on\n'
@@ -163,6 +173,15 @@ if "${HTTPD}" -t -f "${work}/conflict.conf" >/dev/null 2>&1; then
   echo "Apache accepted conflicting Laghu selectors." >&2
   exit 1
 fi
+for specification in "CssInlineLimit 70000" "CssOutlineThreshold 1000"; do
+  name=${specification%% *}
+  sed "s/Laghu ${name} [0-9]*/Laghu ${specification}/" \
+    "${work}/httpd.conf" >"${work}/invalid-css.conf"
+  if "${HTTPD}" -t -f "${work}/invalid-css.conf" >/dev/null 2>&1; then
+    echo "Apache accepted invalid Laghu ${specification}." >&2
+    exit 1
+  fi
+done
 if command -v setsid >/dev/null 2>&1; then
   setsid "${HTTPD}" -f "${work}/httpd.conf" -DFOREGROUND &
 else
@@ -201,6 +220,38 @@ if grep 'remove' "${work}/css-warm" >/dev/null; then
   exit 1
 fi
 grep -i '^ETag: "laghu-css-' "${work}/css-warm.headers" >/dev/null
+
+curl --fail --silent http://127.0.0.1:18081/inline.css >"${work}/inline-css-cold"
+cmp "${work}/htdocs/inline.css" "${work}/inline-css-cold"
+curl --fail --silent http://127.0.0.1:18081/inline.css >"${work}/inline-css-warm"
+curl --fail --silent http://127.0.0.1:18081/inline-page.html \
+  >"${work}/inline-page-cold"
+cmp "${work}/htdocs/inline-page.html" "${work}/inline-page-cold"
+curl --fail --silent http://127.0.0.1:18081/inline-page.html \
+  >"${work}/inline-page-warm"
+grep '<style>' "${work}/inline-page-warm" >/dev/null
+if grep 'href=' "${work}/inline-page-warm" >/dev/null; then
+  echo "Apache did not inline the warm stylesheet." >&2
+  exit 1
+fi
+
+curl --fail --silent http://127.0.0.1:18081/outline-page.html \
+  >"${work}/outline-cold"
+cmp "${work}/htdocs/outline-page.html" "${work}/outline-cold"
+curl --fail --silent http://127.0.0.1:18081/outline-page.html \
+  >"${work}/outline-publish"
+curl --fail --silent http://127.0.0.1:18081/outline-page.html \
+  >"${work}/outline-warm"
+outline_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' "${work}/outline-warm")
+case "${outline_url}" in
+  /.laghu/css/????????????????????????????????????????????????????????????????) ;;
+  *) echo "Apache did not outline CSS to a hash-only route." >&2; exit 1 ;;
+esac
+curl --fail --silent --dump-header "${work}/outline-asset.headers" \
+  http://127.0.0.1:18081"${outline_url}" >"${work}/outline-asset.css"
+grep -i '^Content-Type: text/css' "${work}/outline-asset.headers" >/dev/null
+grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+  "${work}/outline-asset.headers" >/dev/null
 
 printf 'brigade-flush-eos\n' >"${work}/expected-stream"
 curl --fail --silent --http1.1 --dump-header "${work}/proxy-http1.headers" \

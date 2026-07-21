@@ -395,6 +395,40 @@ static bool ngx_http_laghu_csp_allows_data(ngx_http_request_t *request) {
   }
 }
 
+static bool ngx_http_laghu_csp_allows_inline_style(
+    ngx_http_request_t *request) {
+  ngx_list_part_t *part = &request->headers_out.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        return true;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash != 0U &&
+        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
+        ngx_strncasecmp(headers[index].key.data,
+                        (u_char *)"Content-Security-Policy",
+                        sizeof("Content-Security-Policy") - 1U) == 0) {
+      size_t offset;
+      for (offset = 0U;
+           offset + sizeof("'unsafe-inline'") - 1U <= headers[index].value.len;
+           ++offset) {
+        if (ngx_strncasecmp(headers[index].value.data + offset,
+                            (u_char *)"'unsafe-inline'",
+                            sizeof("'unsafe-inline'") - 1U) == 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+}
+
 static bool ngx_http_laghu_same_origin(ngx_http_request_t *request) {
   ngx_list_part_t *part = &request->headers_in.headers.part;
   ngx_table_elt_t *headers = part->elts;
@@ -1007,7 +1041,9 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
               conf->core.image_metadata_ttl,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U,
-              context->policy.allow_structural_rewrite, &rewritten)) {
+              context->policy.allow_structural_rewrite,
+              conf->core.css_inline_limit, conf->core.css_outline_threshold,
+              &rewritten)) {
         if (rewritten.rewritten) {
           unsigned char *copy = ngx_pnalloc(request->pool, rewritten.length);
           if (copy != NULL) {
@@ -1138,9 +1174,15 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
               conf->core.image_metadata_ttl, filters,
               context->policy.allow_resource_inlining,
+              (context->policy.filter_families &
+               LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
+                  context->policy.allow_resource_inlining,
+              context->policy.allow_structural_rewrite,
               ngx_http_laghu_csp_allows_data(request),
+              ngx_http_laghu_csp_allows_inline_style(request),
               conf->core.image_beacon == LAGHU_MODE_ON,
-              conf->core.image_inline_limit,
+              conf->core.image_inline_limit, conf->core.css_inline_limit,
+              conf->core.css_outline_threshold,
               ngx_http_laghu_viewport_header(request),
               ngx_http_laghu_dpr_header(request), &rewritten)) {
         if (rewritten.rewritten) {
@@ -1278,6 +1320,7 @@ static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {
 
 static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char prefix[] = "/.laghu/image/";
+  static const char css_prefix[] = "/.laghu/css/";
   static const char beacon_script_path[] = "/.laghu/beacon/images.js";
   static const char beacon_post_path[] = "/.laghu/beacon/images";
   static const unsigned char beacon_script[] =
@@ -1298,6 +1341,7 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   ngx_table_elt_t *header;
   unsigned char *body;
   char key[LAGHU_RUNTIME_KEY_SIZE];
+  bool css_asset = false;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
   if (request->uri.len == sizeof(beacon_script_path) - 1U &&
@@ -1359,8 +1403,12 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
     }
     return NGX_DONE;
   }
-  if (request->uri.len != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
-      ngx_strncmp(request->uri.data, prefix, sizeof(prefix) - 1U) != 0) {
+  css_asset =
+      request->uri.len == sizeof(css_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH &&
+      ngx_strncmp(request->uri.data, css_prefix, sizeof(css_prefix) - 1U) == 0;
+  if (!css_asset &&
+      (request->uri.len != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
+       ngx_strncmp(request->uri.data, prefix, sizeof(prefix) - 1U) != 0)) {
     return NGX_DECLINED;
   }
   if (!(request->method & (NGX_HTTP_GET | NGX_HTTP_HEAD))) {
@@ -1369,9 +1417,20 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   if (conf->core.mode != LAGHU_MODE_ON) {
     return NGX_HTTP_NOT_FOUND;
   }
-  ngx_memcpy(key, request->uri.data + sizeof(prefix) - 1U,
+  ngx_memcpy(key,
+             request->uri.data +
+                 (css_asset ? sizeof(css_prefix) - 1U : sizeof(prefix) - 1U),
              LAGHU_SHA256_HEX_LENGTH);
   key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+  {
+    size_t offset;
+    for (offset = 0U; offset < LAGHU_SHA256_HEX_LENGTH; ++offset) {
+      if (!((key[offset] >= '0' && key[offset] <= '9') ||
+            (key[offset] >= 'a' && key[offset] <= 'f'))) {
+        return NGX_HTTP_NOT_FOUND;
+      }
+    }
+  }
   if (!laghu_runtime_cache_lookup_variant((const char *)conf->image_cache.data,
                                           key, &entry) ||
       entry.length == 0U || entry.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
@@ -1383,8 +1442,10 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   }
   request->headers_out.status = NGX_HTTP_OK;
   request->headers_out.content_length_n = (off_t)entry.length;
-  request->headers_out.content_type.data = (u_char *)entry.content_type;
-  request->headers_out.content_type.len = ngx_strlen(entry.content_type);
+  request->headers_out.content_type.data =
+      (u_char *)(css_asset ? "text/css" : entry.content_type);
+  request->headers_out.content_type.len =
+      ngx_strlen(request->headers_out.content_type.data);
   header = ngx_list_push(&request->headers_out.headers);
   if (header == NULL) {
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -1392,6 +1453,21 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   header->hash = 1U;
   ngx_str_set(&header->key, "Cache-Control");
   ngx_str_set(&header->value, "public, max-age=31536000, immutable");
+  header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+  header->hash = 1U;
+  ngx_str_set(&header->key, "ETag");
+  header->value.data = ngx_pnalloc(request->pool, LAGHU_SHA256_HEX_LENGTH + 3U);
+  if (header->value.data == NULL) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+  header->value.len = LAGHU_SHA256_HEX_LENGTH + 2U;
+  header->value.data[0] = '"';
+  ngx_memcpy(header->value.data + 1U, key, LAGHU_SHA256_HEX_LENGTH);
+  header->value.data[LAGHU_SHA256_HEX_LENGTH + 1U] = '"';
+  header->value.data[LAGHU_SHA256_HEX_LENGTH + 2U] = '\0';
   if (ngx_http_send_header(request) == NGX_ERROR ||
       request->method == NGX_HTTP_HEAD) {
     return NGX_OK;
@@ -1644,6 +1720,32 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return "laghu image_metadata_ttl expects a duration from 1h to 30d";
     }
     location->core.image_metadata_ttl = (unsigned int)ttl;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "css_inline_limit") == 0) {
+    ngx_int_t limit = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.css_inline_limit != LAGHU_CSS_INLINE_LIMIT_UNSET) {
+      return "is duplicate";
+    }
+    if (limit < 0 || limit > 65536) {
+      return "laghu css_inline_limit expects an integer from 0 to 65536";
+    }
+    location->core.css_inline_limit = (unsigned int)limit;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "css_outline_threshold") == 0) {
+    ngx_int_t threshold = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.css_outline_threshold !=
+        LAGHU_CSS_OUTLINE_THRESHOLD_UNSET) {
+      return "is duplicate";
+    }
+    if (threshold < 1024 || threshold > 1048576) {
+      return "laghu css_outline_threshold expects an integer from 1024 to "
+             "1048576";
+    }
+    location->core.css_outline_threshold = (unsigned int)threshold;
     return NGX_CONF_OK;
   }
 

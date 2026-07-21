@@ -71,8 +71,10 @@ bool laghu_runtime_rewrite_html(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
-    bool allow_inline, bool csp_allows_data, bool beacon_enabled,
-    size_t inline_limit, unsigned int viewport_width,
+    bool allow_inline, bool allow_css_inline, bool allow_css_outline,
+    bool csp_allows_data, bool csp_allows_inline_styles, bool beacon_enabled,
+    size_t inline_limit, unsigned int css_inline_limit,
+    unsigned int css_outline_threshold, unsigned int viewport_width,
     unsigned int dpr_hundredths, laghu_runtime_html_result *result) {
   laghu_image_discovery_result *discovery = NULL;
   laghu_image_resource *resources = NULL;
@@ -299,6 +301,32 @@ bool laghu_runtime_rewrite_html(
         rewritten = styled;
       } else {
         laghu_image_markup_result_release(&styled);
+      }
+    }
+    if (allow_css_inline || allow_css_outline) {
+      laghu_runtime_html_result css_markup;
+      if (!laghu_runtime_rewrite_css_markup(
+              cache_path, (laghu_buffer){rewritten.data, rewritten.length},
+              page_path, page_origin, policy_key, capability_mask, now,
+              ttl_seconds, allow_css_inline, allow_css_outline,
+              csp_allows_inline_styles, css_inline_limit, css_outline_threshold,
+              &css_markup)) {
+        laghu_image_markup_result_release(&rewritten);
+        goto finished;
+      }
+      if (css_markup.dependencies_pending) {
+        laghu_image_markup_result_release(&rewritten);
+        result->dependencies_pending = true;
+        success = true;
+        goto finished;
+      }
+      if (css_markup.rewritten) {
+        laghu_image_markup_result_release(&rewritten);
+        rewritten.data = css_markup.data;
+        rewritten.length = css_markup.length;
+        rewritten.applied_filters = 1U;
+        memcpy(rewritten.dependency_key, css_markup.dependency_key,
+               sizeof(rewritten.dependency_key));
       }
     }
     static const unsigned char beacon[] =

@@ -29,6 +29,8 @@ cp "${REPO_ROOT}/libs/laghu-image/src/css.c" "${build_dir}/laghu_image_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/catalog.c" "${build_dir}/laghu_catalog.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/html.c" "${build_dir}/laghu_html.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/css_runtime.c" "${build_dir}/laghu_runtime_css.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/css_catalog.c" "${build_dir}/laghu_css_catalog.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/css_markup.c" "${build_dir}/laghu_css_markup.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/beacon.c" "${build_dir}/laghu_beacon.c"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -56,6 +58,8 @@ cd "${build_dir}"
   laghu_catalog.c \
   laghu_html.c \
   laghu_runtime_css.c \
+  laghu_css_catalog.c \
+  laghu_css_markup.c \
   laghu_beacon.c \
   laghu_runtime.c
 

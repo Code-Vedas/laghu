@@ -8,6 +8,8 @@ This directory contains the thin NGINX integration layer. It:
   `laghu image_quality 1..100`, `laghu image_beacon on|off`,
   `laghu image_inline_limit 0..16384`,
   `laghu image_metadata_limit 1..100000`, `laghu image_metadata_ttl 1h..30d`,
+  `laghu css_inline_limit 0..65536`,
+  `laghu css_outline_threshold 1024..1048576`,
   `laghu worker_queue <path>`, and
   `laghu image_cache <path>` at `http`, `server`, and `location` scope
 - inherits configuration through NGINX's normal location hierarchy

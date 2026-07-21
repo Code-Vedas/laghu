@@ -1,0 +1,446 @@
+// Copyright Codevedas Inc. 2026-present
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "laghu/runtime.h"
+
+#define LAGHU_CSS_MARKUP_MAX_ITEMS 64U
+
+typedef struct {
+  unsigned char *data;
+  size_t length;
+  size_t capacity;
+} laghu_css_markup_builder;
+
+static bool laghu_css_markup_append(laghu_css_markup_builder *builder,
+                                    const void *data, size_t length) {
+  size_t needed;
+  unsigned char *grown;
+  if (length > SIZE_MAX - builder->length - 1U) {
+    return false;
+  }
+  needed = builder->length + length + 1U;
+  if (needed > builder->capacity) {
+    size_t capacity = builder->capacity == 0U ? 1024U : builder->capacity;
+    while (capacity < needed) {
+      capacity = capacity > SIZE_MAX / 2U ? needed : capacity * 2U;
+    }
+    grown = realloc(builder->data, capacity);
+    if (grown == NULL) {
+      return false;
+    }
+    builder->data = grown;
+    builder->capacity = capacity;
+  }
+  memcpy(builder->data + builder->length, data, length);
+  builder->length += length;
+  builder->data[builder->length] = '\0';
+  return true;
+}
+
+static bool laghu_css_markup_equal(const unsigned char *value, size_t length,
+                                   const char *expected) {
+  size_t index;
+  if (strlen(expected) != length) {
+    return false;
+  }
+  for (index = 0U; index < length; ++index) {
+    if (tolower(value[index]) != tolower((unsigned char)expected[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static const unsigned char *laghu_css_markup_find(const unsigned char *data,
+                                                  size_t length,
+                                                  const char *needle) {
+  size_t index;
+  size_t needle_length = strlen(needle);
+  for (index = 0U; index + needle_length <= length; ++index) {
+    if (laghu_css_markup_equal(data + index, needle_length, needle)) {
+      return data + index;
+    }
+  }
+  return NULL;
+}
+
+static bool laghu_css_markup_attribute(const unsigned char *tag, size_t length,
+                                       const char *name,
+                                       const unsigned char **value,
+                                       size_t *value_length) {
+  size_t cursor = 1U;
+  while (cursor < length && !isspace(tag[cursor]) && tag[cursor] != '>') {
+    ++cursor;
+  }
+  while (cursor < length) {
+    size_t attribute_start;
+    size_t attribute_end;
+    size_t start;
+    unsigned char quote = 0U;
+    while (cursor < length && (isspace(tag[cursor]) || tag[cursor] == '/')) {
+      ++cursor;
+    }
+    attribute_start = cursor;
+    while (cursor < length &&
+           (isalnum(tag[cursor]) || tag[cursor] == '-' || tag[cursor] == '_')) {
+      ++cursor;
+    }
+    attribute_end = cursor;
+    if (attribute_end == attribute_start) {
+      break;
+    }
+    while (cursor < length && isspace(tag[cursor])) {
+      ++cursor;
+    }
+    if (cursor >= length || tag[cursor] != '=') {
+      if (laghu_css_markup_equal(tag + attribute_start,
+                                 attribute_end - attribute_start, name)) {
+        *value = NULL;
+        *value_length = 0U;
+        return true;
+      }
+      continue;
+    }
+    ++cursor;
+    while (cursor < length && isspace(tag[cursor])) {
+      ++cursor;
+    }
+    if (cursor < length && (tag[cursor] == '\'' || tag[cursor] == '"')) {
+      quote = tag[cursor++];
+    }
+    start = cursor;
+    while (cursor < length &&
+           ((quote != 0U && tag[cursor] != quote) ||
+            (quote == 0U && !isspace(tag[cursor]) && tag[cursor] != '>'))) {
+      ++cursor;
+    }
+    if (laghu_css_markup_equal(tag + attribute_start,
+                               attribute_end - attribute_start, name)) {
+      *value = tag + start;
+      *value_length = cursor - start;
+      return true;
+    }
+    if (quote != 0U && cursor < length) {
+      ++cursor;
+    }
+  }
+  return false;
+}
+
+static bool laghu_css_markup_has(const unsigned char *tag, size_t length,
+                                 const char *name) {
+  const unsigned char *value;
+  size_t value_length;
+  return laghu_css_markup_attribute(tag, length, name, &value, &value_length);
+}
+
+static bool laghu_css_markup_safe_attribute(const unsigned char *value,
+                                            size_t length) {
+  size_t index;
+  for (index = 0U; index < length; ++index) {
+    if (value[index] == '"' || value[index] == '<' || value[index] == '>') {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool laghu_css_markup_normalize(const unsigned char *url, size_t length,
+                                       const char *page_path,
+                                       const char *page_origin,
+                                       char output[LAGHU_RUNTIME_PATH_SIZE]) {
+  const char *slash;
+  size_t prefix = 0U;
+  size_t origin_length = page_origin == NULL ? 0U : strlen(page_origin);
+  if (length == 0U || length >= LAGHU_RUNTIME_PATH_SIZE ||
+      (length >= 2U && url[0] == '/' && url[1] == '/')) {
+    return false;
+  }
+  if (origin_length != 0U && length > origin_length &&
+      memcmp(url, page_origin, origin_length) == 0 &&
+      url[origin_length] == '/') {
+    url += origin_length;
+    length -= origin_length;
+  } else if (memchr(url, ':', length) != NULL) {
+    return false;
+  }
+  if (url[0] != '/') {
+    slash = strrchr(page_path != NULL ? page_path : "/", '/');
+    prefix = slash == NULL ? 1U : (size_t)(slash - page_path + 1U);
+    if (prefix + length >= LAGHU_RUNTIME_PATH_SIZE) {
+      return false;
+    }
+    memcpy(output, page_path, prefix);
+  }
+  memcpy(output + prefix, url, length);
+  output[prefix + length] = '\0';
+  return strstr(output, "..") == NULL &&
+         !(strncmp(output, "/api", 4U) == 0 &&
+           (output[4] == '\0' || output[4] == '/')) &&
+         !(strncmp(output, "/graphql", 8U) == 0 &&
+           (output[8] == '\0' || output[8] == '/'));
+}
+
+static bool laghu_css_markup_read(const char *cache_path, const char *key,
+                                  unsigned char **data, size_t *length) {
+  laghu_runtime_cache_entry entry;
+  if (!laghu_runtime_cache_lookup_variant(cache_path, key, &entry)) {
+    return false;
+  }
+  *data = malloc(entry.length + 1U);
+  if (*data == NULL || !laghu_runtime_cache_read(&entry, *data, entry.length)) {
+    free(*data);
+    *data = NULL;
+    return false;
+  }
+  (*data)[entry.length] = '\0';
+  *length = entry.length;
+  return true;
+}
+
+bool laghu_runtime_rewrite_css_markup(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, bool allow_inline,
+    bool allow_outline, bool csp_allows_inline_styles,
+    unsigned int inline_limit, unsigned int outline_threshold,
+    laghu_runtime_html_result *result) {
+  laghu_css_markup_builder builder = {0};
+  size_t cursor = 0U;
+  size_t original_bundle = html.length;
+  size_t outlined_payload = 0U;
+  size_t rewritten_bundle;
+  unsigned int item_count = 0U;
+  bool changed = false;
+  if (result == NULL || cache_path == NULL || page_path == NULL ||
+      policy_key == NULL || html.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
+    return false;
+  }
+  memset(result, 0, sizeof(*result));
+  while (cursor < html.length) {
+    const unsigned char *open =
+        memchr(html.data + cursor, '<', html.length - cursor);
+    size_t start;
+    size_t end;
+    if (open == NULL) {
+      if (!laghu_css_markup_append(&builder, html.data + cursor,
+                                   html.length - cursor)) {
+        goto failed;
+      }
+      break;
+    }
+    start = (size_t)(open - html.data);
+    if (!laghu_css_markup_append(&builder, html.data + cursor,
+                                 start - cursor)) {
+      goto failed;
+    }
+    end = start + 1U;
+    while (end < html.length && html.data[end] != '>') {
+      ++end;
+    }
+    if (end == html.length || ++item_count > LAGHU_CSS_MARKUP_MAX_ITEMS) {
+      goto unchanged;
+    }
+    if (allow_inline && csp_allows_inline_styles && start + 5U <= end &&
+        laghu_css_markup_equal(html.data + start + 1U, 4U, "link")) {
+      const unsigned char *rel = NULL;
+      const unsigned char *href = NULL;
+      const unsigned char *media = NULL;
+      const unsigned char *type = NULL;
+      size_t rel_length = 0U;
+      size_t href_length = 0U;
+      size_t media_length = 0U;
+      size_t type_length = 0U;
+      char normalized[LAGHU_RUNTIME_PATH_SIZE];
+      laghu_stylesheet_record record;
+      unsigned char *css = NULL;
+      size_t css_length = 0U;
+      bool eligible =
+          laghu_css_markup_attribute(html.data + start, end - start + 1U, "rel",
+                                     &rel, &rel_length) &&
+          laghu_css_markup_equal(rel, rel_length, "stylesheet") &&
+          laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                     "href", &href, &href_length) &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "integrity") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U, "nonce") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "disabled") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "alternate");
+      if (eligible &&
+          laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                     "media", &media, &media_length)) {
+        eligible = laghu_css_markup_equal(media, media_length, "all");
+      }
+      if (eligible &&
+          laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                     "type", &type, &type_length)) {
+        eligible = laghu_css_markup_equal(type, type_length, "text/css");
+      }
+      if (eligible && inline_limit != 0U &&
+          laghu_css_markup_normalize(href, href_length, page_path, page_origin,
+                                     normalized)) {
+        if (!laghu_stylesheet_lookup(
+                cache_path, normalized, policy_key, capability_mask,
+                inline_limit, outline_threshold, now, ttl_seconds, &record)) {
+          result->dependencies_pending = true;
+          goto unchanged;
+        }
+        if ((record.ready || record.terminally_excluded) &&
+            record.source_length <= inline_limit &&
+            laghu_css_markup_read(
+                cache_path,
+                record.ready ? record.derived_key : record.source_key, &css,
+                &css_length) &&
+            strstr((const char *)css, "@import") == NULL &&
+            strstr((const char *)css, "@font-face") == NULL) {
+          if (!laghu_css_markup_append(&builder, "<style>", 7U) ||
+              !laghu_css_markup_append(&builder, css, css_length) ||
+              !laghu_css_markup_append(&builder, "</style>", 8U)) {
+            free(css);
+            goto failed;
+          }
+          original_bundle += css_length;
+          free(css);
+          cursor = end + 1U;
+          changed = true;
+          continue;
+        }
+        free(css);
+      }
+    }
+    if (allow_outline && start + 6U <= end &&
+        laghu_css_markup_equal(html.data + start + 1U, 5U, "style") &&
+        !laghu_css_markup_has(html.data + start, end - start + 1U, "nonce") &&
+        !laghu_css_markup_has(html.data + start, end - start + 1U, "scoped")) {
+      const unsigned char *media = NULL;
+      const unsigned char *type = NULL;
+      size_t media_length = 0U;
+      size_t type_length = 0U;
+      bool has_media = laghu_css_markup_attribute(
+          html.data + start, end - start + 1U, "media", &media, &media_length);
+      bool has_type = laghu_css_markup_attribute(
+          html.data + start, end - start + 1U, "type", &type, &type_length);
+      const unsigned char *close = laghu_css_markup_find(
+          html.data + end + 1U, html.length - end - 1U, "</style>");
+      size_t css_length =
+          close == NULL ? 0U : (size_t)(close - html.data) - end - 1U;
+      if ((!has_media ||
+           laghu_css_markup_safe_attribute(media, media_length)) &&
+          (!has_type ||
+           laghu_css_markup_equal(type, type_length, "text/css")) &&
+          close != NULL && css_length >= outline_threshold &&
+          laghu_css_markup_find(html.data + end + 1U, css_length, "@import") ==
+              NULL &&
+          laghu_css_markup_find(html.data + end + 1U, css_length,
+                                "@font-face") == NULL) {
+        laghu_runtime_css_result css_result;
+        char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+        char synthetic_path[LAGHU_RUNTIME_PATH_SIZE];
+        const char *slash = strrchr(page_path, '/');
+        size_t directory_length =
+            slash == NULL ? 1U : (size_t)(slash - page_path + 1U);
+        if (!laghu_sha256_hex((laghu_buffer){html.data + end + 1U, css_length},
+                              source_hash) ||
+            directory_length + sizeof(".laghu-style-.css") - 1U +
+                    LAGHU_SHA256_HEX_LENGTH >=
+                sizeof(synthetic_path)) {
+          goto unchanged;
+        }
+        memcpy(synthetic_path, page_path, directory_length);
+        (void)snprintf(synthetic_path + directory_length,
+                       sizeof(synthetic_path) - directory_length,
+                       ".laghu-style-%s.css", source_hash);
+        if (!laghu_runtime_rewrite_css(
+                NULL, cache_path,
+                (laghu_buffer){html.data + end + 1U, css_length},
+                synthetic_path, page_origin, policy_key, capability_mask, now,
+                ttl_seconds, true, false, inline_limit, outline_threshold,
+                &css_result)) {
+          goto unchanged;
+        }
+        if (css_result.published || css_result.dependencies_pending) {
+          laghu_runtime_css_result_release(&css_result);
+          result->dependencies_pending = true;
+          goto unchanged;
+        }
+        if (css_result.rewritten && css_result.length < css_length) {
+          char link[512U];
+          int length = snprintf(
+              link, sizeof(link),
+              "<link rel=\"stylesheet\" href=\"/.laghu/css/%s\"%s%.*s%s%s>",
+              css_result.dependency_key, has_media ? " media=\"" : "",
+              has_media ? (int)media_length : 0,
+              has_media ? (const char *)media : "", has_media ? "\"" : "",
+              has_type ? " type=\"text/css\"" : "");
+          if (length <= 0 || (size_t)length >= sizeof(link) ||
+              !laghu_css_markup_append(&builder, link, (size_t)length)) {
+            laghu_runtime_css_result_release(&css_result);
+            goto failed;
+          }
+          outlined_payload += css_result.length;
+          laghu_runtime_css_result_release(&css_result);
+          cursor = (size_t)(close - html.data) + 8U;
+          changed = true;
+          continue;
+        }
+        laghu_runtime_css_result_release(&css_result);
+      }
+    }
+    if (!laghu_css_markup_append(&builder, html.data + start,
+                                 end - start + 1U)) {
+      goto failed;
+    }
+    cursor = end + 1U;
+  }
+  rewritten_bundle = builder.length + outlined_payload;
+  if (!changed || rewritten_bundle >= original_bundle) {
+    goto unchanged;
+  }
+  if (!laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
+                        result->dependency_key)) {
+    goto failed;
+  }
+  {
+    laghu_runtime_cache_entry entry;
+    if (!laghu_runtime_cache_lookup_variant(cache_path, result->dependency_key,
+                                            &entry)) {
+      if (!laghu_runtime_cache_publish(
+              cache_path, result->dependency_key, result->dependency_key,
+              result->dependency_key, "text/html", "laghu-css-markup-v1",
+              (laghu_buffer){builder.data, builder.length}, &entry)) {
+        goto failed;
+      }
+      free(builder.data);
+      result->dependencies_pending = true;
+      return true;
+    }
+    result->data = malloc(entry.length + 1U);
+    if (result->data == NULL ||
+        !laghu_runtime_cache_read(&entry, result->data, entry.length)) {
+      goto failed;
+    }
+    result->data[entry.length] = '\0';
+    result->length = entry.length;
+    result->rewritten = true;
+    free(builder.data);
+    return true;
+  }
+
+unchanged:
+  free(builder.data);
+  return true;
+failed:
+  free(builder.data);
+  free(result->data);
+  memset(result, 0, sizeof(*result));
+  return false;
+}

@@ -35,6 +35,12 @@ image_smoke=0
 optimizer_pid=""
 printf '%s\n' '/*! keep */ .card { color: red; margin: 0  0; } /* remove */' \
   >"${SMOKE_DIR}/html/site.css"
+printf '%s\n' '.inline { color: blue; margin: 0  0; } /* remove */' \
+  >"${SMOKE_DIR}/html/inline.css"
+printf '%s\n' '<link rel="stylesheet" href="/inline.css"><p class="inline">inline</p>' \
+  >"${SMOKE_DIR}/html/inline-page.html"
+awk 'BEGIN { printf "<style>"; for (i=0;i<400;i++) printf ".x { color: red; margin: 0 0; } "; printf "</style>\n" }' \
+  >"${SMOKE_DIR}/html/outline-page.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -85,6 +91,8 @@ http {
     laghu image_quality 82;
     laghu image_beacon on;
     laghu image_inline_limit 2048;
+    laghu css_inline_limit 2048;
+    laghu css_outline_threshold 8192;
     laghu image_metadata_limit 10000;
     laghu image_metadata_ttl 7d;
     laghu worker_queue ${SMOKE_DIR}/jobs.queue;
@@ -93,6 +101,24 @@ http {
     location = /site.css {
       default_type text/css;
       try_files /site.css =404;
+    }
+
+    location = /inline.css {
+      laghu rewrite_level all;
+      default_type text/css;
+      try_files /inline.css =404;
+    }
+
+    location = /inline-page.html {
+      laghu rewrite_level all;
+      default_type text/html;
+      try_files /inline-page.html =404;
+    }
+
+    location = /outline-page.html {
+      laghu rewrite_level all;
+      default_type text/html;
+      try_files /outline-page.html =404;
     }
 
     location = /image.png {
@@ -307,6 +333,19 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   exit 1
 fi
 grep 'is duplicate' "${SMOKE_DIR}/duplicate-quality-config-output" >/dev/null
+
+for specification in \
+    "css_inline_limit 70000" \
+    "css_outline_threshold 1000"; do
+  name=${specification%% *}
+  sed "s/laghu ${name} [0-9]*;/laghu ${specification};/" \
+    "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-${name}-nginx.conf"
+  if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+      -c "${SMOKE_DIR}/invalid-${name}-nginx.conf" >/dev/null 2>&1; then
+    echo "NGINX accepted invalid Laghu ${name}." >&2
+    exit 1
+  fi
+done
 
 for directive in worker_queue image_cache; do
   sed "s#laghu ${directive} #laghu ${directive} /tmp/duplicate; laghu ${directive} #" \
@@ -684,6 +723,39 @@ if grep 'remove' "${SMOKE_DIR}/css-warm" >/dev/null; then
   echo "NGINX did not serve the warm minified CSS derivation." >&2
   exit 1
 fi
+curl --fail --silent --show-error --output "${SMOKE_DIR}/inline-css-cold" \
+  "http://127.0.0.1:${PORT}/inline.css"
+cmp "${SMOKE_DIR}/html/inline.css" "${SMOKE_DIR}/inline-css-cold"
+curl --fail --silent --show-error --output "${SMOKE_DIR}/inline-css-warm" \
+  "http://127.0.0.1:${PORT}/inline.css"
+curl --fail --silent --show-error --output "${SMOKE_DIR}/inline-page-cold" \
+  "http://127.0.0.1:${PORT}/inline-page.html"
+cmp "${SMOKE_DIR}/html/inline-page.html" "${SMOKE_DIR}/inline-page-cold"
+curl --fail --silent --show-error --output "${SMOKE_DIR}/inline-page-warm" \
+  "http://127.0.0.1:${PORT}/inline-page.html"
+grep '<style>' "${SMOKE_DIR}/inline-page-warm" >/dev/null
+if grep 'href=' "${SMOKE_DIR}/inline-page-warm" >/dev/null; then
+  echo "NGINX did not inline the warm stylesheet." >&2
+  exit 1
+fi
+curl --fail --silent --output "${SMOKE_DIR}/outline-cold" \
+  "http://127.0.0.1:${PORT}/outline-page.html"
+cmp "${SMOKE_DIR}/html/outline-page.html" "${SMOKE_DIR}/outline-cold"
+curl --fail --silent --output "${SMOKE_DIR}/outline-publish" \
+  "http://127.0.0.1:${PORT}/outline-page.html"
+curl --fail --silent --output "${SMOKE_DIR}/outline-warm" \
+  "http://127.0.0.1:${PORT}/outline-page.html"
+outline_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' "${SMOKE_DIR}/outline-warm")
+case "${outline_url}" in
+  /.laghu/css/????????????????????????????????????????????????????????????????) ;;
+  *) echo "NGINX did not outline CSS to a hash-only route." >&2; exit 1 ;;
+esac
+curl --fail --silent --dump-header "${SMOKE_DIR}/outline-asset.headers" \
+  --output "${SMOKE_DIR}/outline-asset.css" \
+  "http://127.0.0.1:${PORT}${outline_url}"
+grep -i '^Content-Type: text/css' "${SMOKE_DIR}/outline-asset.headers" >/dev/null
+grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+  "${SMOKE_DIR}/outline-asset.headers" >/dev/null
 grep -i '^ETag: "laghu-css-' "${SMOKE_DIR}/css-warm.headers" >/dev/null
 
 kill "${nginx_pid}"

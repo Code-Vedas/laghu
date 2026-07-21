@@ -99,6 +99,8 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.image_inline_limit == LAGHU_IMAGE_INLINE_LIMIT_DEFAULT);
   assert(result.image_metadata_limit == LAGHU_IMAGE_METADATA_LIMIT_DEFAULT);
   assert(result.image_metadata_ttl == LAGHU_IMAGE_METADATA_TTL_DEFAULT);
+  assert(result.css_inline_limit == LAGHU_CSS_INLINE_LIMIT_DEFAULT);
+  assert(result.css_outline_threshold == LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT);
 
   parent.mode = LAGHU_MODE_ON;
   parent.preset = LAGHU_PRESET_SAFE;
@@ -108,6 +110,8 @@ static void test_config_defaults_and_inheritance(void) {
   parent.image_inline_limit = 4096U;
   parent.image_metadata_limit = 5000U;
   parent.image_metadata_ttl = 86400U;
+  parent.css_inline_limit = 8192U;
+  parent.css_outline_threshold = 16384U;
   child.preset = LAGHU_PRESET_STATIC;
   laghu_config_merge(&result, &parent, &child);
   assert(result.mode == LAGHU_MODE_ON);
@@ -119,6 +123,8 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.image_inline_limit == 4096U);
   assert(result.image_metadata_limit == 5000U);
   assert(result.image_metadata_ttl == 86400U);
+  assert(result.css_inline_limit == 8192U);
+  assert(result.css_outline_threshold == 16384U);
 
   child.mode = LAGHU_MODE_OFF;
   child.allow_api = LAGHU_MODE_OFF;
@@ -504,8 +510,8 @@ static void test_hashing(void) {
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
   assert(strcmp(key,
-                "b5d11f4a05489db0bbd252a8f09ba527aacfcb69069bdaf4270326a05585"
-                "9bc5") == 0);
+                "9708b28574b27d2dfdf7617339316a09b936a78cb525f690ab9bb33c7947"
+                "fca3") == 0);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,

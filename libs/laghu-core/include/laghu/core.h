@@ -17,7 +17,7 @@ extern "C" {
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
-#define LAGHU_VARIANT_KEY_VERSION 3U
+#define LAGHU_VARIANT_KEY_VERSION 4U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -25,6 +25,10 @@ extern "C" {
 #define LAGHU_IMAGE_INLINE_LIMIT_DEFAULT 2048U
 #define LAGHU_IMAGE_METADATA_LIMIT_DEFAULT 10000U
 #define LAGHU_IMAGE_METADATA_TTL_DEFAULT 604800U
+#define LAGHU_CSS_INLINE_LIMIT_UNSET UINT32_MAX
+#define LAGHU_CSS_INLINE_LIMIT_DEFAULT 2048U
+#define LAGHU_CSS_OUTLINE_THRESHOLD_UNSET 0U
+#define LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT 8192U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -87,6 +91,8 @@ typedef struct {
   bool allow_script_reordering;
   bool allow_experimental;
   unsigned int image_quality;
+  unsigned int css_inline_limit;
+  unsigned int css_outline_threshold;
 } laghu_policy;
 
 typedef struct {
@@ -99,6 +105,8 @@ typedef struct {
   unsigned int image_inline_limit;
   unsigned int image_metadata_limit;
   unsigned int image_metadata_ttl;
+  unsigned int css_inline_limit;
+  unsigned int css_outline_threshold;
 } laghu_config;
 
 typedef struct {

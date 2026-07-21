@@ -77,6 +77,38 @@ typedef struct {
 #define LAGHU_CACHE_MAGIC UINT64_C(0x4c41474855434143)
 #define LAGHU_CACHE_VERSION 2U
 
+static bool laghu_hash_valid(const char *value) {
+  size_t index;
+  if (value == NULL || value[LAGHU_RUNTIME_KEY_SIZE - 1U] != '\0') {
+    return false;
+  }
+  for (index = 0U; index + 1U < LAGHU_RUNTIME_KEY_SIZE; ++index) {
+    if (!((value[index] >= '0' && value[index] <= '9') ||
+          (value[index] >= 'a' && value[index] <= 'f'))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool laghu_sprite_job_valid(const laghu_runtime_job *job) {
+  unsigned int index;
+  if (job->kind != LAGHU_RUNTIME_JOB_SPRITE) {
+    return job->sprite_count == 0U;
+  }
+  if (job->sprite_count < 2U ||
+      job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
+      job->payload.length != 0U) {
+    return false;
+  }
+  for (index = 0U; index < job->sprite_count; ++index) {
+    if (!laghu_hash_valid(job->sprite_variant_keys[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static size_t laghu_queue_slot_size(size_t payload_size) {
   return sizeof(laghu_queue_slot) + payload_size;
 }
@@ -367,6 +399,8 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
   if (queue == NULL || queue->mapping == NULL || job == NULL ||
       job->target_count > LAGHU_RUNTIME_MAX_TARGETS ||
       job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
+      !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key) ||
+      !laghu_sprite_job_valid(job) ||
       job->payload.length > queue->slot_payload_size ||
       (job->payload.data == NULL && job->payload.length != 0U) ||
       !laghu_lock(queue->platform_file, F_WRLCK)) {

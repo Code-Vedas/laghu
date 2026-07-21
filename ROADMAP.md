@@ -156,13 +156,19 @@ loading, dependency ETags, and the page-bundle never-larger gate. The shared
 bounded CSS parser discovers conservative standalone no-repeat backgrounds;
 `laghu-libvips` publishes at most one horizontal PNG sprite per stylesheet
 before either adapter rewrites URLs and positions.
+CSS inline/outline evidence: inherited thresholds participate in variant keys;
+the versioned stylesheet catalog publishes source and derived payloads without
+origin fetching; strict link/style eligibility, CSP checks, dependency
+invalidation, cold-original publication, combined-transfer gates, and
+hash-only immutable CSS delivery are unit tested and exercised by both NGINX
+and Apache cold/warm smoke paths.
 
 ### 3.3 CSS Filters
 
 - [x] `rewrite_css`: safely minify CSS and rewrite ready same-format image URLs.
 - [ ] `combine_css`: combine compatible stylesheets.
-- [ ] `inline_css`: inline eligible small external stylesheets.
-- [ ] `outline_css`: externalize eligible large inline style blocks.
+- [x] `inline_css`: inline eligible small external stylesheets.
+- [x] `outline_css`: externalize eligible large inline style blocks.
 - [ ] `flatten_css_imports`: flatten compatible `@import` chains.
 - [ ] `inline_import_to_link`: convert `@import` rules to links.
 - [ ] `inline_google_font_css`: inline eligible Google Fonts CSS.

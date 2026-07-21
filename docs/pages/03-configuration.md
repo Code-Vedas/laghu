@@ -21,6 +21,8 @@ semicolons. Unsupported settings fail server configuration validation.
 | `laghu image_inline_limit 2048;` | `Laghu ImageInlineLimit 2048` |
 | `laghu image_metadata_limit 10000;` | `Laghu ImageMetadataLimit 10000` |
 | `laghu image_metadata_ttl 7d;` | `Laghu ImageMetadataTtl 7d` |
+| `laghu css_inline_limit 2048;` | `Laghu CssInlineLimit 2048` |
+| `laghu css_outline_threshold 8192;` | `Laghu CssOutlineThreshold 8192` |
 
 ## `laghu on|off`
 
@@ -100,6 +102,8 @@ laghu image_beacon off;
 laghu image_inline_limit 2048;
 laghu image_metadata_limit 10000;
 laghu image_metadata_ttl 7d;
+laghu css_inline_limit 2048;
+laghu css_outline_threshold 8192;
 laghu worker_queue /run/laghu/jobs.queue;
 laghu image_cache /var/cache/laghu/images;
 ```
@@ -119,6 +123,18 @@ to 10,000 entries with a seven-day TTL; accepted TTLs range from `1h..30d`.
 The same settings are exposed by Apache as `Laghu ImageBeacon`,
 `Laghu ImageInlineLimit`, `Laghu ImageMetadataLimit`, and
 `Laghu ImageMetadataTtl`.
+
+Stylesheet inlining defaults to 2 KiB and accepts `0..65536`; zero disables
+it. Outlining considers complete inline style blocks from 8 KiB by default and
+accepts `1024..1048576`. Inlining requires a ready same-origin stylesheet,
+inline-style CSP permission, and the strict integrity/nonce/media/import/font
+eligibility checks. Outlining requires structural-rewrite permission. Both
+preserve the first HTML response and apply only after their catalog dependency
+is ready and the combined HTML/CSS transfer is smaller.
+
+Outlined assets are exposed only through the validated
+`/.laghu/css/<sha256>` route with `text/css`, a strong ETag, and one-year
+immutable caching. Laghu never fetches a stylesheet from an origin.
 
 Cold HTML is preserved while Laghu discovers image dependencies. Warm HTML is
 rewritten only after every dependency is ready or terminally excluded. When

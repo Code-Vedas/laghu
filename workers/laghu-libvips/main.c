@@ -549,11 +549,36 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path,
   job.filters = LAGHU_IMAGE_FILTER_ALL;
   job.quality = 82U;
   job.allow_lossy = true;
-  job.accept_webp = true;
+  job.accept_webp = false;
   job.payload = (laghu_buffer){input, input_length};
   submitted = laghu_runtime_queue_try_publish(&queue, &job);
   laghu_runtime_queue_close(&queue);
   free(input);
+  return submitted ? 0 : 1;
+}
+
+static int laghu_libvips_submit_sprite(const char *queue_path,
+                                       const char *first_key,
+                                       const char *second_key,
+                                       const char *output_key) {
+  laghu_runtime_queue queue = {0};
+  laghu_runtime_job job = {0};
+  bool submitted;
+  if (strlen(first_key) != LAGHU_SHA256_HEX_LENGTH ||
+      strlen(second_key) != LAGHU_SHA256_HEX_LENGTH ||
+      strlen(output_key) != LAGHU_SHA256_HEX_LENGTH ||
+      !laghu_runtime_queue_open(&queue, queue_path)) {
+    return 1;
+  }
+  job.kind = LAGHU_RUNTIME_JOB_SPRITE;
+  job.sprite_count = 2U;
+  strcpy(job.sprite_variant_keys[0], first_key);
+  strcpy(job.sprite_variant_keys[1], second_key);
+  strcpy(job.index_key, output_key);
+  strcpy(job.policy_key, output_key);
+  strcpy(job.validator, output_key);
+  submitted = laghu_runtime_queue_try_publish(&queue, &job);
+  laghu_runtime_queue_close(&queue);
   return submitted ? 0 : 1;
 }
 
@@ -721,11 +746,15 @@ int main(int argc, char **argv) {
   if (argc == 6 && strcmp(argv[1], "--submit") == 0) {
     return laghu_libvips_submit(argv[2], argv[3], argv[4], argv[5]);
   }
+  if (argc == 6 && strcmp(argv[1], "--submit-sprite") == 0) {
+    return laghu_libvips_submit_sprite(argv[2], argv[3], argv[4], argv[5]);
+  }
   fprintf(stderr,
           "usage: %s --probe | --transform <input> <output> | "
           "--init <queue> <cache> | --serve <queue> <cache> | "
           "--init-and-serve <queue> <cache> | --once <queue> <cache> | "
-          "--submit <queue> <input> <path> <validator>\n",
+          "--submit <queue> <input> <path> <validator> | "
+          "--submit-sprite <queue> <first-key> <second-key> <output-key>\n",
           argv[0]);
   return 2;
 }

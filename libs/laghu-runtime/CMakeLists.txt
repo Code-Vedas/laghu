@@ -9,7 +9,7 @@ else()
   set(LAGHU_RUNTIME_SOURCE src/runtime_posix.c)
 endif()
 
-add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/catalog.c src/html.c src/css_runtime.c src/beacon.c)
+add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/catalog.c src/html.c src/css_runtime.c src/css_catalog.c src/css_markup.c src/beacon.c)
 add_library(Laghu::Runtime ALIAS laghu_runtime)
 
 target_include_directories(laghu_runtime
@@ -22,6 +22,16 @@ target_link_libraries(laghu_runtime PUBLIC Laghu::Core Laghu::Image)
 set_target_properties(laghu_runtime PROPERTIES C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+if(LAGHU_BUILD_FUZZERS)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "LAGHU_BUILD_FUZZERS requires Clang")
+  endif()
+  add_executable(laghu_runtime_fuzz tests/runtime_fuzz.c)
+  target_link_libraries(laghu_runtime_fuzz PRIVATE Laghu::Runtime)
+  target_compile_options(laghu_runtime_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(laghu_runtime_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 if(LAGHU_BUILD_TESTS)

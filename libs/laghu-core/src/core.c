@@ -245,6 +245,8 @@ static void laghu_policy_init(laghu_policy *policy) {
   policy->allow_script_reordering = false;
   policy->allow_experimental = false;
   policy->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
+  policy->css_inline_limit = LAGHU_CSS_INLINE_LIMIT_DEFAULT;
+  policy->css_outline_threshold = LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT;
 }
 
 static bool laghu_config_has_policy_selector(const laghu_config *config) {
@@ -343,6 +345,8 @@ void laghu_config_init(laghu_config *config) {
   config->image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_UNSET;
   config->image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_UNSET;
   config->image_metadata_ttl = LAGHU_IMAGE_METADATA_TTL_UNSET;
+  config->css_inline_limit = LAGHU_CSS_INLINE_LIMIT_UNSET;
+  config->css_outline_threshold = LAGHU_CSS_OUTLINE_THRESHOLD_UNSET;
 }
 
 void laghu_config_merge(laghu_config *result, const laghu_config *parent,
@@ -356,6 +360,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   unsigned int parent_image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_DEFAULT;
   unsigned int parent_image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_DEFAULT;
   unsigned int parent_image_metadata_ttl = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
+  unsigned int parent_css_inline_limit = LAGHU_CSS_INLINE_LIMIT_DEFAULT;
+  unsigned int parent_css_outline_threshold =
+      LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT;
 
   if (result == NULL) {
     return;
@@ -386,6 +393,12 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     }
     if (parent->image_metadata_ttl != LAGHU_IMAGE_METADATA_TTL_UNSET) {
       parent_image_metadata_ttl = parent->image_metadata_ttl;
+    }
+    if (parent->css_inline_limit != LAGHU_CSS_INLINE_LIMIT_UNSET) {
+      parent_css_inline_limit = parent->css_inline_limit;
+    }
+    if (parent->css_outline_threshold != LAGHU_CSS_OUTLINE_THRESHOLD_UNSET) {
+      parent_css_outline_threshold = parent->css_outline_threshold;
     }
   }
 
@@ -424,6 +437,15 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
               child->image_metadata_ttl != LAGHU_IMAGE_METADATA_TTL_UNSET
           ? child->image_metadata_ttl
           : parent_image_metadata_ttl;
+  result->css_inline_limit =
+      child != NULL && child->css_inline_limit != LAGHU_CSS_INLINE_LIMIT_UNSET
+          ? child->css_inline_limit
+          : parent_css_inline_limit;
+  result->css_outline_threshold =
+      child != NULL &&
+              child->css_outline_threshold != LAGHU_CSS_OUTLINE_THRESHOLD_UNSET
+          ? child->css_outline_threshold
+          : parent_css_outline_threshold;
 }
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset) {
@@ -652,6 +674,16 @@ bool laghu_resolve_config_policy(const laghu_config *config,
       policy->image_quality = config->image_quality;
     }
   }
+  if (resolved) {
+    policy->css_inline_limit =
+        config->css_inline_limit == LAGHU_CSS_INLINE_LIMIT_UNSET
+            ? LAGHU_CSS_INLINE_LIMIT_DEFAULT
+            : config->css_inline_limit;
+    policy->css_outline_threshold =
+        config->css_outline_threshold == LAGHU_CSS_OUTLINE_THRESHOLD_UNSET
+            ? LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT
+            : config->css_outline_threshold;
+  }
   return resolved;
 }
 
@@ -789,7 +821,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   static const unsigned char namespace_value[] = "laghu-variant";
   laghu_sha256_context context;
   unsigned char digest[LAGHU_SHA256_DIGEST_SIZE];
-  unsigned char fields[14];
+  unsigned char fields[22];
   bool has_preset;
   bool has_rewrite_level;
   bool preset_is_valid;
@@ -815,7 +847,9 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
       has_preset == has_rewrite_level ||
       policy->risk_level < LAGHU_RISK_CONSERVATIVE ||
       policy->risk_level > LAGHU_RISK_EXPANSIVE ||
-      policy->image_quality > 100U ||
+      policy->image_quality > 100U || policy->css_inline_limit > 65536U ||
+      policy->css_outline_threshold < 1024U ||
+      policy->css_outline_threshold > 1048576U ||
       (policy->filter_families & ~((uint32_t)LAGHU_FILTER_ALL)) != 0U) {
     output[0] = '\0';
     return false;
@@ -836,6 +870,14 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   fields[11] = policy->allow_script_reordering ? 1U : 0U;
   fields[12] = policy->allow_experimental ? 1U : 0U;
   fields[13] = (unsigned char)policy->image_quality;
+  fields[14] = (unsigned char)(policy->css_inline_limit >> 24U);
+  fields[15] = (unsigned char)(policy->css_inline_limit >> 16U);
+  fields[16] = (unsigned char)(policy->css_inline_limit >> 8U);
+  fields[17] = (unsigned char)policy->css_inline_limit;
+  fields[18] = (unsigned char)(policy->css_outline_threshold >> 24U);
+  fields[19] = (unsigned char)(policy->css_outline_threshold >> 16U);
+  fields[20] = (unsigned char)(policy->css_outline_threshold >> 8U);
+  fields[21] = (unsigned char)policy->css_outline_threshold;
 
   laghu_sha256_init(&context);
   laghu_sha256_update(&context, namespace_value, sizeof(namespace_value) - 1U);

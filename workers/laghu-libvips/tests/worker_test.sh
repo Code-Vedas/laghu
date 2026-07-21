@@ -11,6 +11,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/laghu-worker-XXXXXX")
 queue="${work}/jobs.queue"
 cache="${work}/cache"
 source_image="${work}/source.png"
+second_image="${work}/second.png"
 
 cleanup() {
   rm -rf "${work}"
@@ -21,6 +22,9 @@ ulimit -c 0 2>/dev/null || true
 vips black "${work}/source.v" 512 512 --bands 3
 vips pngsave "${work}/source.v" "${source_image}" --compression 0
 rm -f "${work}/source.v"
+vips black "${work}/second.v" 512 512 --bands 3
+vips pngsave "${work}/second.v" "${second_image}" --compression 1
+rm -f "${work}/second.v"
 
 "${optimizer}" --init "${queue}" "${cache}"
 "${optimizer}" --submit "${queue}" "${source_image}" /source.png '"v1"'
@@ -37,6 +41,15 @@ if LAGHU_TEST_CRASH=1 "${optimizer}" --once "${queue}" "${cache}"; then
 fi
 "${optimizer}" --submit "${queue}" "${source_image}" /source.png '"restart"'
 "${optimizer}" --once "${queue}" "${cache}"
+"${optimizer}" --submit "${queue}" "${second_image}" /second.png '"sprite"'
+"${optimizer}" --once "${queue}" "${cache}"
+
+set -- $(find "${cache}" -name 'variant-*.bin' -type f | sed -E 's#.*variant-([0-9a-f]{64})\.bin#\1#' | head -n 2)
+test "$#" = 2
+sprite_key=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+"${optimizer}" --submit-sprite "${queue}" "$1" "$2" "${sprite_key}"
+"${optimizer}" --once "${queue}" "${cache}"
+test -s "${cache}/variant-${sprite_key}.bin"
 
 "${optimizer}" --submit "${queue}" "${source_image}" /source.png '"timeout"'
 if LAGHU_TEST_TIMEOUT_SECONDS=1 LAGHU_TEST_JOB_DELAY_SECONDS=2 \

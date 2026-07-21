@@ -261,6 +261,27 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     config->core.image_metadata_ttl = (unsigned int)seconds;
     return NULL;
   }
+  if (ap_cstr_casecmp(name, "CssInlineLimit") == 0) {
+    quality = strtoul(parameter, &end, 10);
+    if (config->core.css_inline_limit != LAGHU_CSS_INLINE_LIMIT_UNSET ||
+        end == parameter || *end != '\0' || quality > 65536U) {
+      return "Laghu CssInlineLimit expects 0 through 65536 exactly once";
+    }
+    config->core.css_inline_limit = (unsigned int)quality;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "CssOutlineThreshold") == 0) {
+    quality = strtoul(parameter, &end, 10);
+    if (config->core.css_outline_threshold !=
+            LAGHU_CSS_OUTLINE_THRESHOLD_UNSET ||
+        end == parameter || *end != '\0' || quality < 1024U ||
+        quality > 1048576U) {
+      return "Laghu CssOutlineThreshold expects 1024 through 1048576 exactly "
+             "once";
+    }
+    config->core.css_outline_threshold = (unsigned int)quality;
+    return NULL;
+  }
   if (ap_cstr_casecmp(name, "WorkerQueue") == 0) {
     if (config->worker_queue != NULL) {
       return "Laghu WorkerQueue may appear only once in this scope";
@@ -362,10 +383,10 @@ static laghu_decision laghu_apache_decide(ap_filter_t *filter,
         request->clength > (apr_off_t)LAGHU_IMAGE_MAX_INPUT_BYTES ||
         !laghu_resolve_config_policy(&config->core, &context->policy) ||
         !laghu_variant_key((laghu_buffer){NULL, 0U}, &context->policy,
-                           context->policy_key) ||
-        !laghu_apache_backend_available(config)) {
+                           context->policy_key)) {
       return LAGHU_DECISION_PASS;
     }
+    (void)laghu_apache_backend_available(config);
     context->filters = laghu_apache_image_filters(&context->policy);
     context->capture_capacity = (size_t)request->clength;
     context->capture = apr_palloc(request->pool, context->capture_capacity);
@@ -603,7 +624,9 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
               (uint64_t)apr_time_sec(apr_time_now()),
               context->config->core.image_metadata_ttl,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U,
-              context->policy.allow_structural_rewrite, &rewritten)) {
+              context->policy.allow_structural_rewrite,
+              context->config->core.css_inline_limit,
+              context->config->core.css_outline_threshold, &rewritten)) {
         if (rewritten.rewritten) {
           selected =
               apr_pmemdup(request->pool, rewritten.data, rewritten.length);
@@ -652,6 +675,8 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
       const char *csp =
           apr_table_get(request->headers_out, "Content-Security-Policy");
       bool csp_allows_data = csp == NULL || ap_strcasestr(csp, "data:") != NULL;
+      bool csp_allows_inline =
+          csp == NULL || ap_strcasestr(csp, "'unsafe-inline'") != NULL;
       unsigned char *selected = context->capture;
       size_t selected_length = context->capture_length;
       apr_bucket_brigade *replacement;
@@ -664,9 +689,16 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
               context->config->queue.capabilities,
               (uint64_t)apr_time_sec(apr_time_now()),
               context->config->core.image_metadata_ttl, context->filters,
-              context->policy.allow_resource_inlining, csp_allows_data,
+              context->policy.allow_resource_inlining,
+              (context->policy.filter_families &
+               LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
+                  context->policy.allow_resource_inlining,
+              context->policy.allow_structural_rewrite, csp_allows_data,
+              csp_allows_inline,
               context->config->core.image_beacon == LAGHU_MODE_ON,
               context->config->core.image_inline_limit,
+              context->config->core.css_inline_limit,
+              context->config->core.css_outline_threshold,
               laghu_apache_viewport_header(request),
               laghu_apache_dpr_header(request), &rewritten)) {
         if (rewritten.rewritten) {
@@ -753,6 +785,7 @@ static void laghu_apache_insert_filter(request_rec *request) {
 
 static int laghu_apache_variant_handler(request_rec *request) {
   static const char prefix[] = "/.laghu/image/";
+  static const char css_prefix[] = "/.laghu/css/";
   static const char script_path[] = "/.laghu/beacon/images.js";
   static const char post_path[] = "/.laghu/beacon/images";
   static const char script[] =
@@ -772,6 +805,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
   laghu_runtime_cache_entry entry;
   unsigned char *body;
   const char *key;
+  bool css_asset;
   if (request->uri == NULL ||
       strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0) {
     return DECLINED;
@@ -855,14 +889,28 @@ static int laghu_apache_variant_handler(request_rec *request) {
     request->status = HTTP_NO_CONTENT;
     return OK;
   }
-  if (strlen(request->uri) != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
-      strncmp(request->uri, prefix, sizeof(prefix) - 1U) != 0) {
+  css_asset = strlen(request->uri) ==
+                  sizeof(css_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH &&
+              strncmp(request->uri, css_prefix, sizeof(css_prefix) - 1U) == 0;
+  if (!css_asset &&
+      (strlen(request->uri) != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
+       strncmp(request->uri, prefix, sizeof(prefix) - 1U) != 0)) {
     return HTTP_NOT_FOUND;
   }
   if (request->method_number != M_GET) {
     return HTTP_METHOD_NOT_ALLOWED;
   }
-  key = request->uri + sizeof(prefix) - 1U;
+  key = request->uri +
+        (css_asset ? sizeof(css_prefix) - 1U : sizeof(prefix) - 1U);
+  {
+    size_t offset;
+    for (offset = 0U; offset < LAGHU_SHA256_HEX_LENGTH; ++offset) {
+      if (!((key[offset] >= '0' && key[offset] <= '9') ||
+            (key[offset] >= 'a' && key[offset] <= 'f'))) {
+        return HTTP_NOT_FOUND;
+      }
+    }
+  }
   if (!laghu_runtime_cache_lookup_variant(config->image_cache != NULL
                                               ? config->image_cache
                                               : LAGHU_DEFAULT_CACHE,
@@ -874,10 +922,12 @@ static int laghu_apache_variant_handler(request_rec *request) {
   if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
     return HTTP_NOT_FOUND;
   }
-  ap_set_content_type(request, entry.content_type);
+  ap_set_content_type(request, css_asset ? "text/css" : entry.content_type);
   ap_set_content_length(request, (apr_off_t)entry.length);
   apr_table_setn(request->headers_out, "Cache-Control",
                  "public, max-age=31536000, immutable");
+  apr_table_set(request->headers_out, "ETag",
+                apr_psprintf(request->pool, "\"%s\"", key));
   if (!request->header_only &&
       ap_rwrite(body, (int)entry.length, request) < 0) {
     return HTTP_INTERNAL_SERVER_ERROR;

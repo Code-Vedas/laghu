@@ -115,6 +115,24 @@ static bool laghu_hash_valid(const char *value) {
   return true;
 }
 
+static bool laghu_sprite_job_valid(const laghu_runtime_job *job) {
+  unsigned int index;
+  if (job->kind != LAGHU_RUNTIME_JOB_SPRITE) {
+    return job->sprite_count == 0U;
+  }
+  if (job->sprite_count < 2U ||
+      job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
+      job->payload.length != 0U) {
+    return false;
+  }
+  for (index = 0U; index < job->sprite_count; ++index) {
+    if (!laghu_hash_valid(job->sprite_variant_keys[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static size_t laghu_slot_size(size_t payload_size) {
   return sizeof(laghu_queue_slot) + payload_size;
 }
@@ -387,7 +405,8 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
       job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
       (job->payload.data == NULL && job->payload.length != 0U) ||
       job->payload.length > queue->slot_payload_size ||
-      !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key)) {
+      !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key) ||
+      !laghu_sprite_job_valid(job)) {
     return false;
   }
   file = laghu_file(queue);

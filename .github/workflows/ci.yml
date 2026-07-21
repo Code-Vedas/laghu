@@ -288,6 +288,7 @@ jobs:
       - run: cmake --build tmp/sanitizers --parallel
       - run: ctest --test-dir tmp/sanitizers --output-on-failure
       - run: tmp/sanitizers/libs/laghu-image/laghu_image_fuzz -runs=2000
+      - run: tmp/sanitizers/libs/laghu-runtime/laghu_runtime_fuzz -runs=2000
 
   minimum_vips:
     name: Minimum libvips 8.15 baseline
