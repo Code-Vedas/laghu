@@ -25,8 +25,10 @@ cp "${REPO_ROOT}/modules/mod_laghu/mod_laghu.c" "${build_dir}/mod_laghu.c"
 cp "${REPO_ROOT}/libs/laghu-core/src/core.c" "${build_dir}/laghu_core.c"
 cp "${REPO_ROOT}/libs/laghu-image/src/image.c" "${build_dir}/laghu_image.c"
 cp "${REPO_ROOT}/libs/laghu-image/src/markup.c" "${build_dir}/laghu_markup.c"
+cp "${REPO_ROOT}/libs/laghu-image/src/css.c" "${build_dir}/laghu_image_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/catalog.c" "${build_dir}/laghu_catalog.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/html.c" "${build_dir}/laghu_html.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/css_runtime.c" "${build_dir}/laghu_runtime_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/beacon.c" "${build_dir}/laghu_beacon.c"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -50,8 +52,10 @@ cd "${build_dir}"
   laghu_core.c \
   laghu_image.c \
   laghu_markup.c \
+  laghu_image_css.c \
   laghu_catalog.c \
   laghu_html.c \
+  laghu_runtime_css.c \
   laghu_beacon.c \
   laghu_runtime.c
 

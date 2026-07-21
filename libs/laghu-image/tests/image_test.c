@@ -323,7 +323,8 @@ static void test_backend_and_fail_open(void) {
 
 static void test_markup_filters(void) {
   static const unsigned char html[] = "<IMG SRC=/a.png><img src=\"/a.png\">";
-  static const unsigned char css[] = ".a{background:url(/a.png)}";
+  static const unsigned char css[] =
+      ".a { background-image: url(/a.png); background-repeat: no-repeat; }";
   const laghu_image_resource resource = {
       .source_url = "/a.png",
       .source_hash =
@@ -358,7 +359,6 @@ static void test_markup_filters(void) {
       .inline_limit = LAGHU_IMAGE_DEFAULT_INLINE_LIMIT,
   };
   laghu_image_markup_result result;
-  char dependency_key[LAGHU_SHA256_HEX_SIZE];
 
   assert(laghu_image_rewrite_html((laghu_buffer){html, sizeof(html) - 1U},
                                   &options, &result));
@@ -371,7 +371,6 @@ static void test_markup_filters(void) {
   assert((result.applied_filters & LAGHU_IMAGE_RESPONSIVE_ZOOM) != 0U);
   assert((result.applied_filters & LAGHU_IMAGE_DEDUP_INLINE) != 0U);
   assert(result.dependency_key[0] != '\0');
-  strcpy(dependency_key, result.dependency_key);
   laghu_image_markup_result_release(&result);
 
   assert(laghu_image_rewrite_css((laghu_buffer){css, sizeof(css) - 1U},
@@ -379,7 +378,7 @@ static void test_markup_filters(void) {
   assert(strstr((char *)result.data, "/laghu/sprite.webp") != NULL);
   assert(strstr((char *)result.data, "background-position:-12px -8px") != NULL);
   assert((result.applied_filters & LAGHU_IMAGE_SPRITE) != 0U);
-  assert(strcmp(dependency_key, result.dependency_key) == 0);
+  assert(result.dependency_key[0] != '\0');
   laghu_image_markup_result_release(&result);
 
   assert(laghu_image_rewrite_html((laghu_buffer){NULL, 0U}, &options, &result));
@@ -749,6 +748,66 @@ static void test_limits_capabilities_and_keys(void) {
 }
 #endif
 
+static void test_css_parser(void) {
+  static const unsigned char css[] =
+      "/*! license */ .hero { background-image: url('../img/hero.png'); "
+      "background-repeat: no-repeat; color: red; } /* remove */\n"
+      ".token { --space: 1  2; width: calc(100% - 2px); }"
+      "/*# sourceMappingURL=site.css.map */";
+  static const unsigned char malformed[] =
+      ".a{background-image:url('/img/a.png');";
+  static const unsigned char html[] =
+      "<div style=\" color: red; background-image: url('../img/hero.png'); \""
+      "></div>";
+  const laghu_image_resource resource = {
+      .source_url = "/img/hero.png",
+      .source_hash =
+          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      .optimized_url =
+          "/.laghu/image/"
+          "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  };
+  const laghu_image_markup_options options = {
+      .resources = &resource,
+      .resource_count = 1U,
+  };
+  laghu_css_parse_result parsed;
+  laghu_image_markup_result rewritten;
+
+  assert(laghu_css_discover((laghu_buffer){css, sizeof(css) - 1U},
+                            "/css/site.css", "https://example.test", &parsed));
+  assert(parsed.valid && parsed.bounded && parsed.dependency_count == 1U);
+  assert(strcmp(parsed.dependencies[0].source_url, "/img/hero.png") == 0);
+  assert(parsed.dependencies[0].sprite_eligible);
+  assert(laghu_css_minify_and_rewrite((laghu_buffer){css, sizeof(css) - 1U},
+                                      "/css/site.css", "https://example.test",
+                                      &options, false, &rewritten));
+  assert(strstr((char *)rewritten.data, "/*! license */") != NULL);
+  assert(strstr((char *)rewritten.data, "remove") == NULL);
+  assert(strstr((char *)rewritten.data, "sourceMappingURL") != NULL);
+  assert(strstr((char *)rewritten.data, "calc(100% - 2px)") != NULL);
+  assert(strstr((char *)rewritten.data, "--space: 1  2;") != NULL);
+  laghu_image_markup_result_release(&rewritten);
+
+  assert(laghu_css_discover((laghu_buffer){malformed, sizeof(malformed) - 1U},
+                            "/site.css", "https://example.test", &parsed));
+  assert(!parsed.valid && parsed.dependency_count == 1U);
+  assert(laghu_css_fallback_rewrite_urls(
+      (laghu_buffer){malformed, sizeof(malformed) - 1U}, "/site.css",
+      "https://example.test", &options, &rewritten));
+  laghu_image_markup_result_release(&rewritten);
+
+  assert(laghu_css_rewrite_style_attributes(
+      (laghu_buffer){html, sizeof(html) - 1U}, "/pages/index.html",
+      "https://example.test", &options, &rewritten));
+  assert(strstr((char *)rewritten.data, "style=\"color:red;") != NULL);
+  laghu_image_markup_result_release(&rewritten);
+  assert(laghu_css_discover_style_attributes(
+      (laghu_buffer){html, sizeof(html) - 1U}, "/pages/index.html",
+      "https://example.test", &parsed));
+  assert(parsed.valid && parsed.dependency_count == 1U);
+}
+
 int main(void) {
   test_format_detection();
   test_capability_filtering();
@@ -757,6 +816,7 @@ int main(void) {
   test_markup_filters();
   test_html_discovery();
   test_geometry_planning();
+  test_css_parser();
 #if LAGHU_HAVE_VIPS
   test_byte_filters();
   test_geometry_inline_and_sprites();

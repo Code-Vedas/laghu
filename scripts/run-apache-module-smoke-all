@@ -33,6 +33,8 @@ origin_pid=
 rm -rf "${work}"
 mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache"
 printf '%s\n' 'apache laghu smoke' >"${work}/htdocs/index.html"
+printf '%s\n' '/*! keep */ .card { color: red; margin: 0  0; } /* remove */' \
+  >"${work}/htdocs/site.css"
 
 load_if_present() {
   name=$1
@@ -91,6 +93,7 @@ load_first_mpm() {
   printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
   printf 'Laghu ImageBeacon On\nLaghu ImageInlineLimit 2048\n'
   printf 'Laghu ImageMetadataLimit 10000\nLaghu ImageMetadataTtl 7d\n'
+  printf '<Location "/site.css">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
   if [ -f "${modules}/mod_http2.so" ]; then
     printf 'Protocols h2c http/1.1\nH2Direct on\n'
@@ -187,6 +190,18 @@ done
 cmp "${work}/htdocs/index.html" "${work}/body"
 grep -i '^X-Laghu: bypass-passthrough' "${work}/headers"
 
+curl --fail --silent --dump-header "${work}/css-cold.headers" \
+  http://127.0.0.1:18081/site.css >"${work}/css-cold"
+cmp "${work}/htdocs/site.css" "${work}/css-cold"
+curl --fail --silent --dump-header "${work}/css-warm.headers" \
+  http://127.0.0.1:18081/site.css >"${work}/css-warm"
+grep -F '/*! keep */' "${work}/css-warm" >/dev/null
+if grep 'remove' "${work}/css-warm" >/dev/null; then
+  echo "Apache did not serve the warm minified CSS derivation." >&2
+  exit 1
+fi
+grep -i '^ETag: "laghu-css-' "${work}/css-warm.headers" >/dev/null
+
 printf 'brigade-flush-eos\n' >"${work}/expected-stream"
 curl --fail --silent --http1.1 --dump-header "${work}/proxy-http1.headers" \
   http://127.0.0.1:18081/proxied/stream >"${work}/proxy-http1.body"
@@ -207,7 +222,7 @@ if [ "${service_pid}" != "" ]; then
   cmp "${work}/htdocs/image.png" "${work}/image-cold.png"
   attempt=0
   while [ "${attempt}" -lt 100 ] &&
-      ! find "${work}/cache" -name '*.meta' -type f | grep -q .; do
+      [ "$(find "${work}/cache" -name '*.meta' -type f | wc -l | tr -d ' ')" -lt 2 ]; do
     attempt=$((attempt + 1))
     sleep 0.1
   done
@@ -215,8 +230,17 @@ if [ "${service_pid}" != "" ]; then
     echo "laghu-libvips did not publish the Apache image variant." >&2
     exit 1
   }
-  curl --fail --silent --dump-header "${work}/image-warm.headers" \
-    http://127.0.0.1:18081/image.png >"${work}/image-warm.png"
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --dump-header "${work}/image-warm.headers" \
+      http://127.0.0.1:18081/image.png >"${work}/image-warm.png"
+    if grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ]
   grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers"
   test "$(wc -c <"${work}/image-warm.png")" -lt \
     "$(wc -c <"${work}/htdocs/image.png")"

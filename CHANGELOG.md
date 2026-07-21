@@ -23,12 +23,18 @@ The project follows [Semantic Versioning](https://semver.org/).
   runtime paths, explicit image backend bypass, and strict fail-open behavior.
 - Image markup primitives for dimensions, responsive sources, native lazy
   loading, data-URI/LQIP inlining, deduplication, and CSS sprite coordinates.
-- Queue protocol v4 batched 1x/2x geometry plans, a checksummed image catalog,
+- Queue protocol v5 batched 1x/2x geometry plans and sprite jobs, a checksummed
+  image catalog,
   bounded same-origin HTML discovery, CSP and page-bundle gates, and inherited
   image beacon/inline/metadata settings for NGINX and Apache.
 - Cold-original/warm-rewritten HTML image delivery in both adapters, including
   dimensions, responsive variants, native lazy loading, final/LQIP inlining,
   inline deduplication, client hints, and privacy-bounded beacon learning.
+- A bounded CSS tokenizer, safe minification, same-origin same-format URL
+  rewriting, declaration-list rewriting for style attributes, malformed-CSS
+  URL fallback, and cold-original/warm-derived CSS delivery in both adapters.
+- Queue protocol v5 content-addressed sprite jobs and conservative horizontal
+  PNG sprite generation for standalone no-repeat background images.
 - Official packaging inputs requiring libvips 8.15+, hardened service/runtime
   directory definitions, sanitizer coverage, and an image parser fuzz harness.
 - `ngx-laghu` and `mod-laghu` Debian/RPM package families with the internal

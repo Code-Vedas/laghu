@@ -59,6 +59,7 @@ typedef struct {
   unsigned int target_height[LAGHU_RUNTIME_MAX_TARGETS];
   uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
   bool html_capture;
+  bool css_capture;
 } laghu_apache_context;
 
 module AP_MODULE_DECLARE_DATA laghu_module;
@@ -372,6 +373,24 @@ static laghu_decision laghu_apache_decide(ap_filter_t *filter,
     context->html_capture = context->capture_enabled;
     return LAGHU_DECISION_PASS;
   }
+  if (ap_cstr_casecmpn(request->content_type, "text/css", 8U) == 0) {
+    if (apr_table_get(request->headers_out, "Content-Encoding") != NULL ||
+        request->clength <= 0 ||
+        request->clength > (apr_off_t)LAGHU_CSS_MAX_INPUT_BYTES ||
+        !laghu_resolve_config_policy(&config->core, &context->policy) ||
+        !laghu_variant_key((laghu_buffer){NULL, 0U}, &context->policy,
+                           context->policy_key) ||
+        ((context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) == 0U &&
+         !context->policy.allow_structural_rewrite)) {
+      return LAGHU_DECISION_PASS;
+    }
+    context->capture_capacity = (size_t)request->clength;
+    (void)laghu_apache_backend_available(config);
+    context->capture = apr_palloc(request->pool, context->capture_capacity);
+    context->capture_enabled = context->capture != NULL;
+    context->css_capture = context->capture_enabled;
+    return LAGHU_DECISION_PASS;
+  }
   if (ap_cstr_casecmpn(request->content_type, "image/", 6U) != 0) {
     return LAGHU_DECISION_PASS;
   }
@@ -557,6 +576,66 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
       memcpy(context->capture + context->capture_length, data, length);
       context->capture_length += length;
     }
+  }
+  if (context->css_capture) {
+    if (!eos) {
+      apr_brigade_cleanup(brigade);
+      return APR_SUCCESS;
+    }
+    if (context->capture_enabled) {
+      laghu_runtime_css_result rewritten;
+      const char *host = request->hostname != NULL
+                             ? request->hostname
+                             : request->server->server_hostname;
+      const char *origin =
+          apr_psprintf(request->pool, "%s://%s", ap_http_scheme(request), host);
+      unsigned char *selected = context->capture;
+      size_t selected_length = context->capture_length;
+      apr_bucket_brigade *replacement;
+      if (laghu_runtime_rewrite_css(
+              &context->config->queue,
+              context->config->image_cache != NULL
+                  ? context->config->image_cache
+                  : LAGHU_DEFAULT_CACHE,
+              (laghu_buffer){context->capture, context->capture_length},
+              request->uri, origin, context->policy_key,
+              context->config->queue.capabilities,
+              (uint64_t)apr_time_sec(apr_time_now()),
+              context->config->core.image_metadata_ttl,
+              (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U,
+              context->policy.allow_structural_rewrite, &rewritten)) {
+        if (rewritten.rewritten) {
+          selected =
+              apr_pmemdup(request->pool, rewritten.data, rewritten.length);
+          if (selected != NULL) {
+            selected_length = rewritten.length;
+            apr_table_set(request->headers_out, "ETag",
+                          apr_psprintf(request->pool, "\"laghu-css-%s\"",
+                                       rewritten.dependency_key));
+            apr_table_unset(request->headers_out, "Content-MD5");
+            apr_table_unset(request->headers_out, "Digest");
+          }
+        }
+        laghu_runtime_css_result_release(&rewritten);
+      }
+      ap_set_content_length(request, (apr_off_t)selected_length);
+      replacement =
+          apr_brigade_create(request->pool, request->connection->bucket_alloc);
+      if (replacement == NULL) {
+        return ap_pass_brigade(filter->next, brigade);
+      }
+      APR_BRIGADE_INSERT_TAIL(
+          replacement, apr_bucket_pool_create(
+                           (const char *)selected, selected_length,
+                           request->pool, request->connection->bucket_alloc));
+      APR_BRIGADE_INSERT_TAIL(
+          replacement,
+          apr_bucket_eos_create(request->connection->bucket_alloc));
+      apr_brigade_cleanup(brigade);
+      context->capture_enabled = false;
+      return ap_pass_brigade(filter->next, replacement);
+    }
+    return ap_pass_brigade(filter->next, brigade);
   }
   if (context->html_capture) {
     if (!eos) {

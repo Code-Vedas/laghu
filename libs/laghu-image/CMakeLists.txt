@@ -34,7 +34,7 @@ if(NOT LAGHU_WITH_VIPS STREQUAL "OFF")
   endif()
 endif()
 
-add_library(laghu_image STATIC src/image.c src/markup.c)
+add_library(laghu_image STATIC src/image.c src/markup.c src/css.c)
 add_library(Laghu::Image ALIAS laghu_image)
 
 target_include_directories(laghu_image

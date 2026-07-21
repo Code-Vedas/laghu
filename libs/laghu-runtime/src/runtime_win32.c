@@ -33,7 +33,7 @@ typedef struct {
 
 typedef struct {
   uint32_t state;
-  uint32_t reserved;
+  uint32_t kind;
   uint64_t payload_length;
   char index_key[LAGHU_RUNTIME_KEY_SIZE];
   char request_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -48,6 +48,11 @@ typedef struct {
   uint32_t target_width[LAGHU_RUNTIME_MAX_TARGETS];
   uint32_t target_height[LAGHU_RUNTIME_MAX_TARGETS];
   uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
+  uint32_t sprite_count;
+  char sprite_variant_keys[LAGHU_RUNTIME_MAX_SPRITE_INPUTS]
+                          [LAGHU_RUNTIME_KEY_SIZE];
+  uint32_t sprite_width[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
+  uint32_t sprite_height[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
   uint8_t allow_lossy;
   uint8_t accept_webp;
   uint8_t padding[6];
@@ -379,7 +384,8 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
   bool success = false;
   if (queue == NULL || job == NULL || queue->mapping == NULL ||
       job->target_count > LAGHU_RUNTIME_MAX_TARGETS ||
-      job->payload.data == NULL || job->payload.length == 0U ||
+      job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
+      (job->payload.data == NULL && job->payload.length != 0U) ||
       job->payload.length > queue->slot_payload_size ||
       !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key)) {
     return false;
@@ -393,6 +399,7 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
   if (slot->state == LAGHU_SLOT_EMPTY) {
     memset(slot, 0, sizeof(*slot));
     slot->payload_length = job->payload.length;
+    slot->kind = (uint32_t)job->kind;
     memcpy(slot->index_key, job->index_key, sizeof(slot->index_key));
     memcpy(slot->request_path, job->request_path, sizeof(slot->request_path));
     memcpy(slot->validator, job->validator, sizeof(slot->validator));
@@ -408,9 +415,17 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
            sizeof(slot->target_height));
     memcpy(slot->resize_filter, job->resize_filter,
            sizeof(slot->resize_filter));
+    slot->sprite_count = job->sprite_count;
+    memcpy(slot->sprite_variant_keys, job->sprite_variant_keys,
+           sizeof(slot->sprite_variant_keys));
+    memcpy(slot->sprite_width, job->sprite_width, sizeof(slot->sprite_width));
+    memcpy(slot->sprite_height, job->sprite_height,
+           sizeof(slot->sprite_height));
     slot->allow_lossy = job->allow_lossy ? 1U : 0U;
     slot->accept_webp = job->accept_webp ? 1U : 0U;
-    memcpy(laghu_payload(slot), job->payload.data, job->payload.length);
+    if (job->payload.length != 0U) {
+      memcpy(laghu_payload(slot), job->payload.data, job->payload.length);
+    }
     slot->state = LAGHU_SLOT_READY;
     header->next_write = (header->next_write + 1U) % queue->slot_count;
     success = true;
@@ -439,8 +454,10 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
   slot = laghu_slot(queue, header->next_read % queue->slot_count);
   if (slot->state == LAGHU_SLOT_READY &&
       slot->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
+      slot->sprite_count <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
       slot->payload_length <= payload_capacity) {
     memset(job, 0, sizeof(*job));
+    job->kind = (laghu_runtime_job_kind)slot->kind;
     memcpy(job->index_key, slot->index_key, sizeof(job->index_key));
     memcpy(job->request_path, slot->request_path, sizeof(job->request_path));
     memcpy(job->validator, slot->validator, sizeof(job->validator));
@@ -454,9 +471,16 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
     memcpy(job->target_width, slot->target_width, sizeof(job->target_width));
     memcpy(job->target_height, slot->target_height, sizeof(job->target_height));
     memcpy(job->resize_filter, slot->resize_filter, sizeof(job->resize_filter));
+    job->sprite_count = slot->sprite_count;
+    memcpy(job->sprite_variant_keys, slot->sprite_variant_keys,
+           sizeof(job->sprite_variant_keys));
+    memcpy(job->sprite_width, slot->sprite_width, sizeof(job->sprite_width));
+    memcpy(job->sprite_height, slot->sprite_height, sizeof(job->sprite_height));
     job->allow_lossy = slot->allow_lossy != 0U;
     job->accept_webp = slot->accept_webp != 0U;
-    memcpy(payload, laghu_payload(slot), (size_t)slot->payload_length);
+    if (slot->payload_length != 0U) {
+      memcpy(payload, laghu_payload(slot), (size_t)slot->payload_length);
+    }
     job->payload = (laghu_buffer){payload, (size_t)slot->payload_length};
     memset(slot, 0, sizeof(*slot));
     header->next_read = (header->next_read + 1U) % queue->slot_count;

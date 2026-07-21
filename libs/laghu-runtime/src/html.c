@@ -93,12 +93,44 @@ bool laghu_runtime_rewrite_html(
     free(discovery);
     return false;
   }
-  if (discovery->resource_count == 0U) {
-    free(discovery);
-    return true;
+  {
+    laghu_css_parse_result *styles = calloc(1U, sizeof(*styles));
+    if (styles == NULL ||
+        !laghu_css_discover_style_attributes(html, page_path, page_origin,
+                                             styles) ||
+        !styles->bounded) {
+      free(styles);
+      free(discovery);
+      return false;
+    }
+    for (index = 0U; index < styles->dependency_count; ++index) {
+      size_t existing;
+      bool duplicate = false;
+      for (existing = 0U; existing < discovery->resource_count; ++existing) {
+        if (strcmp(discovery->resources[existing].source_url,
+                   styles->dependencies[index].source_url) == 0) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate) {
+        if (discovery->resource_count == LAGHU_IMAGE_MAX_PAGE_RESOURCES) {
+          free(styles);
+          free(discovery);
+          return false;
+        }
+        memcpy(discovery->resources[discovery->resource_count++].source_url,
+               styles->dependencies[index].source_url, LAGHU_IMAGE_URL_SIZE);
+      }
+    }
+    free(styles);
   }
-  resources = calloc(discovery->resource_count, sizeof(*resources));
-  storage = calloc(discovery->resource_count, sizeof(*storage));
+  resources =
+      calloc(discovery->resource_count == 0U ? 1U : discovery->resource_count,
+             sizeof(*resources));
+  storage =
+      calloc(discovery->resource_count == 0U ? 1U : discovery->resource_count,
+             sizeof(*storage));
   if (resources == NULL || storage == NULL) {
     goto finished;
   }
@@ -258,6 +290,17 @@ bool laghu_runtime_rewrite_html(
   options.inline_limit = inline_limit;
   options.enforce_bundle_gate = true;
   if (laghu_image_rewrite_html(html, &options, &rewritten)) {
+    laghu_image_markup_result styled;
+    if (laghu_css_rewrite_style_attributes(
+            (laghu_buffer){rewritten.data, rewritten.length}, page_path,
+            page_origin, &options, &styled)) {
+      if (styled.applied_filters != 0U && styled.length <= rewritten.length) {
+        laghu_image_markup_result_release(&rewritten);
+        rewritten = styled;
+      } else {
+        laghu_image_markup_result_release(&styled);
+      }
+    }
     static const unsigned char beacon[] =
         "<script src=\"/.laghu/beacon/images.js\" defer></script>";
     result->data = rewritten.data;

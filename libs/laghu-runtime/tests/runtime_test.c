@@ -98,6 +98,21 @@ int main(void) {
   assert(taken.target_count == 2U && taken.target_width[0] == 320U &&
          taken.target_width[1] == 640U);
   assert(taken.metadata_limit == 10000U && taken.metadata_ttl == 604800U);
+  memset(&submitted, 0, sizeof(submitted));
+  submitted.kind = LAGHU_RUNTIME_JOB_SPRITE;
+  strcpy(submitted.index_key, index_key);
+  strcpy(submitted.policy_key, policy_key);
+  submitted.sprite_count = 2U;
+  strcpy(submitted.sprite_variant_keys[0], index_key);
+  strcpy(submitted.sprite_variant_keys[1], no_webp_index_key);
+  submitted.sprite_width[0] = 20U;
+  submitted.sprite_width[1] = 30U;
+  assert(laghu_runtime_queue_try_publish(&producer, &submitted));
+  assert(laghu_runtime_queue_try_take(&consumer, &taken, received,
+                                      sizeof(received)));
+  assert(taken.kind == LAGHU_RUNTIME_JOB_SPRITE && taken.sprite_count == 2U);
+  assert(taken.payload.length == 0U && taken.sprite_width[1] == 30U);
+  assert(strcmp(taken.sprite_variant_keys[1], no_webp_index_key) == 0);
   assert(laghu_catalog_key("/image.png", index_key, policy_key, 0x55aaU,
                            catalog_key));
   catalog.version = LAGHU_CATALOG_VERSION;
@@ -172,6 +187,25 @@ int main(void) {
   assert(laghu_runtime_cache_publish(temporary, index_key, policy_key, "etag",
                                      "image/png", "test-backend", taken.payload,
                                      &entry));
+  {
+    static const unsigned char css[] =
+        "/*! keep */\n.hero { color: red; margin: 0  0; } /* remove */\n";
+    laghu_runtime_css_result stylesheet;
+    assert(laghu_runtime_rewrite_css(
+        NULL, temporary, (laghu_buffer){css, sizeof(css) - 1U}, "/site.css",
+        "https://example.test", policy_key, 0x55aaU, 900000U, 604800U, true,
+        false, &stylesheet));
+    assert(!stylesheet.rewritten && stylesheet.published);
+    laghu_runtime_css_result_release(&stylesheet);
+    assert(laghu_runtime_rewrite_css(
+        NULL, temporary, (laghu_buffer){css, sizeof(css) - 1U}, "/site.css",
+        "https://example.test", policy_key, 0x55aaU, 900001U, 604800U, true,
+        false, &stylesheet));
+    assert(stylesheet.rewritten && !stylesheet.published);
+    assert(strstr((const char *)stylesheet.data, "/*! keep */") != NULL);
+    assert(strstr((const char *)stylesheet.data, "remove") == NULL);
+    laghu_runtime_css_result_release(&stylesheet);
+  }
   {
     static const unsigned char html[] =
         "<html><body><img src=\"/image.png\" width=\"320\"></body></html>";

@@ -33,6 +33,8 @@ printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
 
 image_smoke=0
 optimizer_pid=""
+printf '%s\n' '/*! keep */ .card { color: red; margin: 0  0; } /* remove */' \
+  >"${SMOKE_DIR}/html/site.css"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -87,6 +89,11 @@ http {
     laghu image_metadata_ttl 7d;
     laghu worker_queue ${SMOKE_DIR}/jobs.queue;
     laghu image_cache ${SMOKE_DIR}/cache;
+
+    location = /site.css {
+      default_type text/css;
+      try_files /site.css =404;
+    }
 
     location = /image.png {
       default_type image/png;
@@ -666,6 +673,18 @@ if grep -i '^X-Laghu:' "${SMOKE_DIR}/off-headers" >/dev/null; then
   echo "Laghu emitted a decision header in a disabled location." >&2
   exit 1
 fi
+
+curl --fail --silent --show-error --output "${SMOKE_DIR}/css-cold" \
+  "http://127.0.0.1:${PORT}/site.css"
+cmp "${SMOKE_DIR}/html/site.css" "${SMOKE_DIR}/css-cold"
+curl --fail --silent --show-error --dump-header "${SMOKE_DIR}/css-warm.headers" \
+  --output "${SMOKE_DIR}/css-warm" "http://127.0.0.1:${PORT}/site.css"
+grep -F '/*! keep */' "${SMOKE_DIR}/css-warm" >/dev/null
+if grep 'remove' "${SMOKE_DIR}/css-warm" >/dev/null; then
+  echo "NGINX did not serve the warm minified CSS derivation." >&2
+  exit 1
+fi
+grep -i '^ETag: "laghu-css-' "${SMOKE_DIR}/css-warm.headers" >/dev/null
 
 kill "${nginx_pid}"
 wait "${nginx_pid}"

@@ -205,6 +205,49 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
   unsigned int target;
   int status = 4;
 
+  if (job->kind == LAGHU_RUNTIME_JOB_SPRITE) {
+    laghu_image_sprite_item items[LAGHU_RUNTIME_MAX_SPRITE_INPUTS] = {0};
+    laghu_runtime_cache_entry inputs[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
+    laghu_image_sprite_result sprite;
+    unsigned char *buffers[LAGHU_RUNTIME_MAX_SPRITE_INPUTS] = {0};
+    laghu_runtime_cache_entry published;
+    unsigned int index;
+    int sprite_status = 1;
+    if (job->sprite_count < 2U ||
+        job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
+        !laghu_image_backend_probe(&backend) || !backend.available) {
+      return 1;
+    }
+    for (index = 0U; index < job->sprite_count; ++index) {
+      if (!laghu_runtime_cache_lookup_variant(
+              cache_path, job->sprite_variant_keys[index], &inputs[index])) {
+        goto sprite_finished;
+      }
+      buffers[index] = malloc(inputs[index].length);
+      if (buffers[index] == NULL ||
+          !laghu_runtime_cache_read(&inputs[index], buffers[index],
+                                    inputs[index].length)) {
+        goto sprite_finished;
+      }
+      items[index].original =
+          (laghu_buffer){buffers[index], inputs[index].length};
+    }
+    if (laghu_image_build_sprite(&backend, items, job->sprite_count,
+                                 LAGHU_IMAGE_FORMAT_PNG, &sprite) &&
+        laghu_runtime_cache_publish(
+            cache_path, job->index_key, job->index_key, job->validator,
+            "image/png", backend.backend_id,
+            (laghu_buffer){sprite.data, sprite.length}, &published)) {
+      sprite_status = 0;
+      laghu_image_sprite_result_release(&sprite);
+    }
+  sprite_finished:
+    for (index = 0U; index < job->sprite_count; ++index) {
+      free(buffers[index]);
+    }
+    return sprite_status;
+  }
+
 #if LAGHU_TEST_HOOKS
   const char *delay = getenv("LAGHU_TEST_JOB_DELAY_SECONDS");
 
@@ -263,6 +306,9 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     if (target == 0U) {
       catalog.natural_width = result.natural_width;
       catalog.natural_height = result.natural_height;
+      (void)snprintf(catalog.original_content_type,
+                     sizeof(catalog.original_content_type), "%s",
+                     laghu_image_content_type(result.input_format));
     }
     if (target == 0U) {
       memcpy(index_key, job->index_key, sizeof(index_key));

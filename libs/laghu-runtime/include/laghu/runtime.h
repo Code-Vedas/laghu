@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_QUEUE_VERSION 4U
+#define LAGHU_QUEUE_VERSION 5U
 #define LAGHU_QUEUE_DEFAULT_SLOTS 4U
 #define LAGHU_RUNTIME_KEY_SIZE LAGHU_SHA256_HEX_SIZE
 #define LAGHU_RUNTIME_PATH_SIZE 1024U
@@ -25,12 +25,20 @@ extern "C" {
 #define LAGHU_RUNTIME_VALIDATOR_SIZE 256U
 #define LAGHU_RUNTIME_BACKEND_SIZE 128U
 #define LAGHU_RUNTIME_MAX_TARGETS 2U
-#define LAGHU_CATALOG_VERSION 1U
+#define LAGHU_RUNTIME_MAX_SPRITE_INPUTS 32U
+#define LAGHU_CATALOG_VERSION 2U
 #define LAGHU_CATALOG_MAX_WIDTHS 8U
 #define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
 #define LAGHU_CATALOG_DEFAULT_TTL 604800U
+#define LAGHU_CSS_DERIVATION_VERSION 1U
+
+typedef enum {
+  LAGHU_RUNTIME_JOB_IMAGE = 0,
+  LAGHU_RUNTIME_JOB_SPRITE = 1
+} laghu_runtime_job_kind;
 
 typedef struct {
+  laghu_runtime_job_kind kind;
   char index_key[LAGHU_RUNTIME_KEY_SIZE];
   char request_path[LAGHU_RUNTIME_PATH_SIZE];
   char validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
@@ -44,6 +52,11 @@ typedef struct {
   unsigned int target_width[LAGHU_RUNTIME_MAX_TARGETS];
   unsigned int target_height[LAGHU_RUNTIME_MAX_TARGETS];
   uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
+  unsigned int sprite_count;
+  char sprite_variant_keys[LAGHU_RUNTIME_MAX_SPRITE_INPUTS]
+                          [LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int sprite_width[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
+  unsigned int sprite_height[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
   bool allow_lossy;
   bool accept_webp;
   laghu_buffer payload;
@@ -90,6 +103,7 @@ typedef struct {
   uint32_t capability_mask;
   unsigned int natural_width;
   unsigned int natural_height;
+  char original_content_type[LAGHU_RUNTIME_TYPE_SIZE];
   laghu_catalog_variant variants[LAGHU_CATALOG_MAX_WIDTHS];
   unsigned int variant_count;
   uint64_t updated_at;
@@ -122,6 +136,16 @@ typedef struct {
   bool rewritten;
   bool dependencies_pending;
 } laghu_runtime_html_result;
+
+typedef struct {
+  unsigned char *data;
+  size_t length;
+  char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  bool rewritten;
+  bool dependencies_pending;
+  bool published;
+  bool used_fallback;
+} laghu_runtime_css_result;
 
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
@@ -181,6 +205,15 @@ bool laghu_runtime_rewrite_html(
     size_t inline_limit, unsigned int viewport_width,
     unsigned int dpr_hundredths, laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
+bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
+                               const char *cache_path, laghu_buffer css,
+                               const char *stylesheet_path,
+                               const char *page_origin, const char *policy_key,
+                               uint32_t capability_mask, uint64_t now,
+                               unsigned int ttl_seconds, bool minify,
+                               bool allow_sprites,
+                               laghu_runtime_css_result *result);
+void laghu_runtime_css_result_release(laghu_runtime_css_result *result);
 bool laghu_runtime_parse_image_beacon(laghu_buffer json,
                                       laghu_image_beacon_record *record);
 bool laghu_catalog_apply_beacon(const char *cache_path, const char *policy_key,

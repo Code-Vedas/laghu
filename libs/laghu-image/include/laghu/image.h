@@ -27,6 +27,11 @@ extern "C" {
 #define LAGHU_IMAGE_MAX_WIDTHS_PER_SOURCE 8U
 #define LAGHU_IMAGE_DEFAULT_INLINE_LIMIT 2048U
 #define LAGHU_IMAGE_PREVIEW_DIMENSION 24U
+#define LAGHU_CSS_MAX_INPUT_BYTES (2U * 1024U * 1024U)
+#define LAGHU_CSS_MAX_TOKENS 262144U
+#define LAGHU_CSS_MAX_URLS 256U
+#define LAGHU_CSS_MAX_NESTING 64U
+#define LAGHU_CSS_MAX_SPRITE_ITEMS 32U
 
 typedef uint64_t laghu_image_filter_mask;
 
@@ -60,6 +65,7 @@ enum {
 };
 
 #define LAGHU_IMAGE_FILTER_ALL ((UINT64_C(1) << 26) - UINT64_C(1))
+#define LAGHU_CSS_MINIFY_APPLIED (UINT64_C(1) << 63)
 
 typedef enum {
   LAGHU_IMAGE_FORMAT_UNKNOWN = 0,
@@ -221,6 +227,21 @@ typedef struct {
   unsigned int height;
 } laghu_image_sprite_result;
 
+typedef struct {
+  char source_url[LAGHU_IMAGE_URL_SIZE];
+  bool background_image;
+  bool sprite_eligible;
+} laghu_css_dependency;
+
+typedef struct {
+  laghu_css_dependency dependencies[LAGHU_CSS_MAX_URLS];
+  size_t dependency_count;
+  size_t token_count;
+  bool valid;
+  bool bounded;
+  bool used_fallback;
+} laghu_css_parse_result;
+
 void laghu_image_request_init(laghu_image_request *request);
 bool laghu_image_backend_probe(laghu_image_backend *backend);
 laghu_image_format laghu_image_detect_format(laghu_buffer input);
@@ -251,6 +272,26 @@ bool laghu_image_plan_geometry(const laghu_image_geometry_input *input,
 bool laghu_image_rewrite_css(laghu_buffer input,
                              const laghu_image_markup_options *options,
                              laghu_image_markup_result *result);
+bool laghu_css_discover(laghu_buffer input, const char *base_path,
+                        const char *page_origin,
+                        laghu_css_parse_result *result);
+bool laghu_css_discover_style_attributes(laghu_buffer html,
+                                         const char *page_path,
+                                         const char *page_origin,
+                                         laghu_css_parse_result *result);
+bool laghu_css_minify_and_rewrite(laghu_buffer input, const char *base_path,
+                                  const char *page_origin,
+                                  const laghu_image_markup_options *options,
+                                  bool declaration_list,
+                                  laghu_image_markup_result *result);
+bool laghu_css_fallback_rewrite_urls(laghu_buffer input, const char *base_path,
+                                     const char *page_origin,
+                                     const laghu_image_markup_options *options,
+                                     laghu_image_markup_result *result);
+bool laghu_css_rewrite_style_attributes(
+    laghu_buffer html, const char *page_path, const char *page_origin,
+    const laghu_image_markup_options *options,
+    laghu_image_markup_result *result);
 bool laghu_image_data_uri(laghu_image_format format, laghu_buffer input,
                           size_t max_input_bytes,
                           laghu_image_markup_result *result);

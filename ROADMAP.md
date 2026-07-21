@@ -125,7 +125,8 @@ Section 3 full-parity item remains pending.
 - [x] `inline_preview_images`: generate and inline low-quality previews.
 - [x] `dedup_inlined_images`: deduplicate repeated inline images.
 - [x] `lazyload_images`: defer eligible offscreen images.
-- [ ] `sprite_images`: combine CSS background images into sprites.
+- [x] `sprite_images`: combine eligible CSS background images into a
+  deterministic lossless PNG sprite.
 - [x] `strip_image_meta_data`: remove EXIF and other metadata.
 - [x] `strip_image_color_profile`: remove eligible ICC profiles.
 - [x] `in_place_optimize_for_browser`: optimize directly requested resources for
@@ -143,19 +144,22 @@ loop, and frame preservation. The bounded queue/atomic cache worker integration
 covers crash/restart and deadline termination; stable/mainline NGINX smoke
 coverage verifies cold-original and warm browser-aware variant delivery,
 including `q=0` format refusal, payload-derived ETags, and corruption fallback.
-Geometry and markup completion evidence: queue v4 batches exact 1x/2x targets;
+Geometry and markup completion evidence: queue v5 batches exact 1x/2x targets
+and carries content-addressed sprite jobs;
 the bounded, checksummed catalog publishes natural dimensions and ready
 variants atomically with try-only record locking, TTL/LRU bounds, and corruption
 recovery. Both adapters exercise cold-original discovery, asynchronous image
 requests, warm all-dependencies-ready HTML substitution, immutable hash-only
 delivery, native DPR/client-hint selection, opt-in rendered/mobile beacon data,
 CSP-gated final/LQIP inlining, repeated-inline deduplication, native lazy
-loading, dependency ETags, and the page-bundle never-larger gate. CSS sprites
-remain pending until Section 3.3 supplies the shared CSS parser.
+loading, dependency ETags, and the page-bundle never-larger gate. The shared
+bounded CSS parser discovers conservative standalone no-repeat backgrounds;
+`laghu-libvips` publishes at most one horizontal PNG sprite per stylesheet
+before either adapter rewrites URLs and positions.
 
 ### 3.3 CSS Filters
 
-- [ ] `rewrite_css`: minify CSS and rewrite embedded URLs.
+- [x] `rewrite_css`: safely minify CSS and rewrite ready same-format image URLs.
 - [ ] `combine_css`: combine compatible stylesheets.
 - [ ] `inline_css`: inline eligible small external stylesheets.
 - [ ] `outline_css`: externalize eligible large inline style blocks.
@@ -165,11 +169,20 @@ remain pending until Section 3.3 supplies the shared CSS parser.
 - [ ] `move_css_to_head`: move stylesheet links into the document head.
 - [ ] `move_css_above_scripts`: move CSS above script elements.
 - [ ] `prioritize_critical_css`: inline critical CSS and defer the remainder.
-- [ ] `rewrite_style_attributes`: rewrite inline style attributes.
-- [ ] `rewrite_style_attributes_with_url`: rewrite style attributes containing
+- [x] `rewrite_style_attributes`: rewrite inline style attributes.
+- [x] `rewrite_style_attributes_with_url`: rewrite style attributes containing
   `url()`.
-- [ ] `fallback_rewrite_css_urls`: safely rewrite URLs in otherwise unparseable
+- [x] `fallback_rewrite_css_urls`: safely rewrite URLs in otherwise unparseable
   CSS.
+
+CSS rewrite evidence: the dependency-free tokenizer enforces 2 MiB, 262,144
+token, 256 URL, 64 nesting-level, and 32 sprite-input bounds. Unit tests cover
+strings, comments, relative URLs, custom properties, `calc()`, malformed input,
+style attributes, cold/warm derivations, queue-v5 sprite serialization, and
+strict bundle gates. NGINX and Apache share the same cold-original derivation
+runtime, dependency ETags, stale entity-header removal, cache validation, and
+fail-open behavior. Combining, imports, outlining, critical CSS, and `<style>`
+blocks remain pending.
 
 ### 3.4 JavaScript Filters
 

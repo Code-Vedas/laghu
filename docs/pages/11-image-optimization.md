@@ -54,7 +54,8 @@ Catalog metadata is versioned and checksummed beneath the image cache. It is
 keyed by normalized URL, source hash, resolved policy, and backend capability
 mask, records natural dimensions even when no smaller candidate exists, caps a
 source at eight widths, and expires after seven days by default. Queue protocol
-v4 carries at most two geometry targets in one bounded source payload. Catalog
+v5 carries at most two geometry targets in one bounded source payload and
+content-addressed sprite jobs without duplicating those source bytes. Catalog
 corruption and expiry are fail-open.
 
 Eligible HTML is delivered unchanged during cold discovery and while any
@@ -78,7 +79,12 @@ performs no caller-controlled filesystem lookup, revalidates the cached payload
 hash before sending it, and returns `Cache-Control: public,
 max-age=31536000, immutable`.
 
-CSS sprites remain pending until the Section 3.3 CSS parser is available.
+Eligible standalone `background-image` declarations with explicit
+`background-repeat: no-repeat` may share one deterministic horizontal PNG
+sprite per stylesheet. Existing positions, sizes, shorthand or layered
+backgrounds, animation, SVG, and cross-origin resources are excluded. The
+sprite is published only when it is valid and smaller than its unique inputs;
+CSS remains original until publication completes.
 
 ## Bounds and Failure Behavior
 

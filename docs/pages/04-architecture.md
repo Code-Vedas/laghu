@@ -89,4 +89,13 @@ cold original while copying a bounded image into a queue slot. A warm
 strong-validator hit is read before response headers are committed and replaces
 the origin body. Queue publication uses an immediate-fail platform lock, so
 contention cannot hold a server request. POSIX and Win32 runtime backends expose
-the same queue/cache contract.
+the same queue/cache contract. Queue protocol v5 supports image jobs carrying
+one bounded source payload and sprite jobs carrying only validated variant
+keys.
+
+External stylesheets use the same lifecycle. A bounded server-independent CSS
+tokenizer discovers same-origin image dependencies without fetching them. The
+first eligible response remains byte-identical; after every dependency and any
+sprite are atomically published, a later request may receive derived CSS with a
+dependency ETag. Both adapters preserve the original on parse, queue, cache, or
+allocation failure.
