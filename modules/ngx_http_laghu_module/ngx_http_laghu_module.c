@@ -429,6 +429,36 @@ static bool ngx_http_laghu_csp_allows_inline_style(
   }
 }
 
+static bool ngx_http_laghu_csp_allows_self_style(ngx_http_request_t *request,
+                                                 const char *page_origin) {
+  ngx_list_part_t *part = &request->headers_out.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        return true;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash != 0U &&
+        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
+        ngx_strncasecmp(headers[index].key.data,
+                        (u_char *)"Content-Security-Policy",
+                        sizeof("Content-Security-Policy") - 1U) == 0) {
+      char *value = ngx_pnalloc(request->pool, headers[index].value.len + 1U);
+      if (value == NULL) {
+        return false;
+      }
+      ngx_memcpy(value, headers[index].value.data, headers[index].value.len);
+      value[headers[index].value.len] = '\0';
+      return laghu_runtime_csp_allows_self_styles(value, page_origin);
+    }
+  }
+}
+
 static bool ngx_http_laghu_same_origin(ngx_http_request_t *request) {
   ngx_list_part_t *part = &request->headers_in.headers.part;
   ngx_table_elt_t *headers = part->elts;
@@ -824,7 +854,8 @@ static ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
              request->headers_out.content_length_n <=
                  (off_t)LAGHU_CSS_MAX_INPUT_BYTES) {
     context = ngx_pcalloc(request->pool, sizeof(*context));
-    if (context != NULL && ngx_http_laghu_queue_refresh(conf) &&
+    (void)ngx_http_laghu_queue_refresh(conf);
+    if (context != NULL &&
         laghu_resolve_config_policy(&conf->core, &context->policy) &&
         laghu_variant_key((laghu_buffer){NULL, 0U}, &context->policy,
                           context->policy_key) &&
@@ -1178,8 +1209,12 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
                   context->policy.allow_resource_inlining,
               context->policy.allow_structural_rewrite,
+              (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
+                      0U &&
+                  context->policy.allow_structural_rewrite,
               ngx_http_laghu_csp_allows_data(request),
               ngx_http_laghu_csp_allows_inline_style(request),
+              ngx_http_laghu_csp_allows_self_style(request, origin_value),
               conf->core.image_beacon == LAGHU_MODE_ON,
               conf->core.image_inline_limit, conf->core.css_inline_limit,
               conf->core.css_outline_threshold,

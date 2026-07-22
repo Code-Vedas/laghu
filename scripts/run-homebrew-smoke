@@ -11,8 +11,8 @@ if [ "$(uname -s)" != Darwin ]; then
   exit 77
 fi
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/laghu-homebrew-XXXXXX")
 tap="codevedas/laghu-smoke"
 tap_repo=

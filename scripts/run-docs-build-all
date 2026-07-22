@@ -6,12 +6,13 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/run-common"
 
+# This command is intentionally single-quoted so the inner shell expands it.
+# shellcheck disable=SC2016
 run_cmd docs-build sh -c '
   cd "${1}/docs"
   bundle check >/dev/null 2>&1 || bundle install
   bundle exec jekyll build
 ' sh "${REPO_ROOT}"
-

@@ -99,3 +99,10 @@ first eligible response remains byte-identical; after every dependency and any
 sprite are atomically published, a later request may receive derived CSS with a
 dependency ETag. Both adapters preserve the original on parse, queue, cache, or
 allocation failure.
+
+The shared HTML planner can combine remaining adjacent stylesheet records after
+small-sheet inlining. It reads only finalized catalog payloads, validates nested
+dependencies and CSP, concatenates in DOM order, reparses the bounded bundle,
+and atomically publishes one immutable asset. Publication and HTML derivation
+are separate cold stages; only a later warm request receives the link, and only
+when the full HTML plus unique-CSS transfer decreases.

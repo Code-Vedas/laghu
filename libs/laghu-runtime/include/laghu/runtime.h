@@ -141,6 +141,15 @@ typedef struct {
 typedef struct {
   unsigned char *data;
   size_t length;
+  size_t original_external_bytes;
+  size_t combined_external_bytes;
+  bool rewritten;
+  bool dependencies_pending;
+} laghu_runtime_css_combine_result;
+
+typedef struct {
+  unsigned char *data;
+  size_t length;
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
   bool rewritten;
   bool dependencies_pending;
@@ -222,18 +231,28 @@ bool laghu_runtime_rewrite_html(
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
     bool allow_inline, bool allow_css_inline, bool allow_css_outline,
-    bool csp_allows_data, bool csp_allows_inline_styles, bool beacon_enabled,
-    size_t inline_limit, unsigned int css_inline_limit,
-    unsigned int css_outline_threshold, unsigned int viewport_width,
-    unsigned int dpr_hundredths, laghu_runtime_html_result *result);
+    bool allow_css_combine, bool csp_allows_data, bool csp_allows_inline_styles,
+    bool csp_allows_self_styles, bool beacon_enabled, size_t inline_limit,
+    unsigned int css_inline_limit, unsigned int css_outline_threshold,
+    unsigned int viewport_width, unsigned int dpr_hundredths,
+    laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
 bool laghu_runtime_rewrite_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, bool allow_inline,
-    bool allow_outline, bool csp_allows_inline_styles,
-    unsigned int inline_limit, unsigned int outline_threshold,
-    laghu_runtime_html_result *result);
+    bool allow_outline, bool allow_combine, bool csp_allows_inline_styles,
+    bool csp_allows_self_styles, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_html_result *result);
+bool laghu_runtime_combine_css_markup(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_css_combine_result *result);
+void laghu_runtime_css_combine_result_release(
+    laghu_runtime_css_combine_result *result);
+bool laghu_runtime_csp_allows_self_styles(const char *csp,
+                                          const char *page_origin);
 bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
                                const char *cache_path, laghu_buffer css,
                                const char *stylesheet_path,

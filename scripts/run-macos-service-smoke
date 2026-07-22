@@ -11,8 +11,8 @@ if [ "$(uname -s)" != Darwin ]; then
   exit 77
 fi
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 BUILD_DIR=${BUILD_DIR:-"${REPO_ROOT}/tmp/build"}
 service="${BUILD_DIR}/workers/laghu-libvips/laghu-libvips"
 work=$(mktemp -d "${TMPDIR:-/tmp}/laghu-launchd-XXXXXX")

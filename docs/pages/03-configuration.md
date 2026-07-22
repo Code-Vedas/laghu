@@ -132,6 +132,12 @@ eligibility checks. Outlining requires structural-rewrite permission. Both
 preserve the first HTML response and apply only after their catalog dependency
 is ready and the combined HTML/CSS transfer is smaller.
 
+No separate directive controls stylesheet combination. Policies that select
+CSS rewriting and permit structural rewriting may combine up to 32 compatible,
+whitespace-adjacent links after inlining has run. Media, CSP, source-map,
+import, font, catalog-readiness, and strict total-transfer checks remain
+mandatory.
+
 Outlined assets are exposed only through the validated
 `/.laghu/css/<sha256>` route with `text/css`, a strong ETag, and one-year
 immutable caching. Laghu never fetches a stylesheet from an origin.

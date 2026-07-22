@@ -43,5 +43,22 @@ sorted by normalized URL, and the out-of-process `laghu-libvips` service reads
 only validated cached variants. The sprite and rewritten CSS must pass their
 strict size gates before publication.
 
-Combining stylesheets, flattening imports, rewriting `<style>` blocks,
-outlining, inlining external CSS, and critical-CSS extraction remain pending.
+Laghu may combine two to 32 strictly adjacent external stylesheet links when
+CSS rewriting and structural rewriting are selected. Only whitespace may
+separate links; comments and other nodes terminate a group. Every member must
+be an ordinary same-origin stylesheet with the same effective media value,
+ready catalog data, and ready nested image dependencies. DOM order and ordered
+duplicates are preserved with a newline between payloads.
+
+Combination respects `style-src-elem`, then `style-src`, then `default-src` and
+requires the internal same-origin asset route to be allowed. Integrity, nonce,
+alternate, disabled, cross-origin and unsupported attributes exclude links.
+Imports, namespaces, charsets, external fonts, source maps/source URLs,
+malformed CSS, and unresolved relative URLs exclude the complete group. The
+bundle is reparsed, capped at 2 MiB, atomically published, and exposed through
+`/.laghu/css/<sha256>`. The first eligible page stays original; a later request
+may receive the combined link only when total HTML and unique CSS transfer
+bytes are strictly smaller. Laghu does not count request overhead as savings.
+
+Flattening imports, moving CSS, general `<style>` rewriting, and critical-CSS
+extraction remain pending.

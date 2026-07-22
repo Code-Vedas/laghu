@@ -677,6 +677,7 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
       bool csp_allows_data = csp == NULL || ap_strcasestr(csp, "data:") != NULL;
       bool csp_allows_inline =
           csp == NULL || ap_strcasestr(csp, "'unsafe-inline'") != NULL;
+      bool csp_allows_self = laghu_runtime_csp_allows_self_styles(csp, origin);
       unsigned char *selected = context->capture;
       size_t selected_length = context->capture_length;
       apr_bucket_brigade *replacement;
@@ -693,8 +694,11 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
               (context->policy.filter_families &
                LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
                   context->policy.allow_resource_inlining,
-              context->policy.allow_structural_rewrite, csp_allows_data,
-              csp_allows_inline,
+              context->policy.allow_structural_rewrite,
+              (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
+                      0U &&
+                  context->policy.allow_structural_rewrite,
+              csp_allows_data, csp_allows_inline, csp_allows_self,
               context->config->core.image_beacon == LAGHU_MODE_ON,
               context->config->core.image_inline_limit,
               context->config->core.css_inline_limit,

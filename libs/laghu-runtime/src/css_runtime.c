@@ -281,7 +281,7 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
         job.kind = LAGHU_RUNTIME_JOB_SPRITE;
         memcpy(job.index_key, sprite_key, sizeof(job.index_key));
         memcpy(job.policy_key, policy_key, sizeof(job.policy_key));
-        memcpy(job.validator, source_hash, sizeof(job.validator));
+        memcpy(job.validator, source_hash, sizeof(source_hash));
         job.sprite_count = (unsigned int)sprite_count;
         for (outer = 0U; outer < sprite_count; ++outer) {
           size_t item = ordered[outer];

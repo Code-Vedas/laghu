@@ -6,11 +6,13 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/run-common"
 
 run_cmd license-headers "${SCRIPT_DIR}/run-license-headers-all"
 
+# This command is intentionally single-quoted so the inner shell expands it.
+# shellcheck disable=SC2016
 run_cmd shell-syntax sh -c '
   for script in "${1}"/scripts/*; do
     [ -f "${script}" ] || continue
@@ -53,6 +55,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_runtime.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_catalog.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_markup.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/css_combine.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/beacon.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_fuzz.c \

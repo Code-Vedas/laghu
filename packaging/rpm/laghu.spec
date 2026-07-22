@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 Name: laghu-libvips
+%global _lto_cflags %{nil}
 Version: 0.1.0
 Release: 1%{?dist}
 Summary: Shared asynchronous libvips service for Laghu

@@ -6,8 +6,8 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 NGINX_VERSION="${NGINX_VERSION:-1.30.4}"
 WORK_DIR="${NGINX_WORK_DIR:-${REPO_ROOT}/tmp/nginx/${NGINX_VERSION}}"
 BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
@@ -41,6 +41,14 @@ printf '%s\n' '<link rel="stylesheet" href="/inline.css"><p class="inline">inlin
   >"${SMOKE_DIR}/html/inline-page.html"
 awk 'BEGIN { printf "<style>"; for (i=0;i<400;i++) printf ".x { color: red; margin: 0 0; } "; printf "</style>\n" }' \
   >"${SMOKE_DIR}/html/outline-page.html"
+printf '%s\n' '.combine-a { color: red; padding: 0  0; }' \
+  >"${SMOKE_DIR}/html/combine-a.css"
+printf '%s\n' '.combine-b { color: blue; margin: 0  0; }' \
+  >"${SMOKE_DIR}/html/combine-b.css"
+printf '%s\n' '.combine-c { color: green; border: 0  none; }' \
+  >"${SMOKE_DIR}/html/combine-c.css"
+printf '%s\n' '<link rel="stylesheet" href="/combine-a.css"> <link rel="stylesheet" href="/combine-b.css"> <link rel="stylesheet" href="/combine-c.css">' \
+  >"${SMOKE_DIR}/html/combine-page.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -119,6 +127,19 @@ http {
       laghu rewrite_level all;
       default_type text/html;
       try_files /outline-page.html =404;
+    }
+
+    location ~ ^/combine-(a|b|c)\.css$ {
+      laghu rewrite_level all;
+      laghu css_inline_limit 0;
+      default_type text/css;
+    }
+
+    location = /combine-page.html {
+      laghu rewrite_level all;
+      laghu css_inline_limit 0;
+      default_type text/html;
+      try_files /combine-page.html =404;
     }
 
     location = /image.png {
@@ -716,10 +737,22 @@ fi
 curl --fail --silent --show-error --output "${SMOKE_DIR}/css-cold" \
   "http://127.0.0.1:${PORT}/site.css"
 cmp "${SMOKE_DIR}/html/site.css" "${SMOKE_DIR}/css-cold"
-curl --fail --silent --show-error --dump-header "${SMOKE_DIR}/css-warm.headers" \
-  --output "${SMOKE_DIR}/css-warm" "http://127.0.0.1:${PORT}/site.css"
+attempt=0
+while [ "${attempt}" -lt 100 ]; do
+  curl --fail --silent --show-error \
+    --dump-header "${SMOKE_DIR}/css-warm.headers" \
+    --output "${SMOKE_DIR}/css-warm" \
+    "http://127.0.0.1:${PORT}/site.css"
+  if ! grep 'remove' "${SMOKE_DIR}/css-warm" >/dev/null &&
+      grep -i '^ETag: "laghu-css-' \
+        "${SMOKE_DIR}/css-warm.headers" >/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
 grep -F '/*! keep */' "${SMOKE_DIR}/css-warm" >/dev/null
-if grep 'remove' "${SMOKE_DIR}/css-warm" >/dev/null; then
+if [ "${attempt}" -eq 100 ]; then
   echo "NGINX did not serve the warm minified CSS derivation." >&2
   exit 1
 fi
@@ -757,6 +790,40 @@ grep -i '^Content-Type: text/css' "${SMOKE_DIR}/outline-asset.headers" >/dev/nul
 grep -i '^Cache-Control: public, max-age=31536000, immutable' \
   "${SMOKE_DIR}/outline-asset.headers" >/dev/null
 grep -i '^ETag: "laghu-css-' "${SMOKE_DIR}/css-warm.headers" >/dev/null
+
+for name in a b c; do
+  curl --fail --silent --output "${SMOKE_DIR}/combine-${name}-cold" \
+    "http://127.0.0.1:${PORT}/combine-${name}.css"
+  cmp "${SMOKE_DIR}/html/combine-${name}.css" \
+    "${SMOKE_DIR}/combine-${name}-cold"
+  curl --fail --silent --output "${SMOKE_DIR}/combine-${name}-warm" \
+    "http://127.0.0.1:${PORT}/combine-${name}.css"
+done
+for phase in cold settle warm; do
+  curl --fail --silent --output "${SMOKE_DIR}/combine-page-${phase}" \
+    "http://127.0.0.1:${PORT}/combine-page.html"
+done
+cmp "${SMOKE_DIR}/html/combine-page.html" "${SMOKE_DIR}/combine-page-cold"
+combine_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' \
+  "${SMOKE_DIR}/combine-page-warm")
+case "${combine_url}" in
+  /.laghu/css/????????????????????????????????????????????????????????????????) ;;
+  *) echo "NGINX did not combine CSS to a hash-only route." >&2; exit 1 ;;
+esac
+if [ "$(grep -o 'rel="stylesheet"' "${SMOKE_DIR}/combine-page-warm" | wc -l | tr -d ' ')" != 1 ]; then
+  echo "NGINX did not replace the group with one stylesheet." >&2
+  exit 1
+fi
+curl --fail --silent --dump-header "${SMOKE_DIR}/combine-asset.headers" \
+  --output "${SMOKE_DIR}/combine-asset.css" \
+  "http://127.0.0.1:${PORT}${combine_url}"
+grep -i '^Content-Type: text/css' "${SMOKE_DIR}/combine-asset.headers" >/dev/null
+grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+  "${SMOKE_DIR}/combine-asset.headers" >/dev/null
+test "$(grep -n 'combine-a' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)" -le \
+  "$(grep -n 'combine-b' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)"
+test "$(grep -n 'combine-b' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)" -le \
+  "$(grep -n 'combine-c' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)"
 
 kill "${nginx_pid}"
 wait "${nginx_pid}"

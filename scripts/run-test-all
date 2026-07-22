@@ -6,7 +6,7 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "${SCRIPT_DIR}/run-common"
 
 BUILD_DIR="${BUILD_DIR:-${REPO_ROOT}/tmp/build}"
@@ -16,4 +16,3 @@ if [ ! -f "${BUILD_DIR}/CTestTestfile.cmake" ]; then
 fi
 
 run_cmd core-test ctest --test-dir "${BUILD_DIR}" --output-on-failure
-

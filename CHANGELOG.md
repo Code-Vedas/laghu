@@ -38,6 +38,9 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Versioned stylesheet catalogs, inherited CSS inline/outline limits,
   cold-original/warm-inline stylesheet replacement, and immutable hash-only
   outlined CSS delivery for both server adapters.
+- Catalog-driven combination of strictly adjacent compatible stylesheets with
+  CSP/media/source-map safeguards, ordered deterministic keys, cold-original
+  publication, immutable delivery, and strict total-transfer accounting.
 - Official packaging inputs requiring libvips 8.15+, hardened service/runtime
   directory definitions, sanitizer coverage, and an image parser fuzz harness.
 - `ngx-laghu` and `mod-laghu` Debian/RPM package families with the internal

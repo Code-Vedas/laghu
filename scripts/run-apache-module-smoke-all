@@ -6,8 +6,8 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 APXS=${APXS:-}
 HTTPD=${HTTPD:-}
 
@@ -41,6 +41,14 @@ printf '%s\n' '<link rel="stylesheet" href="/inline.css"><p class="inline">inlin
   >"${work}/htdocs/inline-page.html"
 awk 'BEGIN { printf "<style>"; for (i=0;i<400;i++) printf ".x { color: red; margin: 0 0; } "; printf "</style>\n" }' \
   >"${work}/htdocs/outline-page.html"
+printf '%s\n' '.combine-a { color: red; padding: 0  0; }' \
+  >"${work}/htdocs/combine-a.css"
+printf '%s\n' '.combine-b { color: blue; margin: 0  0; }' \
+  >"${work}/htdocs/combine-b.css"
+printf '%s\n' '.combine-c { color: green; border: 0  none; }' \
+  >"${work}/htdocs/combine-c.css"
+printf '%s\n' '<link rel="stylesheet" href="/combine-a.css"> <link rel="stylesheet" href="/combine-b.css"> <link rel="stylesheet" href="/combine-c.css">' \
+  >"${work}/htdocs/combine-page.html"
 
 load_if_present() {
   name=$1
@@ -104,6 +112,8 @@ load_first_mpm() {
   printf '<Location "/inline.css">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/inline-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/outline-page.html">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<LocationMatch "^/combine-(a|b|c)\\.css$">\nLaghu RewriteLevel all\nLaghu CssInlineLimit 0\n</LocationMatch>\n'
+  printf '<Location "/combine-page.html">\nLaghu RewriteLevel all\nLaghu CssInlineLimit 0\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
   if [ -f "${modules}/mod_http2.so" ]; then
     printf 'Protocols h2c http/1.1\nH2Direct on\n'
@@ -212,14 +222,51 @@ grep -i '^X-Laghu: bypass-passthrough' "${work}/headers"
 curl --fail --silent --dump-header "${work}/css-cold.headers" \
   http://127.0.0.1:18081/site.css >"${work}/css-cold"
 cmp "${work}/htdocs/site.css" "${work}/css-cold"
-curl --fail --silent --dump-header "${work}/css-warm.headers" \
-  http://127.0.0.1:18081/site.css >"${work}/css-warm"
+attempt=0
+while [ "${attempt}" -lt 100 ]; do
+  curl --fail --silent --dump-header "${work}/css-warm.headers" \
+    http://127.0.0.1:18081/site.css >"${work}/css-warm"
+  if ! grep 'remove' "${work}/css-warm" >/dev/null &&
+      grep -i '^ETag: "laghu-css-' "${work}/css-warm.headers" >/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
 grep -F '/*! keep */' "${work}/css-warm" >/dev/null
-if grep 'remove' "${work}/css-warm" >/dev/null; then
+if [ "${attempt}" -eq 100 ]; then
   echo "Apache did not serve the warm minified CSS derivation." >&2
   exit 1
 fi
 grep -i '^ETag: "laghu-css-' "${work}/css-warm.headers" >/dev/null
+
+for name in a b c; do
+  curl --fail --silent http://127.0.0.1:18081/combine-${name}.css \
+    >"${work}/combine-${name}-cold"
+  cmp "${work}/htdocs/combine-${name}.css" "${work}/combine-${name}-cold"
+  curl --fail --silent http://127.0.0.1:18081/combine-${name}.css \
+    >"${work}/combine-${name}-warm"
+done
+for phase in cold settle warm; do
+  curl --fail --silent http://127.0.0.1:18081/combine-page.html \
+    >"${work}/combine-page-${phase}"
+done
+cmp "${work}/htdocs/combine-page.html" "${work}/combine-page-cold"
+combine_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' \
+  "${work}/combine-page-warm")
+case "${combine_url}" in
+  /.laghu/css/????????????????????????????????????????????????????????????????) ;;
+  *) echo "Apache did not combine CSS to a hash-only route." >&2; exit 1 ;;
+esac
+curl --fail --silent --dump-header "${work}/combine-asset.headers" \
+  http://127.0.0.1:18081"${combine_url}" >"${work}/combine-asset.css"
+grep -i '^Content-Type: text/css' "${work}/combine-asset.headers" >/dev/null
+grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+  "${work}/combine-asset.headers" >/dev/null
+test "$(grep -n 'combine-a' "${work}/combine-asset.css" | cut -d: -f1)" -le \
+  "$(grep -n 'combine-b' "${work}/combine-asset.css" | cut -d: -f1)"
+test "$(grep -n 'combine-b' "${work}/combine-asset.css" | cut -d: -f1)" -le \
+  "$(grep -n 'combine-c' "${work}/combine-asset.css" | cut -d: -f1)"
 
 curl --fail --silent http://127.0.0.1:18081/inline.css >"${work}/inline-css-cold"
 cmp "${work}/htdocs/inline.css" "${work}/inline-css-cold"
@@ -268,6 +315,9 @@ if [ -f "${modules}/mod_http2.so" ] && curl --version | grep -q 'Features:.*HTTP
 fi
 
 if [ "${service_pid}" != "" ]; then
+  curl --fail --silent \
+    http://127.0.0.1:18081/image-page.html >"${work}/image-page-discovery.html"
+  cmp "${work}/htdocs/image-page.html" "${work}/image-page-discovery.html"
   curl --fail --silent --dump-header "${work}/image-cold.headers" \
     http://127.0.0.1:18081/image.png >"${work}/image-cold.png"
   cmp "${work}/htdocs/image.png" "${work}/image-cold.png"
@@ -282,35 +332,61 @@ if [ "${service_pid}" != "" ]; then
     exit 1
   }
   attempt=0
+  original_image_size=$(wc -c <"${work}/htdocs/image.png")
   while [ "${attempt}" -lt 100 ]; do
     curl --fail --silent --dump-header "${work}/image-warm.headers" \
       http://127.0.0.1:18081/image.png >"${work}/image-warm.png"
-    if grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers" >/dev/null; then
+    if grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers" >/dev/null &&
+        [ "$(wc -c <"${work}/image-warm.png")" -lt \
+          "${original_image_size}" ]; then
       break
     fi
     attempt=$((attempt + 1))
     sleep 0.1
   done
-  [ "${attempt}" -lt 100 ]
+  [ "${attempt}" -lt 100 ] || {
+    echo "Apache did not serve a smaller warm image variant." >&2
+    exit 1
+  }
   grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers"
-  test "$(wc -c <"${work}/image-warm.png")" -lt \
-    "$(wc -c <"${work}/htdocs/image.png")"
-  curl --fail --silent \
-    http://127.0.0.1:18081/image-page.html >"${work}/image-page-discovery.html"
-  cmp "${work}/htdocs/image-page.html" "${work}/image-page-discovery.html"
-  curl --fail --silent http://127.0.0.1:18081/image.png \
+  test "$(wc -c <"${work}/image-warm.png")" -lt "${original_image_size}"
+  curl --fail --silent --show-error http://127.0.0.1:18081/image-page.html \
+    >"${work}/image-page-targets.html"
+  curl --fail --silent --show-error http://127.0.0.1:18081/image.png \
     >"${work}/image-target.png"
   attempt=0
   while [ "${attempt}" -lt 100 ]; do
-    curl --fail --silent --dump-header "${work}/image-page-warm.headers" \
+    curl --fail --silent --show-error \
+      --dump-header "${work}/image-page-warm.headers" \
       http://127.0.0.1:18081/image-page.html >"${work}/image-page-warm.html"
-    if grep 'srcset=' "${work}/image-page-warm.html" >/dev/null; then
+    if grep 'srcset=' "${work}/image-page-warm.html" >/dev/null &&
+        grep ' 320w' "${work}/image-page-warm.html" >/dev/null &&
+        grep ' 512w' "${work}/image-page-warm.html" >/dev/null &&
+        grep 'loading="lazy"' "${work}/image-page-warm.html" >/dev/null &&
+        grep '/.laghu/beacon/images.js' \
+          "${work}/image-page-warm.html" >/dev/null &&
+        grep -i -E '^ETag: "laghu-html-[0-9a-f]{64}"' \
+          "${work}/image-page-warm.headers" >/dev/null; then
       break
     fi
+    # Discovery and queue publication are deliberately try-only. A catalog
+    # writer may be contended, so revisit the source between page attempts to
+    # submit any targets published by the latest discovery pass.
+    curl --fail --silent --show-error http://127.0.0.1:18081/image.png \
+      >"${work}/image-target.png"
     attempt=$((attempt + 1))
     sleep 0.1
   done
-  [ "${attempt}" -lt 100 ]
+  [ "${attempt}" -lt 100 ] || {
+    echo "Apache did not serve the complete warm responsive image markup." >&2
+    echo "Last response headers:" >&2
+    cat "${work}/image-page-warm.headers" >&2
+    echo "Last response body:" >&2
+    cat "${work}/image-page-warm.html" >&2
+    echo "Published catalog metadata:" >&2
+    find "${work}/cache" -name '*.meta' -type f -print >&2
+    exit 1
+  }
   grep ' 320w' "${work}/image-page-warm.html" >/dev/null
   grep ' 512w' "${work}/image-page-warm.html" >/dev/null
   grep 'loading="lazy"' "${work}/image-page-warm.html" >/dev/null

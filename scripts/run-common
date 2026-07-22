@@ -7,11 +7,11 @@
 set -eu
 
 if [ "${SCRIPT_DIR:-}" = "" ]; then
-  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 fi
 
 if [ "${REPO_ROOT:-}" = "" ]; then
-  REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+  REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 fi
 
 TMP_DIR="${REPO_ROOT}/tmp/run-all"
@@ -38,4 +38,3 @@ run_cmd() {
 has_command() {
   command -v "$1" >/dev/null 2>&1
 }
-

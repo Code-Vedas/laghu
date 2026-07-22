@@ -209,9 +209,9 @@ bool laghu_runtime_rewrite_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, bool allow_inline,
-    bool allow_outline, bool csp_allows_inline_styles,
-    unsigned int inline_limit, unsigned int outline_threshold,
-    laghu_runtime_html_result *result) {
+    bool allow_outline, bool allow_combine, bool csp_allows_inline_styles,
+    bool csp_allows_self_styles, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_html_result *result) {
   laghu_css_markup_builder builder = {0};
   size_t cursor = 0U;
   size_t original_bundle = html.length;
@@ -400,6 +400,29 @@ bool laghu_runtime_rewrite_css_markup(
       goto failed;
     }
     cursor = end + 1U;
+  }
+  if (allow_combine && csp_allows_self_styles) {
+    laghu_runtime_css_combine_result combined;
+    if (!laghu_runtime_combine_css_markup(
+            cache_path, (laghu_buffer){builder.data, builder.length}, page_path,
+            page_origin, policy_key, capability_mask, now, ttl_seconds,
+            inline_limit, outline_threshold, &combined)) {
+      goto failed;
+    }
+    if (combined.dependencies_pending) {
+      result->dependencies_pending = true;
+      laghu_runtime_css_combine_result_release(&combined);
+      goto unchanged;
+    }
+    if (combined.rewritten) {
+      free(builder.data);
+      builder.data = combined.data;
+      builder.length = combined.length;
+      builder.capacity = combined.length + 1U;
+      original_bundle += combined.original_external_bytes;
+      outlined_payload += combined.combined_external_bytes;
+      changed = true;
+    }
   }
   rewritten_bundle = builder.length + outlined_payload;
   if (!changed || rewritten_bundle >= original_bundle) {

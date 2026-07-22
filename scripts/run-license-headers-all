@@ -6,8 +6,8 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 MISSING_FILE=$(mktemp "${TMPDIR:-/tmp}/laghu-license-headers.XXXXXX")
 trap 'rm -f "${MISSING_FILE}"' EXIT HUP INT TERM
 
@@ -22,13 +22,13 @@ requires_header() {
     scripts/*|*/CMakeLists.txt|CMakeLists.txt|*/Dockerfile|Dockerfile.*)
       return 0
       ;;
-    */config|examples/nginx.conf|packaging/container/entrypoint)
+    */config|packaging/container/entrypoint)
       return 0
       ;;
     packaging/debian/control|packaging/debian/laghu-libvips.postinst|packaging/debian/rules)
       return 0
       ;;
-    packaging/rpm/*.spec|packaging/systemd/*.service|packaging/tmpfiles/*.conf)
+    packaging/rpm/*.spec|packaging/systemd/*.service)
       return 0
       ;;
   esac

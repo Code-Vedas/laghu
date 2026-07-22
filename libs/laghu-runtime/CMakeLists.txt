@@ -9,7 +9,7 @@ else()
   set(LAGHU_RUNTIME_SOURCE src/runtime_posix.c)
 endif()
 
-add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/catalog.c src/html.c src/css_runtime.c src/css_catalog.c src/css_markup.c src/beacon.c)
+add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/catalog.c src/html.c src/css_runtime.c src/css_catalog.c src/css_combine.c src/css_markup.c src/beacon.c)
 add_library(Laghu::Runtime ALIAS laghu_runtime)
 
 target_include_directories(laghu_runtime

@@ -29,6 +29,10 @@ case "${PACKAGE_FAMILY}" in
   apt)
     cp -R packaging/debian debian
     dpkg-buildpackage --build=binary --no-sign
+    # Container dependency layers may outlive a mirror publication. Refresh
+    # immediately before the clean-host install so package versions referenced
+    # by APT still exist on the configured mirror.
+    apt-get update
     if [ "${SERVER}" = nginx ]; then
       dependencies=$(dpkg-deb -f ../ngx-laghu_*.deb Depends)
       printf '%s\n' "${dependencies}" | grep -q 'nginx-abi-'

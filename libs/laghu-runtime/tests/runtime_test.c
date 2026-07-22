@@ -218,13 +218,13 @@ int main(void) {
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){linked, sizeof(linked) - 1U}, "/index.html",
           "https://example.test", policy_key, 0x55aaU, 900002U, 604800U, true,
-          false, true, 2048U, 8192U, &markup));
+          false, false, true, true, 2048U, 8192U, &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){linked, sizeof(linked) - 1U}, "/index.html",
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, true,
-          false, true, 2048U, 8192U, &markup));
+          false, false, true, true, 2048U, 8192U, &markup));
       assert(markup.rewritten && !markup.dependencies_pending);
       assert(strstr((const char *)markup.data, "<style>") != NULL);
       assert(strstr((const char *)markup.data, "href=") == NULL);
@@ -232,7 +232,7 @@ int main(void) {
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){linked, sizeof(linked) - 1U}, "/index.html",
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, true,
-          false, false, 2048U, 8192U, &markup));
+          false, false, false, true, 2048U, 8192U, &markup));
       assert(!markup.rewritten && !markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
     }
@@ -252,23 +252,141 @@ int main(void) {
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){outlined, offset}, "/outline.html",
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, false,
-          true, false, 2048U, 8192U, &markup));
+          true, false, false, true, 2048U, 8192U, &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){outlined, offset}, "/outline.html",
           "https://example.test", policy_key, 0x55aaU, 900004U, 604800U, false,
-          true, false, 2048U, 8192U, &markup));
+          true, false, false, true, 2048U, 8192U, &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){outlined, offset}, "/outline.html",
           "https://example.test", policy_key, 0x55aaU, 900005U, 604800U, false,
-          true, false, 2048U, 8192U, &markup));
+          true, false, false, true, 2048U, 8192U, &markup));
       assert(markup.rewritten && !markup.dependencies_pending);
       assert(strstr((const char *)markup.data, "/.laghu/css/") != NULL);
       laghu_runtime_html_result_release(&markup);
       free(outlined);
+    }
+    {
+      static const unsigned char first_css[] =
+          ".first { color: red; padding: 0  0  0  0; }\n";
+      static const unsigned char second_css[] =
+          ".second { color: blue; margin: 0  0  0  0; }\n";
+      static const unsigned char combined_html[] =
+          "<html><head><link rel=\"stylesheet\" href=\"/first.css\"> \n"
+          "<link rel=\"stylesheet\" href=\"/second.css\"></head></html>";
+      static const unsigned char split_html[] =
+          "<link rel=\"stylesheet\" href=\"/first.css\"><!-- split -->"
+          "<link rel=\"stylesheet\" href=\"/second.css\">";
+      static const unsigned char media_html[] =
+          "<link rel=\"stylesheet\" href=\"/first.css\" media=\"print\">"
+          "<link rel=\"stylesheet\" href=\"/second.css\" media=\"screen\">";
+      laghu_runtime_css_result sheet;
+      laghu_runtime_css_combine_result combined;
+      laghu_runtime_cache_entry combined_entry;
+      unsigned char combined_body[256U];
+      char first_key[LAGHU_RUNTIME_KEY_SIZE];
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){first_css, sizeof(first_css) - 1U},
+          "/first.css", "https://example.test", policy_key, 0x55aaU, 910000U,
+          604800U, true, false, 2048U, 8192U, &sheet));
+      laghu_runtime_css_result_release(&sheet);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){first_css, sizeof(first_css) - 1U},
+          "/first.css", "https://example.test", policy_key, 0x55aaU, 910001U,
+          604800U, true, false, 2048U, 8192U, &sheet));
+      laghu_runtime_css_result_release(&sheet);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){second_css, sizeof(second_css) - 1U},
+          "/second.css", "https://example.test", policy_key, 0x55aaU, 910000U,
+          604800U, true, false, 2048U, 8192U, &sheet));
+      laghu_runtime_css_result_release(&sheet);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){second_css, sizeof(second_css) - 1U},
+          "/second.css", "https://example.test", policy_key, 0x55aaU, 910001U,
+          604800U, true, false, 2048U, 8192U, &sheet));
+      laghu_runtime_css_result_release(&sheet);
+      assert(laghu_runtime_combine_css_markup(
+          temporary, (laghu_buffer){combined_html, sizeof(combined_html) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 910002U,
+          604800U, 2048U, 8192U, &combined));
+      assert(combined.rewritten && !combined.dependencies_pending);
+      assert(strstr((const char *)combined.data, "/.laghu/css/") != NULL);
+      {
+        const char *route = strstr((const char *)combined.data, "/.laghu/css/");
+        assert(route != NULL);
+        memcpy(first_key, route + sizeof("/.laghu/css/") - 1U,
+               LAGHU_SHA256_HEX_LENGTH);
+        first_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+      }
+      assert(laghu_runtime_cache_lookup_variant(temporary, first_key,
+                                                &combined_entry));
+      assert(combined_entry.length < sizeof(combined_body));
+      assert(laghu_runtime_cache_read(&combined_entry, combined_body,
+                                      sizeof(combined_body)));
+      combined_body[combined_entry.length] = '\0';
+      assert(strstr((const char *)combined_body, ".first") <
+             strstr((const char *)combined_body, ".second"));
+      laghu_runtime_css_combine_result_release(&combined);
+      {
+        static const unsigned char changed_css[] =
+            ".first { color: green; padding: 0  0  0  0; }\n";
+        char changed_key[LAGHU_RUNTIME_KEY_SIZE];
+        assert(laghu_runtime_rewrite_css(
+            NULL, temporary,
+            (laghu_buffer){changed_css, sizeof(changed_css) - 1U}, "/first.css",
+            "https://example.test", policy_key, 0x55aaU, 910004U, 604800U, true,
+            false, 2048U, 8192U, &sheet));
+        laghu_runtime_css_result_release(&sheet);
+        assert(laghu_runtime_rewrite_css(
+            NULL, temporary,
+            (laghu_buffer){changed_css, sizeof(changed_css) - 1U}, "/first.css",
+            "https://example.test", policy_key, 0x55aaU, 910005U, 604800U, true,
+            false, 2048U, 8192U, &sheet));
+        laghu_runtime_css_result_release(&sheet);
+        assert(laghu_runtime_combine_css_markup(
+            temporary,
+            (laghu_buffer){combined_html, sizeof(combined_html) - 1U},
+            "/index.html", "https://example.test", policy_key, 0x55aaU, 910006U,
+            604800U, 2048U, 8192U, &combined));
+        assert(combined.rewritten);
+        {
+          const char *route =
+              strstr((const char *)combined.data, "/.laghu/css/");
+          assert(route != NULL);
+          memcpy(changed_key, route + sizeof("/.laghu/css/") - 1U,
+                 LAGHU_SHA256_HEX_LENGTH);
+          changed_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+        }
+        assert(strcmp(first_key, changed_key) != 0);
+        laghu_runtime_css_combine_result_release(&combined);
+      }
+      assert(laghu_runtime_combine_css_markup(
+          temporary, (laghu_buffer){split_html, sizeof(split_html) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 910003U,
+          604800U, 2048U, 8192U, &combined));
+      assert(!combined.rewritten && !combined.dependencies_pending);
+      laghu_runtime_css_combine_result_release(&combined);
+      assert(laghu_runtime_combine_css_markup(
+          temporary, (laghu_buffer){media_html, sizeof(media_html) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 910003U,
+          604800U, 2048U, 8192U, &combined));
+      assert(!combined.rewritten && !combined.dependencies_pending);
+      laghu_runtime_css_combine_result_release(&combined);
+      assert(
+          laghu_runtime_csp_allows_self_styles(NULL, "https://example.test"));
+      assert(laghu_runtime_csp_allows_self_styles(
+          "default-src 'none'; style-src 'self'", "https://example.test"));
+      assert(laghu_runtime_csp_allows_self_styles(
+          "style-src-elem https://example.test; style-src 'none'",
+          "https://example.test"));
+      assert(!laghu_runtime_csp_allows_self_styles(
+          "style-src-elem 'none'; style-src 'self'", "https://example.test"));
+      assert(!laghu_runtime_csp_allows_self_styles("default-src 'none'",
+                                                   "https://example.test"));
     }
   }
   {
@@ -321,8 +439,8 @@ int main(void) {
         "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,
         LAGHU_IMAGE_INSERT_DIMENSIONS | LAGHU_IMAGE_RESPONSIVE |
             LAGHU_IMAGE_RESPONSIVE_ZOOM | LAGHU_IMAGE_LAZYLOAD,
-        false, false, false, false, false, false, 2048U, 2048U, 8192U, 0U, 100U,
-        &page));
+        false, false, false, false, false, false, true, false, 2048U, 2048U,
+        8192U, 0U, 100U, &page));
     assert(page.rewritten && !page.dependencies_pending);
     assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
     assert(strstr((const char *)page.data, " 320w") != NULL);
@@ -332,7 +450,8 @@ int main(void) {
         temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
         "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
         604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
-        false, true, true, false, 2048U, 2048U, 8192U, 0U, 100U, &page));
+        false, false, true, true, true, false, 2048U, 2048U, 8192U, 0U, 100U,
+        &page));
     assert(page.rewritten);
     assert(strstr((const char *)page.data, "data:image/png;base64,") != NULL);
     assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
@@ -341,7 +460,8 @@ int main(void) {
         temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
         "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
         604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
-        false, false, true, false, 2048U, 2048U, 8192U, 0U, 100U, &page));
+        false, false, false, true, true, false, 2048U, 2048U, 8192U, 0U, 100U,
+        &page));
     assert(page.rewritten);
     assert(strstr((const char *)page.data, "data:image/") == NULL);
     laghu_runtime_html_result_release(&page);
