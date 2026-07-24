@@ -226,10 +226,10 @@ both adapters. Critical CSS remains pending.
 - [x] `remove_comments`: strip eligible HTML comments.
 - [x] `remove_quotes`: remove unnecessary attribute quotes.
 - [x] `elide_attributes`: remove default-value attributes.
-- [ ] `convert_meta_tags`: convert eligible HTTP-equivalent meta tags to headers.
+- [x] `convert_meta_tags`: convert eligible HTTP-equivalent meta tags to headers.
 - [ ] `add_instrumentation`: inject opt-in real-user measurement instrumentation.
-- [ ] `hint_preload_subresources`: add preload link hints.
-- [ ] `insert_dns_prefetch`: add DNS-prefetch hints for third parties.
+- [x] `hint_preload_subresources`: add preload link hints.
+- [x] `insert_dns_prefetch`: add DNS-prefetch hints for third parties.
 - [ ] `trim_urls`: shorten URLs relative to the document base.
 
 Safe HTML normalization evidence: the versioned shared planner mask enables the
@@ -239,6 +239,12 @@ Unicode whitespace, every retained comment marker, safe and unsafe attribute
 values, duplicate/malformed attributes, and the exact MIME-elision table.
 NGINX and Apache smoke fixtures verify byte-identical cold responses,
 strictly-smaller warm responses, protected bytes, and dependency ETags.
+Safe header evidence: the shared planner converts only conflict-free head-level
+Content-Language metadata and emits at most four ready same-origin preload and
+eight discovered third-party DNS-prefetch Link headers. Unit tests cover cold
+publication, catalog-validated CSS/image targets, conflicts, and deterministic
+header derivation; NGINX and Apache smoke fixtures verify byte-identical cold
+responses and atomic warm body/header delivery.
 
 ### 3.6 Caching and URL Filters
 

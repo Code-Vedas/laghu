@@ -29,6 +29,7 @@ cp "${REPO_ROOT}/libs/laghu-image/src/css.c" "${build_dir}/laghu_image_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/catalog.c" "${build_dir}/laghu_catalog.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/html.c" "${build_dir}/laghu_html.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/html_head.c" "${build_dir}/laghu_html_head.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/html_hints.c" "${build_dir}/laghu_html_hints.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/css_runtime.c" "${build_dir}/laghu_runtime_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/css_catalog.c" "${build_dir}/laghu_css_catalog.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/css_combine.c" "${build_dir}/laghu_css_combine.c"
@@ -61,6 +62,7 @@ cd "${build_dir}"
   laghu_catalog.c \
   laghu_html.c \
   laghu_html_head.c \
+  laghu_html_hints.c \
   laghu_runtime_css.c \
   laghu_css_catalog.c \
   laghu_css_combine.c \

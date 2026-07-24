@@ -337,7 +337,10 @@ static laghu_html_planner_mask laghu_apache_html_plan(
   bool html = (policy->filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U;
   bool css = (policy->filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U;
   if (html) {
-    plan |= LAGHU_HTML_PLAN_LEXICAL;
+    plan |= LAGHU_HTML_PLAN_LEXICAL | LAGHU_HTML_PLAN_CONVERT_META_TAGS;
+  }
+  if ((policy->filter_families & LAGHU_FILTER_RESOURCE_HINTS) != 0U) {
+    plan |= LAGHU_HTML_PLAN_RESOURCE_HINTS;
   }
   if (html && policy->allow_structural_rewrite) {
     plan |= LAGHU_HTML_PLAN_ADD_COMBINE_HEAD;
@@ -726,19 +729,116 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
               context->config->core.css_outline_threshold,
               laghu_apache_viewport_header(request),
               laghu_apache_dpr_header(request), &rewritten)) {
+        bool base_rewritten = rewritten.rewritten;
+        char base_dependency[LAGHU_RUNTIME_KEY_SIZE];
+        laghu_runtime_html_result finalized;
+        laghu_runtime_html_result hinted;
+        bool finalized_ok;
+        bool hinted_ok;
+        memcpy(base_dependency, rewritten.dependency_key,
+               sizeof(base_dependency));
         if (rewritten.rewritten) {
           selected =
               apr_pmemdup(request->pool, rewritten.data, rewritten.length);
           if (selected != NULL) {
             selected_length = rewritten.length;
-            apr_table_set(request->headers_out, "ETag",
-                          apr_psprintf(request->pool, "\"laghu-html-%s\"",
-                                       rewritten.dependency_key));
-            apr_table_unset(request->headers_out, "Content-MD5");
-            apr_table_unset(request->headers_out, "Digest");
           }
         }
         laghu_runtime_html_result_release(&rewritten);
+        hinted_ok = laghu_runtime_finalize_html_headers(
+            context->config->image_cache != NULL ? context->config->image_cache
+                                                 : LAGHU_DEFAULT_CACHE,
+            (laghu_buffer){context->capture, context->capture_length},
+            request->uri, origin, context->policy_key,
+            context->config->queue.capabilities,
+            (uint64_t)apr_time_sec(apr_time_now()),
+            context->config->core.image_metadata_ttl,
+            laghu_apache_html_plan(&context->policy) &
+                LAGHU_HTML_PLAN_RESOURCE_HINTS,
+            apr_table_get(request->headers_out, "Content-Language"),
+            apr_table_get(request->headers_out, "Link"),
+            context->config->core.css_inline_limit,
+            context->config->core.css_outline_threshold, base_rewritten,
+            &hinted);
+        finalized_ok = laghu_runtime_finalize_html_headers(
+            context->config->image_cache != NULL ? context->config->image_cache
+                                                 : LAGHU_DEFAULT_CACHE,
+            (laghu_buffer){selected, selected_length}, request->uri, origin,
+            context->policy_key, context->config->queue.capabilities,
+            (uint64_t)apr_time_sec(apr_time_now()),
+            context->config->core.image_metadata_ttl,
+            laghu_apache_html_plan(&context->policy) &
+                ~LAGHU_HTML_PLAN_RESOURCE_HINTS,
+            apr_table_get(request->headers_out, "Content-Language"),
+            apr_table_get(request->headers_out, "Link"),
+            context->config->core.css_inline_limit,
+            context->config->core.css_outline_threshold, base_rewritten,
+            &finalized);
+        if (hinted_ok && finalized_ok) {
+          const char *dependency = base_dependency;
+          if (hinted.invalid || hinted.dependencies_pending ||
+              finalized.invalid || finalized.dependencies_pending) {
+            selected = context->capture;
+            selected_length = context->capture_length;
+          } else {
+            unsigned int header_index;
+            if (finalized.rewritten) {
+              unsigned char *copy =
+                  apr_pmemdup(request->pool, finalized.data, finalized.length);
+              if (copy != NULL) {
+                selected = copy;
+                selected_length = finalized.length;
+              }
+            }
+            for (header_index = 0U; header_index < hinted.link_header_count;
+                 ++header_index) {
+              memcpy(finalized.link_headers[header_index],
+                     hinted.link_headers[header_index],
+                     LAGHU_HTML_HEADER_VALUE_SIZE);
+            }
+            finalized.link_header_count = hinted.link_header_count;
+            {
+              char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 4U];
+              int material_length = snprintf(
+                  material, sizeof(material), "%s\n%s\n%s", base_dependency,
+                  hinted.dependency_key, finalized.dependency_key);
+              if (material_length > 0 &&
+                  (size_t)material_length < sizeof(material) &&
+                  laghu_sha256_hex(
+                      (laghu_buffer){(const unsigned char *)material,
+                                     (size_t)material_length},
+                      finalized.dependency_key)) {
+                dependency = finalized.dependency_key;
+              }
+            }
+            if (finalized.set_content_language) {
+              apr_table_set(request->headers_out, "Content-Language",
+                            finalized.content_language);
+            }
+            for (header_index = 0U; header_index < finalized.link_header_count;
+                 ++header_index) {
+              apr_table_add(request->headers_out, "Link",
+                            finalized.link_headers[header_index]);
+            }
+            if ((base_rewritten || finalized.rewritten ||
+                 finalized.set_content_language ||
+                 finalized.link_header_count != 0U) &&
+                dependency[0] != '\0') {
+              apr_table_set(
+                  request->headers_out, "ETag",
+                  apr_psprintf(request->pool, "\"laghu-html-%s\"", dependency));
+              apr_table_unset(request->headers_out, "Content-MD5");
+              apr_table_unset(request->headers_out, "Digest");
+            }
+          }
+          laghu_runtime_html_result_release(&hinted);
+          laghu_runtime_html_result_release(&finalized);
+        } else {
+          laghu_runtime_html_result_release(&hinted);
+          laghu_runtime_html_result_release(&finalized);
+          selected = context->capture;
+          selected_length = context->capture_length;
+        }
       }
       ap_set_content_length(request, (apr_off_t)selected_length);
       replacement =

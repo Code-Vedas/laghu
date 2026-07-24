@@ -17,6 +17,11 @@ Laghu treats response rewriting as a privileged parsing boundary.
 - bypasses `/api` and `/graphql` path segments unless narrowly overridden
 - bypasses unsupported status codes and content types
 - performs no outbound resource fetches
+- converts only validated `Content-Language` metadata; CSP, refresh, cookies,
+  content type, compatibility, and unknown HTTP-equivalent metadata remain
+  untouched
+- derives preload and DNS-prefetch headers only from bounded document parsing;
+  discovery performs no DNS resolution or outbound connection
 - never loads a generic ImageMagick fallback for untrusted image bytes
 - accepts image type from decoded magic and an explicit loader, not the
   declared response content type

@@ -68,6 +68,8 @@ printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="i
   >"${SMOKE_DIR}/html/missing-head-page.html"
 printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
   >"${SMOKE_DIR}/html/minify-page.html"
+printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
+  >"${SMOKE_DIR}/html/hints-page.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -186,6 +188,12 @@ http {
       laghu rewrite_level bandwidth;
       default_type text/html;
       try_files /minify-page.html =404;
+    }
+
+    location = /hints-page.html {
+      laghu rewrite_level core;
+      default_type text/html;
+      try_files /hints-page.html =404;
     }
 
     location = /image.png {
@@ -572,6 +580,8 @@ if [ "${image_smoke}" -eq 1 ]; then
   grep '/.laghu/beacon/images.js' "${SMOKE_DIR}/image-page-warm" >/dev/null
   tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
     grep -i -E -x 'ETag: "laghu-html-[0-9a-f]{64}"' >/dev/null
+  tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
+    grep -i -E -x 'Link: </.laghu/image/[0-9a-f]{64}>; rel=preload; as=image(; type="image/[a-z0-9.+-]+")?' >/dev/null
   curl --fail --silent --show-error \
     "http://127.0.0.1:${PORT}/.laghu/beacon/images.js" | \
     grep 'getBoundingClientRect' >/dev/null
@@ -932,6 +942,28 @@ if grep '<!-- remove -->' "${SMOKE_DIR}/minify-page-warm" >/dev/null; then
 fi
 grep -i '^ETag: "laghu-html-' \
   "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
+
+curl --fail --silent --dump-header "${SMOKE_DIR}/hints-page-cold.headers" \
+  --output "${SMOKE_DIR}/hints-page-cold" \
+  "http://127.0.0.1:${PORT}/hints-page.html"
+cmp "${SMOKE_DIR}/html/hints-page.html" "${SMOKE_DIR}/hints-page-cold"
+if grep -iE '^(Content-Language|Link):' \
+  "${SMOKE_DIR}/hints-page-cold.headers" >/dev/null; then
+  echo "NGINX emitted Laghu discovery headers on the cold response." >&2
+  exit 1
+fi
+curl --fail --silent --dump-header "${SMOKE_DIR}/hints-page-warm.headers" \
+  --output "${SMOKE_DIR}/hints-page-warm" \
+  "http://127.0.0.1:${PORT}/hints-page.html"
+if grep -i 'http-equiv' "${SMOKE_DIR}/hints-page-warm" >/dev/null; then
+  echo "NGINX retained a converted Content-Language meta element." >&2
+  exit 1
+fi
+grep -i '^Content-Language: en-CA' \
+  "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
+grep -i '^Link: <https://cdn.example.test>; rel=dns-prefetch' \
+  "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
+grep -i '^ETag: "laghu-html-' "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
 
 curl --fail --silent --output "${SMOKE_DIR}/missing-head-cold" \
   "http://127.0.0.1:${PORT}/missing-head-page.html"

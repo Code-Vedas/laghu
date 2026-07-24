@@ -67,6 +67,8 @@ printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="i
   >"${work}/htdocs/missing-head-page.html"
 printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
   >"${work}/htdocs/minify-page.html"
+printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
+  >"${work}/htdocs/hints-page.html"
 
 load_if_present() {
   name=$1
@@ -137,6 +139,7 @@ load_first_mpm() {
   printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
   printf '<Location "/minify-page.html">\nLaghu RewriteLevel bandwidth\n</Location>\n'
+  printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
   printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
@@ -362,6 +365,25 @@ if grep '<!-- remove -->' "${work}/minify-page-warm" >/dev/null; then
 fi
 grep -i '^ETag: "laghu-html-' "${work}/minify-page-warm.headers" >/dev/null
 
+curl --fail --silent --dump-header "${work}/hints-page-cold.headers" \
+  http://127.0.0.1:18081/hints-page.html >"${work}/hints-page-cold"
+cmp "${work}/htdocs/hints-page.html" "${work}/hints-page-cold"
+if grep -iE '^(Content-Language|Link):' \
+  "${work}/hints-page-cold.headers" >/dev/null; then
+  echo "Apache emitted Laghu discovery headers on the cold response." >&2
+  exit 1
+fi
+curl --fail --silent --dump-header "${work}/hints-page-warm.headers" \
+  http://127.0.0.1:18081/hints-page.html >"${work}/hints-page-warm"
+if grep -i 'http-equiv' "${work}/hints-page-warm" >/dev/null; then
+  echo "Apache retained a converted Content-Language meta element." >&2
+  exit 1
+fi
+grep -i '^Content-Language: en-CA' "${work}/hints-page-warm.headers" >/dev/null
+grep -i '^Link: <https://cdn.example.test>; rel=dns-prefetch' \
+  "${work}/hints-page-warm.headers" >/dev/null
+grep -i '^ETag: "laghu-html-' "${work}/hints-page-warm.headers" >/dev/null
+
 curl --fail --silent http://127.0.0.1:18081/missing-head-page.html \
   >"${work}/missing-head-cold"
 cmp "${work}/htdocs/missing-head-page.html" "${work}/missing-head-cold"
@@ -453,6 +475,8 @@ if [ "${service_pid}" != "" ]; then
         grep 'loading=lazy' "${work}/image-page-warm.html" >/dev/null &&
         grep '/.laghu/beacon/images.js' \
           "${work}/image-page-warm.html" >/dev/null &&
+        grep -i -E '^Link: </.laghu/image/[0-9a-f]{64}>; rel=preload; as=image' \
+          "${work}/image-page-warm.headers" >/dev/null &&
         grep -i -E '^ETag: "laghu-html-[0-9a-f]{64}"' \
           "${work}/image-page-warm.headers" >/dev/null; then
       break

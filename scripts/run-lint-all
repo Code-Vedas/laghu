@@ -53,6 +53,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/catalog.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html_head.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/html_hints.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_runtime.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_catalog.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_markup.c \

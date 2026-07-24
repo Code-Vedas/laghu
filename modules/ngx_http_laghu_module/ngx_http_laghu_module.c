@@ -327,7 +327,10 @@ static laghu_html_planner_mask ngx_http_laghu_html_plan(
   bool html = (policy->filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U;
   bool css = (policy->filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U;
   if (html) {
-    plan |= LAGHU_HTML_PLAN_LEXICAL;
+    plan |= LAGHU_HTML_PLAN_LEXICAL | LAGHU_HTML_PLAN_CONVERT_META_TAGS;
+  }
+  if ((policy->filter_families & LAGHU_FILTER_RESOURCE_HINTS) != 0U) {
+    plan |= LAGHU_HTML_PLAN_RESOURCE_HINTS;
   }
   if (html && policy->allow_structural_rewrite) {
     plan |= LAGHU_HTML_PLAN_ADD_COMBINE_HEAD;
@@ -339,6 +342,93 @@ static laghu_html_planner_mask ngx_http_laghu_html_plan(
     }
   }
   return plan;
+}
+
+static void ngx_http_laghu_response_header_values(ngx_http_request_t *request,
+                                                  const char *name,
+                                                  char *output,
+                                                  size_t capacity) {
+  ngx_list_part_t *part = &request->headers_out.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  size_t used = 0U;
+  size_t name_length = ngx_strlen(name);
+  output[0] = '\0';
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) {
+        break;
+      }
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash == 0U || headers[index].key.len != name_length ||
+        ngx_strncasecmp(headers[index].key.data, (u_char *)name, name_length) !=
+            0) {
+      continue;
+    }
+    if (used != 0U) {
+      if (used + 2U >= capacity) {
+        output[0] = '\0';
+        return;
+      }
+      output[used++] = ',';
+      output[used++] = ' ';
+    }
+    if (headers[index].value.len >= capacity - used) {
+      output[0] = '\0';
+      return;
+    }
+    ngx_memcpy(output + used, headers[index].value.data,
+               headers[index].value.len);
+    used += headers[index].value.len;
+    output[used] = '\0';
+  }
+}
+
+static bool ngx_http_laghu_apply_html_headers(
+    ngx_http_request_t *request, const laghu_runtime_html_result *result) {
+  ngx_table_elt_t *allocated[LAGHU_HTML_MAX_LINK_HEADERS + 1U];
+  u_char *values[LAGHU_HTML_MAX_LINK_HEADERS + 1U];
+  unsigned int count = result->link_header_count;
+  unsigned int index;
+  if (result->set_content_language) {
+    ++count;
+  }
+  for (index = 0U; index < count; ++index) {
+    const char *value = index < result->link_header_count
+                            ? result->link_headers[index]
+                            : result->content_language;
+    size_t length = ngx_strlen(value);
+    allocated[index] = ngx_list_push(&request->headers_out.headers);
+    if (allocated[index] == NULL) {
+      while (index > 0U) {
+        allocated[--index]->hash = 0U;
+      }
+      return false;
+    }
+    allocated[index]->hash = 0U;
+    values[index] = ngx_pnalloc(request->pool, length);
+    if (values[index] == NULL) {
+      do {
+        allocated[index]->hash = 0U;
+      } while (index-- > 0U);
+      return false;
+    }
+    ngx_memcpy(values[index], value, length);
+    allocated[index]->value.data = values[index];
+    allocated[index]->value.len = length;
+  }
+  for (index = 0U; index < count; ++index) {
+    allocated[index]->hash = 1U;
+    if (index < result->link_header_count) {
+      ngx_str_set(&allocated[index]->key, "Link");
+    } else {
+      ngx_str_set(&allocated[index]->key, "Content-Language");
+    }
+  }
+  return true;
 }
 
 static bool ngx_http_laghu_validator(
@@ -1198,6 +1288,8 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
       ngx_buf_t *buffer;
       ngx_chain_t output;
       ngx_table_elt_t *etag;
+      char existing_language[LAGHU_HTML_LANGUAGE_SIZE];
+      char existing_links[8192U];
       conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
       if (request->uri.len < sizeof(page_path)) {
         ngx_memcpy(page_path, request->uri.data, request->uri.len);
@@ -1218,6 +1310,11 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                            &request->headers_in.host->value);
         origin_value = origin;
       }
+      ngx_http_laghu_response_header_values(request, "Content-Language",
+                                            existing_language,
+                                            sizeof(existing_language));
+      ngx_http_laghu_response_header_values(request, "Link", existing_links,
+                                            sizeof(existing_links));
       if (laghu_runtime_rewrite_html(
               (const char *)conf->image_cache.data,
               (laghu_buffer){context->capture, context->capture_length},
@@ -1241,11 +1338,96 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               conf->core.css_outline_threshold,
               ngx_http_laghu_viewport_header(request),
               ngx_http_laghu_dpr_header(request), &rewritten)) {
-        if (rewritten.rewritten) {
+        bool base_rewritten = rewritten.rewritten;
+        char base_dependency[LAGHU_RUNTIME_KEY_SIZE];
+        laghu_runtime_html_result finalized;
+        laghu_runtime_html_result hinted;
+        bool finalized_ok;
+        bool hinted_ok;
+        memcpy(base_dependency, rewritten.dependency_key,
+               sizeof(base_dependency));
+        if (base_rewritten) {
           selected = ngx_pnalloc(request->pool, rewritten.length);
           if (selected != NULL) {
             ngx_memcpy(selected, rewritten.data, rewritten.length);
             selected_length = rewritten.length;
+          }
+        }
+        laghu_runtime_html_result_release(&rewritten);
+        hinted_ok = laghu_runtime_finalize_html_headers(
+            (const char *)conf->image_cache.data,
+            (laghu_buffer){context->capture, context->capture_length},
+            page_path, origin_value, context->policy_key,
+            conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
+            conf->core.image_metadata_ttl,
+            ngx_http_laghu_html_plan(&context->policy) &
+                LAGHU_HTML_PLAN_RESOURCE_HINTS,
+            existing_language, existing_links, conf->core.css_inline_limit,
+            conf->core.css_outline_threshold, base_rewritten, &hinted);
+        finalized_ok = laghu_runtime_finalize_html_headers(
+            (const char *)conf->image_cache.data,
+            (laghu_buffer){selected, selected_length}, page_path, origin_value,
+            context->policy_key, conf->runtime_queue.capabilities,
+            (uint64_t)ngx_time(), conf->core.image_metadata_ttl,
+            ngx_http_laghu_html_plan(&context->policy) &
+                ~LAGHU_HTML_PLAN_RESOURCE_HINTS,
+            existing_language, existing_links, conf->core.css_inline_limit,
+            conf->core.css_outline_threshold, base_rewritten, &finalized);
+        if (hinted_ok && finalized_ok) {
+          const char *dependency = base_dependency;
+          if (hinted.invalid || hinted.dependencies_pending ||
+              finalized.invalid || finalized.dependencies_pending) {
+            selected = context->capture;
+            selected_length = context->capture_length;
+            base_rewritten = false;
+          } else {
+            unsigned int header_index;
+            if (finalized.rewritten) {
+              unsigned char *copy =
+                  ngx_pnalloc(request->pool, finalized.length);
+              if (copy == NULL) {
+                selected = context->capture;
+                selected_length = context->capture_length;
+                base_rewritten = false;
+              } else {
+                ngx_memcpy(copy, finalized.data, finalized.length);
+                selected = copy;
+                selected_length = finalized.length;
+                base_rewritten = true;
+              }
+            }
+            for (header_index = 0U; header_index < hinted.link_header_count;
+                 ++header_index) {
+              memcpy(finalized.link_headers[header_index],
+                     hinted.link_headers[header_index],
+                     LAGHU_HTML_HEADER_VALUE_SIZE);
+            }
+            finalized.link_header_count = hinted.link_header_count;
+            {
+              char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 4U];
+              int material_length = snprintf(
+                  material, sizeof(material), "%s\n%s\n%s", base_dependency,
+                  hinted.dependency_key, finalized.dependency_key);
+              if (material_length > 0 &&
+                  (size_t)material_length < sizeof(material) &&
+                  laghu_sha256_hex(
+                      (laghu_buffer){(const unsigned char *)material,
+                                     (size_t)material_length},
+                      finalized.dependency_key)) {
+                dependency = finalized.dependency_key;
+              }
+            }
+            if ((finalized.link_header_count != 0U ||
+                 finalized.set_content_language) &&
+                !ngx_http_laghu_apply_html_headers(request, &finalized)) {
+              selected = context->capture;
+              selected_length = context->capture_length;
+              base_rewritten = false;
+            }
+          }
+          if ((base_rewritten || finalized.link_header_count != 0U ||
+               finalized.set_content_language) &&
+              dependency[0] != '\0') {
             etag = request->headers_out.etag;
             if (etag == NULL) {
               etag = ngx_list_push(&request->headers_out.headers);
@@ -1262,15 +1444,20 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                     (size_t)(ngx_snprintf(value,
                                           sizeof("\"laghu-html-\"") +
                                               LAGHU_SHA256_HEX_LENGTH,
-                                          "\"laghu-html-%s\"",
-                                          rewritten.dependency_key) -
+                                          "\"laghu-html-%s\"", dependency) -
                              value);
                 request->headers_out.etag = etag;
               }
             }
           }
+          laghu_runtime_html_result_release(&hinted);
+          laghu_runtime_html_result_release(&finalized);
+        } else {
+          laghu_runtime_html_result_release(&hinted);
+          laghu_runtime_html_result_release(&finalized);
+          selected = context->capture;
+          selected_length = context->capture_length;
         }
-        laghu_runtime_html_result_release(&rewritten);
       }
       request->headers_out.content_length_n = (off_t)selected_length;
       if (request->headers_out.content_length != NULL) {

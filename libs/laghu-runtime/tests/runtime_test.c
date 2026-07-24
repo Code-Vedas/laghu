@@ -821,6 +821,94 @@ int main(void) {
     catalog.variants[1].variant_length = sizeof(payload) - 1U;
     catalog.variants[1].ready = true;
     assert(laghu_catalog_publish_url(temporary, &catalog));
+    {
+      static const unsigned char hinted_html[] =
+          "<html><head><meta http-equiv=Content-Language content=en-CA>"
+          "<link rel=stylesheet href=/app.css></head><body>"
+          "<img src=/image.png fetchpriority=high>"
+          "<script src=https://cdn.example.test/app.js></script></body></html>";
+      static const unsigned char css[] = "body{color:#000}";
+      laghu_stylesheet_record stylesheet;
+      laghu_runtime_html_result hints;
+      char css_key[LAGHU_RUNTIME_KEY_SIZE];
+      assert(laghu_sha256_hex((laghu_buffer){css, sizeof(css) - 1U}, css_key));
+      assert(laghu_runtime_cache_publish(
+          temporary, css_key, css_key, css_key, "text/css", "test-css",
+          (laghu_buffer){css, sizeof(css) - 1U}, &entry));
+      memset(&stylesheet, 0, sizeof(stylesheet));
+      stylesheet.version = LAGHU_STYLESHEET_CATALOG_VERSION;
+      strcpy(stylesheet.normalized_url, "/app.css");
+      strcpy(stylesheet.source_hash, css_key);
+      strcpy(stylesheet.source_key, css_key);
+      strcpy(stylesheet.derived_key, css_key);
+      strcpy(stylesheet.dependency_key, css_key);
+      strcpy(stylesheet.policy_key, policy_key);
+      stylesheet.capability_mask = 0x55aaU;
+      stylesheet.parser_version = 1U;
+      stylesheet.inline_limit = 2048U;
+      stylesheet.outline_threshold = 8192U;
+      stylesheet.source_length = sizeof(css) - 1U;
+      stylesheet.derived_length = sizeof(css) - 1U;
+      stylesheet.updated_at = 2000U;
+      stylesheet.ready = true;
+      assert(laghu_stylesheet_publish(temporary, &stylesheet));
+      assert(laghu_runtime_finalize_html_headers(
+          temporary, (laghu_buffer){hinted_html, sizeof(hinted_html) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+          604800U,
+          LAGHU_HTML_PLAN_CONVERT_META_TAGS | LAGHU_HTML_PLAN_RESOURCE_HINTS,
+          NULL, NULL, 2048U, 8192U, false, &hints));
+      assert(hints.dependencies_pending && !hints.rewritten &&
+             hints.link_header_count == 0U);
+      laghu_runtime_html_result_release(&hints);
+      assert(laghu_runtime_finalize_html_headers(
+          temporary, (laghu_buffer){hinted_html, sizeof(hinted_html) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+          604800U,
+          LAGHU_HTML_PLAN_CONVERT_META_TAGS | LAGHU_HTML_PLAN_RESOURCE_HINTS,
+          NULL, NULL, 2048U, 8192U, false, &hints));
+      assert(hints.rewritten && hints.set_content_language);
+      assert(strcmp(hints.content_language, "en-CA") == 0);
+      assert(hints.link_header_count == 3U);
+      assert(strstr(hints.link_headers[0], "/.laghu/css/") != NULL);
+      assert(strstr(hints.link_headers[1], "/.laghu/image/") != NULL);
+      assert(strstr(hints.link_headers[2], "https://cdn.example.test") != NULL);
+      assert(strstr((const char *)hints.data, "Content-Language") == NULL);
+      laghu_runtime_html_result_release(&hints);
+      assert(laghu_runtime_finalize_html_headers(
+          temporary, (laghu_buffer){hinted_html, sizeof(hinted_html) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+          604800U, LAGHU_HTML_PLAN_CONVERT_META_TAGS, "fr-CA", NULL, 2048U,
+          8192U, true, &hints));
+      assert(hints.invalid && !hints.rewritten && !hints.set_content_language &&
+             hints.link_header_count == 0U);
+      laghu_runtime_html_result_release(&hints);
+      {
+        static const unsigned char deduplicated[] =
+            "<html><head><meta http-equiv=content-language content=en>"
+            "<link rel=preconnect href=https://cdn.example.test></head>"
+            "<body><script src=https://cdn.example.test/a.js></script></body>"
+            "</html>";
+        assert(laghu_runtime_finalize_html_headers(
+            temporary, (laghu_buffer){deduplicated, sizeof(deduplicated) - 1U},
+            "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+            604800U,
+            LAGHU_HTML_PLAN_CONVERT_META_TAGS | LAGHU_HTML_PLAN_RESOURCE_HINTS,
+            NULL, NULL, 2048U, 8192U, true, &hints));
+        assert(hints.rewritten && hints.set_content_language &&
+               hints.link_header_count == 0U);
+        laghu_runtime_html_result_release(&hints);
+        assert(laghu_runtime_finalize_html_headers(
+            temporary, (laghu_buffer){deduplicated, sizeof(deduplicated) - 1U},
+            "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+            604800U,
+            LAGHU_HTML_PLAN_CONVERT_META_TAGS | LAGHU_HTML_PLAN_RESOURCE_HINTS,
+            NULL, "malformed", 2048U, 8192U, true, &hints));
+        assert(hints.rewritten && hints.set_content_language &&
+               hints.link_header_count == 0U);
+        laghu_runtime_html_result_release(&hints);
+      }
+    }
     assert(laghu_runtime_rewrite_html(
         temporary, (laghu_buffer){html, sizeof(html) - 1U}, "/index.html",
         "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,

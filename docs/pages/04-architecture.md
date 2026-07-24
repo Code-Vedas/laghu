@@ -122,3 +122,26 @@ ASCII text whitespace. Raw-text, template/noscript, SVG/MathML, legacy
 raw-text, and content-editable regions remain opaque. The derived document is
 reparsed for ordered structural equivalence, and lexical changes are accepted
 only when strictly smaller.
+
+## Safe Metadata and Resource Hints
+
+The versioned HTML planner converts only a complete, head-level
+`Content-Language` HTTP-equivalent meta element. An absent response header is
+added on the warm response; an identical origin header is retained. Conflicting
+headers, conflicting meta elements, malformed values, duplicate attributes,
+and every security-sensitive or legacy `http-equiv` value preserve the
+original document and headers.
+
+Policies selecting resource hints may emit up to four preload and eight
+DNS-prefetch HTTP `Link` values. Preloads are restricted to validated, ready
+same-origin stylesheet records and ready first, high-priority, or learned
+above-fold image variants. DNS-prefetch discovers only third-party HTTP(S)
+origins already referenced by bounded HTML parsing. Existing response and HTML
+hints are deduplicated. Discovery never resolves a hostname, fetches a
+resource, or creates a catalog record.
+
+The cold response contains neither converted metadata nor new hint headers.
+After the content-addressed derivation is validated, both adapters apply the
+body and all header operations together, remove stale entity digests when the
+body changes, and emit a dependency-derived strong ETag. Allocation, parsing,
+catalog, or header validation failures remain fail-open.

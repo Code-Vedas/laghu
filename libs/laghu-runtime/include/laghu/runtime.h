@@ -33,9 +33,14 @@ extern "C" {
 #define LAGHU_CSS_DERIVATION_VERSION 2U
 #define LAGHU_STYLESHEET_CATALOG_VERSION 2U
 #define LAGHU_CSS_IMPORT_MAX_DEPTH 8U
-#define LAGHU_HTML_PLANNER_VERSION 2U
+#define LAGHU_HTML_PLANNER_VERSION 3U
 #define LAGHU_HTML_MAX_TOKENS 4096U
 #define LAGHU_HTML_MAX_HEADS 16U
+#define LAGHU_HTML_MAX_PRELOADS 4U
+#define LAGHU_HTML_MAX_DNS_PREFETCH 8U
+#define LAGHU_HTML_MAX_LINK_HEADERS 12U
+#define LAGHU_HTML_HEADER_VALUE_SIZE 1152U
+#define LAGHU_HTML_LANGUAGE_SIZE 128U
 
 typedef uint32_t laghu_html_planner_mask;
 
@@ -46,6 +51,8 @@ typedef uint32_t laghu_html_planner_mask;
 #define LAGHU_HTML_PLAN_REMOVE_COMMENTS (UINT32_C(1) << 4)
 #define LAGHU_HTML_PLAN_REMOVE_QUOTES (UINT32_C(1) << 5)
 #define LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES (UINT32_C(1) << 6)
+#define LAGHU_HTML_PLAN_CONVERT_META_TAGS (UINT32_C(1) << 7)
+#define LAGHU_HTML_PLAN_RESOURCE_HINTS (UINT32_C(1) << 8)
 #define LAGHU_HTML_PLAN_LEXICAL                                            \
   (LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE | LAGHU_HTML_PLAN_REMOVE_COMMENTS | \
    LAGHU_HTML_PLAN_REMOVE_QUOTES | LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES)
@@ -151,6 +158,11 @@ typedef struct {
   unsigned char *data;
   size_t length;
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  char content_language[LAGHU_HTML_LANGUAGE_SIZE];
+  char link_headers[LAGHU_HTML_MAX_LINK_HEADERS][LAGHU_HTML_HEADER_VALUE_SIZE];
+  unsigned int link_header_count;
+  bool set_content_language;
+  bool invalid;
   bool rewritten;
   bool dependencies_pending;
 } laghu_runtime_html_result;
@@ -276,6 +288,13 @@ bool laghu_runtime_rewrite_html(
     unsigned int viewport_width, unsigned int dpr_hundredths,
     laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
+bool laghu_runtime_finalize_html_headers(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, laghu_html_planner_mask plan,
+    const char *existing_content_language, const char *existing_link_headers,
+    unsigned int css_inline_limit, unsigned int css_outline_threshold,
+    bool already_warm, laghu_runtime_html_result *result);
 bool laghu_runtime_plan_html_document(laghu_buffer html,
                                       laghu_html_planner_mask plan,
                                       laghu_runtime_head_result *result);

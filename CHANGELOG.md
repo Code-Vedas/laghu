@@ -8,6 +8,10 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Conflict-safe `Content-Language` meta conversion plus bounded, deduplicated
+  stylesheet/image preload and third-party DNS-prefetch response headers from
+  the shared cold-original HTML planner, with no resource fetching.
+
 - Initial `laghu-core` policy library and unit tests.
 - Native NGINX and Apache HTTP Server adapters with configuration inheritance.
 - Resolved preset policies, default API-path exclusion with scoped overrides,
