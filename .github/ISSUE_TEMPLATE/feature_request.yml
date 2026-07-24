@@ -38,4 +38,5 @@ body:
           required: true
         - label: The proposal does not require blocking work in the NGINX event loop.
           required: true
-
+        - label: Shared behavior is designed for both NGINX and Apache rather than one module only.
+          required: true

@@ -18,13 +18,21 @@ body:
       placeholder: commit SHA or release
     validations:
       required: true
-  - type: input
-    id: nginx
+  - type: dropdown
+    id: surface
     attributes:
-      label: NGINX version and configure arguments
-      placeholder: nginx -V output
+      label: Deployment surface
+      options:
+        - ngx-laghu
+        - mod-laghu
+        - shared library or worker
     validations:
       required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server or origin details
+      description: Include the NGINX or Apache version and configuration when applicable.
   - type: textarea
     id: description
     attributes:
@@ -43,7 +51,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include OS, architecture, compiler, and loaded modules.
+      description: Include OS, architecture, compiler, installed package, and loaded module.
     validations:
       required: true
   - type: checkboxes
@@ -55,4 +63,3 @@ body:
           required: true
         - label: This report does not contain an unpatched vulnerability.
           required: true
-
