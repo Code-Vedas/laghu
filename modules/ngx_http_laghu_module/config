@@ -8,7 +8,7 @@ ngx_addon_name=ngx_http_laghu_module
 LAGHU_CORE_DIR="$ngx_addon_dir/../../libs/laghu-core"
 LAGHU_RUNTIME_DIR="$ngx_addon_dir/../../libs/laghu-runtime"
 LAGHU_IMAGE_DIR="$ngx_addon_dir/../../libs/laghu-image"
-LAGHU_MODULE_SRCS="$ngx_addon_dir/ngx_http_laghu_module.c $LAGHU_CORE_DIR/src/core.c $LAGHU_IMAGE_DIR/src/image.c $LAGHU_IMAGE_DIR/src/markup.c $LAGHU_IMAGE_DIR/src/css.c $LAGHU_RUNTIME_DIR/src/runtime_posix.c $LAGHU_RUNTIME_DIR/src/catalog.c $LAGHU_RUNTIME_DIR/src/html.c $LAGHU_RUNTIME_DIR/src/css_runtime.c $LAGHU_RUNTIME_DIR/src/css_catalog.c $LAGHU_RUNTIME_DIR/src/css_combine.c $LAGHU_RUNTIME_DIR/src/css_markup.c $LAGHU_RUNTIME_DIR/src/beacon.c"
+LAGHU_MODULE_SRCS="$ngx_addon_dir/ngx_http_laghu_module.c $LAGHU_CORE_DIR/src/core.c $LAGHU_IMAGE_DIR/src/image.c $LAGHU_IMAGE_DIR/src/markup.c $LAGHU_IMAGE_DIR/src/css.c $LAGHU_RUNTIME_DIR/src/runtime_posix.c $LAGHU_RUNTIME_DIR/src/catalog.c $LAGHU_RUNTIME_DIR/src/html.c $LAGHU_RUNTIME_DIR/src/css_runtime.c $LAGHU_RUNTIME_DIR/src/css_catalog.c $LAGHU_RUNTIME_DIR/src/css_combine.c $LAGHU_RUNTIME_DIR/src/css_imports.c $LAGHU_RUNTIME_DIR/src/css_markup.c $LAGHU_RUNTIME_DIR/src/beacon.c"
 
 if test -n "$ngx_module_link"; then
     ngx_module_type=HTTP_AUX_FILTER

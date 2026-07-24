@@ -806,6 +806,70 @@ static void test_css_parser(void) {
       (laghu_buffer){html, sizeof(html) - 1U}, "/pages/index.html",
       "https://example.test", &parsed));
   assert(parsed.valid && parsed.dependency_count == 1U);
+
+  {
+    static const unsigned char imports[] =
+        "/* lead */ @import \"../base/reset.css\";"
+        "@import url('/print.css') print and (min-width: 20px);"
+        ".page{color:red}";
+    static const unsigned char late[] = ".page{color:red}@import '/late.css';";
+    static const unsigned char modern[] = "@import '/layer.css' layer(theme);";
+    static const unsigned char cross_origin[] =
+        "@import 'https://other.test/site.css';";
+    static const unsigned char forbidden[] =
+        "@import '/base.css';@font-face{font-family:x}";
+    static const unsigned char escaped[] = "@import '\\2f escaped.css';";
+    static const unsigned char relative_url[] =
+        ".hero{background-image:url('../images/hero.png')}";
+    laghu_image_markup_result rebased;
+    unsigned char import_limit[1024U];
+    size_t import_limit_length = 0U;
+    unsigned int import_index;
+    assert(laghu_css_discover((laghu_buffer){imports, sizeof(imports) - 1U},
+                              "/css/site/main.css", "https://example.test",
+                              &parsed));
+    assert(parsed.valid && parsed.bounded && parsed.has_imports &&
+           parsed.imports_supported && parsed.import_count == 2U);
+    assert(strcmp(parsed.imports[0].source_url, "/css/base/reset.css") == 0);
+    assert(parsed.imports[0].media[0] == '\0');
+    assert(strcmp(parsed.imports[1].source_url, "/print.css") == 0);
+    assert(strcmp(parsed.imports[1].media, "print and (min-width: 20px)") == 0);
+    assert(parsed.dependency_count == 0U);
+    assert(laghu_css_discover((laghu_buffer){late, sizeof(late) - 1U},
+                              "/site.css", "https://example.test", &parsed));
+    assert(parsed.has_imports && !parsed.imports_supported);
+    assert(laghu_css_discover((laghu_buffer){modern, sizeof(modern) - 1U},
+                              "/site.css", "https://example.test", &parsed));
+    assert(parsed.has_imports && !parsed.imports_supported);
+    assert(laghu_css_discover(
+        (laghu_buffer){cross_origin, sizeof(cross_origin) - 1U}, "/site.css",
+        "https://example.test", &parsed));
+    assert(parsed.has_imports && !parsed.imports_supported);
+    assert(laghu_css_discover((laghu_buffer){forbidden, sizeof(forbidden) - 1U},
+                              "/site.css", "https://example.test", &parsed));
+    assert(parsed.import_graph_forbidden);
+    assert(laghu_css_discover((laghu_buffer){escaped, sizeof(escaped) - 1U},
+                              "/site.css", "https://example.test", &parsed));
+    assert(parsed.imports_supported && parsed.import_count == 1U);
+    assert(strcmp(parsed.imports[0].source_url, "/escaped.css") == 0);
+    for (import_index = 0U; import_index <= LAGHU_CSS_MAX_IMPORTS;
+         ++import_index) {
+      int written = snprintf((char *)import_limit + import_limit_length,
+                             sizeof(import_limit) - import_limit_length,
+                             "@import '/i%u.css';", import_index);
+      assert(written > 0 &&
+             (size_t)written < sizeof(import_limit) - import_limit_length);
+      import_limit_length += (size_t)written;
+    }
+    assert(laghu_css_discover((laghu_buffer){import_limit, import_limit_length},
+                              "/site.css", "https://example.test", &parsed));
+    assert(parsed.has_imports && !parsed.imports_supported);
+    assert(laghu_css_rebase_urls(
+        (laghu_buffer){relative_url, sizeof(relative_url) - 1U},
+        "/css/components/card.css", "https://example.test", &rebased));
+    assert(strstr((const char *)rebased.data, "/css/images/hero.png") != NULL);
+    laghu_image_markup_result_release(&rebased);
+  }
 }
 
 int main(void) {

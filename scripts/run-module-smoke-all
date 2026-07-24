@@ -27,7 +27,7 @@ if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
 fi
 
 rm -rf "${SMOKE_DIR}"
-mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs"
+mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs" "${SMOKE_DIR}/cache"
 printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
   >"${SMOKE_DIR}/html/index.html"
 
@@ -49,6 +49,15 @@ printf '%s\n' '.combine-c { color: green; border: 0  none; }' \
   >"${SMOKE_DIR}/html/combine-c.css"
 printf '%s\n' '<link rel="stylesheet" href="/combine-a.css"> <link rel="stylesheet" href="/combine-b.css"> <link rel="stylesheet" href="/combine-c.css">' \
   >"${SMOKE_DIR}/html/combine-page.html"
+printf '%s\n' '.import-leaf { color: purple; margin: 0  0  0  0; } /* remove */' \
+  >"${SMOKE_DIR}/html/import-leaf.css"
+printf '%s\n' '@import "/import-leaf.css" print; .import-root { padding: 0  0; }' \
+  >"${SMOKE_DIR}/html/import-root.css"
+import_long_name="import-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.css"
+cp "${SMOKE_DIR}/html/import-leaf.css" \
+  "${SMOKE_DIR}/html/${import_long_name}"
+printf '%s\n' "<style>@import \"/${import_long_name}\" print;</style>" \
+  >"${SMOKE_DIR}/html/import-page.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -56,7 +65,6 @@ if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   printf '%s\n' '<!doctype html><img src="/image.png" width="320"><img src="/image.png" width="320">' \
     >"${SMOKE_DIR}/html/image-page.html"
   rm -f "${SMOKE_DIR}/image.v"
-  mkdir -p "${SMOKE_DIR}/cache"
   "${OPTIMIZER_BIN}" --init "${SMOKE_DIR}/jobs.queue" \
     "${SMOKE_DIR}/cache"
   image_smoke=1
@@ -140,6 +148,17 @@ http {
       laghu css_inline_limit 0;
       default_type text/html;
       try_files /combine-page.html =404;
+    }
+
+    location ~ ^/import-.*\.css$ {
+      laghu rewrite_level all;
+      default_type text/css;
+    }
+
+    location = /import-page.html {
+      laghu rewrite_level all;
+      default_type text/html;
+      try_files /import-page.html =404;
     }
 
     location = /image.png {
@@ -824,6 +843,34 @@ test "$(grep -n 'combine-a' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)" -le
   "$(grep -n 'combine-b' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)"
 test "$(grep -n 'combine-b' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)" -le \
   "$(grep -n 'combine-c' "${SMOKE_DIR}/combine-asset.css" | cut -d: -f1)"
+
+for path in import-leaf.css "${import_long_name}"; do
+  curl --fail --silent "http://127.0.0.1:${PORT}/${path}" \
+    >"${SMOKE_DIR}/${path}-cold"
+  cmp "${SMOKE_DIR}/html/${path}" "${SMOKE_DIR}/${path}-cold"
+  curl --fail --silent "http://127.0.0.1:${PORT}/${path}" \
+    >"${SMOKE_DIR}/${path}-warm"
+done
+curl --fail --silent "http://127.0.0.1:${PORT}/import-root.css" \
+  >"${SMOKE_DIR}/import-root-cold"
+cmp "${SMOKE_DIR}/html/import-root.css" "${SMOKE_DIR}/import-root-cold"
+curl --fail --silent --dump-header "${SMOKE_DIR}/import-root-warm.headers" \
+  "http://127.0.0.1:${PORT}/import-root.css" \
+  >"${SMOKE_DIR}/import-root-warm"
+grep -F '.import-leaf' "${SMOKE_DIR}/import-root-warm" >/dev/null
+if grep '@import' "${SMOKE_DIR}/import-root-warm" >/dev/null; then
+  echo "NGINX did not flatten the ready CSS import." >&2
+  exit 1
+fi
+grep -i '^ETag: "laghu-css-' "${SMOKE_DIR}/import-root-warm.headers" >/dev/null
+curl --fail --silent "http://127.0.0.1:${PORT}/import-page.html" \
+  >"${SMOKE_DIR}/import-page-cold"
+cmp "${SMOKE_DIR}/html/import-page.html" "${SMOKE_DIR}/import-page-cold"
+curl --fail --silent "http://127.0.0.1:${PORT}/import-page.html" \
+  >"${SMOKE_DIR}/import-page-warm"
+grep '<link rel="stylesheet" href="/.laghu/css/' \
+  "${SMOKE_DIR}/import-page-warm" >/dev/null
+grep 'media="print"' "${SMOKE_DIR}/import-page-warm" >/dev/null
 
 kill "${nginx_pid}"
 wait "${nginx_pid}"

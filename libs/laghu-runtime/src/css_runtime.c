@@ -66,16 +66,15 @@ static laghu_catalog_variant *laghu_runtime_css_variant(
   return NULL;
 }
 
-static bool laghu_runtime_css_key(laghu_buffer css, const char *stylesheet_path,
-                                  const char *policy_key,
-                                  uint32_t capability_mask,
-                                  const laghu_image_resource *resources,
-                                  size_t resource_count, bool minify,
-                                  bool allow_sprites,
-                                  char output[LAGHU_RUNTIME_KEY_SIZE]) {
+static bool laghu_runtime_css_key(
+    laghu_buffer css, const char *stylesheet_path, const char *policy_key,
+    uint32_t capability_mask, const laghu_image_resource *resources,
+    size_t resource_count, bool minify, bool allow_sprites,
+    const char *import_dependency_key, char output[LAGHU_RUNTIME_KEY_SIZE]) {
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
-  size_t capacity = 256U + resource_count * (LAGHU_IMAGE_URL_SIZE +
-                                             LAGHU_RUNTIME_KEY_SIZE * 2U);
+  size_t capacity =
+      512U + strlen(stylesheet_path != NULL ? stylesheet_path : "") +
+      resource_count * (LAGHU_IMAGE_URL_SIZE + LAGHU_RUNTIME_KEY_SIZE * 2U);
   char *material;
   size_t length;
   size_t index;
@@ -88,10 +87,11 @@ static bool laghu_runtime_css_key(laghu_buffer css, const char *stylesheet_path,
   if (material == NULL) {
     return false;
   }
-  written = snprintf(material, capacity, "laghu-css-v%u\n%s\n%s\n%s\n%u\n%d:%d",
-                     LAGHU_CSS_DERIVATION_VERSION, source_hash, stylesheet_path,
-                     policy_key, capability_mask, minify ? 1 : 0,
-                     allow_sprites ? 1 : 0);
+  written = snprintf(
+      material, capacity, "laghu-css-v%u\n%s\n%s\n%s\n%u\n%d:%d\n%s",
+      LAGHU_CSS_DERIVATION_VERSION, source_hash, stylesheet_path, policy_key,
+      capability_mask, minify ? 1 : 0, allow_sprites ? 1 : 0,
+      import_dependency_key != NULL ? import_dependency_key : "");
   if (written <= 0 || (size_t)written >= capacity) {
     free(material);
     return false;
@@ -136,6 +136,8 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   laghu_runtime_cache_entry entry;
   laghu_runtime_cache_entry source_entry;
   laghu_stylesheet_record stylesheet = {0};
+  laghu_runtime_css_import_result imports = {0};
+  laghu_buffer transform_css = css;
   char derivation_key[LAGHU_RUNTIME_KEY_SIZE];
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
   size_t index;
@@ -298,9 +300,35 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
       }
     }
   }
-  if (!laghu_runtime_css_key(css, stylesheet_path, policy_key, capability_mask,
-                             resources, discovery->dependency_count, minify,
-                             allow_sprites, derivation_key)) {
+  if (allow_sprites && discovery->has_imports) {
+    if (!laghu_runtime_flatten_css_imports(
+            cache_path, css, stylesheet_path, page_origin, policy_key,
+            capability_mask, now, ttl_seconds, inline_limit, outline_threshold,
+            &imports)) {
+      goto finished;
+    }
+    if (imports.dependencies_pending) {
+      result->dependencies_pending = true;
+      (void)laghu_stylesheet_publish(cache_path, &stylesheet);
+      success = true;
+      goto finished;
+    }
+    if (imports.invalid || !imports.flattened) {
+      stylesheet.terminally_excluded = true;
+      (void)laghu_stylesheet_publish(cache_path, &stylesheet);
+      success = true;
+      goto finished;
+    }
+    transform_css = (laghu_buffer){imports.data, imports.length};
+    if (imports.original_external_bytes > SIZE_MAX - byte_savings) {
+      goto finished;
+    }
+    byte_savings += imports.original_external_bytes;
+  }
+  if (!laghu_runtime_css_key(
+          css, stylesheet_path, policy_key, capability_mask, resources,
+          discovery->dependency_count, minify, allow_sprites,
+          imports.flattened ? imports.dependency_key : NULL, derivation_key)) {
     goto finished;
   }
   memcpy(result->dependency_key, derivation_key,
@@ -328,8 +356,9 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   options.resource_count = discovery->dependency_count;
   options.sprites = allow_sprites;
   if (discovery->valid && minify) {
-    success = laghu_css_minify_and_rewrite(css, stylesheet_path, page_origin,
-                                           &options, false, &rewritten);
+    success =
+        laghu_css_minify_and_rewrite(transform_css, stylesheet_path,
+                                     page_origin, &options, false, &rewritten);
   } else {
     success = laghu_css_fallback_rewrite_urls(css, stylesheet_path, page_origin,
                                               &options, &rewritten);
@@ -337,6 +366,9 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   }
   if (!success) {
     goto finished;
+  }
+  if (imports.flattened) {
+    rewritten.applied_filters |= LAGHU_CSS_FLATTEN_IMPORTS_APPLIED;
   }
   if ((rewritten.length >= css.length &&
        rewritten.length - css.length >= byte_savings) ||
@@ -367,6 +399,7 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
   success = true;
 
 finished:
+  laghu_runtime_css_import_result_release(&imports);
   free(storage);
   free(resources);
   free(discovery);

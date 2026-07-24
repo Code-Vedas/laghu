@@ -30,8 +30,9 @@ extern "C" {
 #define LAGHU_CATALOG_MAX_WIDTHS 8U
 #define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
 #define LAGHU_CATALOG_DEFAULT_TTL 604800U
-#define LAGHU_CSS_DERIVATION_VERSION 1U
-#define LAGHU_STYLESHEET_CATALOG_VERSION 1U
+#define LAGHU_CSS_DERIVATION_VERSION 2U
+#define LAGHU_STYLESHEET_CATALOG_VERSION 2U
+#define LAGHU_CSS_IMPORT_MAX_DEPTH 8U
 
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
@@ -158,6 +159,16 @@ typedef struct {
 } laghu_runtime_css_result;
 
 typedef struct {
+  unsigned char *data;
+  size_t length;
+  size_t original_external_bytes;
+  char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  bool flattened;
+  bool dependencies_pending;
+  bool invalid;
+} laghu_runtime_css_import_result;
+
+typedef struct {
   uint32_t version;
   char normalized_url[LAGHU_RUNTIME_PATH_SIZE];
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
@@ -263,6 +274,13 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
                                unsigned int outline_threshold,
                                laghu_runtime_css_result *result);
 void laghu_runtime_css_result_release(laghu_runtime_css_result *result);
+bool laghu_runtime_flatten_css_imports(
+    const char *cache_path, laghu_buffer css, const char *stylesheet_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_css_import_result *result);
+void laghu_runtime_css_import_result_release(
+    laghu_runtime_css_import_result *result);
 bool laghu_stylesheet_publish(const char *cache_path,
                               const laghu_stylesheet_record *record);
 bool laghu_stylesheet_lookup(const char *cache_path, const char *normalized_url,

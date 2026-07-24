@@ -211,6 +211,57 @@ int main(void) {
     assert(strstr((const char *)stylesheet.data, "remove") == NULL);
     laghu_runtime_css_result_release(&stylesheet);
     {
+      static const unsigned char leaf_css[] =
+          ".leaf { color: blue; margin: 0  0  0  0; } /* leaf remove */";
+      static const unsigned char root_css[] =
+          "@import \"/leaf.css\" print; .root { color: red; padding: 0  0; }";
+      laghu_runtime_css_result imported;
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){leaf_css, sizeof(leaf_css) - 1U},
+          "/leaf.css", "https://example.test", policy_key, 0x55aaU, 900010U,
+          604800U, true, false, 2048U, 8192U, &imported));
+      assert(imported.published && !imported.rewritten);
+      laghu_runtime_css_result_release(&imported);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){leaf_css, sizeof(leaf_css) - 1U},
+          "/leaf.css", "https://example.test", policy_key, 0x55aaU, 900011U,
+          604800U, true, false, 2048U, 8192U, &imported));
+      assert(imported.rewritten);
+      laghu_runtime_css_result_release(&imported);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){root_css, sizeof(root_css) - 1U},
+          "/root.css", "https://example.test", policy_key, 0x55aaU, 900012U,
+          604800U, true, true, 2048U, 8192U, &imported));
+      assert(imported.published && !imported.rewritten);
+      laghu_runtime_css_result_release(&imported);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary, (laghu_buffer){root_css, sizeof(root_css) - 1U},
+          "/root.css", "https://example.test", policy_key, 0x55aaU, 900013U,
+          604800U, true, true, 2048U, 8192U, &imported));
+      assert(imported.rewritten &&
+             strstr((const char *)imported.data, "@import") == NULL);
+      assert(strstr((const char *)imported.data, "@media print{") != NULL);
+      assert(strstr((const char *)imported.data, ".leaf") != NULL);
+      laghu_runtime_css_result_release(&imported);
+
+      {
+        static const unsigned char cycle_a[] = "@import '/cycle-b.css';";
+        static const unsigned char cycle_b[] = "@import '/cycle-a.css';";
+        assert(laghu_runtime_rewrite_css(
+            NULL, temporary, (laghu_buffer){cycle_a, sizeof(cycle_a) - 1U},
+            "/cycle-a.css", "https://example.test", policy_key, 0x55aaU,
+            900014U, 604800U, true, true, 2048U, 8192U, &imported));
+        assert(imported.dependencies_pending && !imported.rewritten);
+        laghu_runtime_css_result_release(&imported);
+        assert(laghu_runtime_rewrite_css(
+            NULL, temporary, (laghu_buffer){cycle_b, sizeof(cycle_b) - 1U},
+            "/cycle-b.css", "https://example.test", policy_key, 0x55aaU,
+            900015U, 604800U, true, true, 2048U, 8192U, &imported));
+        assert(!imported.rewritten && !imported.dependencies_pending);
+        laghu_runtime_css_result_release(&imported);
+      }
+    }
+    {
       static const unsigned char linked[] =
           "<html><head><link rel=\"stylesheet\" href=\"/site.css\"></head>"
           "<body></body></html>";
@@ -234,6 +285,54 @@ int main(void) {
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, true,
           false, false, false, true, 2048U, 8192U, &markup));
       assert(!markup.rewritten && !markup.dependencies_pending);
+      laghu_runtime_html_result_release(&markup);
+    }
+    {
+      static const unsigned char long_leaf_css[] =
+          ".linked { color: green; margin: 0  0  0  0; }";
+      char long_path[256U];
+      char import_html[512U];
+      laghu_runtime_css_result sheet;
+      laghu_runtime_html_result markup;
+      size_t index;
+      int length;
+      long_path[0] = '/';
+      for (index = 1U; index < 190U; ++index) {
+        long_path[index] = 'a';
+      }
+      strcpy(long_path + 190U, ".css");
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary,
+          (laghu_buffer){long_leaf_css, sizeof(long_leaf_css) - 1U}, long_path,
+          "https://example.test", policy_key, 0x55aaU, 900020U, 604800U, true,
+          false, 2048U, 8192U, &sheet));
+      laghu_runtime_css_result_release(&sheet);
+      assert(laghu_runtime_rewrite_css(
+          NULL, temporary,
+          (laghu_buffer){long_leaf_css, sizeof(long_leaf_css) - 1U}, long_path,
+          "https://example.test", policy_key, 0x55aaU, 900021U, 604800U, true,
+          false, 2048U, 8192U, &sheet));
+      assert(sheet.rewritten);
+      laghu_runtime_css_result_release(&sheet);
+      length = snprintf(import_html, sizeof(import_html),
+                        "<style>@import \"%s\" print;</style>", long_path);
+      assert(length > 0 && (size_t)length < sizeof(import_html));
+      assert(laghu_runtime_rewrite_css_markup(
+          temporary,
+          (laghu_buffer){(const unsigned char *)import_html, (size_t)length},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 900022U,
+          604800U, false, true, false, false, true, 2048U, 8192U, &markup));
+      assert(!markup.rewritten && markup.dependencies_pending);
+      laghu_runtime_html_result_release(&markup);
+      assert(laghu_runtime_rewrite_css_markup(
+          temporary,
+          (laghu_buffer){(const unsigned char *)import_html, (size_t)length},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 900023U,
+          604800U, false, true, false, false, true, 2048U, 8192U, &markup));
+      assert(markup.rewritten && strstr((const char *)markup.data,
+                                        "<link rel=\"stylesheet\"") != NULL);
+      assert(strstr((const char *)markup.data, "media=\"print\"") != NULL);
+      assert(strstr((const char *)markup.data, "@import") == NULL);
       laghu_runtime_html_result_release(&markup);
     }
     {

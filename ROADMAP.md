@@ -169,8 +169,8 @@ and Apache cold/warm smoke paths.
 - [x] `combine_css`: combine compatible adjacent stylesheets.
 - [x] `inline_css`: inline eligible small external stylesheets.
 - [x] `outline_css`: externalize eligible large inline style blocks.
-- [ ] `flatten_css_imports`: flatten compatible `@import` chains.
-- [ ] `inline_import_to_link`: convert `@import` rules to links.
+- [x] `flatten_css_imports`: flatten compatible `@import` chains.
+- [x] `inline_import_to_link`: convert `@import` rules to links.
 - [ ] `inline_google_font_css`: inline eligible Google Fonts CSS.
 - [ ] `move_css_to_head`: move stylesheet links into the document head.
 - [ ] `move_css_above_scripts`: move CSS above script elements.
@@ -192,7 +192,17 @@ adjacent, compatible, fully ready stylesheet records in DOM order. Unit tests
 cover media and CSP precedence, group termination, deterministic immutable
 assets, source-map and relative-URL exclusion, cold publication, and warm
 delivery; both adapters exercise the same planner and hash-only CSS route.
-Imports, critical CSS, and general `<style>` rewriting remain pending.
+Import evidence: the shared parser records only contiguous leading imports and
+the runtime resolves ready same-origin stylesheet graphs without fetching.
+Unit tests cover quoted and `url()` grammar, media, cross-origin and modern-
+qualifier rejection, URL rebasing, cycles, cold publication, warm flattening,
+and ordered immutable links from inline style blocks. Graphs are bounded to 32
+unique stylesheets, eight levels, and 2 MiB; dependency keys include ordered
+URLs, media, source/derived keys, policy, and capabilities. NGINX stable and
+Apache smoke fixtures populate catalogs through normal CSS responses, verify
+byte-identical cold responses, warm flattened CSS with dependency ETags, and
+warm import-to-link conversion through the hash-only CSS route. Critical CSS
+and broader style movement remain pending.
 
 ### 3.4 JavaScript Filters
 

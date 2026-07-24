@@ -32,6 +32,8 @@ extern "C" {
 #define LAGHU_CSS_MAX_URLS 256U
 #define LAGHU_CSS_MAX_NESTING 64U
 #define LAGHU_CSS_MAX_SPRITE_ITEMS 32U
+#define LAGHU_CSS_MAX_IMPORTS 32U
+#define LAGHU_CSS_IMPORT_MEDIA_SIZE 512U
 
 typedef uint64_t laghu_image_filter_mask;
 
@@ -66,6 +68,7 @@ enum {
 
 #define LAGHU_IMAGE_FILTER_ALL ((UINT64_C(1) << 26) - UINT64_C(1))
 #define LAGHU_CSS_MINIFY_APPLIED (UINT64_C(1) << 63)
+#define LAGHU_CSS_FLATTEN_IMPORTS_APPLIED (UINT64_C(1) << 62)
 
 typedef enum {
   LAGHU_IMAGE_FORMAT_UNKNOWN = 0,
@@ -234,12 +237,24 @@ typedef struct {
 } laghu_css_dependency;
 
 typedef struct {
+  size_t start;
+  size_t end;
+  char source_url[LAGHU_IMAGE_URL_SIZE];
+  char media[LAGHU_CSS_IMPORT_MEDIA_SIZE];
+} laghu_css_import;
+
+typedef struct {
   laghu_css_dependency dependencies[LAGHU_CSS_MAX_URLS];
   size_t dependency_count;
+  laghu_css_import imports[LAGHU_CSS_MAX_IMPORTS];
+  size_t import_count;
   size_t token_count;
   bool valid;
   bool bounded;
   bool used_fallback;
+  bool has_imports;
+  bool imports_supported;
+  bool import_graph_forbidden;
 } laghu_css_parse_result;
 
 void laghu_image_request_init(laghu_image_request *request);
@@ -288,6 +303,9 @@ bool laghu_css_fallback_rewrite_urls(laghu_buffer input, const char *base_path,
                                      const char *page_origin,
                                      const laghu_image_markup_options *options,
                                      laghu_image_markup_result *result);
+bool laghu_css_rebase_urls(laghu_buffer input, const char *base_path,
+                           const char *page_origin,
+                           laghu_image_markup_result *result);
 bool laghu_css_rewrite_style_attributes(
     laghu_buffer html, const char *page_path, const char *page_origin,
     const laghu_image_markup_options *options,

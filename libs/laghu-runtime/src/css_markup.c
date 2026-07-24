@@ -317,6 +317,121 @@ bool laghu_runtime_rewrite_css_markup(
         free(css);
       }
     }
+    if (allow_outline && csp_allows_self_styles && start + 6U <= end &&
+        laghu_css_markup_equal(html.data + start + 1U, 5U, "style") &&
+        !laghu_css_markup_has(html.data + start, end - start + 1U, "scoped")) {
+      const unsigned char *block_media = NULL;
+      const unsigned char *type = NULL;
+      size_t block_media_length = 0U;
+      size_t type_length = 0U;
+      bool has_block_media = laghu_css_markup_attribute(
+          html.data + start, end - start + 1U, "media", &block_media,
+          &block_media_length);
+      bool has_type = laghu_css_markup_attribute(
+          html.data + start, end - start + 1U, "type", &type, &type_length);
+      const unsigned char *close = laghu_css_markup_find(
+          html.data + end + 1U, html.length - end - 1U, "</style>");
+      size_t css_length =
+          close == NULL ? 0U : (size_t)(close - html.data) - end - 1U;
+      laghu_css_parse_result *imports = calloc(1U, sizeof(*imports));
+      bool eligible =
+          imports != NULL && close != NULL &&
+          (!has_block_media ||
+           laghu_css_markup_equal(block_media, block_media_length, "all")) &&
+          (!has_type || laghu_css_markup_equal(type, type_length, "text/css"));
+      if (eligible &&
+          !laghu_css_discover((laghu_buffer){html.data + end + 1U, css_length},
+                              page_path, page_origin, imports)) {
+        eligible = false;
+      }
+      if (eligible && imports->has_imports && imports->imports_supported &&
+          !imports->import_graph_forbidden) {
+        laghu_css_markup_builder links = {0};
+        laghu_css_markup_builder remainder = {0};
+        size_t import_index;
+        size_t css_cursor = 0U;
+        size_t imported_bytes = 0U;
+        for (import_index = 0U; import_index < imports->import_count;
+             ++import_index) {
+          laghu_stylesheet_record record;
+          char link[1024U];
+          int link_length;
+          const laghu_css_import *import = &imports->imports[import_index];
+          if (!laghu_stylesheet_lookup(
+                  cache_path, import->source_url, policy_key, capability_mask,
+                  inline_limit, outline_threshold, now, ttl_seconds, &record)) {
+            result->dependencies_pending = true;
+            eligible = false;
+            break;
+          }
+          if (!record.ready && !record.terminally_excluded) {
+            result->dependencies_pending = true;
+            eligible = false;
+            break;
+          }
+          if (!record.ready || record.terminally_excluded ||
+              record.derived_key[0] == '\0' ||
+              record.derived_length > SIZE_MAX - imported_bytes) {
+            eligible = false;
+            break;
+          }
+          imported_bytes += record.derived_length;
+          link_length = snprintf(
+              link, sizeof(link),
+              "<link rel=\"stylesheet\" href=\"/.laghu/css/%s\"%s%s%s>",
+              record.derived_key, import->media[0] != '\0' ? " media=\"" : "",
+              import->media, import->media[0] != '\0' ? "\"" : "");
+          if (link_length <= 0 || (size_t)link_length >= sizeof(link) ||
+              !laghu_css_markup_append(&links, link, (size_t)link_length) ||
+              !laghu_css_markup_append(&remainder,
+                                       html.data + end + 1U + css_cursor,
+                                       import->start - css_cursor)) {
+            free(links.data);
+            free(remainder.data);
+            free(imports);
+            goto failed;
+          }
+          css_cursor = import->end;
+        }
+        if (eligible && !laghu_css_markup_append(
+                            &remainder, html.data + end + 1U + css_cursor,
+                            css_length - css_cursor)) {
+          free(links.data);
+          free(remainder.data);
+          free(imports);
+          goto failed;
+        }
+        if (eligible &&
+            (!laghu_css_markup_append(&builder, links.data, links.length) ||
+             (remainder.length != 0U &&
+              (!laghu_css_markup_append(&builder, html.data + start,
+                                        end - start + 1U) ||
+               !laghu_css_markup_append(&builder, remainder.data,
+                                        remainder.length) ||
+               !laghu_css_markup_append(&builder, "</style>", 8U))))) {
+          free(links.data);
+          free(remainder.data);
+          free(imports);
+          goto failed;
+        }
+        if (eligible) {
+          original_bundle += imported_bytes;
+          outlined_payload += imported_bytes;
+          cursor = (size_t)(close - html.data) + 8U;
+          changed = true;
+          free(links.data);
+          free(remainder.data);
+          free(imports);
+          continue;
+        }
+        free(links.data);
+        free(remainder.data);
+      }
+      free(imports);
+      if (result->dependencies_pending) {
+        goto unchanged;
+      }
+    }
     if (allow_outline && start + 6U <= end &&
         laghu_css_markup_equal(html.data + start + 1U, 5U, "style") &&
         !laghu_css_markup_has(html.data + start, end - start + 1U, "nonce") &&

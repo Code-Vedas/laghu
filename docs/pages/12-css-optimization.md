@@ -60,5 +60,32 @@ bundle is reparsed, capped at 2 MiB, atomically published, and exposed through
 may receive the combined link only when total HTML and unique CSS transfer
 bytes are strictly smaller. Laghu does not count request overhead as savings.
 
-Flattening imports, moving CSS, general `<style>` rewriting, and critical-CSS
+Laghu also resolves conservative leading `@import` graphs from the stylesheet
+catalog. It accepts quoted and `url(...)` same-origin imports with no media,
+`all`, or an ordinary media query. Imports using `layer()` or `supports()`,
+late imports, fragments, API or GraphQL paths, cross-origin URLs, charsets,
+namespaces, external fonts, and source-map/sourceURL comments reject the whole
+flattening attempt. No origin request is made.
+
+Every imported stylesheet and nested dependency must already be ready and
+unexpired. The resolver detects cycles before expansion and limits a graph to
+32 unique stylesheets, eight levels, and 2 MiB of finalized CSS. Relative
+`url(...)` values are rebased against the stylesheet that contains them, media
+imports are wrapped in `@media`, and source order is preserved. The first root
+response publishes the dependency-derived asset but stays byte-identical; a
+later response may use it only when the flattened transfer is strictly
+smaller. Changes to any source, media query, derived dependency, policy, or
+capability produce a new key.
+
+For complete inline `<style>` blocks, Laghu may instead convert contiguous
+leading imports to ordered immutable links under `/.laghu/css/<sha256>`. The
+block must have absent or `all` media, valid CSS, no `scoped` attribute, and a
+CSP that permits same-origin stylesheet links. Non-`all` import media is kept
+on its generated link. An import-only block is removed; otherwise supported
+attributes and remaining CSS stay in place. This runs before outlining and
+combining, so compatible generated links can participate in combination.
+Pending or invalid dependencies preserve the entire page, and the normal
+cold-original lifecycle and total-transfer gate still apply.
+
+Moving CSS, Google Fonts fetching, modern import qualifiers, and critical-CSS
 extraction remain pending.

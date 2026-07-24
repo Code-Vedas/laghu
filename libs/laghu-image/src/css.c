@@ -29,11 +29,16 @@ typedef struct {
 
 typedef struct {
   laghu_css_url urls[LAGHU_CSS_MAX_URLS];
+  laghu_css_import imports[LAGHU_CSS_MAX_IMPORTS];
   size_t url_count;
+  size_t import_count;
   size_t token_count;
   bool valid;
   bool bounded;
   bool fallback_safe;
+  bool has_imports;
+  bool imports_supported;
+  bool import_graph_forbidden;
 } laghu_css_scan;
 
 static bool laghu_css_reserve(laghu_css_builder *builder, size_t extra) {
@@ -211,6 +216,192 @@ static bool laghu_css_block_sprite_eligible(const unsigned char *data,
          laghu_css_case_find(data, length, "background:") == NULL;
 }
 
+static bool laghu_css_import_media_valid(const unsigned char *data,
+                                         size_t length) {
+  size_t index;
+  if (length >= LAGHU_CSS_IMPORT_MEDIA_SIZE ||
+      laghu_css_case_find(data, length, "layer") != NULL ||
+      laghu_css_case_find(data, length, "supports") != NULL) {
+    return false;
+  }
+  for (index = 0U; index < length; ++index) {
+    unsigned char value = data[index];
+    if (value == '{' || value == '}' || value == ';' || value == '"' ||
+        value == '\'') {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool laghu_css_decode_import_url(
+    const unsigned char *data, size_t length,
+    unsigned char output[LAGHU_IMAGE_URL_SIZE], size_t *output_length) {
+  size_t source = 0U;
+  size_t destination = 0U;
+  while (source < length) {
+    unsigned char value = data[source++];
+    if (value == '\\') {
+      unsigned int decoded = 0U;
+      unsigned int digits = 0U;
+      if (source == length || data[source] == '\n' || data[source] == '\r' ||
+          data[source] == '\f') {
+        return false;
+      }
+      while (source < length && digits < 6U && isxdigit(data[source])) {
+        unsigned char digit = data[source++];
+        decoded = decoded * 16U +
+                  (isdigit(digit) ? (unsigned int)(digit - (unsigned char)'0')
+                                  : (unsigned int)(tolower(digit) - 'a' + 10));
+        ++digits;
+      }
+      if (digits != 0U) {
+        if (source < length && isspace(data[source])) {
+          ++source;
+        }
+        if (decoded == 0U || decoded > 0x7fU) {
+          return false;
+        }
+        value = (unsigned char)decoded;
+      } else {
+        value = data[source++];
+      }
+    }
+    if (destination + 1U >= LAGHU_IMAGE_URL_SIZE) {
+      return false;
+    }
+    output[destination++] = value;
+  }
+  output[destination] = '\0';
+  *output_length = destination;
+  return true;
+}
+
+static bool laghu_css_parse_import(laghu_buffer input, size_t start,
+                                   const char *base_path,
+                                   const char *page_origin,
+                                   laghu_css_import *result, size_t *next) {
+  size_t cursor = start + sizeof("@import") - 1U;
+  size_t value_start;
+  size_t value_end;
+  size_t media_start;
+  size_t media_end;
+  unsigned char quote = 0U;
+  unsigned char decoded_url[LAGHU_IMAGE_URL_SIZE];
+  size_t decoded_length;
+  unsigned int paren = 0U;
+  if (cursor >= input.length ||
+      (cursor < input.length &&
+       (isalnum(input.data[cursor]) || input.data[cursor] == '-' ||
+        input.data[cursor] == '_'))) {
+    return false;
+  }
+  while (cursor < input.length && isspace(input.data[cursor])) {
+    ++cursor;
+  }
+  if (cursor >= input.length) {
+    return false;
+  }
+  if (input.data[cursor] == '\'' || input.data[cursor] == '"') {
+    quote = input.data[cursor++];
+    value_start = cursor;
+    while (cursor < input.length && input.data[cursor] != quote) {
+      if (input.data[cursor] == '\\') {
+        cursor += cursor + 1U < input.length ? 2U : 1U;
+        continue;
+      }
+      ++cursor;
+    }
+    if (cursor == input.length) {
+      return false;
+    }
+    value_end = cursor++;
+  } else if (cursor + 4U <= input.length &&
+             laghu_css_case_equal(input.data + cursor, 3U, "url") &&
+             input.data[cursor + 3U] == '(') {
+    cursor += 4U;
+    while (cursor < input.length && isspace(input.data[cursor])) {
+      ++cursor;
+    }
+    if (cursor < input.length &&
+        (input.data[cursor] == '\'' || input.data[cursor] == '"')) {
+      quote = input.data[cursor++];
+    }
+    value_start = cursor;
+    while (cursor < input.length &&
+           ((quote != 0U && input.data[cursor] != quote) ||
+            (quote == 0U && input.data[cursor] != ')'))) {
+      if (input.data[cursor] == '\\') {
+        cursor += cursor + 1U < input.length ? 2U : 1U;
+        continue;
+      }
+      ++cursor;
+    }
+    if (cursor == input.length) {
+      return false;
+    }
+    value_end = cursor;
+    if (quote != 0U) {
+      ++cursor;
+      while (cursor < input.length && isspace(input.data[cursor])) {
+        ++cursor;
+      }
+      if (cursor == input.length || input.data[cursor] != ')') {
+        return false;
+      }
+    }
+    ++cursor;
+  } else {
+    return false;
+  }
+  while (cursor < input.length && isspace(input.data[cursor])) {
+    ++cursor;
+  }
+  media_start = cursor;
+  while (cursor < input.length) {
+    unsigned char value = input.data[cursor];
+    if (value == '(') {
+      ++paren;
+    } else if (value == ')') {
+      if (paren == 0U) {
+        return false;
+      }
+      --paren;
+    } else if (value == ';' && paren == 0U) {
+      break;
+    } else if (value == '{' || value == '}' || value == '\'' || value == '"') {
+      return false;
+    }
+    ++cursor;
+  }
+  if (cursor == input.length || paren != 0U) {
+    return false;
+  }
+  media_end = cursor;
+  while (media_end > media_start && isspace(input.data[media_end - 1U])) {
+    --media_end;
+  }
+  if (!laghu_css_import_media_valid(input.data + media_start,
+                                    media_end - media_start) ||
+      !laghu_css_decode_import_url(input.data + value_start,
+                                   value_end - value_start, decoded_url,
+                                   &decoded_length) ||
+      !laghu_css_normalize_url(decoded_url, decoded_length, base_path,
+                               page_origin, result->source_url)) {
+    return false;
+  }
+  result->start = start;
+  result->end = cursor + 1U;
+  if (media_end > media_start &&
+      !laghu_css_case_equal(input.data + media_start, media_end - media_start,
+                            "all")) {
+    memcpy(result->media, input.data + media_start, media_end - media_start);
+    result->media[media_end - media_start] = '\0';
+  }
+  *next = cursor + 1U;
+  return true;
+}
+
 static bool laghu_css_scan_input(laghu_buffer input, const char *base_path,
                                  const char *page_origin, bool declaration_list,
                                  laghu_css_scan *scan) {
@@ -219,6 +410,7 @@ static bool laghu_css_scan_input(laghu_buffer input, const char *base_path,
   unsigned int paren = 0U;
   unsigned int square = 0U;
   size_t block_start = 0U;
+  bool imports_allowed = !declaration_list;
   if (scan == NULL || input.length > LAGHU_CSS_MAX_INPUT_BYTES ||
       (input.data == NULL && input.length != 0U)) {
     return false;
@@ -226,6 +418,7 @@ static bool laghu_css_scan_input(laghu_buffer input, const char *base_path,
   memset(scan, 0, sizeof(*scan));
   scan->bounded = true;
   scan->fallback_safe = true;
+  scan->imports_supported = true;
   while (cursor < input.length) {
     unsigned char current = input.data[cursor];
     if (++scan->token_count > LAGHU_CSS_MAX_TOKENS) {
@@ -246,8 +439,48 @@ static bool laghu_css_scan_input(laghu_buffer input, const char *base_path,
         scan->fallback_safe = false;
         return true;
       }
+      if (laghu_css_preserve_comment(
+              input.data + cursor,
+              (size_t)(close - input.data) + 2U - cursor) &&
+          (laghu_css_case_find(input.data + cursor,
+                               (size_t)(close - input.data) + 2U - cursor,
+                               "sourceMappingURL") != NULL ||
+           laghu_css_case_find(input.data + cursor,
+                               (size_t)(close - input.data) + 2U - cursor,
+                               "sourceURL") != NULL)) {
+        scan->import_graph_forbidden = true;
+      }
       cursor = (size_t)(close - input.data) + 2U;
       continue;
+    }
+    if (!declaration_list && curly == 0U && paren == 0U && square == 0U &&
+        current == '@' && cursor + sizeof("@import") - 1U <= input.length &&
+        laghu_css_case_equal(input.data + cursor, sizeof("@import") - 1U,
+                             "@import")) {
+      size_t next = cursor;
+      scan->has_imports = true;
+      if (!imports_allowed || scan->import_count == LAGHU_CSS_MAX_IMPORTS ||
+          !laghu_css_parse_import(input, cursor, base_path, page_origin,
+                                  &scan->imports[scan->import_count], &next)) {
+        scan->imports_supported = false;
+      } else {
+        ++scan->import_count;
+        cursor = next;
+        continue;
+      }
+    }
+    if (!declaration_list && curly == 0U && paren == 0U && square == 0U &&
+        current == '@') {
+      static const char *forbidden[] = {"@charset", "@namespace", "@font-face"};
+      size_t item;
+      for (item = 0U; item < sizeof(forbidden) / sizeof(forbidden[0]); ++item) {
+        size_t length = strlen(forbidden[item]);
+        if (cursor + length <= input.length &&
+            laghu_css_case_equal(input.data + cursor, length,
+                                 forbidden[item])) {
+          scan->import_graph_forbidden = true;
+        }
+      }
     }
     if (current == '\'' || current == '"') {
       unsigned char quote = current;
@@ -266,6 +499,9 @@ static bool laghu_css_scan_input(laghu_buffer input, const char *base_path,
         return true;
       }
       continue;
+    }
+    if (!isspace(current) && imports_allowed) {
+      imports_allowed = false;
     }
     if (current == '{') {
       if (++curly > LAGHU_CSS_MAX_NESTING) {
@@ -571,6 +807,12 @@ bool laghu_css_discover(laghu_buffer input, const char *base_path,
   result->valid = scan->valid;
   result->bounded = scan->bounded;
   result->token_count = scan->token_count;
+  result->has_imports = scan->has_imports;
+  result->imports_supported = scan->imports_supported;
+  result->import_graph_forbidden = scan->import_graph_forbidden;
+  result->import_count = scan->import_count;
+  memcpy(result->imports, scan->imports,
+         scan->import_count * sizeof(result->imports[0]));
   for (index = 0U; index < scan->url_count; ++index) {
     size_t existing;
     bool duplicate = false;
@@ -738,6 +980,49 @@ bool laghu_css_fallback_rewrite_urls(laghu_buffer input, const char *base_path,
   result->length = builder.length;
   return laghu_sha256_hex((laghu_buffer){result->data, result->length},
                           result->dependency_key);
+}
+
+bool laghu_css_rebase_urls(laghu_buffer input, const char *base_path,
+                           const char *page_origin,
+                           laghu_image_markup_result *result) {
+  laghu_css_scan *scan = NULL;
+  laghu_css_builder builder = {0};
+  size_t cursor = 0U;
+  size_t index;
+  bool success = false;
+  if (result == NULL) {
+    return false;
+  }
+  memset(result, 0, sizeof(*result));
+  scan = calloc(1U, sizeof(*scan));
+  if (scan == NULL ||
+      !laghu_css_scan_input(input, base_path, page_origin, false, scan) ||
+      !scan->valid || !scan->bounded) {
+    goto finished;
+  }
+  for (index = 0U; index < scan->url_count; ++index) {
+    const laghu_css_url *url = &scan->urls[index];
+    if (!laghu_css_append(&builder, input.data + cursor,
+                          url->value_start - cursor) ||
+        !laghu_css_append(&builder, url->normalized, strlen(url->normalized))) {
+      goto finished;
+    }
+    cursor = url->value_end;
+  }
+  if (!laghu_css_append(&builder, input.data + cursor, input.length - cursor)) {
+    goto finished;
+  }
+  result->data = builder.data;
+  result->length = builder.length;
+  builder.data = NULL;
+  success = true;
+finished:
+  free(scan);
+  free(builder.data);
+  if (!success) {
+    laghu_image_markup_result_release(result);
+  }
+  return success;
 }
 
 bool laghu_css_rewrite_style_attributes(
