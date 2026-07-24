@@ -65,6 +65,8 @@ printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style me
   >"${work}/htdocs/no-cross-page.html"
 printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
   >"${work}/htdocs/missing-head-page.html"
+printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
+  >"${work}/htdocs/minify-page.html"
 
 load_if_present() {
   name=$1
@@ -134,6 +136,7 @@ load_first_mpm() {
   printf '<Location "/import-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
+  printf '<Location "/minify-page.html">\nLaghu RewriteLevel bandwidth\n</Location>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
   printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
@@ -338,11 +341,26 @@ for page in heads-page move-page; do
   grep -i '^ETag: "laghu-html-' "${work}/${page}-warm.headers" >/dev/null
 done
 test "$(grep -oi '<head' "${work}/heads-page-warm" | wc -l | tr -d ' ')" = 1
-test "$(grep -bo '<style media="all">' "${work}/move-page-warm" | cut -d: -f1)" -lt \
-  "$(grep -bo '<script src="/app.js">' "${work}/move-page-warm" | cut -d: -f1)"
+test "$(grep -bo '<style media=all>' "${work}/move-page-warm" | cut -d: -f1)" -lt \
+  "$(grep -bo '<script src=/app.js>' "${work}/move-page-warm" | cut -d: -f1)"
 curl --fail --silent http://127.0.0.1:18081/no-cross-page.html \
   >"${work}/no-cross-page"
 cmp "${work}/htdocs/no-cross-page.html" "${work}/no-cross-page"
+
+curl --fail --silent http://127.0.0.1:18081/minify-page.html \
+  >"${work}/minify-page-cold"
+cmp "${work}/htdocs/minify-page.html" "${work}/minify-page-cold"
+curl --fail --silent --dump-header "${work}/minify-page-warm.headers" \
+  http://127.0.0.1:18081/minify-page.html >"${work}/minify-page-warm"
+grep '<p class=safe title="two words">one two</p>' \
+  "${work}/minify-page-warm" >/dev/null
+grep '<script> x  y </script><pre> a  b </pre><!-- @license keep -->' \
+  "${work}/minify-page-warm" >/dev/null
+if grep '<!-- remove -->' "${work}/minify-page-warm" >/dev/null; then
+  echo "Apache retained an eligible HTML comment." >&2
+  exit 1
+fi
+grep -i '^ETag: "laghu-html-' "${work}/minify-page-warm.headers" >/dev/null
 
 curl --fail --silent http://127.0.0.1:18081/missing-head-page.html \
   >"${work}/missing-head-cold"
@@ -432,7 +450,7 @@ if [ "${service_pid}" != "" ]; then
     if grep 'srcset=' "${work}/image-page-warm.html" >/dev/null &&
         grep ' 320w' "${work}/image-page-warm.html" >/dev/null &&
         grep ' 512w' "${work}/image-page-warm.html" >/dev/null &&
-        grep 'loading="lazy"' "${work}/image-page-warm.html" >/dev/null &&
+        grep 'loading=lazy' "${work}/image-page-warm.html" >/dev/null &&
         grep '/.laghu/beacon/images.js' \
           "${work}/image-page-warm.html" >/dev/null &&
         grep -i -E '^ETag: "laghu-html-[0-9a-f]{64}"' \
@@ -459,7 +477,7 @@ if [ "${service_pid}" != "" ]; then
   }
   grep ' 320w' "${work}/image-page-warm.html" >/dev/null
   grep ' 512w' "${work}/image-page-warm.html" >/dev/null
-  grep 'loading="lazy"' "${work}/image-page-warm.html" >/dev/null
+  grep 'loading=lazy' "${work}/image-page-warm.html" >/dev/null
   grep '/.laghu/beacon/images.js' "${work}/image-page-warm.html" >/dev/null
   grep -i -E '^ETag: "laghu-html-[0-9a-f]{64}"' \
     "${work}/image-page-warm.headers"

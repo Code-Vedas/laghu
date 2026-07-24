@@ -66,6 +66,8 @@ printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style me
   >"${SMOKE_DIR}/html/no-cross-page.html"
 printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
   >"${SMOKE_DIR}/html/missing-head-page.html"
+printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
+  >"${SMOKE_DIR}/html/minify-page.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -178,6 +180,12 @@ http {
       laghu rewrite_level core;
       default_type text/html;
       try_files /no-cross-page.html =404;
+    }
+
+    location = /minify-page.html {
+      laghu rewrite_level bandwidth;
+      default_type text/html;
+      try_files /minify-page.html =404;
     }
 
     location = /image.png {
@@ -560,7 +568,7 @@ if [ "${image_smoke}" -eq 1 ]; then
   [ "${attempt}" -lt 100 ]
   grep ' 320w' "${SMOKE_DIR}/image-page-warm" >/dev/null
   grep ' 512w' "${SMOKE_DIR}/image-page-warm" >/dev/null
-  grep 'loading="lazy"' "${SMOKE_DIR}/image-page-warm" >/dev/null
+  grep 'loading=lazy' "${SMOKE_DIR}/image-page-warm" >/dev/null
   grep '/.laghu/beacon/images.js' "${SMOKE_DIR}/image-page-warm" >/dev/null
   tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
     grep -i -E -x 'ETag: "laghu-html-[0-9a-f]{64}"' >/dev/null
@@ -902,11 +910,28 @@ for page in heads-page move-page; do
   grep -i '^ETag: "laghu-html-' "${SMOKE_DIR}/${page}-warm.headers" >/dev/null
 done
 test "$(grep -oi '<head' "${SMOKE_DIR}/heads-page-warm" | wc -l | tr -d ' ')" = 1
-test "$(grep -bo '<style media="all">' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)" -lt \
-  "$(grep -bo '<script src="/app.js">' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)"
+test "$(grep -bo '<style media=all>' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)" -lt \
+  "$(grep -bo '<script src=/app.js>' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)"
 curl --fail --silent --output "${SMOKE_DIR}/no-cross-page" \
   "http://127.0.0.1:${PORT}/no-cross-page.html"
 cmp "${SMOKE_DIR}/html/no-cross-page.html" "${SMOKE_DIR}/no-cross-page"
+
+curl --fail --silent --output "${SMOKE_DIR}/minify-page-cold" \
+  "http://127.0.0.1:${PORT}/minify-page.html"
+cmp "${SMOKE_DIR}/html/minify-page.html" "${SMOKE_DIR}/minify-page-cold"
+curl --fail --silent --dump-header "${SMOKE_DIR}/minify-page-warm.headers" \
+  --output "${SMOKE_DIR}/minify-page-warm" \
+  "http://127.0.0.1:${PORT}/minify-page.html"
+grep '<p class=safe title="two words">one two</p>' \
+  "${SMOKE_DIR}/minify-page-warm" >/dev/null
+grep '<script> x  y </script><pre> a  b </pre><!-- @license keep -->' \
+  "${SMOKE_DIR}/minify-page-warm" >/dev/null
+if grep '<!-- remove -->' "${SMOKE_DIR}/minify-page-warm" >/dev/null; then
+  echo "NGINX retained an eligible HTML comment." >&2
+  exit 1
+fi
+grep -i '^ETag: "laghu-html-' \
+  "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
 
 curl --fail --silent --output "${SMOKE_DIR}/missing-head-cold" \
   "http://127.0.0.1:${PORT}/missing-head-page.html"

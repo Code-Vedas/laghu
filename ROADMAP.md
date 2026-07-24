@@ -222,15 +222,23 @@ both adapters. Critical CSS remains pending.
 
 - [x] `add_head`: add a missing document head.
 - [x] `combine_heads`: merge multiple head elements.
-- [ ] `collapse_whitespace`: remove safe excess whitespace.
-- [ ] `remove_comments`: strip eligible HTML comments.
-- [ ] `remove_quotes`: remove unnecessary attribute quotes.
-- [ ] `elide_attributes`: remove default-value attributes.
+- [x] `collapse_whitespace`: remove safe excess whitespace.
+- [x] `remove_comments`: strip eligible HTML comments.
+- [x] `remove_quotes`: remove unnecessary attribute quotes.
+- [x] `elide_attributes`: remove default-value attributes.
 - [ ] `convert_meta_tags`: convert eligible HTTP-equivalent meta tags to headers.
 - [ ] `add_instrumentation`: inject opt-in real-user measurement instrumentation.
 - [ ] `hint_preload_subresources`: add preload link hints.
 - [ ] `insert_dns_prefetch`: add DNS-prefetch hints for third parties.
 - [ ] `trim_urls`: shorten URLs relative to the document base.
+
+Safe HTML normalization evidence: the versioned shared planner mask enables the
+four lexical filters whenever HTML minification is selected, including the
+non-structural bandwidth level. Unit tests cover protected/raw contexts,
+Unicode whitespace, every retained comment marker, safe and unsafe attribute
+values, duplicate/malformed attributes, and the exact MIME-elision table.
+NGINX and Apache smoke fixtures verify byte-identical cold responses,
+strictly-smaller warm responses, protected bytes, and dependency ETags.
 
 ### 3.6 Caching and URL Filters
 

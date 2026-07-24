@@ -331,6 +331,26 @@ static laghu_image_filter_mask laghu_apache_image_filters(
   return filters;
 }
 
+static laghu_html_planner_mask laghu_apache_html_plan(
+    const laghu_policy *policy) {
+  laghu_html_planner_mask plan = 0U;
+  bool html = (policy->filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U;
+  bool css = (policy->filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U;
+  if (html) {
+    plan |= LAGHU_HTML_PLAN_LEXICAL;
+  }
+  if (html && policy->allow_structural_rewrite) {
+    plan |= LAGHU_HTML_PLAN_ADD_COMBINE_HEAD;
+  }
+  if (html && css && policy->allow_structural_rewrite) {
+    plan |= LAGHU_HTML_PLAN_MOVE_CSS_TO_HEAD;
+    if (policy->allow_script_reordering) {
+      plan |= LAGHU_HTML_PLAN_MOVE_CSS_ABOVE_SCRIPTS;
+    }
+  }
+  return plan;
+}
+
 static bool laghu_apache_accepts_webp(request_rec *request) {
   const char *accept = apr_table_get(request->headers_in, "Accept");
   const char *match =
@@ -698,19 +718,8 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                       0U &&
                   context->policy.allow_structural_rewrite,
-              (context->policy.filter_families & LAGHU_FILTER_HTML_MINIFY) !=
-                      0U &&
-                  context->policy.allow_structural_rewrite,
-              (context->policy.filter_families &
-               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
-                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
-                  context->policy.allow_structural_rewrite,
-              (context->policy.filter_families &
-               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
-                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
-                  context->policy.allow_structural_rewrite &&
-                  context->policy.allow_script_reordering,
-              csp_allows_data, csp_allows_inline, csp_allows_self,
+              laghu_apache_html_plan(&context->policy), csp_allows_data,
+              csp_allows_inline, csp_allows_self,
               context->config->core.image_beacon == LAGHU_MODE_ON,
               context->config->core.image_inline_limit,
               context->config->core.css_inline_limit,

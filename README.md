@@ -58,6 +58,9 @@ The module currently:
 - queues bounded image jobs without waiting and publishes cache files atomically
 - normalizes eligible document heads and places CSS through one bounded planner
   shared by NGINX and Apache
+- safely collapses ordinary HTML whitespace, removes unprotected comments,
+  unquotes safe values, and elides exact default MIME attributes through that
+  same cold-original planner
 - emits `pass`, `image-hit`, or a specific fail-open bypass in `X-Laghu`
 - preserves the original on a cold miss, backend loss, queue contention,
   malformed input, timeout, invalid output, or non-smaller output

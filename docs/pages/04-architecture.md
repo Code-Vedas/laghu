@@ -115,3 +115,10 @@ original node bytes. Script boundaries are policy inputs: only policies that
 explicitly permit script reordering may place CSS ahead of an executable
 classic or module script. NGINX and Apache pass identical planner flags and use
 the same cold-original, dependency-key, byte-accounting, and fail-open path.
+The flags form a versioned planner mask rather than adapter-specific booleans.
+When HTML minification is selected, the planner removes eligible comments and
+exact default MIME attributes, safely unquotes values, and collapses ordinary
+ASCII text whitespace. Raw-text, template/noscript, SVG/MathML, legacy
+raw-text, and content-editable regions remain opaque. The derived document is
+reparsed for ordered structural equivalence, and lexical changes are accepted
+only when strictly smaller.

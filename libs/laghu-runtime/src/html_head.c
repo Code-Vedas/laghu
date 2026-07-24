@@ -10,6 +10,8 @@
 #include "laghu/runtime.h"
 
 #define LAGHU_HEAD_MAX_CSS_NODES 64U
+#define LAGHU_HTML_MAX_ATTRIBUTES 128U
+#define LAGHU_HTML_ATTRIBUTE_NAME_SIZE 64U
 
 typedef enum {
   LAGHU_HEAD_TOKEN_TAG = 0,
@@ -37,6 +39,19 @@ typedef struct {
   size_t start;
   size_t end;
 } laghu_head_range;
+
+typedef struct {
+  size_t leading_start;
+  size_t name_start;
+  size_t name_end;
+  size_t value_start;
+  size_t value_end;
+  size_t end;
+  unsigned char quote;
+  char name[LAGHU_HTML_ATTRIBUTE_NAME_SIZE];
+  bool has_value;
+  bool elide;
+} laghu_html_attribute;
 
 static bool laghu_head_append(laghu_head_builder *builder, const void *data,
                               size_t length) {
@@ -79,6 +94,46 @@ static bool laghu_head_equal(const unsigned char *value, size_t length,
     }
   }
   return true;
+}
+
+static bool laghu_html_ascii_space(unsigned char value) {
+  return value == ' ' || value == '\t' || value == '\n' || value == '\r' ||
+         value == '\f';
+}
+
+static bool laghu_html_contains_ci(const unsigned char *data, size_t length,
+                                   const char *needle) {
+  size_t needle_length = strlen(needle);
+  size_t offset;
+  if (needle_length == 0U || needle_length > length) {
+    return false;
+  }
+  for (offset = 0U; offset + needle_length <= length; ++offset) {
+    size_t index;
+    for (index = 0U; index < needle_length; ++index) {
+      if (tolower(data[offset + index]) !=
+          tolower((unsigned char)needle[index])) {
+        break;
+      }
+    }
+    if (index == needle_length) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool laghu_html_protected_element(const char *name) {
+  static const char *const names[] = {
+      "pre",  "textarea", "script", "style",   "template", "noscript", "svg",
+      "math", "xmp",      "iframe", "noembed", "noframes", "plaintext"};
+  size_t index;
+  for (index = 0U; index < sizeof(names) / sizeof(names[0]); ++index) {
+    if (strcmp(name, names[index]) == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 static bool laghu_head_protected_name(const char *name) {
@@ -754,14 +809,549 @@ finished:
   return success;
 }
 
-bool laghu_runtime_normalize_head(laghu_buffer html, bool add_or_combine_head,
-                                  bool move_css_to_head,
-                                  bool move_css_above_scripts,
-                                  laghu_runtime_head_result *result) {
+static bool laghu_html_comment_preserved(const unsigned char *data,
+                                         size_t length) {
+  return memchr(data, '!', length) != NULL ||
+         laghu_html_contains_ci(data, length, "[if") ||
+         laghu_html_contains_ci(data, length, "[endif]") ||
+         laghu_html_contains_ci(data, length, "@license") ||
+         laghu_html_contains_ci(data, length, "@preserve") ||
+         laghu_html_contains_ci(data, length, "laghu:keep") ||
+         laghu_html_contains_ci(data, length, "sourceMappingURL") ||
+         laghu_html_contains_ci(data, length, "sourceURL");
+}
+
+static bool laghu_html_unquoted_safe(const unsigned char *value,
+                                     size_t length) {
+  size_t index;
+  if (length == 0U) {
+    return false;
+  }
+  for (index = 0U; index < length; ++index) {
+    unsigned char byte = value[index];
+    if (laghu_html_ascii_space(byte) || byte == '"' || byte == '\'' ||
+        byte == '`' || byte == '=' || byte == '<' || byte == '>') {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool laghu_html_parse_tag(laghu_buffer html, size_t start, size_t end,
+                                 char tag_name[16U], bool *closing,
+                                 bool *self_closing,
+                                 laghu_html_attribute *attributes,
+                                 size_t *attribute_count) {
+  size_t cursor = start + 1U;
+  size_t name_start;
+  size_t name_end;
+  size_t count = 0U;
+  *closing = false;
+  *self_closing = false;
+  *attribute_count = 0U;
+  tag_name[0] = '\0';
+  while (cursor < end && laghu_html_ascii_space(html.data[cursor])) {
+    ++cursor;
+  }
+  if (cursor < end && html.data[cursor] == '/') {
+    *closing = true;
+    ++cursor;
+  }
+  name_start = cursor;
+  while (cursor < end &&
+         (isalnum(html.data[cursor]) || html.data[cursor] == '-' ||
+          html.data[cursor] == '_')) {
+    ++cursor;
+  }
+  name_end = cursor;
+  if (name_end == name_start || name_end - name_start >= 16U) {
+    return false;
+  }
+  for (cursor = 0U; cursor < name_end - name_start; ++cursor) {
+    tag_name[cursor] =
+        (char)tolower((unsigned char)html.data[name_start + cursor]);
+  }
+  tag_name[name_end - name_start] = '\0';
+  cursor = name_end;
+  if (*closing) {
+    while (cursor < end && laghu_html_ascii_space(html.data[cursor])) {
+      ++cursor;
+    }
+    return cursor == end;
+  }
+  while (cursor < end) {
+    laghu_html_attribute *attribute;
+    size_t previous;
+    size_t leading = cursor;
+    size_t index;
+    while (cursor < end && laghu_html_ascii_space(html.data[cursor])) {
+      ++cursor;
+    }
+    if (cursor == end) {
+      break;
+    }
+    if (html.data[cursor] == '/' && cursor + 1U == end) {
+      *self_closing = true;
+      break;
+    }
+    if (count == LAGHU_HTML_MAX_ATTRIBUTES) {
+      return false;
+    }
+    attribute = &attributes[count];
+    memset(attribute, 0, sizeof(*attribute));
+    attribute->leading_start = leading;
+    attribute->name_start = cursor;
+    while (cursor < end &&
+           (isalnum(html.data[cursor]) || html.data[cursor] == '-' ||
+            html.data[cursor] == '_' || html.data[cursor] == ':')) {
+      ++cursor;
+    }
+    attribute->name_end = cursor;
+    if (attribute->name_end == attribute->name_start ||
+        attribute->name_end - attribute->name_start >=
+            sizeof(attribute->name)) {
+      return false;
+    }
+    for (index = 0U; index < attribute->name_end - attribute->name_start;
+         ++index) {
+      attribute->name[index] = (char)tolower(
+          (unsigned char)html.data[attribute->name_start + index]);
+    }
+    for (previous = 0U; previous < count; ++previous) {
+      if (strcmp(attributes[previous].name, attribute->name) == 0) {
+        return false;
+      }
+    }
+    while (cursor < end && laghu_html_ascii_space(html.data[cursor])) {
+      ++cursor;
+    }
+    if (cursor < end && html.data[cursor] == '=') {
+      attribute->has_value = true;
+      ++cursor;
+      while (cursor < end && laghu_html_ascii_space(html.data[cursor])) {
+        ++cursor;
+      }
+      if (cursor == end) {
+        return false;
+      }
+      if (html.data[cursor] == '\'' || html.data[cursor] == '"') {
+        attribute->quote = html.data[cursor++];
+        attribute->value_start = cursor;
+        while (cursor < end && html.data[cursor] != attribute->quote) {
+          ++cursor;
+        }
+        if (cursor == end) {
+          return false;
+        }
+        attribute->value_end = cursor++;
+      } else {
+        attribute->value_start = cursor;
+        while (cursor < end && !laghu_html_ascii_space(html.data[cursor]) &&
+               html.data[cursor] != '>') {
+          if (html.data[cursor] == '\'' || html.data[cursor] == '"' ||
+              html.data[cursor] == '<' || html.data[cursor] == '=' ||
+              html.data[cursor] == '`') {
+            return false;
+          }
+          ++cursor;
+        }
+        attribute->value_end = cursor;
+        if (attribute->value_end == attribute->value_start) {
+          return false;
+        }
+      }
+    }
+    attribute->end = cursor;
+    ++count;
+  }
+  *attribute_count = count;
+  return true;
+}
+
+static const laghu_html_attribute *laghu_html_find_attribute(
+    const laghu_html_attribute *attributes, size_t count, const char *name) {
+  size_t index;
+  for (index = 0U; index < count; ++index) {
+    if (strcmp(attributes[index].name, name) == 0) {
+      return &attributes[index];
+    }
+  }
+  return NULL;
+}
+
+static bool laghu_html_attribute_equals(laghu_buffer html,
+                                        const laghu_html_attribute *attribute,
+                                        const char *value) {
+  return attribute != NULL && attribute->has_value &&
+         laghu_head_equal(html.data + attribute->value_start,
+                          attribute->value_end - attribute->value_start, value);
+}
+
+static bool laghu_html_transform_tag(laghu_buffer html, size_t start,
+                                     size_t end, laghu_html_planner_mask plan,
+                                     laghu_head_builder *builder,
+                                     char tag_name[16U], bool *closing,
+                                     bool *self_closing,
+                                     bool *contenteditable) {
+  laghu_html_attribute attributes[LAGHU_HTML_MAX_ATTRIBUTES];
+  size_t count = 0U;
+  size_t cursor = start;
+  size_t index;
+  const laghu_html_attribute *rel;
+  if (!laghu_html_parse_tag(html, start, end, tag_name, closing, self_closing,
+                            attributes, &count)) {
+    return false;
+  }
+  *contenteditable = false;
+  rel = laghu_html_find_attribute(attributes, count, "rel");
+  for (index = 0U; index < count; ++index) {
+    laghu_html_attribute *attribute = &attributes[index];
+    if (strcmp(attribute->name, "contenteditable") == 0 &&
+        (!attribute->has_value ||
+         !laghu_html_attribute_equals(html, attribute, "false"))) {
+      *contenteditable = true;
+    }
+    if ((plan & LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES) != 0U &&
+        strcmp(attribute->name, "type") == 0) {
+      attribute->elide =
+          (strcmp(tag_name, "script") == 0 &&
+           laghu_html_attribute_equals(html, attribute, "text/javascript")) ||
+          (strcmp(tag_name, "style") == 0 &&
+           laghu_html_attribute_equals(html, attribute, "text/css")) ||
+          (strcmp(tag_name, "link") == 0 &&
+           laghu_html_attribute_equals(html, rel, "stylesheet") &&
+           laghu_html_attribute_equals(html, attribute, "text/css"));
+    }
+  }
+  for (index = 0U; index < count; ++index) {
+    laghu_html_attribute *attribute = &attributes[index];
+    if (attribute->elide) {
+      if (!laghu_head_append(builder, html.data + cursor,
+                             attribute->leading_start - cursor)) {
+        return false;
+      }
+      cursor = attribute->end;
+    } else if ((plan & LAGHU_HTML_PLAN_REMOVE_QUOTES) != 0U &&
+               attribute->quote != 0U &&
+               laghu_html_unquoted_safe(
+                   html.data + attribute->value_start,
+                   attribute->value_end - attribute->value_start)) {
+      size_t quote_start = attribute->value_start - 1U;
+      if (!laghu_head_append(builder, html.data + cursor,
+                             quote_start - cursor) ||
+          !laghu_head_append(builder, html.data + attribute->value_start,
+                             attribute->value_end - attribute->value_start)) {
+        return false;
+      }
+      cursor = attribute->value_end + 1U;
+    }
+  }
+  return laghu_head_append(builder, html.data + cursor, end + 1U - cursor);
+}
+
+static bool laghu_html_append_text(laghu_head_builder *builder,
+                                   const unsigned char *data, size_t length,
+                                   bool collapse) {
+  size_t cursor = 0U;
+  if (!collapse) {
+    return laghu_head_append(builder, data, length);
+  }
+  while (cursor < length) {
+    size_t start = cursor;
+    if (laghu_html_ascii_space(data[cursor])) {
+      while (cursor < length && laghu_html_ascii_space(data[cursor])) {
+        ++cursor;
+      }
+      if (!laghu_head_append(builder, " ", 1U)) {
+        return false;
+      }
+    } else {
+      while (cursor < length && !laghu_html_ascii_space(data[cursor])) {
+        ++cursor;
+      }
+      if (!laghu_head_append(builder, data + start, cursor - start)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+static bool laghu_html_attributes_equivalent(laghu_buffer before,
+                                             const laghu_head_token *left,
+                                             laghu_buffer after,
+                                             const laghu_head_token *right,
+                                             laghu_html_planner_mask plan) {
+  laghu_html_attribute left_attributes[LAGHU_HTML_MAX_ATTRIBUTES];
+  laghu_html_attribute right_attributes[LAGHU_HTML_MAX_ATTRIBUTES];
+  char left_name[16U];
+  char right_name[16U];
+  bool left_closing;
+  bool right_closing;
+  bool left_self_closing;
+  bool right_self_closing;
+  size_t left_count = 0U;
+  size_t right_count = 0U;
+  size_t left_index;
+  size_t right_index = 0U;
+  const laghu_html_attribute *rel;
+  if (!laghu_html_parse_tag(before, left->start, left->end - 1U, left_name,
+                            &left_closing, &left_self_closing, left_attributes,
+                            &left_count) ||
+      !laghu_html_parse_tag(after, right->start, right->end - 1U, right_name,
+                            &right_closing, &right_self_closing,
+                            right_attributes, &right_count) ||
+      left_closing != right_closing ||
+      left_self_closing != right_self_closing) {
+    return false;
+  }
+  rel = laghu_html_find_attribute(left_attributes, left_count, "rel");
+  for (left_index = 0U; left_index < left_count; ++left_index) {
+    const laghu_html_attribute *attribute = &left_attributes[left_index];
+    bool approved_elision =
+        (plan & LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES) != 0U &&
+        strcmp(attribute->name, "type") == 0 &&
+        ((strcmp(left_name, "script") == 0 &&
+          laghu_html_attribute_equals(before, attribute, "text/javascript")) ||
+         (strcmp(left_name, "style") == 0 &&
+          laghu_html_attribute_equals(before, attribute, "text/css")) ||
+         (strcmp(left_name, "link") == 0 &&
+          laghu_html_attribute_equals(before, rel, "stylesheet") &&
+          laghu_html_attribute_equals(before, attribute, "text/css")));
+    if (approved_elision) {
+      continue;
+    }
+    if (right_index == right_count ||
+        strcmp(attribute->name, right_attributes[right_index].name) != 0 ||
+        attribute->has_value != right_attributes[right_index].has_value ||
+        (attribute->has_value &&
+         (attribute->value_end - attribute->value_start !=
+              right_attributes[right_index].value_end -
+                  right_attributes[right_index].value_start ||
+          memcmp(before.data + attribute->value_start,
+                 after.data + right_attributes[right_index].value_start,
+                 attribute->value_end - attribute->value_start) != 0))) {
+      return false;
+    }
+    ++right_index;
+  }
+  return right_index == right_count;
+}
+
+static bool laghu_html_tag_sequence_equal(laghu_buffer before,
+                                          laghu_buffer after,
+                                          laghu_html_planner_mask plan) {
+  laghu_head_token *left = calloc(LAGHU_HTML_MAX_TOKENS, sizeof(*left));
+  laghu_head_token *right = calloc(LAGHU_HTML_MAX_TOKENS, sizeof(*right));
+  size_t left_count = 0U;
+  size_t right_count = 0U;
+  size_t li = 0U;
+  size_t ri = 0U;
+  bool equal = false;
+  if (left == NULL || right == NULL ||
+      !laghu_head_tokenize(before, left, &left_count) ||
+      !laghu_head_tokenize(after, right, &right_count) ||
+      !laghu_head_pair_tokens(left, left_count) ||
+      !laghu_head_pair_tokens(right, right_count)) {
+    goto finished;
+  }
+  for (;;) {
+    while (li < left_count && left[li].kind == LAGHU_HEAD_TOKEN_COMMENT) {
+      ++li;
+    }
+    while (ri < right_count && right[ri].kind == LAGHU_HEAD_TOKEN_COMMENT) {
+      ++ri;
+    }
+    if (li == left_count || ri == right_count) {
+      equal = li == left_count && ri == right_count;
+      break;
+    }
+    if (left[li].kind != right[ri].kind ||
+        left[li].closing != right[ri].closing ||
+        strcmp(left[li].name, right[ri].name) != 0 ||
+        (left[li].kind == LAGHU_HEAD_TOKEN_TAG &&
+         !laghu_html_attributes_equivalent(before, &left[li], after, &right[ri],
+                                           plan))) {
+      break;
+    }
+    ++li;
+    ++ri;
+  }
+finished:
+  free(left);
+  free(right);
+  return equal;
+}
+
+static size_t laghu_html_paired_end(laghu_buffer html,
+                                    const laghu_head_token *tokens,
+                                    size_t token_count, size_t start,
+                                    const char *name) {
+  size_t index;
+  unsigned int depth = 0U;
+  for (index = 0U; index < token_count; ++index) {
+    if (tokens[index].kind != LAGHU_HEAD_TOKEN_TAG ||
+        strcmp(tokens[index].name, name) != 0 || tokens[index].start < start) {
+      continue;
+    }
+    if (!tokens[index].closing) {
+      if (tokens[index].end < 2U || html.data[tokens[index].end - 2U] != '/') {
+        ++depth;
+      }
+    } else if (depth != 0U && --depth == 0U) {
+      return tokens[index].end;
+    }
+  }
+  return SIZE_MAX;
+}
+
+static bool laghu_html_lexical(laghu_buffer html, laghu_html_planner_mask plan,
+                               laghu_runtime_head_result *result) {
+  laghu_head_builder builder = {0};
+  laghu_head_token *tokens = calloc(LAGHU_HTML_MAX_TOKENS, sizeof(*tokens));
+  size_t document_token_count = 0U;
+  size_t cursor = 0U;
+  unsigned int token_count = 0U;
+  if (tokens == NULL ||
+      !laghu_head_tokenize(html, tokens, &document_token_count)) {
+    goto failed;
+  }
+  while (cursor < html.length) {
+    const unsigned char *found =
+        memchr(html.data + cursor, '<', html.length - cursor);
+    size_t start;
+    size_t end;
+    unsigned char quote = 0U;
+    if (found == NULL) {
+      if (!laghu_html_append_text(
+              &builder, html.data + cursor, html.length - cursor,
+              (plan & LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE) != 0U)) {
+        goto failed;
+      }
+      break;
+    }
+    start = (size_t)(found - html.data);
+    if (!laghu_html_append_text(
+            &builder, html.data + cursor, start - cursor,
+            (plan & LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE) != 0U)) {
+      goto failed;
+    }
+    if (++token_count > LAGHU_HTML_MAX_TOKENS) {
+      goto failed;
+    }
+    if (start + 4U <= html.length &&
+        memcmp(html.data + start, "<!--", 4U) == 0) {
+      const unsigned char *close = NULL;
+      size_t index;
+      for (index = start + 4U; index + 2U < html.length; ++index) {
+        if (memcmp(html.data + index, "-->", 3U) == 0) {
+          close = html.data + index;
+          break;
+        }
+      }
+      if (close == NULL) {
+        goto failed;
+      }
+      end = (size_t)(close - html.data) + 3U;
+      if ((plan & LAGHU_HTML_PLAN_REMOVE_COMMENTS) == 0U ||
+          laghu_html_comment_preserved(html.data + start + 4U,
+                                       end - start - 7U)) {
+        if (!laghu_head_append(&builder, html.data + start, end - start)) {
+          goto failed;
+        }
+      }
+      cursor = end;
+      continue;
+    }
+    end = start + 1U;
+    while (end < html.length) {
+      unsigned char value = html.data[end];
+      if (quote != 0U) {
+        if (value == quote) {
+          quote = 0U;
+        }
+      } else if (value == '\'' || value == '"') {
+        quote = value;
+      } else if (value == '>') {
+        break;
+      }
+      ++end;
+    }
+    if (end == html.length || quote != 0U) {
+      goto failed;
+    }
+    if (start + 2U < html.length &&
+        (html.data[start + 1U] == '!' || html.data[start + 1U] == '?')) {
+      if (!laghu_head_append(&builder, html.data + start, end + 1U - start)) {
+        goto failed;
+      }
+      cursor = end + 1U;
+      continue;
+    }
+    {
+      char name[16U];
+      bool closing;
+      bool self_closing;
+      bool contenteditable;
+      size_t protected_end;
+      if (!laghu_html_transform_tag(html, start, end, plan, &builder, name,
+                                    &closing, &self_closing,
+                                    &contenteditable)) {
+        goto failed;
+      }
+      cursor = end + 1U;
+      if (!closing && !self_closing &&
+          (laghu_html_protected_element(name) || contenteditable)) {
+        if (strcmp(name, "plaintext") == 0) {
+          if (!laghu_head_append(&builder, html.data + cursor,
+                                 html.length - cursor)) {
+            goto failed;
+          }
+          cursor = html.length;
+          continue;
+        }
+        protected_end = laghu_html_paired_end(
+            html, tokens, document_token_count, start, name);
+        if (protected_end == SIZE_MAX || protected_end < cursor) {
+          goto failed;
+        }
+        if (!laghu_head_append(&builder, html.data + cursor,
+                               protected_end - cursor)) {
+          goto failed;
+        }
+        cursor = protected_end;
+      }
+    }
+  }
+  if (!laghu_html_tag_sequence_equal(
+          html, (laghu_buffer){builder.data, builder.length}, plan)) {
+    goto failed;
+  }
+  if (builder.length != html.length ||
+      memcmp(builder.data, html.data, html.length) != 0) {
+    result->data = builder.data;
+    result->length = builder.length;
+    result->rewritten = true;
+    result->lexical_changed = true;
+    builder.data = NULL;
+  }
+  free(tokens);
+  free(builder.data);
+  return true;
+failed:
+  free(tokens);
+  free(builder.data);
+  return false;
+}
+
+bool laghu_runtime_plan_html_document(laghu_buffer html,
+                                      laghu_html_planner_mask plan,
+                                      laghu_runtime_head_result *result) {
   laghu_head_token *tokens = NULL;
   size_t token_count = 0U;
   laghu_runtime_head_result normalized = {0};
   laghu_runtime_head_result moved = {0};
+  laghu_runtime_head_result lexical = {0};
   laghu_buffer working = html;
   bool success = false;
   if (result == NULL || html.length > LAGHU_IMAGE_MAX_INPUT_BYTES ||
@@ -774,21 +1364,34 @@ bool laghu_runtime_normalize_head(laghu_buffer html, bool add_or_combine_head,
       !laghu_head_pair_tokens(tokens, token_count)) {
     goto finished;
   }
-  if (add_or_combine_head &&
+  if ((plan & LAGHU_HTML_PLAN_ADD_COMBINE_HEAD) != 0U &&
       !laghu_head_merge(html, tokens, token_count, &normalized)) {
     goto finished;
   }
   if (normalized.rewritten) {
     working = (laghu_buffer){normalized.data, normalized.length};
   }
-  if (move_css_to_head &&
-      !laghu_head_move_css(working, move_css_above_scripts, &moved)) {
+  if ((plan & LAGHU_HTML_PLAN_MOVE_CSS_TO_HEAD) != 0U &&
+      !laghu_head_move_css(
+          working, (plan & LAGHU_HTML_PLAN_MOVE_CSS_ABOVE_SCRIPTS) != 0U,
+          &moved)) {
     goto finished;
   }
   if (moved.rewritten) {
+    working = (laghu_buffer){moved.data, moved.length};
+  }
+  if ((plan & LAGHU_HTML_PLAN_LEXICAL) != 0U &&
+      !laghu_html_lexical(working, plan, &lexical)) {
+    goto finished;
+  }
+  if (lexical.rewritten) {
+    result->data = lexical.data;
+    result->length = lexical.length;
+    result->lexical_changed = true;
+    lexical.data = NULL;
+  } else if (moved.rewritten) {
     result->data = moved.data;
     result->length = moved.length;
-    result->moved_css = true;
     moved.data = NULL;
   } else if (normalized.rewritten) {
     result->data = normalized.data;
@@ -797,12 +1400,15 @@ bool laghu_runtime_normalize_head(laghu_buffer html, bool add_or_combine_head,
   }
   result->added_head = normalized.added_head;
   result->combined_heads = normalized.combined_heads;
+  result->moved_css = moved.moved_css;
+  result->structural_changed = normalized.rewritten || moved.rewritten;
   result->rewritten = result->data != NULL;
   success = true;
 finished:
   free(tokens);
   laghu_runtime_head_result_release(&normalized);
   laghu_runtime_head_result_release(&moved);
+  laghu_runtime_head_result_release(&lexical);
   if (!success) {
     laghu_runtime_head_result_release(result);
   }

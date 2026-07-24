@@ -146,6 +146,21 @@ only when the selected policy explicitly permits script reordering. Every path
 keeps the first eligible response unchanged and accepts byte-neutral structural
 placement.
 
+Policies that select HTML minification also enable four conservative lexical
+filters, including the non-structural `bandwidth` rewrite level. Laghu collapses
+ASCII whitespace only in ordinary text, removes only unprotected complete
+comments, unquotes only values valid in HTML's unquoted syntax, and elides only
+exact default `text/javascript` and `text/css` MIME attributes. It preserves
+`pre`, `textarea`, script/style, template/noscript, SVG/MathML, legacy raw-text,
+and content-editable regions. Conditional comments and comments containing
+`!`, `@license`, `@preserve`, `laghu:keep`, `sourceMappingURL`, or `sourceURL`
+are retained. Malformed or ambiguous markup remains byte-identical.
+
+Lexical output must be strictly smaller and is reparsed before publication.
+The first eligible response remains the origin response; a later warm response
+uses a source-, policy-, planner-mask-, and dependency-derived strong ETag.
+There are no per-filter directives in this milestone.
+
 Outlined assets are exposed only through the validated
 `/.laghu/css/<sha256>` route with `text/css`, a strong ETag, and one-year
 immutable caching. Laghu never fetches a stylesheet from an origin.

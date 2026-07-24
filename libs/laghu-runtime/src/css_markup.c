@@ -209,11 +209,11 @@ bool laghu_runtime_rewrite_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, bool allow_inline,
-    bool allow_outline, bool allow_combine, bool normalize_head,
-    bool move_css_to_head, bool move_css_above_scripts,
+    bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
     bool csp_allows_inline_styles, bool csp_allows_self_styles,
     unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result) {
+  laghu_buffer source_html = html;
   laghu_css_markup_builder builder = {0};
   size_t cursor = 0U;
   size_t original_bundle = html.length;
@@ -221,21 +221,22 @@ bool laghu_runtime_rewrite_css_markup(
   size_t rewritten_bundle;
   unsigned int item_count = 0U;
   bool changed = false;
-  bool head_changed = false;
+  bool structural_changed = false;
+  bool lexical_changed = false;
   laghu_runtime_head_result head = {0};
   if (result == NULL || cache_path == NULL || page_path == NULL ||
       policy_key == NULL || html.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
     return false;
   }
   memset(result, 0, sizeof(*result));
-  if ((normalize_head || move_css_to_head) &&
-      !laghu_runtime_normalize_head(html, normalize_head, move_css_to_head,
-                                    move_css_above_scripts, &head)) {
+  if (html_plan != 0U &&
+      !laghu_runtime_plan_html_document(html, html_plan, &head)) {
     return false;
   }
   if (head.rewritten) {
     html = (laghu_buffer){head.data, head.length};
-    head_changed = true;
+    structural_changed = head.structural_changed;
+    lexical_changed = head.lexical_changed;
   }
   while (cursor < html.length) {
     const unsigned char *open =
@@ -553,23 +554,25 @@ bool laghu_runtime_rewrite_css_markup(
     }
   }
   rewritten_bundle = builder.length + outlined_payload;
-  if ((!changed && !head_changed) || rewritten_bundle > original_bundle ||
-      (!head_changed && rewritten_bundle == original_bundle)) {
+  if ((!changed && !structural_changed && !lexical_changed) ||
+      rewritten_bundle > original_bundle ||
+      (!structural_changed && rewritten_bundle == original_bundle)) {
     goto unchanged;
   }
   {
+    char source_hash[LAGHU_RUNTIME_KEY_SIZE];
     char output_hash[LAGHU_RUNTIME_KEY_SIZE];
-    char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 128U];
+    char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 128U];
     int material_length;
-    if (!laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
+    if (!laghu_sha256_hex(source_html, source_hash) ||
+        !laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
                           output_hash)) {
       goto failed;
     }
     material_length = snprintf(
-        material, sizeof(material), "laghu-html-markup-v%u\n%s\n%s\n%d:%d:%d",
-        LAGHU_HTML_HEAD_PLANNER_VERSION, output_hash, policy_key,
-        normalize_head ? 1 : 0, move_css_to_head ? 1 : 0,
-        move_css_above_scripts ? 1 : 0);
+        material, sizeof(material), "laghu-html-markup-v%u\n%s\n%s\n%s\n%08x",
+        LAGHU_HTML_PLANNER_VERSION, source_hash, output_hash, policy_key,
+        (unsigned int)html_plan);
     if (material_length <= 0 || (size_t)material_length >= sizeof(material) ||
         !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
                                          (size_t)material_length},
@@ -583,7 +586,7 @@ bool laghu_runtime_rewrite_css_markup(
                                             &entry)) {
       if (!laghu_runtime_cache_publish(
               cache_path, result->dependency_key, result->dependency_key,
-              result->dependency_key, "text/html", "laghu-css-markup-v2",
+              result->dependency_key, "text/html", "laghu-css-markup-v3",
               (laghu_buffer){builder.data, builder.length}, &entry)) {
         goto failed;
       }

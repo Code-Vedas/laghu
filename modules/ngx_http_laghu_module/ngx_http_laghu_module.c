@@ -321,6 +321,26 @@ static laghu_image_filter_mask ngx_http_laghu_image_filters(
   return filters;
 }
 
+static laghu_html_planner_mask ngx_http_laghu_html_plan(
+    const laghu_policy *policy) {
+  laghu_html_planner_mask plan = 0U;
+  bool html = (policy->filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U;
+  bool css = (policy->filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U;
+  if (html) {
+    plan |= LAGHU_HTML_PLAN_LEXICAL;
+  }
+  if (html && policy->allow_structural_rewrite) {
+    plan |= LAGHU_HTML_PLAN_ADD_COMBINE_HEAD;
+  }
+  if (html && css && policy->allow_structural_rewrite) {
+    plan |= LAGHU_HTML_PLAN_MOVE_CSS_TO_HEAD;
+    if (policy->allow_script_reordering) {
+      plan |= LAGHU_HTML_PLAN_MOVE_CSS_ABOVE_SCRIPTS;
+    }
+  }
+  return plan;
+}
+
 static bool ngx_http_laghu_validator(
     ngx_http_request_t *request, char output[LAGHU_RUNTIME_VALIDATOR_SIZE]) {
   size_t length;
@@ -1212,18 +1232,7 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                       0U &&
                   context->policy.allow_structural_rewrite,
-              (context->policy.filter_families & LAGHU_FILTER_HTML_MINIFY) !=
-                      0U &&
-                  context->policy.allow_structural_rewrite,
-              (context->policy.filter_families &
-               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
-                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
-                  context->policy.allow_structural_rewrite,
-              (context->policy.filter_families &
-               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
-                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
-                  context->policy.allow_structural_rewrite &&
-                  context->policy.allow_script_reordering,
+              ngx_http_laghu_html_plan(&context->policy),
               ngx_http_laghu_csp_allows_data(request),
               ngx_http_laghu_csp_allows_inline_style(request),
               ngx_http_laghu_csp_allows_self_style(request, origin_value),

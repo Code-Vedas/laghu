@@ -33,9 +33,22 @@ extern "C" {
 #define LAGHU_CSS_DERIVATION_VERSION 2U
 #define LAGHU_STYLESHEET_CATALOG_VERSION 2U
 #define LAGHU_CSS_IMPORT_MAX_DEPTH 8U
-#define LAGHU_HTML_HEAD_PLANNER_VERSION 1U
+#define LAGHU_HTML_PLANNER_VERSION 2U
 #define LAGHU_HTML_MAX_TOKENS 4096U
 #define LAGHU_HTML_MAX_HEADS 16U
+
+typedef uint32_t laghu_html_planner_mask;
+
+#define LAGHU_HTML_PLAN_ADD_COMBINE_HEAD (UINT32_C(1) << 0)
+#define LAGHU_HTML_PLAN_MOVE_CSS_TO_HEAD (UINT32_C(1) << 1)
+#define LAGHU_HTML_PLAN_MOVE_CSS_ABOVE_SCRIPTS (UINT32_C(1) << 2)
+#define LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE (UINT32_C(1) << 3)
+#define LAGHU_HTML_PLAN_REMOVE_COMMENTS (UINT32_C(1) << 4)
+#define LAGHU_HTML_PLAN_REMOVE_QUOTES (UINT32_C(1) << 5)
+#define LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES (UINT32_C(1) << 6)
+#define LAGHU_HTML_PLAN_LEXICAL                                            \
+  (LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE | LAGHU_HTML_PLAN_REMOVE_COMMENTS | \
+   LAGHU_HTML_PLAN_REMOVE_QUOTES | LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES)
 
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
@@ -149,6 +162,8 @@ typedef struct {
   bool added_head;
   bool combined_heads;
   bool moved_css;
+  bool structural_changed;
+  bool lexical_changed;
 } laghu_runtime_head_result;
 
 typedef struct {
@@ -254,24 +269,22 @@ bool laghu_runtime_rewrite_html(
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
     bool allow_inline, bool allow_css_inline, bool allow_css_outline,
-    bool allow_css_combine, bool normalize_head, bool move_css_to_head,
-    bool move_css_above_scripts, bool csp_allows_data,
-    bool csp_allows_inline_styles, bool csp_allows_self_styles,
-    bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
-    unsigned int css_outline_threshold, unsigned int viewport_width,
-    unsigned int dpr_hundredths, laghu_runtime_html_result *result);
+    bool allow_css_combine, laghu_html_planner_mask html_plan,
+    bool csp_allows_data, bool csp_allows_inline_styles,
+    bool csp_allows_self_styles, bool beacon_enabled, size_t inline_limit,
+    unsigned int css_inline_limit, unsigned int css_outline_threshold,
+    unsigned int viewport_width, unsigned int dpr_hundredths,
+    laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
-bool laghu_runtime_normalize_head(laghu_buffer html, bool add_or_combine_head,
-                                  bool move_css_to_head,
-                                  bool move_css_above_scripts,
-                                  laghu_runtime_head_result *result);
+bool laghu_runtime_plan_html_document(laghu_buffer html,
+                                      laghu_html_planner_mask plan,
+                                      laghu_runtime_head_result *result);
 void laghu_runtime_head_result_release(laghu_runtime_head_result *result);
 bool laghu_runtime_rewrite_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, bool allow_inline,
-    bool allow_outline, bool allow_combine, bool normalize_head,
-    bool move_css_to_head, bool move_css_above_scripts,
+    bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
     bool csp_allows_inline_styles, bool csp_allows_self_styles,
     unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result);
