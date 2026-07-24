@@ -10,6 +10,20 @@ if command -v bsdtar >/dev/null 2>&1; then
   export TAR=bsdtar
 fi
 
+# Docker dependency layers can outlive an RPM repository publication. Refresh
+# the matched server and development packages before compiling so the generated
+# ABI requirement is installable from the same repository snapshot used by the
+# clean-host package test below.
+case "${PACKAGE_FAMILY}" in
+  dnf|yum)
+    if [ "${SERVER}" = nginx ]; then
+      "${PACKAGE_FAMILY}" upgrade -y nginx nginx-core nginx-mod-devel
+    else
+      "${PACKAGE_FAMILY}" upgrade -y httpd httpd-core httpd-devel
+    fi
+    ;;
+esac
+
 scripts/run-build-all
 scripts/run-test-all
 

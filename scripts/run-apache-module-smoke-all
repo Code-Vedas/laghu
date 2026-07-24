@@ -57,6 +57,14 @@ import_long_name="import-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 cp "${work}/htdocs/import-leaf.css" "${work}/htdocs/${import_long_name}"
 printf '%s\n' "<style>@import \"/${import_long_name}\" print;</style>" \
   >"${work}/htdocs/import-page.html"
+printf '%s\n' '<html><head><meta charset="utf-8"></head> <!--gap--><head><title>heads</title></head><body></body></html>' \
+  >"${work}/htdocs/heads-page.html"
+printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
+  >"${work}/htdocs/move-page.html"
+printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
+  >"${work}/htdocs/no-cross-page.html"
+printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
+  >"${work}/htdocs/missing-head-page.html"
 
 load_if_present() {
   name=$1
@@ -124,6 +132,8 @@ load_first_mpm() {
   printf '<Location "/combine-page.html">\nLaghu RewriteLevel all\nLaghu CssInlineLimit 0\n</Location>\n'
   printf '<LocationMatch "^/import-.*\\.css$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/import-page.html">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
+  printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
   printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
@@ -318,6 +328,29 @@ if grep 'href=' "${work}/inline-page-warm" >/dev/null; then
   echo "Apache did not inline the warm stylesheet." >&2
   exit 1
 fi
+
+for page in heads-page move-page; do
+  curl --fail --silent --dump-header "${work}/${page}-cold.headers" \
+    http://127.0.0.1:18081/${page}.html >"${work}/${page}-cold"
+  cmp "${work}/htdocs/${page}.html" "${work}/${page}-cold"
+  curl --fail --silent --dump-header "${work}/${page}-warm.headers" \
+    http://127.0.0.1:18081/${page}.html >"${work}/${page}-warm"
+  grep -i '^ETag: "laghu-html-' "${work}/${page}-warm.headers" >/dev/null
+done
+test "$(grep -oi '<head' "${work}/heads-page-warm" | wc -l | tr -d ' ')" = 1
+test "$(grep -bo '<style media="all">' "${work}/move-page-warm" | cut -d: -f1)" -lt \
+  "$(grep -bo '<script src="/app.js">' "${work}/move-page-warm" | cut -d: -f1)"
+curl --fail --silent http://127.0.0.1:18081/no-cross-page.html \
+  >"${work}/no-cross-page"
+cmp "${work}/htdocs/no-cross-page.html" "${work}/no-cross-page"
+
+curl --fail --silent http://127.0.0.1:18081/missing-head-page.html \
+  >"${work}/missing-head-cold"
+cmp "${work}/htdocs/missing-head-page.html" "${work}/missing-head-cold"
+curl --fail --silent --dump-header "${work}/missing-head-warm.headers" \
+  http://127.0.0.1:18081/missing-head-page.html >"${work}/missing-head-warm"
+grep '<head><style>' "${work}/missing-head-warm" >/dev/null
+grep -i '^ETag: "laghu-html-' "${work}/missing-head-warm.headers" >/dev/null
 
 curl --fail --silent http://127.0.0.1:18081/outline-page.html \
   >"${work}/outline-cold"

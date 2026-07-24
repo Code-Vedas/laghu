@@ -1212,6 +1212,18 @@ static ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                       0U &&
                   context->policy.allow_structural_rewrite,
+              (context->policy.filter_families & LAGHU_FILTER_HTML_MINIFY) !=
+                      0U &&
+                  context->policy.allow_structural_rewrite,
+              (context->policy.filter_families &
+               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
+                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
+                  context->policy.allow_structural_rewrite,
+              (context->policy.filter_families &
+               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
+                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
+                  context->policy.allow_structural_rewrite &&
+                  context->policy.allow_script_reordering,
               ngx_http_laghu_csp_allows_data(request),
               ngx_http_laghu_csp_allows_inline_style(request),
               ngx_http_laghu_csp_allows_self_style(request, origin_value),

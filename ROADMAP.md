@@ -172,8 +172,8 @@ and Apache cold/warm smoke paths.
 - [x] `flatten_css_imports`: flatten compatible `@import` chains.
 - [x] `inline_import_to_link`: convert `@import` rules to links.
 - [ ] `inline_google_font_css`: inline eligible Google Fonts CSS.
-- [ ] `move_css_to_head`: move stylesheet links into the document head.
-- [ ] `move_css_above_scripts`: move CSS above script elements.
+- [x] `move_css_to_head`: move stylesheet links into the document head.
+- [x] `move_css_above_scripts`: move CSS above script elements.
 - [ ] `prioritize_critical_css`: inline critical CSS and defer the remainder.
 - [x] `rewrite_style_attributes`: rewrite inline style attributes.
 - [x] `rewrite_style_attributes_with_url`: rewrite style attributes containing
@@ -201,8 +201,11 @@ unique stylesheets, eight levels, and 2 MiB; dependency keys include ordered
 URLs, media, source/derived keys, policy, and capabilities. NGINX stable and
 Apache smoke fixtures populate catalogs through normal CSS responses, verify
 byte-identical cold responses, warm flattened CSS with dependency ETags, and
-warm import-to-link conversion through the hash-only CSS route. Critical CSS
-and broader style movement remain pending.
+warm import-to-link conversion through the hash-only CSS route. Head-placement
+tests cover bounded parsing, missing and adjacent heads, strict node
+eligibility, original-order movement, protected content, cold publication,
+byte-neutral warm delivery, and policy-gated executable-script crossing in
+both adapters. Critical CSS remains pending.
 
 ### 3.4 JavaScript Filters
 
@@ -217,8 +220,8 @@ and broader style movement remain pending.
 
 ### 3.5 HTML Filters
 
-- [ ] `add_head`: add a missing document head.
-- [ ] `combine_heads`: merge multiple head elements.
+- [x] `add_head`: add a missing document head.
+- [x] `combine_heads`: merge multiple head elements.
 - [ ] `collapse_whitespace`: remove safe excess whitespace.
 - [ ] `remove_comments`: strip eligible HTML comments.
 - [ ] `remove_quotes`: remove unnecessary attribute quotes.

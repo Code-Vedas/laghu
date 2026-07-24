@@ -23,6 +23,159 @@
 #include <unistd.h>
 #endif
 
+static void assert_head_rewrite(const char *input, bool normalize, bool move,
+                                bool cross, const char *expected, bool added,
+                                bool combined, bool moved) {
+  laghu_runtime_head_result result;
+  assert(laghu_runtime_normalize_head(
+      (laghu_buffer){(const unsigned char *)input, strlen(input)}, normalize,
+      move, cross, &result));
+  if (expected == NULL) {
+    assert(!result.rewritten && result.data == NULL);
+  } else {
+    if (!result.rewritten || result.length != strlen(expected) ||
+        memcmp(result.data, expected,
+               result.length < strlen(expected) ? result.length
+                                                : strlen(expected)) != 0) {
+      fprintf(stderr, "head input: %s\nexpected: %s\nactual: %.*s\n", input,
+              expected, (int)result.length,
+              result.data == NULL ? (const unsigned char *)"" : result.data);
+    }
+    assert(result.rewritten && result.length == strlen(expected));
+    assert(memcmp(result.data, expected, result.length) == 0);
+  }
+  assert(result.added_head == added);
+  assert(result.combined_heads == combined);
+  assert(result.moved_css == moved);
+  laghu_runtime_head_result_release(&result);
+}
+
+static void test_head_planner(void) {
+  laghu_runtime_head_result result;
+  unsigned char *bounded;
+  size_t offset = 0U;
+  unsigned int index;
+
+  assert_head_rewrite(
+      "<!doctype html><html><head><title>x</title></head>"
+      "<body>x</body></html>",
+      true, true, false, NULL, false, false, false);
+  assert_head_rewrite(
+      "<HTML><HEAD><meta></HEAD> \n<!--gap--><head><title>x"
+      "</title></head><body></body></HTML>",
+      true, false, false,
+      "<HTML><HEAD><meta> \n<!--gap--><title>x</title></HEAD>"
+      "<body></body></HTML>",
+      false, true, false);
+  assert_head_rewrite("<html><head></head><body>x</body><head></head></html>",
+                      true, true, true, NULL, false, false, false);
+  assert_head_rewrite("<!doctype html><html><body>x</body></html>", true, false,
+                      false,
+                      "<!doctype html><html><head></head><body>x</body></html>",
+                      true, false, false);
+  assert_head_rewrite("<!doctype html><body>x</body>", true, false, false,
+                      "<!doctype html><head></head><body>x</body>", true, false,
+                      false);
+  assert_head_rewrite("<div>fragment</div>", true, true, true, NULL, false,
+                      false, false);
+  assert_head_rewrite(
+      "<html><head><meta></head><body><link media='print' rel='stylesheet' "
+      "href='/a.css'><style nonce=abc>.a{color:red}</style></body></html>",
+      true, true, false,
+      "<html><head><meta><link media='print' rel='stylesheet' "
+      "href='/a.css'><style nonce=abc>.a{color:red}</style></head><body>"
+      "</body></html>",
+      false, false, true);
+  assert_head_rewrite(
+      "<html><head><script src='/app.js'></script></head><body>"
+      "<style>.a{color:red}</style></body></html>",
+      true, true, false, NULL, false, false, false);
+  assert_head_rewrite(
+      "<html><head><script src='/app.js'></script></head><body>"
+      "<style>.a{color:red}</style></body></html>",
+      true, true, true,
+      "<html><head><style>.a{color:red}</style><script src='/app.js'>"
+      "</script></head><body></body></html>",
+      false, false, true);
+  assert_head_rewrite(
+      "<html><head><script type='application/ld+json'>{}</script></head>"
+      "<body><link rel=stylesheet href=/a.css></body></html>",
+      true, true, false,
+      "<html><head><script type='application/ld+json'>{}</script>"
+      "<link rel=stylesheet href=/a.css></head><body></body></html>",
+      false, false, true);
+  assert_head_rewrite(
+      "<html><head><script type='application/json'>{\"tag\":\"<head>\"}"
+      "</script></head><body><style>.x::before{content:'<head>'}</style>"
+      "</body></html>",
+      true, true, false,
+      "<html><head><script type='application/json'>{\"tag\":\"<head>\"}"
+      "</script><style>.x::before{content:'<head>'}</style></head><body>"
+      "</body></html>",
+      false, false, true);
+  assert_head_rewrite(
+      "<html><head></head><body><template><style>.x{}</style></template>"
+      "<noscript><link rel=stylesheet href=/n.css></noscript>"
+      "<link rel='alternate stylesheet' href=/a.css>"
+      "<style scoped>.s{}</style><style onclick=x>.e{}</style></body></html>",
+      true, true, true, NULL, false, false, false);
+  assert(!laghu_runtime_normalize_head(
+      (laghu_buffer){(const unsigned char *)"<html><head>", 12U}, true, true,
+      false, &result));
+  assert(!laghu_runtime_normalize_head(
+      (laghu_buffer){
+          (const unsigned char *)"<html><head><head></head></head></html>",
+          sizeof("<html><head><head></head></head></html>") - 1U},
+      true, true, false, &result));
+
+  bounded = malloc((LAGHU_HTML_MAX_TOKENS + 1U) * 6U);
+  assert(bounded != NULL);
+  for (index = 0U; index <= LAGHU_HTML_MAX_TOKENS; ++index) {
+    memcpy(bounded + offset, "<meta>", 6U);
+    offset += 6U;
+  }
+  assert(!laghu_runtime_normalize_head((laghu_buffer){bounded, offset}, true,
+                                       true, false, &result));
+  free(bounded);
+}
+
+static void test_head_planner_cache(const char *cache_path,
+                                    const char *policy_key) {
+  static const unsigned char html[] =
+      "<html><head><script src=/app.js></script></head><body>"
+      "<style media=all>.a{color:red}</style></body></html>";
+  static const unsigned char changed[] =
+      "<html><head><script src=/app.js></script></head><body>"
+      "<style media=all>.a{color:blue}</style></body></html>";
+  laghu_runtime_html_result result;
+  char first_key[LAGHU_RUNTIME_KEY_SIZE];
+
+  assert(laghu_runtime_rewrite_css_markup(
+      cache_path, (laghu_buffer){html, sizeof(html) - 1U}, "/head.html",
+      "https://example.test", policy_key, 0U, 42U, 604800U, false, false, false,
+      true, true, true, true, true, 2048U, 8192U, &result));
+  assert(!result.rewritten && result.dependencies_pending);
+  strcpy(first_key, result.dependency_key);
+  laghu_runtime_html_result_release(&result);
+  assert(laghu_runtime_rewrite_css_markup(
+      cache_path, (laghu_buffer){html, sizeof(html) - 1U}, "/head.html",
+      "https://example.test", policy_key, 0U, 43U, 604800U, false, false, false,
+      true, true, true, true, true, 2048U, 8192U, &result));
+  assert(result.rewritten && !result.dependencies_pending);
+  assert(result.length == sizeof(html) - 1U);
+  assert(strstr((const char *)result.data, "<head><style media=all>") != NULL);
+  assert(strstr((const char *)result.data, "</head><body></body>") != NULL);
+  assert(strcmp(first_key, result.dependency_key) == 0);
+  laghu_runtime_html_result_release(&result);
+  assert(laghu_runtime_rewrite_css_markup(
+      cache_path, (laghu_buffer){changed, sizeof(changed) - 1U}, "/head.html",
+      "https://example.test", policy_key, 0U, 44U, 604800U, false, false, false,
+      true, true, true, true, true, 2048U, 8192U, &result));
+  assert(!result.rewritten && result.dependencies_pending);
+  assert(strcmp(first_key, result.dependency_key) != 0);
+  laghu_runtime_html_result_release(&result);
+}
+
 int main(void) {
   static const unsigned char payload[] = "runtime payload";
   char temporary[LAGHU_RUNTIME_PATH_SIZE];
@@ -43,6 +196,7 @@ int main(void) {
 
   laghu_runtime_queue_init(&producer);
   laghu_runtime_queue_init(&consumer);
+  test_head_planner();
 #ifdef _WIN32
   {
     char base[LAGHU_RUNTIME_PATH_SIZE];
@@ -59,6 +213,7 @@ int main(void) {
          0);
   assert(laghu_sha256_hex((laghu_buffer){payload, sizeof(payload) - 1U},
                           policy_key));
+  test_head_planner_cache(temporary, policy_key);
   assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true,
                                  index_key));
   assert(laghu_runtime_index_key("/image.png", "etag", policy_key, false,
@@ -269,13 +424,15 @@ int main(void) {
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){linked, sizeof(linked) - 1U}, "/index.html",
           "https://example.test", policy_key, 0x55aaU, 900002U, 604800U, true,
-          false, false, true, true, 2048U, 8192U, &markup));
+          false, false, false, false, false, true, true, 2048U, 8192U,
+          &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){linked, sizeof(linked) - 1U}, "/index.html",
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, true,
-          false, false, true, true, 2048U, 8192U, &markup));
+          false, false, false, false, false, true, true, 2048U, 8192U,
+          &markup));
       assert(markup.rewritten && !markup.dependencies_pending);
       assert(strstr((const char *)markup.data, "<style>") != NULL);
       assert(strstr((const char *)markup.data, "href=") == NULL);
@@ -283,7 +440,8 @@ int main(void) {
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){linked, sizeof(linked) - 1U}, "/index.html",
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, true,
-          false, false, false, true, 2048U, 8192U, &markup));
+          false, false, false, false, false, false, true, 2048U, 8192U,
+          &markup));
       assert(!markup.rewritten && !markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
     }
@@ -321,14 +479,16 @@ int main(void) {
           temporary,
           (laghu_buffer){(const unsigned char *)import_html, (size_t)length},
           "/index.html", "https://example.test", policy_key, 0x55aaU, 900022U,
-          604800U, false, true, false, false, true, 2048U, 8192U, &markup));
+          604800U, false, true, false, false, false, false, false, true, 2048U,
+          8192U, &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary,
           (laghu_buffer){(const unsigned char *)import_html, (size_t)length},
           "/index.html", "https://example.test", policy_key, 0x55aaU, 900023U,
-          604800U, false, true, false, false, true, 2048U, 8192U, &markup));
+          604800U, false, true, false, false, false, false, false, true, 2048U,
+          8192U, &markup));
       assert(markup.rewritten && strstr((const char *)markup.data,
                                         "<link rel=\"stylesheet\"") != NULL);
       assert(strstr((const char *)markup.data, "media=\"print\"") != NULL);
@@ -351,19 +511,22 @@ int main(void) {
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){outlined, offset}, "/outline.html",
           "https://example.test", policy_key, 0x55aaU, 900003U, 604800U, false,
-          true, false, false, true, 2048U, 8192U, &markup));
+          true, false, false, false, false, false, true, 2048U, 8192U,
+          &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){outlined, offset}, "/outline.html",
           "https://example.test", policy_key, 0x55aaU, 900004U, 604800U, false,
-          true, false, false, true, 2048U, 8192U, &markup));
+          true, false, false, false, false, false, true, 2048U, 8192U,
+          &markup));
       assert(!markup.rewritten && markup.dependencies_pending);
       laghu_runtime_html_result_release(&markup);
       assert(laghu_runtime_rewrite_css_markup(
           temporary, (laghu_buffer){outlined, offset}, "/outline.html",
           "https://example.test", policy_key, 0x55aaU, 900005U, 604800U, false,
-          true, false, false, true, 2048U, 8192U, &markup));
+          true, false, false, false, false, false, true, 2048U, 8192U,
+          &markup));
       assert(markup.rewritten && !markup.dependencies_pending);
       assert(strstr((const char *)markup.data, "/.laghu/css/") != NULL);
       laghu_runtime_html_result_release(&markup);
@@ -538,8 +701,8 @@ int main(void) {
         "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,
         LAGHU_IMAGE_INSERT_DIMENSIONS | LAGHU_IMAGE_RESPONSIVE |
             LAGHU_IMAGE_RESPONSIVE_ZOOM | LAGHU_IMAGE_LAZYLOAD,
-        false, false, false, false, false, false, true, false, 2048U, 2048U,
-        8192U, 0U, 100U, &page));
+        false, false, false, false, false, false, false, false, false, true,
+        false, 2048U, 2048U, 8192U, 0U, 100U, &page));
     assert(page.rewritten && !page.dependencies_pending);
     assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
     assert(strstr((const char *)page.data, " 320w") != NULL);
@@ -549,8 +712,8 @@ int main(void) {
         temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
         "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
         604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
-        false, false, true, true, true, false, 2048U, 2048U, 8192U, 0U, 100U,
-        &page));
+        false, false, false, false, false, true, true, true, false, 2048U,
+        2048U, 8192U, 0U, 100U, &page));
     assert(page.rewritten);
     assert(strstr((const char *)page.data, "data:image/png;base64,") != NULL);
     assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
@@ -559,8 +722,8 @@ int main(void) {
         temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
         "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
         604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
-        false, false, false, true, true, false, 2048U, 2048U, 8192U, 0U, 100U,
-        &page));
+        false, false, false, false, false, false, true, true, false, 2048U,
+        2048U, 8192U, 0U, 100U, &page));
     assert(page.rewritten);
     assert(strstr((const char *)page.data, "data:image/") == NULL);
     laghu_runtime_html_result_release(&page);

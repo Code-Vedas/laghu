@@ -58,6 +58,14 @@ cp "${SMOKE_DIR}/html/import-leaf.css" \
   "${SMOKE_DIR}/html/${import_long_name}"
 printf '%s\n' "<style>@import \"/${import_long_name}\" print;</style>" \
   >"${SMOKE_DIR}/html/import-page.html"
+printf '%s\n' '<html><head><meta charset="utf-8"></head> <!--gap--><head><title>heads</title></head><body></body></html>' \
+  >"${SMOKE_DIR}/html/heads-page.html"
+printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
+  >"${SMOKE_DIR}/html/move-page.html"
+printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
+  >"${SMOKE_DIR}/html/no-cross-page.html"
+printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
+  >"${SMOKE_DIR}/html/missing-head-page.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -159,6 +167,17 @@ http {
       laghu rewrite_level all;
       default_type text/html;
       try_files /import-page.html =404;
+    }
+
+    location ~ ^/(heads-page|move-page|missing-head-page)\.html$ {
+      laghu rewrite_level all;
+      default_type text/html;
+    }
+
+    location = /no-cross-page.html {
+      laghu rewrite_level core;
+      default_type text/html;
+      try_files /no-cross-page.html =404;
     }
 
     location = /image.png {
@@ -871,6 +890,32 @@ curl --fail --silent "http://127.0.0.1:${PORT}/import-page.html" \
 grep '<link rel="stylesheet" href="/.laghu/css/' \
   "${SMOKE_DIR}/import-page-warm" >/dev/null
 grep 'media="print"' "${SMOKE_DIR}/import-page-warm" >/dev/null
+
+for page in heads-page move-page; do
+  curl --fail --silent --dump-header "${SMOKE_DIR}/${page}-cold.headers" \
+    --output "${SMOKE_DIR}/${page}-cold" \
+    "http://127.0.0.1:${PORT}/${page}.html"
+  cmp "${SMOKE_DIR}/html/${page}.html" "${SMOKE_DIR}/${page}-cold"
+  curl --fail --silent --dump-header "${SMOKE_DIR}/${page}-warm.headers" \
+    --output "${SMOKE_DIR}/${page}-warm" \
+    "http://127.0.0.1:${PORT}/${page}.html"
+  grep -i '^ETag: "laghu-html-' "${SMOKE_DIR}/${page}-warm.headers" >/dev/null
+done
+test "$(grep -oi '<head' "${SMOKE_DIR}/heads-page-warm" | wc -l | tr -d ' ')" = 1
+test "$(grep -bo '<style media="all">' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)" -lt \
+  "$(grep -bo '<script src="/app.js">' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)"
+curl --fail --silent --output "${SMOKE_DIR}/no-cross-page" \
+  "http://127.0.0.1:${PORT}/no-cross-page.html"
+cmp "${SMOKE_DIR}/html/no-cross-page.html" "${SMOKE_DIR}/no-cross-page"
+
+curl --fail --silent --output "${SMOKE_DIR}/missing-head-cold" \
+  "http://127.0.0.1:${PORT}/missing-head-page.html"
+cmp "${SMOKE_DIR}/html/missing-head-page.html" "${SMOKE_DIR}/missing-head-cold"
+curl --fail --silent --dump-header "${SMOKE_DIR}/missing-head-warm.headers" \
+  --output "${SMOKE_DIR}/missing-head-warm" \
+  "http://127.0.0.1:${PORT}/missing-head-page.html"
+grep '<head><style>' "${SMOKE_DIR}/missing-head-warm" >/dev/null
+grep -i '^ETag: "laghu-html-' "${SMOKE_DIR}/missing-head-warm.headers" >/dev/null
 
 kill "${nginx_pid}"
 wait "${nginx_pid}"

@@ -72,11 +72,12 @@ bool laghu_runtime_rewrite_html(
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
     bool allow_inline, bool allow_css_inline, bool allow_css_outline,
-    bool allow_css_combine, bool csp_allows_data, bool csp_allows_inline_styles,
-    bool csp_allows_self_styles, bool beacon_enabled, size_t inline_limit,
-    unsigned int css_inline_limit, unsigned int css_outline_threshold,
-    unsigned int viewport_width, unsigned int dpr_hundredths,
-    laghu_runtime_html_result *result) {
+    bool allow_css_combine, bool normalize_head, bool move_css_to_head,
+    bool move_css_above_scripts, bool csp_allows_data,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
+    unsigned int css_outline_threshold, unsigned int viewport_width,
+    unsigned int dpr_hundredths, laghu_runtime_html_result *result) {
   laghu_image_discovery_result *discovery = NULL;
   laghu_image_resource *resources = NULL;
   laghu_runtime_resource_storage *storage = NULL;
@@ -304,13 +305,15 @@ bool laghu_runtime_rewrite_html(
         laghu_image_markup_result_release(&styled);
       }
     }
-    if (allow_css_inline || allow_css_outline || allow_css_combine) {
+    if (allow_css_inline || allow_css_outline || allow_css_combine ||
+        normalize_head || move_css_to_head) {
       laghu_runtime_html_result css_markup;
       if (!laghu_runtime_rewrite_css_markup(
               cache_path, (laghu_buffer){rewritten.data, rewritten.length},
               page_path, page_origin, policy_key, capability_mask, now,
               ttl_seconds, allow_css_inline, allow_css_outline,
-              allow_css_combine, csp_allows_inline_styles,
+              allow_css_combine, normalize_head, move_css_to_head,
+              move_css_above_scripts, csp_allows_inline_styles,
               csp_allows_self_styles, css_inline_limit, css_outline_threshold,
               &css_markup)) {
         laghu_image_markup_result_release(&rewritten);

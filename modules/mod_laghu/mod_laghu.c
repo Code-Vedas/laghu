@@ -698,6 +698,18 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                       0U &&
                   context->policy.allow_structural_rewrite,
+              (context->policy.filter_families & LAGHU_FILTER_HTML_MINIFY) !=
+                      0U &&
+                  context->policy.allow_structural_rewrite,
+              (context->policy.filter_families &
+               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
+                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
+                  context->policy.allow_structural_rewrite,
+              (context->policy.filter_families &
+               (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY)) ==
+                      (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY) &&
+                  context->policy.allow_structural_rewrite &&
+                  context->policy.allow_script_reordering,
               csp_allows_data, csp_allows_inline, csp_allows_self,
               context->config->core.image_beacon == LAGHU_MODE_ON,
               context->config->core.image_inline_limit,

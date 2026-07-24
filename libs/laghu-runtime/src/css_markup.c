@@ -209,9 +209,11 @@ bool laghu_runtime_rewrite_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, bool allow_inline,
-    bool allow_outline, bool allow_combine, bool csp_allows_inline_styles,
-    bool csp_allows_self_styles, unsigned int inline_limit,
-    unsigned int outline_threshold, laghu_runtime_html_result *result) {
+    bool allow_outline, bool allow_combine, bool normalize_head,
+    bool move_css_to_head, bool move_css_above_scripts,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    unsigned int inline_limit, unsigned int outline_threshold,
+    laghu_runtime_html_result *result) {
   laghu_css_markup_builder builder = {0};
   size_t cursor = 0U;
   size_t original_bundle = html.length;
@@ -219,11 +221,22 @@ bool laghu_runtime_rewrite_css_markup(
   size_t rewritten_bundle;
   unsigned int item_count = 0U;
   bool changed = false;
+  bool head_changed = false;
+  laghu_runtime_head_result head = {0};
   if (result == NULL || cache_path == NULL || page_path == NULL ||
       policy_key == NULL || html.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
     return false;
   }
   memset(result, 0, sizeof(*result));
+  if ((normalize_head || move_css_to_head) &&
+      !laghu_runtime_normalize_head(html, normalize_head, move_css_to_head,
+                                    move_css_above_scripts, &head)) {
+    return false;
+  }
+  if (head.rewritten) {
+    html = (laghu_buffer){head.data, head.length};
+    head_changed = true;
+  }
   while (cursor < html.length) {
     const unsigned char *open =
         memchr(html.data + cursor, '<', html.length - cursor);
@@ -540,12 +553,29 @@ bool laghu_runtime_rewrite_css_markup(
     }
   }
   rewritten_bundle = builder.length + outlined_payload;
-  if (!changed || rewritten_bundle >= original_bundle) {
+  if ((!changed && !head_changed) || rewritten_bundle > original_bundle ||
+      (!head_changed && rewritten_bundle == original_bundle)) {
     goto unchanged;
   }
-  if (!laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
-                        result->dependency_key)) {
-    goto failed;
+  {
+    char output_hash[LAGHU_RUNTIME_KEY_SIZE];
+    char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 128U];
+    int material_length;
+    if (!laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
+                          output_hash)) {
+      goto failed;
+    }
+    material_length = snprintf(
+        material, sizeof(material), "laghu-html-markup-v%u\n%s\n%s\n%d:%d:%d",
+        LAGHU_HTML_HEAD_PLANNER_VERSION, output_hash, policy_key,
+        normalize_head ? 1 : 0, move_css_to_head ? 1 : 0,
+        move_css_above_scripts ? 1 : 0);
+    if (material_length <= 0 || (size_t)material_length >= sizeof(material) ||
+        !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
+                                         (size_t)material_length},
+                          result->dependency_key)) {
+      goto failed;
+    }
   }
   {
     laghu_runtime_cache_entry entry;
@@ -553,11 +583,12 @@ bool laghu_runtime_rewrite_css_markup(
                                             &entry)) {
       if (!laghu_runtime_cache_publish(
               cache_path, result->dependency_key, result->dependency_key,
-              result->dependency_key, "text/html", "laghu-css-markup-v1",
+              result->dependency_key, "text/html", "laghu-css-markup-v2",
               (laghu_buffer){builder.data, builder.length}, &entry)) {
         goto failed;
       }
       free(builder.data);
+      laghu_runtime_head_result_release(&head);
       result->dependencies_pending = true;
       return true;
     }
@@ -570,14 +601,17 @@ bool laghu_runtime_rewrite_css_markup(
     result->length = entry.length;
     result->rewritten = true;
     free(builder.data);
+    laghu_runtime_head_result_release(&head);
     return true;
   }
 
 unchanged:
   free(builder.data);
+  laghu_runtime_head_result_release(&head);
   return true;
 failed:
   free(builder.data);
+  laghu_runtime_head_result_release(&head);
   free(result->data);
   memset(result, 0, sizeof(*result));
   return false;

@@ -56,12 +56,14 @@ The module currently:
   never-larger candidate-selection contract for future transforms
 - probes explicit JPEG, PNG, GIF, animated-image, and WebP operations
 - queues bounded image jobs without waiting and publishes cache files atomically
+- normalizes eligible document heads and places CSS through one bounded planner
+  shared by NGINX and Apache
 - emits `pass`, `image-hit`, or a specific fail-open bypass in `X-Laghu`
 - preserves the original on a cold miss, backend loss, queue contention,
   malformed input, timeout, invalid output, or non-smaller output
 
-HTML/CSS/JavaScript optimization, general cache controls, administration,
-purging, and metrics remain outside the completed image-delivery path.
+The roadmap tracks the remaining HTML, CSS, JavaScript, cache-control,
+administration, purging, and metrics filters individually.
 
 ## Local Development
 

@@ -106,3 +106,12 @@ dependencies and CSP, concatenates in DOM order, reparses the bounded bundle,
 and atomically publishes one immutable asset. Publication and HTML derivation
 are separate cold stages; only a later warm request receives the link, and only
 when the full HTML plus unique-CSS transfer decreases.
+
+Before catalog-driven CSS transformations, the same server-independent planner
+runs a bounded document-structure pass. It conservatively adds a missing head,
+merges only whitespace/comment-adjacent heads, and moves eligible stylesheet
+links and complete style blocks into that head while retaining source order and
+original node bytes. Script boundaries are policy inputs: only policies that
+explicitly permit script reordering may place CSS ahead of an executable
+classic or module script. NGINX and Apache pass identical planner flags and use
+the same cold-original, dependency-key, byte-accounting, and fail-open path.

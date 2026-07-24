@@ -87,5 +87,34 @@ combining, so compatible generated links can participate in combination.
 Pending or invalid dependencies preserve the entire page, and the normal
 cold-original lifecycle and total-transfer gate still apply.
 
-Moving CSS, Google Fonts fetching, modern import qualifiers, and critical-CSS
-extraction remain pending.
+## Head normalization and CSS placement
+
+Before the catalog-driven inline, outline, import, and combination passes,
+Laghu runs one bounded document-structure planner. It adds a missing head only
+to a clearly complete document, and merges multiple heads only when they are
+adjacent with whitespace or comments between them. Fragments and malformed or
+ambiguous structures remain byte-identical. Intervening comments, whitespace,
+child order, tag attributes, and untouched source bytes are preserved.
+
+Ordinary enabled stylesheet links and complete non-scoped style blocks may be
+moved into the normalized head in their original CSS order. Alternate or
+disabled links, event-handler attributes, malformed nodes, and CSS inside
+`template`, `noscript`, SVG, or MathML are excluded. Media, type, nonce,
+integrity, crossorigin, referrer policy, quoting, and other supported
+attributes are copied byte-for-byte.
+
+Policies without script-reordering permission move only CSS that already
+precedes every executable classic or module script. Aggressive, blog, static,
+`all`, and `experimental` policies may move eligible CSS before the first
+executable head script. JSON, data, import-map, and speculation-rule scripts do
+not block placement. No script itself is modified or reordered.
+
+Dependency-free normalization follows the normal cold-original lifecycle: the
+first eligible response publishes the derivation, and a later response may use
+it with a dependency-derived strong ETag. Byte-neutral placement is accepted;
+growth is accepted only when verified resource savings cover it. Encoded,
+partial, authenticated, private, API, oversized, or failed responses retain
+their original bytes.
+
+Google Fonts fetching, modern import qualifiers, and critical-CSS extraction
+remain pending.

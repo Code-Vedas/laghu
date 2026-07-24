@@ -138,6 +138,14 @@ whitespace-adjacent links after inlining has run. Media, CSP, source-map,
 import, font, catalog-readiness, and strict total-transfer checks remain
 mandatory.
 
+Head normalization and CSS placement have no separate directives. They are
+derived from resolved policy: HTML rewriting plus structural permission enables
+missing/adjacent-head normalization, and CSS rewriting additionally enables
+eligible stylesheet and style-block movement. CSS crosses executable scripts
+only when the selected policy explicitly permits script reordering. Every path
+keeps the first eligible response unchanged and accepts byte-neutral structural
+placement.
+
 Outlined assets are exposed only through the validated
 `/.laghu/css/<sha256>` route with `text/css`, a strong ETag, and one-year
 immutable caching. Laghu never fetches a stylesheet from an origin.
