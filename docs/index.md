@@ -6,7 +6,7 @@ permalink: /
 
 # Laghu
 
-Laghu provides native content-optimization modules for NGINX and Apache HTTP Server, making edge responses smaller without application changes.
+Laghu provides native content-optimization modules for NGINX and Apache HTTP Server plus a standalone reverse proxy for any HTTP origin, making edge responses smaller without application changes.
 
 Laghu enforces four runtime properties:
 
@@ -17,11 +17,12 @@ Laghu enforces four runtime properties:
 
 ## Runtime Behavior
 
-Each module streams cold image responses into a try-only bounded queue. The isolated libvips service validates and atomically publishes smaller variants, and strong-validator warm requests can deliver them. Missing codecs, worker loss, queue contention, malformed input, deadlines, and cache failures preserve the original.
+Each adapter submits cold image responses to a try-only bounded queue. The isolated libvips service validates and atomically publishes smaller variants, and strong-validator warm requests can deliver them. Missing codecs, worker loss, queue contention, malformed input, deadlines, and cache failures preserve the original.
 
 ## Start Here
 
 - [Installation](/installation/) builds and loads the module.
+- [Standalone Proxy](/standalone-proxy/) configures HTTP origin forwarding.
 - [Configuration](/configuration/) describes the implemented directives.
 - [Architecture](/architecture/) explains the module/core/worker split.
 - [Compatibility](/compatibility/) records the validated server matrix.

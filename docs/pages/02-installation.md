@@ -42,6 +42,20 @@ laghu-libvips --init-and-serve /run/laghu/jobs.queue \
 
 `LAGHU_WITH_VIPS=AUTO` degrades safely when libvips is unavailable, `ON` requires libvips 8.15 or newer, and `OFF` deliberately tests the no-codec path.
 
+## Standalone Proxy
+
+The same build produces `tmp/build/servers/laghu/laghu`. Run it with one explicit plaintext origin:
+
+```bash
+tmp/build/servers/laghu/laghu \
+  --listen 127.0.0.1:8080 \
+  --origin http://127.0.0.1:8000 \
+  --cache /var/cache/laghu \
+  --worker-queue /run/laghu/jobs.queue
+```
+
+This source-build interface does not install a service or production proxy package. See [Standalone Proxy](/standalone-proxy/) for its implemented HTTP limits.
+
 ## Local Docker Tests
 
 Run one or every supported Linux package/server case locally:

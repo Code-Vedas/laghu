@@ -1,12 +1,12 @@
 # Laghu
 
-Laghu is a free, open-source server-level content optimizer with native NGINX and Apache HTTP Server modules. Both modules use the same policy, parsers, catalogs, workers, cache formats, and fail-open rules.
+Laghu is a free, open-source server-level content optimizer with native NGINX and Apache HTTP Server modules and a standalone reverse proxy. All three surfaces use the same policy, parsers, catalogs, workers, cache formats, and fail-open rules.
 
 The image path uses an out-of-process libvips worker: a cold request serves the original while the adapter publishes a try-only job, and a later request can use a validated, strictly smaller cached variant. Codec work never runs inside NGINX or Apache.
 
 ## Product Shape
 
-Laghu keeps eight deliberate ownership boundaries:
+Laghu keeps nine deliberate ownership boundaries:
 
 - `laghu-core` owns server-independent configuration and optimization policy.
 - `laghu-image` owns explicit-codec image transforms and markup primitives.
@@ -15,6 +15,7 @@ Laghu keeps eight deliberate ownership boundaries:
 - `laghu-libvips` owns isolated libvips execution and deadline enforcement.
 - `ngx_http_laghu_module` owns NGINX configuration, filter integration, and fail-open request handling.
 - `mod_laghu` owns Apache configuration, bucket-brigade integration, and fail-open request handling.
+- `laghu` owns bounded HTTP/1.1 framing, origin forwarding, cancellation, and transport backpressure for origins without a native adapter.
 - `docs/` owns installation, configuration, architecture, compatibility, and security documentation.
 
 ## Repository Map
@@ -26,6 +27,7 @@ Laghu keeps eight deliberate ownership boundaries:
 - `workers/laghu-libvips/`: asynchronous libvips worker
 - `modules/ngx_http_laghu_module/`: NGINX dynamic module integration
 - `modules/mod_laghu/`: Apache HTTP Server output-filter integration
+- `servers/laghu/`: portable standalone HTTP/1.1 reverse proxy
 - `examples/`: runnable configuration examples
 - `docs/`: product documentation site built with Jekyll and Just the Docs
 - `.github/`: issue templates, workflows, dependency updates, and review rules
@@ -34,11 +36,11 @@ Laghu keeps eight deliberate ownership boundaries:
 
 ## Runtime Behavior
 
-The native modules:
+The three adapters:
 
 - share equivalent NGINX and Apache configuration, policy resolution, response eligibility, and failure behavior
 - build as an NGINX dynamic module against the recorded stable and mainline releases and as an Apache HTTP Server 2.4 output filter
-- support native server, virtual-host, directory, and location inheritance
+- expose native server inheritance through NGINX and Apache and explicit process-wide configuration through the standalone proxy
 - resolve every preset to a tested filter-family and safety policy
 - resolve passthrough, core, bandwidth, all, and experimental rewrite levels
 - conservatively bypasses API paths, ineligible statuses, private responses, authenticated requests, and unsupported content types
@@ -70,6 +72,16 @@ make docs
 ```
 
 Use `scripts/run-in-docker` for the default Linux test or `--all` for the complete local distro/server matrix. Set `NGINX_VERSION` to build another NGINX release.
+
+Run the standalone proxy from a development build with one plaintext origin:
+
+```bash
+tmp/build/servers/laghu/laghu \
+  --listen 127.0.0.1:8080 \
+  --origin http://127.0.0.1:8000 \
+  --cache /tmp/laghu-cache \
+  --worker-queue /tmp/laghu.queue
+```
 
 Server modules are architecture- and ABI-specific. Build each module against the target server ABI.
 

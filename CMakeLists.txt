@@ -17,6 +17,7 @@ option(
   "Build the queue/cache runtime and laghu-libvips service"
   ON
 )
+option(LAGHU_BUILD_PROXY "Build the standalone Laghu HTTP reverse proxy" ON)
 set(LAGHU_WITH_VIPS "AUTO" CACHE STRING "Build libvips image support: AUTO, ON, or OFF")
 set_property(CACHE LAGHU_WITH_VIPS PROPERTY STRINGS AUTO ON OFF)
 
@@ -34,4 +35,7 @@ if(LAGHU_BUILD_SERVICE)
   add_subdirectory(libs/laghu-runtime)
   add_subdirectory(libs/laghu-http)
   add_subdirectory(workers/laghu-libvips)
+  if(LAGHU_BUILD_PROXY)
+    add_subdirectory(servers/laghu)
+  endif()
 endif()
