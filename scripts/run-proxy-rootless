@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+IMAGE=laghu-test:proxy-rootless
+
+docker build --file "${REPO_ROOT}/packaging/test/Dockerfile.proxy-rootless" \
+  --tag "${IMAGE}" "${REPO_ROOT}"
+docker run --rm --read-only --user 65532:65532 \
+  --tmpfs /tmp:rw,nosuid,nodev,size=128m "${IMAGE}"

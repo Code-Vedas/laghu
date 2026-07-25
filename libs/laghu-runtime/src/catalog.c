@@ -313,12 +313,13 @@ static bool laghu_catalog_prune_add(const char *path, uint64_t now,
 bool laghu_catalog_prune(const char *cache_path, uint64_t now,
                          unsigned int metadata_limit,
                          unsigned int ttl_seconds) {
+  typedef char laghu_catalog_key[LAGHU_RUNTIME_KEY_SIZE];
   char directory[LAGHU_RUNTIME_PATH_SIZE];
   laghu_catalog_prune_item *items = NULL;
   size_t count = 0U;
   size_t capacity = 0U;
   size_t index;
-  char (*kept)[LAGHU_RUNTIME_KEY_SIZE] = NULL;
+  laghu_catalog_key *kept = NULL;
   size_t kept_count = 0U;
   int length;
   bool success = true;

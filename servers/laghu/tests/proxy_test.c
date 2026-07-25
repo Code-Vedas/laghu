@@ -28,7 +28,9 @@ int main(void) {
                    "/tmp/cache",
                    "--worker-queue",
                    "/tmp/jobs",
-                   "--allow-api"};
+                   "--allow-api",
+                   "--drain-timeout",
+                   "45"};
   char *conflict[] = {"laghu",
                       "--listen",
                       "127.0.0.1:8080",
@@ -42,17 +44,40 @@ int main(void) {
                       "safe",
                       "--rewrite-level",
                       "core"};
+  char *bad_drain[] = {"laghu",
+                       "--listen",
+                       "127.0.0.1:8080",
+                       "--origin",
+                       "http://127.0.0.1:8000",
+                       "--cache",
+                       "/tmp/cache",
+                       "--worker-queue",
+                       "/tmp/jobs",
+                       "--drain-timeout",
+                       "0"};
   static const unsigned char chunked[] = "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
   unsigned char decoded[16];
   size_t decoded_length = 0U;
   laghu_proxy_options_init(&options);
-  CHECK(laghu_proxy_parse_options(10, valid, &options, error, sizeof(error)) ==
+  CHECK(laghu_proxy_parse_options(12, valid, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.origin_host, "127.0.0.1"));
   CHECK(!strcmp(options.origin_port, "8000"));
   CHECK(options.config.allow_api == LAGHU_MODE_ON);
+  CHECK(options.drain_timeout == 45U);
+#ifndef _WIN32
+  {
+    char *service[] = {"laghu", "--service"};
+    laghu_proxy_options_init(&options);
+    CHECK(laghu_proxy_parse_options(2, service, &options, error,
+                                    sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
+  }
+#endif
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(14, conflict, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, bad_drain, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   CHECK(
       laghu_proxy_decode_chunked((laghu_buffer){chunked, sizeof(chunked) - 1U},

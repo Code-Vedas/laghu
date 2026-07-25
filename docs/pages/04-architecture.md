@@ -44,7 +44,11 @@ NGINX and Apache use the same prepare and finalize operations. NGINX retains cha
 
 The standalone `laghu` executable is the third adapter over the same transaction engine. Its first transport supports one configured plaintext HTTP origin, one request per downstream connection, fixed-length request bodies up to 1 MiB, bounded response framing, and a fixed worker pool with a bounded accepted-connection queue. POSIX sockets and WinSock implement one internal transport contract. The proxy owns hop-by-hop header removal, deadlines, disconnect handling, and origin errors; it never retries a request. Captured responses are complete before engine output is committed, while malformed or truncated captures return a transport error without partial optimization headers.
 
-The proxy reserves `/.laghu/` locally. Valid image and CSS hashes use the transaction engine's immutable cache path, and the fixed image beacon script and bounded same-origin POST remain adapter-owned. TLS, persistent connections, origin pooling, HTTP/2, HTTP/3, trusted forwarded headers, health endpoints, and graceful drain are not part of the bounded HTTP/1.1 transport.
+The proxy reserves `/.laghu/` locally. Valid image and CSS hashes use the transaction engine's immutable cache path, and the fixed image beacon script and bounded same-origin POST remain adapter-owned. Health and readiness are local adapter routes that never contact the origin.
+
+One synchronized process state owns the listener, accepted queue, worker lifecycle, and active-socket registry. Shutdown stops acceptance, rejects queued work, and drains active transactions before a bounded forced-cancellation phase. Workers retain exclusive close ownership; the coordinator may interrupt registered sockets but cannot close or reuse them. Transaction finalization and optimizer publication stop when forced cancellation begins.
+
+TLS, persistent connections, origin pooling, HTTP/2, HTTP/3, and trusted forwarded headers are not part of the bounded HTTP/1.1 transport.
 
 The engine has prepare and finalize phases. Prepare performs response classification, policy resolution, capture planning, variant identity, and immediate warm image lookup. Finalize accepts one complete captured body, invokes the shared HTML, CSS, or image runtime, and returns the selected body, dependency and cache keys, queue-publication state, and an ordered atomic header-operation list. Inputs are borrowed; engine-owned bodies and header values have one explicit result-release function.
 

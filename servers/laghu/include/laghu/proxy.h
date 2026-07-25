@@ -22,6 +22,7 @@ extern "C" {
 #define LAGHU_PROXY_DEFAULT_QUEUE 64U
 #define LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT 5U
 #define LAGHU_PROXY_DEFAULT_IO_TIMEOUT 30U
+#define LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT 30U
 
 typedef struct {
   char listen_host[256];
@@ -36,6 +37,8 @@ typedef struct {
   unsigned int connection_queue;
   unsigned int connect_timeout;
   unsigned int io_timeout;
+  unsigned int drain_timeout;
+  bool service_mode;
 } laghu_proxy_options;
 
 typedef enum {
@@ -53,6 +56,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
 bool laghu_proxy_decode_chunked(laghu_buffer encoded, unsigned char *decoded,
                                 size_t capacity, size_t *decoded_length);
 int laghu_proxy_run(const laghu_proxy_options *options);
+#ifdef _WIN32
+int laghu_proxy_run_service(const laghu_proxy_options *options);
+#endif
 
 #ifdef __cplusplus
 }

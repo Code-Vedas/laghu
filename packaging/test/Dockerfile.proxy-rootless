@@ -1,0 +1,23 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+FROM ubuntu:24.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake python3 && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+COPY . /workspace
+RUN cmake -S . -B /build -DLAGHU_WITH_VIPS=OFF -DLAGHU_BUILD_TESTS=ON && \
+    cmake --build /build --parallel
+
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=build /build /opt/laghu-build
+COPY --from=build /workspace/servers/laghu/tests/proxy_smoke.py \
+    /workspace/servers/laghu/tests/proxy_smoke.py
+USER 65532:65532
+ENTRYPOINT ["python3", "/workspace/servers/laghu/tests/proxy_smoke.py", "/opt/laghu-build/servers/laghu/laghu", "/opt/laghu-build/servers/laghu/laghu_proxy_cache_fixture"]

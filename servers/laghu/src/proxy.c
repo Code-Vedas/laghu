@@ -7,6 +7,8 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +24,7 @@ typedef int laghu_socklen;
 #define LAGHU_INVALID_SOCKET INVALID_SOCKET
 #define laghu_close closesocket
 #define LAGHU_SHUT_WRITE SD_SEND
+#define LAGHU_SHUT_BOTH SD_BOTH
 #else
 #include <fcntl.h>
 #include <netdb.h>
@@ -35,6 +38,7 @@ typedef socklen_t laghu_socklen;
 #define LAGHU_INVALID_SOCKET (-1)
 #define laghu_close close
 #define LAGHU_SHUT_WRITE SHUT_WR
+#define LAGHU_SHUT_BOTH SHUT_RDWR
 #endif
 
 #define LAGHU_PROXY_MAX_BODY LAGHU_IMAGE_MAX_INPUT_BYTES
@@ -70,6 +74,16 @@ typedef struct {
   bool chunked;
 } proxy_response;
 
+typedef enum {
+  PROXY_STARTING = 0,
+  PROXY_RUNNING,
+  PROXY_DRAINING,
+  PROXY_FORCING,
+  PROXY_STOPPED
+} proxy_lifecycle_state;
+
+struct proxy_worker;
+
 typedef struct {
   const laghu_proxy_options *options;
   laghu_socket *items;
@@ -77,21 +91,54 @@ typedef struct {
   unsigned int head;
   unsigned int count;
   uint64_t beacon_second;
+  uint64_t request_prefix;
+  uint64_t request_counter;
+  int cache_readiness;
+  int optimizer_readiness;
   unsigned int beacon_count;
+  unsigned int active_count;
+  proxy_lifecycle_state state;
   bool stopping;
 #ifdef _WIN32
   CRITICAL_SECTION lock;
   CONDITION_VARIABLE ready;
+  CONDITION_VARIABLE drained;
 #else
   pthread_mutex_t lock;
   pthread_cond_t ready;
+  pthread_cond_t drained;
 #endif
 } proxy_queue;
 
-typedef struct {
+typedef struct proxy_worker {
   proxy_queue *queue;
   laghu_runtime_queue runtime_queue;
+  laghu_socket active_client;
+  laghu_socket active_origin;
 } proxy_worker;
+
+typedef struct {
+  uint64_t request_id;
+  uint64_t started_ms;
+  char method[16];
+  char path[LAGHU_RUNTIME_PATH_SIZE];
+  unsigned int status;
+  laghu_decision decision;
+  size_t input_bytes;
+  size_t output_bytes;
+  const char *cache_state;
+  const char *failure;
+  bool job_published;
+} proxy_access_log;
+
+#ifdef _WIN32
+static volatile LONG proxy_stop_requests;
+static SERVICE_STATUS_HANDLE proxy_service_handle;
+static SERVICE_STATUS proxy_service_status;
+static const laghu_proxy_options *proxy_service_options;
+#else
+static volatile sig_atomic_t proxy_stop_requests;
+#endif
 
 static const char laghu_beacon_script[] =
     "addEventListener('load',()=>{document.querySelectorAll('img[src]').forEach"
@@ -102,6 +149,14 @@ static const char laghu_beacon_script[] =
     "height),viewport_width:innerWidth,dpr_hundredths:Math.min(400,Math.max("
     "100,Math.round(devicePixelRatio*100))),above_fold:r.top<innerHeight,"
     "mobile:innerWidth<768}),keepalive:true})})});";
+
+static uint64_t proxy_monotonic_ms(void);
+static bool proxy_cache_probe(const char *cache_path);
+static void proxy_worker_origin(proxy_worker *worker, laghu_socket origin);
+static bool proxy_is_forcing(proxy_queue *queue);
+static void proxy_access_init(proxy_access_log *access, proxy_queue *queue);
+static void proxy_access_write(proxy_queue *queue,
+                               const proxy_access_log *access);
 
 static bool proxy_uint(const char *value, unsigned int minimum,
                        unsigned int maximum, unsigned int *output) {
@@ -212,6 +267,7 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->connection_queue = LAGHU_PROXY_DEFAULT_QUEUE;
   options->connect_timeout = LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT;
   options->io_timeout = LAGHU_PROXY_DEFAULT_IO_TIMEOUT;
+  options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity,
@@ -228,7 +284,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool queue_seen = false, selector_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
-  bool io_timeout_seen = false;
+  bool io_timeout_seen = false, drain_timeout_seen = false;
   int index;
   if (options == NULL || argc < 1)
     return proxy_error(error, error_size, "invalid arguments");
@@ -326,6 +382,22 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --io-timeout");
       io_timeout_seen = true;
+    } else if (strcmp(name, "--drain-timeout") == 0) {
+      NEED_VALUE();
+      if (drain_timeout_seen ||
+          !proxy_uint(value, 1U, 300U, &options->drain_timeout))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --drain-timeout");
+      drain_timeout_seen = true;
+    } else if (strcmp(name, "--service") == 0) {
+#ifdef _WIN32
+      if (options->service_mode)
+        return proxy_error(error, error_size, "duplicate --service");
+      options->service_mode = true;
+#else
+      return proxy_error(error, error_size,
+                         "--service is available only on Windows");
+#endif
     } else {
       return proxy_error(error, error_size, "unknown option");
     }
@@ -627,6 +699,15 @@ static bool proxy_send_all(laghu_socket socket, const void *data,
   return true;
 }
 
+static bool proxy_socket_timed_out(void) {
+#ifdef _WIN32
+  int error = WSAGetLastError();
+  return error == WSAETIMEDOUT || error == WSAEWOULDBLOCK;
+#else
+  return errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT;
+#endif
+}
+
 static bool proxy_read_headers(laghu_socket socket, char *buffer,
                                size_t *length, unsigned char **body_start,
                                size_t *body_initial) {
@@ -650,8 +731,8 @@ static bool proxy_read_headers(laghu_socket socket, char *buffer,
   return false;
 }
 
-static laghu_socket proxy_connect(const char *host, const char *port,
-                                  unsigned int timeout) {
+static laghu_socket proxy_connect(proxy_worker *worker, const char *host,
+                                  const char *port, unsigned int timeout) {
   struct addrinfo hints, *addresses = NULL, *address;
   laghu_socket descriptor = LAGHU_INVALID_SOCKET;
   memset(&hints, 0, sizeof(hints));
@@ -662,6 +743,7 @@ static laghu_socket proxy_connect(const char *host, const char *port,
     descriptor = (laghu_socket)socket(address->ai_family, address->ai_socktype,
                                       address->ai_protocol);
     if (descriptor == LAGHU_INVALID_SOCKET) continue;
+    proxy_worker_origin(worker, descriptor);
     {
       bool connected = false;
 #ifdef _WIN32
@@ -679,6 +761,7 @@ static laghu_socket proxy_connect(const char *host, const char *port,
       int flags = fcntl(descriptor, F_GETFL, 0);
       int result;
       if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) {
+        proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
         laghu_close(descriptor);
         descriptor = LAGHU_INVALID_SOCKET;
         continue;
@@ -689,28 +772,35 @@ static laghu_socket proxy_connect(const char *host, const char *port,
         connected = true;
       } else if (errno == EINPROGRESS) {
 #endif
-          fd_set writable;
-          struct timeval wait = {(long)timeout, 0};
-          int selected;
+          uint64_t deadline = proxy_monotonic_ms() + (uint64_t)timeout * 1000U;
           int socket_error = 0;
           laghu_socklen error_length = (laghu_socklen)sizeof(socket_error);
-          FD_ZERO(&writable);
-          FD_SET(descriptor, &writable);
+          while (!proxy_is_forcing(worker->queue) &&
+                 proxy_monotonic_ms() < deadline) {
+            fd_set writable;
+            struct timeval wait = {0, 200000};
+            int selected;
+            FD_ZERO(&writable);
+            FD_SET(descriptor, &writable);
 #ifdef _WIN32
-          selected = select(0, NULL, &writable, NULL, &wait);
+            selected = select(0, NULL, &writable, NULL, &wait);
 #else
-        selected = select(descriptor + 1, NULL, &writable, NULL, &wait);
+          selected = select(descriptor + 1, NULL, &writable, NULL, &wait);
 #endif
-          if (selected > 0 &&
-              getsockopt(descriptor, SOL_SOCKET, SO_ERROR,
+            if (selected > 0 &&
+                getsockopt(descriptor, SOL_SOCKET, SO_ERROR,
 #ifdef _WIN32
-                         (char *)&socket_error,
+                           (char *)&socket_error,
 #else
-                       &socket_error,
+                         &socket_error,
 #endif
-                         &error_length) == 0 &&
-              socket_error == 0)
-            connected = true;
+                           &error_length) == 0 &&
+                socket_error == 0) {
+              connected = true;
+              break;
+            }
+            if (selected < 0) break;
+          }
 #ifdef _WIN32
         }
       }
@@ -725,6 +815,7 @@ static laghu_socket proxy_connect(const char *host, const char *port,
         break;
       }
     }
+    proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
     laghu_close(descriptor);
     descriptor = LAGHU_INVALID_SOCKET;
   }
@@ -742,8 +833,13 @@ static void proxy_error_response(laghu_socket client, unsigned int status,
   if (length > 0) (void)proxy_send_all(client, response, (size_t)length);
 }
 
-static void proxy_reject_overload(laghu_socket client) {
+static void proxy_reject_connection(proxy_queue *queue, laghu_socket client,
+                                    const char *failure) {
   unsigned char discarded[4096U];
+  proxy_access_log access;
+  proxy_access_init(&access, queue);
+  access.status = 503U;
+  access.failure = failure;
   proxy_error_response(client, 503U, "Service Unavailable");
   (void)shutdown(client, LAGHU_SHUT_WRITE);
 #ifdef _WIN32
@@ -758,6 +854,7 @@ static void proxy_reject_overload(laghu_socket client) {
   }
 #endif
   laghu_close(client);
+  proxy_access_write(queue, &access);
 }
 
 static bool proxy_read_body(laghu_socket socket, const unsigned char *initial,
@@ -913,6 +1010,216 @@ static bool proxy_stream_body(laghu_socket origin, laghu_socket client,
   return expected == 0U || sent == expected;
 }
 
+static void proxy_queue_lock(proxy_queue *queue) {
+#ifdef _WIN32
+  EnterCriticalSection(&queue->lock);
+#else
+  pthread_mutex_lock(&queue->lock);
+#endif
+}
+
+static void proxy_queue_unlock(proxy_queue *queue) {
+#ifdef _WIN32
+  LeaveCriticalSection(&queue->lock);
+#else
+  pthread_mutex_unlock(&queue->lock);
+#endif
+}
+
+static void proxy_worker_origin(proxy_worker *worker, laghu_socket origin) {
+  proxy_queue_lock(worker->queue);
+  worker->active_origin = origin;
+  proxy_queue_unlock(worker->queue);
+}
+
+static bool proxy_is_forcing(proxy_queue *queue) {
+  bool forcing;
+  proxy_queue_lock(queue);
+  forcing = queue->state == PROXY_FORCING;
+  proxy_queue_unlock(queue);
+  return forcing;
+}
+
+static proxy_lifecycle_state proxy_state(proxy_queue *queue) {
+  proxy_lifecycle_state state;
+  proxy_queue_lock(queue);
+  state = queue->state;
+  proxy_queue_unlock(queue);
+  return state;
+}
+
+static const char *proxy_state_name(proxy_lifecycle_state state) {
+  switch (state) {
+    case PROXY_STARTING:
+      return "starting";
+    case PROXY_RUNNING:
+      return "running";
+    case PROXY_DRAINING:
+      return "draining";
+    case PROXY_FORCING:
+      return "forcing";
+    case PROXY_STOPPED:
+      return "stopped";
+  }
+  return "unknown";
+}
+
+static bool proxy_optimizer_ready(proxy_worker *worker, uint64_t now) {
+  laghu_runtime_queue *queue = &worker->runtime_queue;
+  const char *path = worker->queue->options->worker_queue_path;
+  if (queue->mapping == NULL && !laghu_runtime_queue_open(queue, path))
+    return false;
+  if (!laghu_runtime_queue_refresh(queue)) {
+    laghu_runtime_queue_close(queue);
+    return false;
+  }
+  if (queue->capabilities == 0U || queue->worker_heartbeat == 0U ||
+      queue->worker_heartbeat > now || now - queue->worker_heartbeat > 45U)
+    return false;
+  return true;
+}
+
+static void proxy_send_json(laghu_socket client, unsigned int status,
+                            const char *reason, const char *json, bool head) {
+  char headers[512];
+  size_t length = strlen(json);
+  int count = snprintf(headers, sizeof(headers),
+                       "HTTP/1.1 %u %s\r\nContent-Type: application/json\r\n"
+                       "Content-Length: %zu\r\nCache-Control: no-store\r\n"
+                       "Connection: close\r\n\r\n",
+                       status, reason, length);
+  if (count > 0 && (size_t)count < sizeof(headers) &&
+      proxy_send_all(client, headers, (size_t)count) && !head)
+    (void)proxy_send_all(client, json, length);
+}
+
+static bool proxy_json_escape(const char *input, char *output,
+                              size_t capacity) {
+  size_t used = 0U;
+  const unsigned char *cursor = (const unsigned char *)input;
+  if (capacity == 0U) return false;
+  while (*cursor != '\0') {
+    const char *escape = NULL;
+    char unicode[7];
+    size_t length;
+    if (*cursor == '"')
+      escape = "\\\"";
+    else if (*cursor == '\\')
+      escape = "\\\\";
+    else if (*cursor == '\n')
+      escape = "\\n";
+    else if (*cursor == '\r')
+      escape = "\\r";
+    else if (*cursor == '\t')
+      escape = "\\t";
+    else if (*cursor < 32U) {
+      (void)snprintf(unicode, sizeof(unicode), "\\u%04x", *cursor);
+      escape = unicode;
+    }
+    length = escape == NULL ? 1U : strlen(escape);
+    if (used + length >= capacity) return false;
+    if (escape == NULL)
+      output[used++] = (char)*cursor;
+    else {
+      memcpy(output + used, escape, length);
+      used += length;
+    }
+    ++cursor;
+  }
+  output[used] = '\0';
+  return true;
+}
+
+static void proxy_timestamp(char output[32]) {
+  time_t now = time(NULL);
+  struct tm value;
+#ifdef _WIN32
+  (void)gmtime_s(&value, &now);
+#else
+  (void)gmtime_r(&now, &value);
+#endif
+  if (strftime(output, 32U, "%Y-%m-%dT%H:%M:%SZ", &value) == 0U)
+    memcpy(output, "1970-01-01T00:00:00Z", 21U);
+}
+
+static void proxy_log_line(proxy_queue *queue, const char *line) {
+  if (queue != NULL) proxy_queue_lock(queue);
+  (void)fwrite(line, 1U, strlen(line), stderr);
+  (void)fputc('\n', stderr);
+  (void)fflush(stderr);
+  if (queue != NULL) proxy_queue_unlock(queue);
+}
+
+static void proxy_log_event(proxy_queue *queue, const char *event,
+                            const char *state) {
+  char timestamp[32], line[512];
+  proxy_timestamp(timestamp);
+  (void)snprintf(line, sizeof(line),
+                 "{\"timestamp\":\"%s\",\"event\":\"%s\","
+                 "\"state\":\"%s\"}",
+                 timestamp, event, state);
+  proxy_log_line(queue, line);
+}
+
+static void proxy_log_readiness(proxy_queue *queue, bool cache_ready,
+                                bool optimizer_ready) {
+  bool changed;
+  char timestamp[32], line[512];
+  proxy_queue_lock(queue);
+  changed = queue->cache_readiness != (int)cache_ready ||
+            queue->optimizer_readiness != (int)optimizer_ready;
+  queue->cache_readiness = (int)cache_ready;
+  queue->optimizer_readiness = (int)optimizer_ready;
+  proxy_queue_unlock(queue);
+  if (!changed) return;
+  proxy_timestamp(timestamp);
+  (void)snprintf(line, sizeof(line),
+                 "{\"timestamp\":\"%s\",\"event\":\"readiness\","
+                 "\"status\":\"%s\",\"cache\":\"%s\","
+                 "\"optimizer\":\"%s\"}",
+                 timestamp, cache_ready ? "ready" : "not_ready",
+                 cache_ready ? "ok" : "unavailable",
+                 optimizer_ready ? "ready" : "degraded");
+  proxy_log_line(queue, line);
+}
+
+static void proxy_access_init(proxy_access_log *access, proxy_queue *queue) {
+  memset(access, 0, sizeof(*access));
+  access->started_ms = proxy_monotonic_ms();
+  access->decision = LAGHU_DECISION_BYPASS_ERROR;
+  access->cache_state = "none";
+  access->failure = "none";
+  proxy_queue_lock(queue);
+  access->request_id = queue->request_prefix + ++queue->request_counter;
+  proxy_queue_unlock(queue);
+}
+
+static void proxy_access_write(proxy_queue *queue,
+                               const proxy_access_log *access) {
+  char timestamp[32], method[64], path[LAGHU_RUNTIME_PATH_SIZE * 2U];
+  char line[LAGHU_RUNTIME_PATH_SIZE * 2U + 1024U];
+  uint64_t elapsed = proxy_monotonic_ms() - access->started_ms;
+  proxy_timestamp(timestamp);
+  if (!proxy_json_escape(access->method[0] ? access->method : "unknown", method,
+                         sizeof(method)) ||
+      !proxy_json_escape(access->path[0] ? access->path : "/", path,
+                         sizeof(path)))
+    return;
+  (void)snprintf(line, sizeof(line),
+                 "{\"timestamp\":\"%s\",\"event\":\"transaction\","
+                 "\"request_id\":\"%016llx\",\"method\":\"%s\","
+                 "\"path\":\"%s\",\"status\":%u,\"decision\":\"%s\","
+                 "\"input_bytes\":%zu,\"output_bytes\":%zu,"
+                 "\"duration_ms\":%llu,\"cache\":\"%s\","
+                 "\"job_published\":%s,\"failure\":\"%s\"}",
+                 timestamp, (unsigned long long)access->request_id, method,
+                 path, access->status, laghu_decision_name(access->decision),
+                 access->input_bytes, access->output_bytes,
+                 (unsigned long long)elapsed, access->cache_state,
+                 access->job_published ? "true" : "false", access->failure);
+  proxy_log_line(queue, line);
+}
+
 static void proxy_handle(laghu_socket client, proxy_worker *worker) {
   const laghu_proxy_options *options = worker->queue->options;
   proxy_request request;
@@ -931,45 +1238,98 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
   laghu_http_environment environment;
   laghu_http_transaction transaction;
   laghu_http_transaction_result prepared, finalized;
+  proxy_access_log access;
   bool prepared_ok = false;
   memset(&request, 0, sizeof(request));
   memset(&response, 0, sizeof(response));
   memset(&prepared, 0, sizeof(prepared));
   memset(&finalized, 0, sizeof(finalized));
+  proxy_access_init(&access, worker->queue);
+#define PROXY_FAIL(code, reason, category)        \
+  do {                                            \
+    access.status = (code);                       \
+    access.failure = (category);                  \
+    proxy_error_response(client, (code), reason); \
+  } while (0)
   proxy_timeout(client, options->io_timeout);
   if (!proxy_read_headers(client, request.storage, &header_length, &initial,
                           &initial_length) ||
       !proxy_parse_request(&request, header_length)) {
-    proxy_error_response(client, 400U, "Bad Request");
+    PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
+  (void)snprintf(access.method, sizeof(access.method), "%s", request.method);
+  {
+    const char *query = strchr(request.target, '?');
+    size_t length = query == NULL ? strlen(request.target)
+                                  : (size_t)(query - request.target);
+    if (length >= sizeof(access.path)) length = sizeof(access.path) - 1U;
+    memcpy(access.path, request.target, length);
+    access.path[length] = '\0';
+  }
+  access.input_bytes = header_length + request.content_length;
   if (!strcmp(request.method, "CONNECT") || !strcmp(request.method, "TRACE")) {
-    proxy_error_response(client, 405U, "Method Not Allowed");
+    PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
     goto done;
   }
   if (request.expect) {
-    proxy_error_response(client, 417U, "Expectation Failed");
+    PROXY_FAIL(417U, "Expectation Failed", "request_limit");
     goto done;
   }
   if (request.upgrade) {
-    proxy_error_response(client, 400U, "Bad Request");
+    PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
   if (request.chunked) {
-    proxy_error_response(client, 501U, "Not Implemented");
+    PROXY_FAIL(501U, "Not Implemented", "request_limit");
     goto done;
   }
   if (request.content_length > LAGHU_PROXY_REQUEST_BODY_BYTES) {
-    proxy_error_response(client, 413U, "Payload Too Large");
+    PROXY_FAIL(413U, "Payload Too Large", "request_limit");
     goto done;
   }
   if (request.content_length != 0U &&
       !proxy_read_body(client, initial, initial_length, request.content_length,
                        false, &request_body, &request_body_length)) {
-    proxy_error_response(client, 400U, "Bad Request");
+    PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
   if (!strncmp(request.target, "/.laghu/", 8U)) {
+    if (!strcmp(request.target, "/.laghu/health") ||
+        !strcmp(request.target, "/.laghu/ready")) {
+      bool head = !strcmp(request.method, "HEAD");
+      bool health = !strcmp(request.target, "/.laghu/health");
+      if (strcmp(request.method, "GET") != 0 && !head) {
+        PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
+      } else if (health) {
+        char json[128];
+        const char *state = proxy_state_name(proxy_state(worker->queue));
+        (void)snprintf(json, sizeof(json),
+                       "{\"status\":\"ok\",\"state\":\"%s\"}", state);
+        proxy_send_json(client, 200U, "OK", json, head);
+        access.status = 200U;
+        access.output_bytes = head ? 0U : strlen(json);
+      } else {
+        char json[160];
+        bool cache_ready = proxy_cache_probe(options->cache_path);
+        bool optimizer_ready =
+            proxy_optimizer_ready(worker, (uint64_t)time(NULL));
+        unsigned int status = cache_ready ? 200U : 503U;
+        (void)snprintf(json, sizeof(json),
+                       "{\"status\":\"%s\",\"cache\":\"%s\","
+                       "\"optimizer\":\"%s\"}",
+                       cache_ready ? "ready" : "not_ready",
+                       cache_ready ? "ok" : "unavailable",
+                       optimizer_ready ? "ready" : "degraded");
+        proxy_send_json(client, status,
+                        cache_ready ? "OK" : "Service Unavailable", json, head);
+        access.status = status;
+        access.failure = cache_ready ? "none" : "cache";
+        access.output_bytes = head ? 0U : strlen(json);
+        proxy_log_readiness(worker->queue, cache_ready, optimizer_ready);
+      }
+      goto done;
+    }
     if (!strcmp(request.target, "/.laghu/beacon/images.js") &&
         options->config.image_beacon == LAGHU_MODE_ON &&
         !strcmp(request.method, "GET")) {
@@ -984,6 +1344,8 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
         (void)proxy_send_all(client, laghu_beacon_script,
                              sizeof(laghu_beacon_script) - 1U);
       }
+      access.status = 200U;
+      access.output_bytes = sizeof(laghu_beacon_script) - 1U;
       goto done;
     }
     if (!strcmp(request.target, "/.laghu/beacon/images") &&
@@ -1001,9 +1363,9 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
           site == NULL || !proxy_name_equal(site->value, "same-origin") ||
           request_body_length == 0U ||
           request_body_length > LAGHU_PROXY_BEACON_BODY) {
-        proxy_error_response(client, 400U, "Bad Request");
+        PROXY_FAIL(400U, "Bad Request", "client_parse");
       } else if (!proxy_beacon_allowed(worker->queue, now)) {
-        proxy_error_response(client, 429U, "Too Many Requests");
+        PROXY_FAIL(429U, "Too Many Requests", "request_limit");
       } else if (!laghu_runtime_parse_image_beacon(
                      (laghu_buffer){request_body, request_body_length},
                      &beacon) ||
@@ -1018,18 +1380,19 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
                      options->cache_path, policy_key,
                      worker->runtime_queue.capabilities, now,
                      options->config.image_metadata_ttl, &beacon)) {
-        proxy_error_response(client, 400U, "Bad Request");
+        PROXY_FAIL(400U, "Bad Request", "worker");
       } else {
         static const char response_204[] =
             "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
             "Connection: close\r\n\r\n";
         (void)proxy_send_all(client, response_204, sizeof(response_204) - 1U);
+        access.status = 204U;
       }
       goto done;
     }
     if (strcmp(request.method, "GET") != 0 &&
         strcmp(request.method, "HEAD") != 0) {
-      proxy_error_response(client, 405U, "Method Not Allowed");
+      PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
       goto done;
     }
     memset(&normalized_request, 0, sizeof(normalized_request));
@@ -1076,18 +1439,22 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
         prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
       response.status = 200U;
       proxy_copy(response.reason, sizeof(response.reason), "OK");
-      (void)proxy_send_result(client, &response, &prepared, prepared.selected);
+      if (!proxy_send_result(client, &response, &prepared, prepared.selected))
+        access.failure = "client_disconnect";
+      access.cache_state = "immutable";
+      access.output_bytes = prepared.selected.length;
     } else
-      proxy_error_response(client, 404U, "Not Found");
+      PROXY_FAIL(404U, "Not Found", "none");
     laghu_http_transaction_result_release(&prepared);
     goto done;
   }
-  origin = proxy_connect(options->origin_host, options->origin_port,
+  origin = proxy_connect(worker, options->origin_host, options->origin_port,
                          options->connect_timeout);
   if (origin == LAGHU_INVALID_SOCKET) {
-    proxy_error_response(client, 502U, "Bad Gateway");
+    PROXY_FAIL(502U, "Bad Gateway", "origin_connect");
     goto done;
   }
+  proxy_worker_origin(worker, origin);
   proxy_timeout(origin, options->io_timeout);
   outbound_length = (size_t)snprintf(
       outbound, sizeof(outbound),
@@ -1105,7 +1472,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
                  "%s: %s\r\n", request.headers[index].name,
                  request.headers[index].value);
     if (n <= 0 || (size_t)n >= sizeof(outbound) - outbound_length) {
-      proxy_error_response(client, 400U, "Bad Request");
+      PROXY_FAIL(400U, "Bad Request", "request_limit");
       goto done;
     }
     outbound_length += (size_t)n;
@@ -1115,7 +1482,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
         outbound + outbound_length, sizeof(outbound) - outbound_length,
         "Content-Length: %zu\r\n", request.content_length);
   if (outbound_length + 2U >= sizeof(outbound)) {
-    proxy_error_response(client, 400U, "Bad Request");
+    PROXY_FAIL(400U, "Bad Request", "request_limit");
     goto done;
   }
   memcpy(outbound + outbound_length, "\r\n", 2U);
@@ -1126,7 +1493,8 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
       !proxy_read_headers(origin, response.storage, &header_length, &initial,
                           &initial_length) ||
       !proxy_parse_response(&response, header_length)) {
-    proxy_error_response(client, 502U, "Bad Gateway");
+    PROXY_FAIL(502U, "Bad Gateway",
+               proxy_socket_timed_out() ? "origin_timeout" : "origin_protocol");
     goto done;
   }
   for (index = 0U; index < request.header_count; ++index)
@@ -1186,11 +1554,12 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
         &transaction, &normalized_request, &normalized_response, &environment,
         &prepared);
     if (!prepared_ok) {
-      proxy_error_response(client, 502U, "Bad Gateway");
+      PROXY_FAIL(502U, "Bad Gateway", "transform");
       goto done;
     }
     if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
-      (void)proxy_send_result(client, &response, &prepared, prepared.selected);
+      if (!proxy_send_result(client, &response, &prepared, prepared.selected))
+        access.failure = "client_disconnect";
       goto done;
     }
     if (prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
@@ -1202,6 +1571,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
           !proxy_stream_body(origin, client, initial,
                              bodyless ? 0U : initial_length, expected,
                              until_close)) {
+        access.failure = "client_disconnect";
         goto done;
       }
       goto done;
@@ -1218,7 +1588,9 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
                 : (response.has_content_length ? response.content_length : 0U),
             !bodyless && !response.has_content_length, &origin_body,
             &origin_body_length)) {
-      proxy_error_response(client, 502U, "Bad Gateway");
+      PROXY_FAIL(
+          502U, "Bad Gateway",
+          proxy_socket_timed_out() ? "origin_timeout" : "origin_protocol");
       goto done;
     }
   }
@@ -1229,7 +1601,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
         !laghu_proxy_decode_chunked(
             (laghu_buffer){origin_body, origin_body_length}, decoded,
             LAGHU_PROXY_MAX_BODY, &decoded_length)) {
-      proxy_error_response(client, 502U, "Bad Gateway");
+      PROXY_FAIL(502U, "Bad Gateway", "origin_protocol");
       goto done;
     }
     free(origin_body);
@@ -1245,31 +1617,61 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
         &transaction, &normalized_request, &normalized_response, &environment,
         &prepared);
     if (!prepared_ok) {
-      proxy_error_response(client, 502U, "Bad Gateway");
+      PROXY_FAIL(502U, "Bad Gateway", "transform");
       goto done;
     }
   }
   if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
-    (void)proxy_send_result(client, &response, &prepared, prepared.selected);
+    if (!proxy_send_result(client, &response, &prepared, prepared.selected))
+      access.failure = "client_disconnect";
   } else if (prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
-    (void)proxy_send_result(client, &response, &prepared,
-                            (laghu_buffer){origin_body, origin_body_length});
-  } else if (laghu_http_transaction_finalize(
+    if (!proxy_send_result(client, &response, &prepared,
+                           (laghu_buffer){origin_body, origin_body_length}))
+      access.failure = "client_disconnect";
+  } else if (!proxy_is_forcing(worker->queue) &&
+             laghu_http_transaction_finalize(
                  &transaction, (laghu_buffer){origin_body, origin_body_length},
                  &finalized)) {
-    (void)proxy_send_result(client, &response, &finalized, finalized.selected);
+    if (!proxy_send_result(client, &response, &finalized, finalized.selected))
+      access.failure = "client_disconnect";
   } else {
-    (void)proxy_send_result(client, &response, &finalized,
-                            (laghu_buffer){origin_body, origin_body_length});
+    if (!proxy_send_result(client, &response, &finalized,
+                           (laghu_buffer){origin_body, origin_body_length}))
+      access.failure = "client_disconnect";
   }
 done:
+  if (access.status == 0U)
+    access.status = response.status != 0U ? response.status : 200U;
+  if (finalized.version == LAGHU_HTTP_ABI_VERSION) {
+    access.decision = finalized.decision;
+    access.job_published = finalized.job_published;
+    access.output_bytes = finalized.selected.length;
+    access.cache_state = "cold";
+  } else if (prepared.version == LAGHU_HTTP_ABI_VERSION) {
+    access.decision = prepared.decision;
+    access.job_published = prepared.job_published;
+    if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
+      access.cache_state = "warm";
+      access.output_bytes = prepared.selected.length;
+    } else if (prepared.action != LAGHU_HTTP_ACTION_BYPASS) {
+      access.cache_state = "cold";
+    }
+  }
+  if (access.output_bytes == 0U && origin_body_length != 0U)
+    access.output_bytes = origin_body_length;
+  if (proxy_is_forcing(worker->queue)) access.failure = "shutdown";
+  proxy_access_write(worker->queue, &access);
   laghu_http_transaction_result_release(&prepared);
   laghu_http_transaction_result_release(&finalized);
   free(request_body);
   free(origin_body);
   free(decoded);
-  if (origin != LAGHU_INVALID_SOCKET) laghu_close(origin);
+  if (origin != LAGHU_INVALID_SOCKET) {
+    proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
+    laghu_close(origin);
+  }
   laghu_close(client);
+#undef PROXY_FAIL
 }
 
 static bool queue_push(proxy_queue *queue, laghu_socket socket) {
@@ -1279,7 +1681,7 @@ static bool queue_push(proxy_queue *queue, laghu_socket socket) {
 #else
   pthread_mutex_lock(&queue->lock);
 #endif
-  if (queue->count < queue->capacity) {
+  if (!queue->stopping && queue->count < queue->capacity) {
     queue->items[(queue->head + queue->count) % queue->capacity] = socket;
     ++queue->count;
     accepted = true;
@@ -1308,9 +1710,9 @@ static laghu_socket queue_pop(proxy_queue *queue) {
   while (queue->count == 0U && !queue->stopping)
     pthread_cond_wait(&queue->ready, &queue->lock);
 #endif
-  socket =
-      queue->count == 0U ? LAGHU_INVALID_SOCKET : queue->items[queue->head];
-  if (queue->count != 0U) {
+  socket = queue->stopping || queue->count == 0U ? LAGHU_INVALID_SOCKET
+                                                 : queue->items[queue->head];
+  if (socket != LAGHU_INVALID_SOCKET) {
     queue->head = (queue->head + 1U) % queue->capacity;
     --queue->count;
   }
@@ -1322,6 +1724,27 @@ static laghu_socket queue_pop(proxy_queue *queue) {
   return socket;
 }
 
+static void proxy_worker_begin(proxy_worker *worker, laghu_socket client) {
+  proxy_queue_lock(worker->queue);
+  worker->active_client = client;
+  worker->active_origin = LAGHU_INVALID_SOCKET;
+  ++worker->queue->active_count;
+  proxy_queue_unlock(worker->queue);
+}
+
+static void proxy_worker_end(proxy_worker *worker) {
+  proxy_queue_lock(worker->queue);
+  worker->active_client = LAGHU_INVALID_SOCKET;
+  worker->active_origin = LAGHU_INVALID_SOCKET;
+  if (worker->queue->active_count != 0U) --worker->queue->active_count;
+#ifdef _WIN32
+  WakeAllConditionVariable(&worker->queue->drained);
+#else
+  pthread_cond_broadcast(&worker->queue->drained);
+#endif
+  proxy_queue_unlock(worker->queue);
+}
+
 #ifdef _WIN32
 static DWORD WINAPI proxy_worker_main(LPVOID argument)
 #else
@@ -1331,8 +1754,11 @@ static void *proxy_worker_main(void *argument)
   proxy_worker *worker = argument;
   laghu_socket client;
   laghu_runtime_queue_init(&worker->runtime_queue);
-  while ((client = queue_pop(worker->queue)) != LAGHU_INVALID_SOCKET)
+  while ((client = queue_pop(worker->queue)) != LAGHU_INVALID_SOCKET) {
+    proxy_worker_begin(worker, client);
     proxy_handle(client, worker);
+    proxy_worker_end(worker);
+  }
   laghu_runtime_queue_close(&worker->runtime_queue);
 #ifdef _WIN32
   return 0U;
@@ -1367,15 +1793,210 @@ static laghu_socket proxy_listen(const char *host, const char *port) {
   return listener;
 }
 
+static uint64_t proxy_monotonic_ms(void) {
+#ifdef _WIN32
+  return (uint64_t)GetTickCount64();
+#else
+  struct timespec value;
+  if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0U;
+  return (uint64_t)value.tv_sec * 1000U + (uint64_t)value.tv_nsec / 1000000U;
+#endif
+}
+
+static void proxy_pause_ms(unsigned int milliseconds) {
+#ifdef _WIN32
+  Sleep(milliseconds);
+#else
+  struct timespec value = {(time_t)(milliseconds / 1000U),
+                           (long)(milliseconds % 1000U) * 1000000L};
+  (void)nanosleep(&value, NULL);
+#endif
+}
+
+static bool proxy_cache_probe(const char *cache_path) {
+  char path[LAGHU_RUNTIME_PATH_SIZE];
+  int count;
+#ifdef _WIN32
+  HANDLE file;
+  DWORD written;
+  unsigned char marker = 0x4cU;
+  count = snprintf(path, sizeof(path), "%s\\.laghu-ready-%lu-%lu-%llu",
+                   cache_path, (unsigned long)GetCurrentProcessId(),
+                   (unsigned long)GetCurrentThreadId(),
+                   (unsigned long long)proxy_monotonic_ms());
+  if (count <= 0 || (size_t)count >= sizeof(path)) return false;
+  file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+                     FILE_ATTRIBUTE_TEMPORARY, NULL);
+  if (file == INVALID_HANDLE_VALUE) return false;
+  if (!WriteFile(file, &marker, 1U, &written, NULL) || written != 1U ||
+      !FlushFileBuffers(file)) {
+    CloseHandle(file);
+    (void)DeleteFileA(path);
+    return false;
+  }
+  CloseHandle(file);
+  return DeleteFileA(path) != 0;
+#else
+  int file;
+  unsigned char marker = 0x4cU;
+  count =
+      snprintf(path, sizeof(path), "%s/.laghu-ready-%ld-%llu-%llu", cache_path,
+               (long)getpid(), (unsigned long long)(uintptr_t)pthread_self(),
+               (unsigned long long)proxy_monotonic_ms());
+  if (count <= 0 || (size_t)count >= sizeof(path)) return false;
+  file = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (file < 0) return false;
+  if (write(file, &marker, 1U) != 1 || fsync(file) != 0) {
+    close(file);
+    (void)unlink(path);
+    return false;
+  }
+  if (close(file) != 0) {
+    (void)unlink(path);
+    return false;
+  }
+  return unlink(path) == 0;
+#endif
+}
+
+static bool proxy_queue_path_valid(const char *path) {
+  laghu_runtime_queue queue;
+  bool exists;
+  bool valid;
+#ifdef _WIN32
+  DWORD attributes = GetFileAttributesA(path);
+  exists = attributes != INVALID_FILE_ATTRIBUTES;
+  if (!exists && GetLastError() != ERROR_FILE_NOT_FOUND &&
+      GetLastError() != ERROR_PATH_NOT_FOUND)
+    return false;
+#else
+  exists = access(path, F_OK) == 0;
+  if (!exists && errno != ENOENT) return false;
+#endif
+  if (!exists) {
+    char parent[LAGHU_RUNTIME_PATH_SIZE];
+    const char *separator = strrchr(path, '/');
+#ifdef _WIN32
+    const char *backslash = strrchr(path, '\\');
+    DWORD parent_attributes;
+    if (backslash != NULL && (separator == NULL || backslash > separator))
+      separator = backslash;
+#endif
+    if (separator == NULL) return true;
+    if (separator == path) {
+      parent[0] = *separator;
+      parent[1] = '\0';
+    } else {
+      size_t length = (size_t)(separator - path);
+      if (length >= sizeof(parent)) return false;
+      memcpy(parent, path, length);
+      parent[length] = '\0';
+    }
+#ifdef _WIN32
+    parent_attributes = GetFileAttributesA(parent);
+    return parent_attributes != INVALID_FILE_ATTRIBUTES &&
+           (parent_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U;
+#else
+    return access(parent, R_OK | X_OK) == 0;
+#endif
+  }
+  laghu_runtime_queue_init(&queue);
+  valid = laghu_runtime_queue_open(&queue, path) &&
+          laghu_runtime_queue_refresh(&queue);
+  laghu_runtime_queue_close(&queue);
+  return valid;
+}
+
+#ifdef _WIN32
+static BOOL WINAPI proxy_console_control(DWORD event) {
+  if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT &&
+      event != CTRL_CLOSE_EVENT && event != CTRL_SHUTDOWN_EVENT)
+    return FALSE;
+  InterlockedIncrement(&proxy_stop_requests);
+  return TRUE;
+}
+#else
+static void proxy_signal_handler(int signal_number) {
+  (void)signal_number;
+  if (proxy_stop_requests < 2) ++proxy_stop_requests;
+}
+#endif
+
+static bool proxy_listener_ready(laghu_socket listener) {
+  fd_set readable;
+  struct timeval wait = {0, 200000};
+  FD_ZERO(&readable);
+  FD_SET(listener, &readable);
+#ifdef _WIN32
+  return select(0, &readable, NULL, NULL, &wait) > 0;
+#else
+  return select(listener + 1, &readable, NULL, NULL, &wait) > 0;
+#endif
+}
+
+static void proxy_begin_drain(proxy_queue *queue) {
+  proxy_queue_lock(queue);
+  queue->state = PROXY_DRAINING;
+  queue->stopping = true;
+#ifdef _WIN32
+  WakeAllConditionVariable(&queue->ready);
+#else
+  pthread_cond_broadcast(&queue->ready);
+#endif
+  proxy_queue_unlock(queue);
+  for (;;) {
+    laghu_socket client;
+    proxy_queue_lock(queue);
+    if (queue->count == 0U) {
+      proxy_queue_unlock(queue);
+      break;
+    }
+    client = queue->items[queue->head];
+    queue->head = (queue->head + 1U) % queue->capacity;
+    --queue->count;
+    proxy_queue_unlock(queue);
+    proxy_reject_connection(queue, client, "shutdown");
+  }
+}
+
+static unsigned int proxy_active_count(proxy_queue *queue) {
+  unsigned int count;
+  proxy_queue_lock(queue);
+  count = queue->active_count;
+  proxy_queue_unlock(queue);
+  return count;
+}
+
+static void proxy_force_workers(proxy_queue *queue, proxy_worker *workers,
+                                unsigned int worker_count) {
+  unsigned int index;
+  proxy_queue_lock(queue);
+  queue->state = PROXY_FORCING;
+  for (index = 0U; index < worker_count; ++index) {
+    if (workers[index].active_client != LAGHU_INVALID_SOCKET)
+      (void)shutdown(workers[index].active_client, LAGHU_SHUT_BOTH);
+    if (workers[index].active_origin != LAGHU_INVALID_SOCKET)
+      (void)shutdown(workers[index].active_origin, LAGHU_SHUT_BOTH);
+  }
+  proxy_queue_unlock(queue);
+}
+
 int laghu_proxy_run(const laghu_proxy_options *options) {
   proxy_queue queue;
   proxy_worker *workers;
-  laghu_socket listener;
-  unsigned int index;
+  laghu_socket listener = LAGHU_INVALID_SOCKET;
+  unsigned int index, started = 0U;
+  int result = 1;
+  bool lock_ready = false;
+#ifndef _WIN32
+  bool ready_condition = false, drained_condition = false;
+#endif
 #ifdef _WIN32
   WSADATA data;
   HANDLE *threads;
+  bool sockets_ready = false;
   if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return 1;
+  sockets_ready = true;
 #else
   pthread_t *threads;
 #endif
@@ -1385,40 +2006,165 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   queue.items = calloc(queue.capacity, sizeof(*queue.items));
   workers = calloc(options->workers, sizeof(*workers));
   threads = calloc(options->workers, sizeof(*threads));
-  if (queue.items == NULL || workers == NULL || threads == NULL) return 1;
+  if (queue.items == NULL || workers == NULL || threads == NULL) goto cleanup;
 #ifdef _WIN32
   InitializeCriticalSection(&queue.lock);
+  lock_ready = true;
   InitializeConditionVariable(&queue.ready);
+  InitializeConditionVariable(&queue.drained);
 #else
-  pthread_mutex_init(&queue.lock, NULL);
-  pthread_cond_init(&queue.ready, NULL);
+  if (pthread_mutex_init(&queue.lock, NULL) != 0) goto cleanup;
+  lock_ready = true;
+  if (pthread_cond_init(&queue.ready, NULL) != 0) goto cleanup;
+  ready_condition = true;
+  if (pthread_cond_init(&queue.drained, NULL) != 0) goto cleanup;
+  drained_condition = true;
 #endif
+  queue.state = PROXY_STARTING;
+  queue.cache_readiness = -1;
+  queue.optimizer_readiness = -1;
+  queue.request_prefix = proxy_monotonic_ms() << 16U;
+  if (!proxy_cache_probe(options->cache_path) ||
+      !proxy_queue_path_valid(options->worker_queue_path)) {
+    proxy_log_event(&queue, "startup_failure", "stopped");
+    goto cleanup;
+  }
   listener = proxy_listen(options->listen_host, options->listen_port);
   if (listener == LAGHU_INVALID_SOCKET) {
-    fprintf(stderr, "laghu: cannot bind %s:%s\n", options->listen_host,
-            options->listen_port);
-    return 1;
+    proxy_log_event(&queue, "startup_failure", "stopped");
+    goto cleanup;
   }
+  proxy_stop_requests = 0;
+#ifdef _WIN32
+  (void)SetConsoleCtrlHandler(proxy_console_control, TRUE);
+#else
+  {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = proxy_signal_handler;
+    sigemptyset(&action.sa_mask);
+    (void)sigaction(SIGINT, &action, NULL);
+    (void)sigaction(SIGTERM, &action, NULL);
+    action.sa_handler = SIG_IGN;
+    (void)sigaction(SIGPIPE, &action, NULL);
+  }
+#endif
   for (index = 0U; index < options->workers; ++index) {
     workers[index].queue = &queue;
+    workers[index].active_client = LAGHU_INVALID_SOCKET;
+    workers[index].active_origin = LAGHU_INVALID_SOCKET;
 #ifdef _WIN32
     threads[index] =
         CreateThread(NULL, 0U, proxy_worker_main, &workers[index], 0U, NULL);
+    if (threads[index] == NULL) break;
 #else
     if (pthread_create(&threads[index], NULL, proxy_worker_main,
                        &workers[index]) != 0)
-      return 1;
+      break;
 #endif
+    ++started;
   }
-  fprintf(stderr, "laghu: listening on %s:%s, origin=http://%s\n",
-          options->listen_host, options->listen_port,
-          options->origin_authority);
-  for (;;) {
-    laghu_socket client = accept(listener, NULL, NULL);
-    if (client == LAGHU_INVALID_SOCKET) break;
-    if (!queue_push(&queue, client)) {
-      proxy_reject_overload(client);
+  if (started != options->workers) {
+    proxy_log_event(&queue, "startup_failure", "forcing");
+    proxy_stop_requests = 2;
+  } else {
+    queue.state = PROXY_RUNNING;
+    proxy_log_event(&queue, "startup", "running");
+    while (proxy_stop_requests == 0) {
+      if (proxy_listener_ready(listener)) {
+        laghu_socket client = accept(listener, NULL, NULL);
+        if (client != LAGHU_INVALID_SOCKET && !queue_push(&queue, client))
+          proxy_reject_connection(&queue, client, "queue_saturated");
+      }
     }
   }
-  return 1;
+  laghu_close(listener);
+  listener = LAGHU_INVALID_SOCKET;
+  proxy_begin_drain(&queue);
+  proxy_log_event(&queue, "shutdown", "draining");
+  {
+    uint64_t deadline =
+        proxy_monotonic_ms() + (uint64_t)options->drain_timeout * 1000U;
+    while (proxy_active_count(&queue) != 0U && proxy_stop_requests < 2 &&
+           proxy_monotonic_ms() < deadline)
+      proxy_pause_ms(20U);
+  }
+  if (proxy_active_count(&queue) != 0U) {
+    proxy_force_workers(&queue, workers, started);
+    proxy_log_event(&queue, "shutdown", "forcing");
+  }
+  for (index = 0U; index < started; ++index) {
+#ifdef _WIN32
+    (void)WaitForSingleObject(threads[index], INFINITE);
+    CloseHandle(threads[index]);
+#else
+    (void)pthread_join(threads[index], NULL);
+#endif
+  }
+  queue.state = PROXY_STOPPED;
+  proxy_log_event(&queue, "shutdown", "stopped");
+  result = started == options->workers ? 0 : 1;
+cleanup:
+  if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);
+#ifdef _WIN32
+  if (lock_ready) DeleteCriticalSection(&queue.lock);
+#else
+  if (drained_condition) pthread_cond_destroy(&queue.drained);
+  if (ready_condition) pthread_cond_destroy(&queue.ready);
+  if (lock_ready) pthread_mutex_destroy(&queue.lock);
+#endif
+  free(threads);
+  free(workers);
+  free(queue.items);
+#ifdef _WIN32
+  if (sockets_ready) WSACleanup();
+#endif
+  return result;
 }
+
+#ifdef _WIN32
+static DWORD WINAPI proxy_service_control(DWORD control, DWORD event_type,
+                                          LPVOID event_data, LPVOID context) {
+  (void)event_type;
+  (void)event_data;
+  (void)context;
+  if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN) {
+    InterlockedIncrement(&proxy_stop_requests);
+    proxy_service_status.dwCurrentState = SERVICE_STOP_PENDING;
+    proxy_service_status.dwWaitHint =
+        proxy_service_options->drain_timeout * 1000U;
+    (void)SetServiceStatus(proxy_service_handle, &proxy_service_status);
+    return NO_ERROR;
+  }
+  return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+static void WINAPI proxy_service_main(DWORD argument_count, LPSTR *arguments) {
+  int result;
+  (void)argument_count;
+  (void)arguments;
+  memset(&proxy_service_status, 0, sizeof(proxy_service_status));
+  proxy_service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+  proxy_service_status.dwCurrentState = SERVICE_START_PENDING;
+  proxy_service_status.dwControlsAccepted =
+      SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+  proxy_service_handle =
+      RegisterServiceCtrlHandlerExA("laghu", proxy_service_control, NULL);
+  if (proxy_service_handle == NULL) return;
+  (void)SetServiceStatus(proxy_service_handle, &proxy_service_status);
+  proxy_service_status.dwCurrentState = SERVICE_RUNNING;
+  (void)SetServiceStatus(proxy_service_handle, &proxy_service_status);
+  result = laghu_proxy_run(proxy_service_options);
+  proxy_service_status.dwCurrentState = SERVICE_STOPPED;
+  proxy_service_status.dwWin32ExitCode =
+      result == 0 ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR;
+  proxy_service_status.dwServiceSpecificExitCode = (DWORD)result;
+  (void)SetServiceStatus(proxy_service_handle, &proxy_service_status);
+}
+
+int laghu_proxy_run_service(const laghu_proxy_options *options) {
+  SERVICE_TABLE_ENTRYA table[] = {{"laghu", proxy_service_main}, {NULL, NULL}};
+  proxy_service_options = options;
+  return StartServiceCtrlDispatcherA(table) != 0 ? 0 : 1;
+}
+#endif

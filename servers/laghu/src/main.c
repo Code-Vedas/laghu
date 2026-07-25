@@ -15,8 +15,12 @@ static void usage(FILE *stream) {
       "  --preset NAME | --rewrite-level NAME\n"
       "  --allow-api --image-beacon --image-quality 1..100\n"
       "  --workers N --connection-queue N\n"
-      "  --connect-timeout SECONDS --io-timeout SECONDS\n",
+      "  --connect-timeout SECONDS --io-timeout SECONDS\n"
+      "  --drain-timeout SECONDS\n",
       stream);
+#ifdef _WIN32
+  fputs("  --service\n", stream);
+#endif
 }
 
 int main(int argc, char **argv) {
@@ -39,5 +43,8 @@ int main(int argc, char **argv) {
     usage(stderr);
     return 2;
   }
+#ifdef _WIN32
+  if (options.service_mode) return laghu_proxy_run_service(&options);
+#endif
   return laghu_proxy_run(&options);
 }

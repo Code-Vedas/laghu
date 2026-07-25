@@ -460,8 +460,9 @@ bool laghu_runtime_combine_css_markup(
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
     unsigned int outline_threshold, laghu_runtime_css_combine_result *result) {
+  typedef char laghu_seen_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_combine_builder output = {0};
-  char (*seen)[LAGHU_RUNTIME_PATH_SIZE] = NULL;
+  laghu_seen_path *seen = NULL;
   laghu_combine_link *links = NULL;
   size_t seen_count = 0U;
   size_t cursor = 0U;

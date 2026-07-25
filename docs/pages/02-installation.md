@@ -51,10 +51,11 @@ tmp/build/servers/laghu/laghu \
   --listen 127.0.0.1:8080 \
   --origin http://127.0.0.1:8000 \
   --cache /var/cache/laghu \
-  --worker-queue /run/laghu/jobs.queue
+  --worker-queue /run/laghu/jobs.queue \
+  --drain-timeout 30
 ```
 
-This source-build interface does not install a service or production proxy package. See [Standalone Proxy](/standalone-proxy/) for its implemented HTTP limits.
+Create the cache and runtime directories for the unprivileged account that runs the process. The executable validates cache writes before binding and writes no mutable state beside itself. This source-build interface does not install a service or production proxy package. See [Standalone Proxy](/standalone-proxy/) for its HTTP, lifecycle, probe, and logging contracts.
 
 ## Local Docker Tests
 
@@ -69,3 +70,9 @@ scripts/run-in-docker --all --architectures amd64,arm64
 ```
 
 Cross-architecture Docker runs use Buildx/QEMU and provide developer feedback; native CI remains required for release evidence.
+
+Run the standalone proxy smoke test as a non-root user with a read-only container filesystem:
+
+```bash
+scripts/run-proxy-rootless
+```

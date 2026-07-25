@@ -80,8 +80,11 @@ tmp/build/servers/laghu/laghu \
   --listen 127.0.0.1:8080 \
   --origin http://127.0.0.1:8000 \
   --cache /tmp/laghu-cache \
-  --worker-queue /tmp/laghu.queue
+  --worker-queue /tmp/laghu.queue \
+  --drain-timeout 30
 ```
+
+The proxy exposes local health and readiness JSON beneath `/.laghu/`, drains active requests on shutdown, and emits privacy-bounded JSON Lines to standard error. `scripts/run-proxy-rootless` validates it as a non-root process with a read-only container filesystem.
 
 Server modules are architecture- and ABI-specific. Build each module against the target server ABI.
 

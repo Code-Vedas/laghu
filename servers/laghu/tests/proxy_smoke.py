@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import http.server
+import json
 import pathlib
 import socket
 import subprocess
@@ -61,6 +62,14 @@ class Origin(http.server.BaseHTTPRequestHandler):
             time.sleep(2)
             body = BODY
             content_type = "text/html"
+        elif self.path == "/drain":
+            time.sleep(0.4)
+            body = BODY
+            content_type = "text/html"
+        elif self.path == "/hang":
+            time.sleep(10)
+            body = BODY
+            content_type = "text/html"
         else:
             body = BODY
             content_type = "text/html"
@@ -87,6 +96,11 @@ class Origin(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, *_args):
+        pass
+
+
+class QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    def handle_error(self, _request, _client_address):
         pass
 
 
@@ -143,12 +157,26 @@ def raw_request(port, payload):
     return b"".join(chunks).lower()
 
 
+def read_open_socket(sock):
+    chunks = []
+    while True:
+        try:
+            chunk = sock.recv(65536)
+        except (ConnectionResetError, OSError):
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+    sock.close()
+    return b"".join(chunks).lower()
+
+
 def main():
     executable = pathlib.Path(sys.argv[1]).resolve()
     cache_fixture = pathlib.Path(sys.argv[2]).resolve()
     origin_port = free_port()
     proxy_port = free_port()
-    origin = http.server.ThreadingHTTPServer(("127.0.0.1", origin_port), Origin)
+    origin = QuietThreadingHTTPServer(("127.0.0.1", origin_port), Origin)
     thread = threading.Thread(target=origin.serve_forever, daemon=True)
     thread.start()
     with tempfile.TemporaryDirectory(prefix="laghu-proxy-") as directory:
@@ -158,6 +186,25 @@ def main():
         subprocess.run(
             [str(cache_fixture), str(root / "cache"), asset_key], check=True
         )
+        invalid_port = free_port()
+        invalid = subprocess.run(
+            [
+                str(executable),
+                "--listen",
+                f"127.0.0.1:{invalid_port}",
+                "--origin",
+                f"http://127.0.0.1:{origin_port}",
+                "--cache",
+                str(root / "missing-cache"),
+                "--worker-queue",
+                str(root / "missing.queue"),
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+        assert invalid.returncode == 1
+        invalid_log = invalid.stderr.decode().strip()
+        assert json.loads(invalid_log)["event"] == "startup_failure"
         process = subprocess.Popen(
             [
                 str(executable),
@@ -177,7 +224,7 @@ def main():
                 "1",
             ],
             stdout=subprocess.DEVNULL,
-            stderr=None,
+            stderr=subprocess.PIPE,
         )
         try:
             for _ in range(50):
@@ -190,6 +237,36 @@ def main():
                 raise AssertionError("proxy did not start")
             assert first_body == BODY, (first_head, first_body)
             assert b"x-laghu: pass" in first_head, first_head
+            health_head, health_body = request(proxy_port, "/.laghu/health")
+            assert b" 200 " in health_head.split(b"\r\n", 1)[0]
+            assert health_body == b'{"status":"ok","state":"running"}'
+            ready_head, ready_body = request(proxy_port, "/.laghu/ready")
+            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
+            assert b'"optimizer":"degraded"' in ready_body
+            subprocess.run(
+                [
+                    str(cache_fixture),
+                    "--queue",
+                    str(root / "missing.queue"),
+                    str(int(time.time())),
+                ],
+                check=True,
+            )
+            ready_head, ready_body = request(proxy_port, "/.laghu/ready")
+            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
+            assert b'"optimizer":"ready"' in ready_body
+            ready_head, ready_body = request(
+                proxy_port, "/.laghu/ready", method="HEAD"
+            )
+            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
+            assert ready_body == b""
+            (root / "cache").chmod(0o500)
+            unavailable_head, unavailable_body = request(
+                proxy_port, "/.laghu/ready"
+            )
+            (root / "cache").chmod(0o700)
+            assert b" 503 " in unavailable_head.split(b"\r\n", 1)[0]
+            assert b'"cache":"unavailable"' in unavailable_body
             second_head, second_body = request(proxy_port, "/index.html")
             assert len(second_body) < len(BODY)
             assert b"etag: \"laghu-html-" in second_head
@@ -206,7 +283,9 @@ def main():
             assert private_body == BODY
             assert b"x-laghu: bypass-private" in private_head
             auth_head, auth_body = request(
-                proxy_port, "/index.html", headers={"Authorization": "Bearer test"}
+                proxy_port,
+                "/index.html?query-secret=hidden",
+                headers={"Authorization": "Bearer private-token", "Cookie": "private-cookie"},
             )
             assert auth_body == BODY
             assert b"x-laghu: bypass-authorized" in auth_head
@@ -292,9 +371,91 @@ def main():
                 b"x-laghu: pass" in corrupt_head
                 or b"x-laghu: bypass-error" in corrupt_head
             )
-        finally:
+            draining = socket.create_connection(("127.0.0.1", proxy_port), timeout=5)
+            draining.sendall(
+                b"GET /drain HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            time.sleep(0.1)
+            queued_for_shutdown = socket.create_connection(
+                ("127.0.0.1", proxy_port), timeout=5
+            )
+            queued_for_shutdown.sendall(
+                b"GET /api/data HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            time.sleep(0.1)
             process.terminate()
-            process.wait(timeout=5)
+            queued_response = read_open_socket(queued_for_shutdown)
+            active_response = read_open_socket(draining)
+            assert queued_response.startswith(b"http/1.1 503 "), queued_response
+            assert active_response.startswith(b"http/1.1 200 "), active_response
+            assert b"hello" in active_response, active_response
+            assert process.wait(timeout=5) == 0
+            logs = process.stderr.read().decode()
+            assert '"event":"startup"' in logs
+            assert '"event":"transaction"' in logs
+            assert '"event":"readiness"' in logs
+            assert '"state":"draining"' in logs
+            assert '"state":"stopped"' in logs
+            assert '"failure":"origin_timeout"' in logs
+            assert '"failure":"queue_saturated"' in logs
+            assert '"failure":"shutdown"' in logs
+            assert "query-secret" not in logs
+            assert "private-token" not in logs
+            assert "private-cookie" not in logs
+            for line in logs.splitlines():
+                assert line.startswith("{") and line.endswith("}"), line
+                json.loads(line)
+            process.stderr.close()
+            force_port = free_port()
+            process = subprocess.Popen(
+                [
+                    str(executable),
+                    "--listen",
+                    f"127.0.0.1:{force_port}",
+                    "--origin",
+                    f"http://127.0.0.1:{origin_port}",
+                    "--cache",
+                    str(root / "cache"),
+                    "--worker-queue",
+                    str(root / "missing.queue"),
+                    "--io-timeout",
+                    "30",
+                    "--drain-timeout",
+                    "30",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            for _ in range(50):
+                try:
+                    forced = socket.create_connection(
+                        ("127.0.0.1", force_port), timeout=5
+                    )
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                raise AssertionError("forced-drain proxy did not start")
+            forced.sendall(
+                b"GET /hang HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            time.sleep(0.2)
+            process.terminate()
+            time.sleep(0.3)
+            process.terminate()
+            started = time.monotonic()
+            assert process.wait(timeout=5) == 0
+            assert time.monotonic() - started < 5
+            read_open_socket(forced)
+            forced_logs = process.stderr.read().decode()
+            assert '"state":"forcing"' in forced_logs
+            assert '"failure":"shutdown"' in forced_logs
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            if process.stderr is not None:
+                process.stderr.close()
             origin.shutdown()
     print("laghu proxy smoke passed")
 

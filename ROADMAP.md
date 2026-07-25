@@ -61,7 +61,7 @@ This is the next milestone and precedes Section 3.4 JavaScript work. Existing NG
 - [x] Implement the standalone `laghu` reverse proxy with bounded HTTP/1.1 origin forwarding first, then add HTTP/2 and HTTP/3 as separately validated transport milestones.
 - [x] Validate cold-original and warm-derived HTML, CSS, image, internal asset, API/auth/private bypass, worker-loss, cache-corruption, timeout, disconnect, and malformed-origin behavior through all three surfaces.
 
-Completion evidence: the C11 `Laghu::Http` library defines ABI version 1 with bounded borrowed request/response views, an optional explicit source validator, engine-derived live worker capabilities, ordered owned header operations, explicit result release, and prepare/finalize phases. The executable engine performs eligibility, policy and planner resolution, bounded capture selection, validator-keyed warm image lookup, HTML/CSS finalization, image target propagation and queue publication, dependency and cache identity, immutable asset delivery, body selection, and fail-open fallback without server types. Table-driven CTest fixtures cover decision precedence, malformed ABI and bounds, encoded/partial/HEAD responses, incomplete capture, frozen policy/index keys, strong and weak validators, worker heartbeat expiry, client hints, cold queue publication, warm cached images, internal assets, and cold/warm HTML and CSS behavior. NGINX normalizes native header lists and buffers NGINX chains; Apache preserves APR header multiplicity and brigade metadata, `FLUSH`, and `EOS`; the standalone proxy owns bounded HTTP/1.1 framing, a fixed worker pool, POSIX and WinSock sockets, origin deadlines, and local internal routes. All three adapters copy engine results into transport-owned storage and apply the same ordered header plan atomically. Native adapter smoke suites and the standalone loopback suite cover cold/warm output, bypasses, immutable routes, worker/cache degradation, malformed input, and original preservation. Beacon POST ingestion remains adapter-owned on every surface. TLS, persistent connections, HTTP/2, HTTP/3, graceful drain, and production proxy packaging remain in Sections 6 and 9.
+Completion evidence: the C11 `Laghu::Http` library defines ABI version 1 with bounded borrowed request/response views, an optional explicit source validator, engine-derived live worker capabilities, ordered owned header operations, explicit result release, and prepare/finalize phases. The executable engine performs eligibility, policy and planner resolution, bounded capture selection, validator-keyed warm image lookup, HTML/CSS finalization, image target propagation and queue publication, dependency and cache identity, immutable asset delivery, body selection, and fail-open fallback without server types. Table-driven CTest fixtures cover decision precedence, malformed ABI and bounds, encoded/partial/HEAD responses, incomplete capture, frozen policy/index keys, strong and weak validators, worker heartbeat expiry, client hints, cold queue publication, warm cached images, internal assets, and cold/warm HTML and CSS behavior. NGINX normalizes native header lists and buffers NGINX chains; Apache preserves APR header multiplicity and brigade metadata, `FLUSH`, and `EOS`; the standalone proxy owns bounded HTTP/1.1 framing, a fixed worker pool, POSIX and WinSock sockets, origin deadlines, and local internal routes. All three adapters copy engine results into transport-owned storage and apply the same ordered header plan atomically. Native adapter smoke suites and the standalone loopback suite cover cold/warm output, bypasses, immutable routes, worker/cache degradation, malformed input, and original preservation. Beacon POST ingestion remains adapter-owned on every surface. TLS, persistent connections, HTTP/2, HTTP/3, and production proxy packaging remain in Sections 6 and 9.
 
 ### 3.1 Rewrite Levels
 
@@ -244,9 +244,9 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 ### 4.5 Observability and Operations
 
 - [ ] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
-- [ ] Emit structured JSON logs with per-request optimization decisions.
+- [ ] Emit the standalone JSON transaction schema from NGINX, Apache, and `laghu-libvips` so every process has one operational log contract.
 - [ ] Emit OpenTelemetry traces across the optimization path.
-- [ ] Add health and readiness endpoints.
+- [ ] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [ ] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
 - [ ] Ship a Grafana dashboard.
 - [ ] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.
@@ -354,8 +354,10 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 
 - [x] Keep policy resolution, hashing, image/CSS/HTML parsing, catalogs, queue protocol, and cache publication independent of NGINX and Apache types.
 - [ ] Support bounded streaming origin forwarding, connection and header limits, request cancellation, upstream timeouts, trusted forwarded-header policy, TLS to the origin, and original-response fallback.
-- [ ] Add standalone health/readiness, graceful drain, structured access and optimization logs, and rootless/read-only-container operation without making telemetry or a hosted service mandatory.
+- [x] Add standalone health/readiness, graceful drain, structured access and optimization logs, and rootless/read-only-container operation without making telemetry or a hosted service mandatory.
 - [ ] Keep the standalone proxy entirely self-hostable with no account, license key, feature gate, phone-home behavior, or required Codevedas service.
+
+Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline cancellation, queued-connection rejection, worker joins, local cache and optimizer readiness transitions, query/header/body-safe JSON records, and non-root execution with a read-only container filesystem. The same state machine includes Win32 console and explicit Service Control Manager entrypoints; native Windows execution remains pending in Section 9.
 
 - [x] Complete the image-path two-process architecture for both lightweight NGINX and Apache interceptors plus the asynchronous out-of-process service.
 - [x] Serve the original image on first hit while an optimized variant is generated without blocking NGINX event loops or Apache request workers.
@@ -416,7 +418,7 @@ Clean-install evidence removes the build-time server before installing the local
 - [ ] Add ppc64le, s390x, riscv64, and 32-bit ARM build evidence where supported.
 - [ ] Test package install, upgrade, downgrade rejection, ABI mismatch rejection, service restart, and uninstall cleanup on every supported distribution.
 - [ ] Add Debian, Ubuntu, Fedora, RHEL, Rocky, and AlmaLinux release matrices rather than treating one deb and one rpm distribution as universal evidence.
-- [ ] Test rootless and read-only container operation, persistent-cache upgrades, graceful shutdown, and orchestrator health behavior.
+- [ ] Test production containers under rootless and read-only operation, persistent-cache upgrades, rolling shutdown, and orchestrator probe behavior.
 - [ ] Publish prebuilt dynamic modules for every supported NGINX release.
 - [ ] Publish deb packages.
 - [ ] Publish rpm packages.
