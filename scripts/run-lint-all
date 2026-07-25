@@ -62,6 +62,9 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/beacon.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_fuzz.c \
+    "${REPO_ROOT}"/libs/laghu-http/include/laghu/http.h \
+    "${REPO_ROOT}"/libs/laghu-http/src/http.c \
+    "${REPO_ROOT}"/libs/laghu-http/tests/http_test.c \
     "${REPO_ROOT}"/workers/laghu-libvips/main.c \
     "${REPO_ROOT}"/modules/mod_laghu/mod_laghu.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/ngx_http_laghu_module.c

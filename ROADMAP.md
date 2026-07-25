@@ -54,14 +54,14 @@ Completion evidence: the server-independent core resolves all preset policies, a
 
 This is the next milestone and precedes Section 3.4 JavaScript work. Existing NGINX and Apache filter evidence remains valid, but new shared capabilities must not deepen adapter duplication while the standalone surface is added.
 
-- [ ] Inventory and extract the duplicated request classification, response capture, policy invocation, warm lookup, derivation, header mutation, body selection, and fail-open orchestration from both native adapters.
-- [ ] Add a bounded, versioned `laghu_http_transaction` API in a shared library without NGINX, APR, socket, TLS, or event-loop types.
-- [ ] Add table-driven conformance fixtures that feed identical HTTP transactions through the shared engine and assert decisions, body bytes, header operations, dependency ETags, cache keys, and failure results.
-- [ ] Refactor `ngx-laghu` and `mod-laghu` into transport/configuration adapters over that contract without regressing NGINX chains or Apache brigades.
+- [x] Inventory duplicated native-adapter orchestration and assign request classification, policy invocation, warm lookup, derivation, header planning, body selection, and fail-open behavior to a shared engine while retaining capture and transport mechanics in each adapter.
+- [x] Add a bounded, versioned `laghu_http_transaction` API in a shared library without NGINX, APR, socket, TLS, or event-loop types.
+- [x] Add table-driven conformance fixtures that feed normalized HTTP transactions through the shared engine and assert decisions, body bytes, header operations, dependency ETags, cache keys, and failure results.
+- [x] Refactor `ngx-laghu` and `mod-laghu` into transport/configuration adapters over that contract without regressing NGINX chains or Apache brigades.
 - [ ] Implement the standalone `laghu` reverse proxy with bounded HTTP/1.1 origin forwarding first, then add HTTP/2 and HTTP/3 as separately validated transport milestones.
 - [ ] Validate cold-original and warm-derived HTML, CSS, image, internal asset, API/auth/private bypass, worker-loss, cache-corruption, timeout, disconnect, and malformed-origin behavior through all three surfaces.
-- [ ] Add the `laghu` deb/rpm/Homebrew/Winget package, service definitions, rootless container, GHCR image, and Helm deployment without installing NGINX or Apache.
-- [ ] Make the root build/test/lint, Docker matrix, native CI, release workflow, SBOM, provenance, and documentation lanes cover the proxy equally.
+
+Completion evidence: the C11 `Laghu::Http` library defines ABI version 1 with bounded borrowed request/response views, an optional explicit source validator, engine-derived live worker capabilities, ordered owned header operations, explicit result release, and prepare/finalize phases. The executable engine performs eligibility, policy and planner resolution, bounded capture selection, validator-keyed warm image lookup, HTML/CSS finalization, image target propagation and queue publication, dependency and cache identity, immutable asset delivery, body selection, and fail-open fallback without server types. Table-driven CTest fixtures cover decision precedence, malformed ABI and bounds, encoded/partial/HEAD responses, incomplete capture, frozen policy/index keys, strong and weak validators, worker heartbeat expiry, client hints, cold queue publication, warm cached images, internal assets, and cold/warm HTML and CSS behavior. NGINX normalizes native header lists and buffers NGINX chains; Apache preserves APR header multiplicity and brigade metadata, `FLUSH`, and `EOS`. Both adapters copy engine results into request pools and atomically apply the same ordered header plan. Beacon POST ingestion remains adapter-owned. The standalone proxy and three-surface parity remain pending.
 
 ### 3.1 Rewrite Levels
 
@@ -353,11 +353,7 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 ## 6. Production Architecture
 
 - [x] Keep policy resolution, hashing, image/CSS/HTML parsing, catalogs, queue protocol, and cache publication independent of NGINX and Apache types.
-- [ ] Define a versioned server-neutral HTTP transaction contract for method, scheme, authority, normalized path, request headers, response status and headers, captured body, selected policy, header operations, dependency key, and fail-open result.
-- [ ] Move duplicated adapter orchestration behind that transaction contract while retaining NGINX pool/chain and Apache pool/brigade ownership in their thin transport adapters.
-- [ ] Implement the `laghu` reverse proxy as a third adapter over the same transaction contract; do not fork filter logic into a proxy-only pipeline.
 - [ ] Support bounded streaming origin forwarding, connection and header limits, request cancellation, upstream timeouts, trusted forwarded-header policy, TLS to the origin, and original-response fallback.
-- [ ] Prove identical policy decisions, dependency keys, cold-original bodies, warm variants, headers, and failure behavior through NGINX, Apache, and the standalone proxy using shared conformance fixtures.
 - [ ] Add standalone health/readiness, graceful drain, structured access and optimization logs, and rootless/read-only-container operation without making telemetry or a hosted service mandatory.
 - [ ] Keep the standalone proxy entirely self-hostable with no account, license key, feature gate, phone-home behavior, or required Codevedas service.
 

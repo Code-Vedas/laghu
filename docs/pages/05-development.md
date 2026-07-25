@@ -37,9 +37,9 @@ scripts/run-in-docker
 scripts/run-in-docker --all
 ```
 
-## Core Work
+## Shared Library Work
 
-Keep the public API in `libs/laghu-core/include/laghu/`. Implementation and direct tests live under `src/` and `tests/` in the same package.
+Keep each public C API under its library's `include/laghu/` directory. Implementation and direct tests live under `src/` and `tests/` in the same package. `laghu-http` must remain free of NGINX, APR, socket, TLS, and event-loop types; its conformance suite must link only the shared Laghu libraries.
 
 ```bash
 cmake -S . -B tmp/build -DCMAKE_BUILD_TYPE=Debug

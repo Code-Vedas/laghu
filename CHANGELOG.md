@@ -8,6 +8,8 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- ABI-versioned `laghu-http` prepare/finalize transaction engine with bounded normalized HTTP inputs, atomic body/header results, warm cache lookup, shared HTML/CSS/image orchestration, try-only job publication, frozen conformance vectors, and original-preserving failure behavior without NGINX or APR types.
+- NGINX and Apache response adapters now consume `laghu-http` for eligibility, live worker resolution, capture planning, warm lookup, HTML/CSS/image finalization, immutable asset delivery, dependency identity, body selection, and ordered header operations while retaining native chain and brigade transport mechanics.
 - Conflict-safe `Content-Language` meta conversion plus bounded, deduplicated stylesheet/image preload and third-party DNS-prefetch response headers from the shared cold-original HTML planner, with no resource fetching.
 - Initial `laghu-core` policy library and unit tests.
 - Native NGINX and Apache HTTP Server adapters with configuration inheritance.

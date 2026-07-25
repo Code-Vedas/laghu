@@ -11,13 +11,13 @@ Laghu separates server integration from optimization policy and expensive execut
 ```text
 NGINX response filters ---- ngx-laghu ----+
                                           |
-Apache bucket brigades --- mod-laghu -----+--> shared policy, parsers, and catalogs
-                                                   |
-                                      bounded shared queue
-                                                   |
-                                           laghu-libvips
-                                                   |
-                                      atomic disk variant cache
+Apache bucket brigades --- mod-laghu -----+--> policy, parsers, and catalogs
+                                                       |
+                                            bounded shared queue
+                                                       |
+                                                laghu-libvips
+                                                       |
+                                           atomic disk variant cache
 ```
 
 ## NGINX Module
@@ -35,6 +35,16 @@ The C library owns policy shared by both modules and the worker. Its responsibil
 Presets and rewrite levels are mutually exclusive selectors at one scope. A child may replace the inherited selector type. Passthrough resolves to an empty policy and stops before response inspection; the remaining levels select tested family and safety masks, while filter execution remains independently gated by its implementation evidence.
 
 The candidate gate preserves a borrowed view of the original and selects optimized output only when the producer reports it valid and it is strictly smaller and non-identical. The caller owns both buffers and must keep their storage alive while the result is used. Equal, larger, invalid, or failed candidates resolve to the original. Variant keys use version 4 of the canonical original-content and resolved-policy encoding, so the same input and policy produce the same fleet-safe key.
+
+## HTTP Transaction Engine
+
+`laghu-http` defines ABI version 1 of the bounded HTTP transaction contract. Its input contains normalized method, scheme, authority, path, request headers, response status and headers, an optional strong source validator, configuration, cache path, worker queue path, and time without NGINX, APR, socket, TLS, or event-loop types. The engine opens and refreshes the queue, validates its heartbeat, and derives backend capabilities from the queue header. Header counts, names, values, captured bodies, and output operations have explicit limits.
+
+NGINX and Apache use the same prepare and finalize operations. NGINX retains chain capture, deferred headers, and pool allocation. Apache retains repeated brigade calls, metadata buckets, `FLUSH`, `EOS`, and APR pool allocation. Both stage the complete ordered header plan before committing it and preserve the original response when staging fails. Hash-only image and CSS routes also use the engine; fixed beacon-script delivery and bounded beacon POST ingestion remain adapter-owned.
+
+The engine has prepare and finalize phases. Prepare performs response classification, policy resolution, capture planning, variant identity, and immediate warm image lookup. Finalize accepts one complete captured body, invokes the shared HTML, CSS, or image runtime, and returns the selected body, dependency and cache keys, queue-publication state, and an ordered atomic header-operation list. Inputs are borrowed; engine-owned bodies and header values have one explicit result-release function.
+
+The engine never mutates server headers or buffers. Transport integrations remain responsible for capturing bytes and applying a complete result. Any invalid ABI, exceeded bound, incomplete body, corrupt cache entry, unavailable backend, full queue, allocation failure, or transform failure retains the original body without partial transformation headers. The conformance suite exercises the engine without linking NGINX or APR.
 
 ## libvips Service and Cache
 

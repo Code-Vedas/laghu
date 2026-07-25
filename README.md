@@ -6,11 +6,12 @@ The image path uses an out-of-process libvips worker: a cold request serves the 
 
 ## Product Shape
 
-Laghu keeps seven deliberate ownership boundaries:
+Laghu keeps eight deliberate ownership boundaries:
 
 - `laghu-core` owns server-independent configuration and optimization policy.
 - `laghu-image` owns explicit-codec image transforms and markup primitives.
 - `laghu-runtime` owns the bounded queue and atomic disk publication protocol.
+- `laghu-http` owns the bounded, server-neutral HTTP transaction contract and executable response orchestration.
 - `laghu-libvips` owns isolated libvips execution and deadline enforcement.
 - `ngx_http_laghu_module` owns NGINX configuration, filter integration, and fail-open request handling.
 - `mod_laghu` owns Apache configuration, bucket-brigade integration, and fail-open request handling.
@@ -21,6 +22,7 @@ Laghu keeps seven deliberate ownership boundaries:
 - `libs/laghu-core/`: canonical native policy library and unit tests
 - `libs/laghu-image/`: server-independent image and image-markup pipeline
 - `libs/laghu-runtime/`: shared queue and content-addressed cache protocol
+- `libs/laghu-http/`: shared HTTP transaction engine and conformance tests
 - `workers/laghu-libvips/`: asynchronous libvips worker
 - `modules/ngx_http_laghu_module/`: NGINX dynamic module integration
 - `modules/mod_laghu/`: Apache HTTP Server output-filter integration
@@ -37,8 +39,8 @@ The native modules:
 - share equivalent NGINX and Apache configuration, policy resolution, response eligibility, and failure behavior
 - build as an NGINX dynamic module against the recorded stable and mainline releases and as an Apache HTTP Server 2.4 output filter
 - support native server, virtual-host, directory, and location inheritance
-- resolves every preset to a tested filter-family and safety policy
-- resolves passthrough, core, bandwidth, all, and experimental rewrite levels
+- resolve every preset to a tested filter-family and safety policy
+- resolve passthrough, core, bandwidth, all, and experimental rewrite levels
 - conservatively bypasses API paths, ineligible statuses, private responses, authenticated requests, and unsupported content types
 - provides stable SHA-256 variant keys and an original-preserving, never-larger candidate-selection contract
 - probes explicit JPEG, PNG, GIF, animated-image, and WebP operations

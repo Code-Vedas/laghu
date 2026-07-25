@@ -93,6 +93,7 @@ error_log ${SMOKE_DIR}/logs/error.log notice;
 events {}
 
 http {
+  server_names_hash_bucket_size 64;
   access_log off;
 
   server {

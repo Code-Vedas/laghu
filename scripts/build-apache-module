@@ -22,6 +22,7 @@ build_dir=${APACHE_BUILD_DIR:-"${REPO_ROOT}/tmp/apache-module"}
 rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
 cp "${REPO_ROOT}/modules/mod_laghu/mod_laghu.c" "${build_dir}/mod_laghu.c"
+cp "${REPO_ROOT}/libs/laghu-http/src/http.c" "${build_dir}/laghu_http.c"
 cp "${REPO_ROOT}/libs/laghu-core/src/core.c" "${build_dir}/laghu_core.c"
 cp "${REPO_ROOT}/libs/laghu-image/src/image.c" "${build_dir}/laghu_image.c"
 cp "${REPO_ROOT}/libs/laghu-image/src/markup.c" "${build_dir}/laghu_markup.c"
@@ -53,8 +54,10 @@ cd "${build_dir}"
   -Wc,-DLAGHU_HAVE_VIPS=0 \
   -I"${REPO_ROOT}/libs/laghu-core/include" \
   -I"${REPO_ROOT}/libs/laghu-image/include" \
+  -I"${REPO_ROOT}/libs/laghu-http/include" \
   -I"${REPO_ROOT}/libs/laghu-runtime/include" \
   mod_laghu.c \
+  laghu_http.c \
   laghu_core.c \
   laghu_image.c \
   laghu_markup.c \

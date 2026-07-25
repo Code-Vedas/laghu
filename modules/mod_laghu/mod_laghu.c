@@ -17,6 +17,7 @@
 #include <util_filter.h>
 
 #include "laghu/core.h"
+#include "laghu/http.h"
 #include "laghu/image.h"
 #include "laghu/runtime.h"
 
@@ -40,6 +41,12 @@ typedef struct {
 
 typedef struct {
   laghu_apache_config *config;
+  laghu_http_request request;
+  laghu_http_response response;
+  laghu_http_environment environment;
+  laghu_http_header request_headers[LAGHU_HTTP_MAX_REQUEST_HEADERS];
+  laghu_http_header response_headers[LAGHU_HTTP_MAX_RESPONSE_HEADERS];
+  laghu_http_transaction transaction;
   laghu_policy policy;
   laghu_runtime_cache_entry cache_entry;
   char policy_key[LAGHU_SHA256_HEX_SIZE];
@@ -48,6 +55,9 @@ typedef struct {
   unsigned char *capture;
   size_t capture_length;
   size_t capture_capacity;
+  unsigned char *selected_body;
+  size_t selected_length;
+  laghu_http_action action;
   laghu_image_filter_mask filters;
   bool accept_webp;
   bool decided;
@@ -521,8 +531,146 @@ static laghu_decision laghu_apache_decide(ap_filter_t *filter,
   return LAGHU_DECISION_PASS;
 }
 
-static apr_status_t laghu_apache_filter(ap_filter_t *filter,
-                                        apr_bucket_brigade *brigade) {
+static bool laghu_apache_collect_table(const apr_table_t *table,
+                                       laghu_http_header *headers,
+                                       size_t capacity, size_t *count) {
+  const apr_array_header_t *array = apr_table_elts(table);
+  const apr_table_entry_t *entries = (const apr_table_entry_t *)array->elts;
+  int index;
+  *count = 0U;
+  for (index = 0; index < array->nelts; ++index) {
+    if (entries[index].key == NULL || entries[index].val == NULL) {
+      continue;
+    }
+    if (*count >= capacity) {
+      return false;
+    }
+    headers[*count].name = (laghu_buffer){
+        (const unsigned char *)entries[index].key, strlen(entries[index].key)};
+    headers[*count].value = (laghu_buffer){
+        (const unsigned char *)entries[index].val, strlen(entries[index].val)};
+    ++*count;
+  }
+  return true;
+}
+
+static bool laghu_apache_normalize(request_rec *request,
+                                   laghu_apache_context *context) {
+  const char *authority = request->hostname != NULL
+                              ? request->hostname
+                              : request->server->server_hostname;
+  const char *validator = apr_table_get(request->headers_out, "ETag");
+  const char *file_validator = NULL;
+  laghu_http_transaction_init(&context->transaction);
+  if (!laghu_apache_collect_table(request->headers_in, context->request_headers,
+                                  LAGHU_HTTP_MAX_REQUEST_HEADERS,
+                                  &context->request.header_count) ||
+      !laghu_apache_collect_table(
+          request->headers_out, context->response_headers,
+          LAGHU_HTTP_MAX_RESPONSE_HEADERS, &context->response.header_count)) {
+    return false;
+  }
+  if (request->content_type != NULL &&
+      apr_table_get(request->headers_out, "Content-Type") == NULL) {
+    size_t index = context->response.header_count++;
+    if (index >= LAGHU_HTTP_MAX_RESPONSE_HEADERS) {
+      return false;
+    }
+    context->response_headers[index].name =
+        (laghu_buffer){(const unsigned char *)"Content-Type", 12U};
+    context->response_headers[index].value =
+        (laghu_buffer){(const unsigned char *)request->content_type,
+                       strlen(request->content_type)};
+  }
+  if ((validator == NULL || ap_cstr_casecmpn(validator, "W/", 2U) == 0) &&
+      request->finfo.filetype != APR_NOFILE && request->mtime > 0) {
+    file_validator =
+        apr_psprintf(request->pool, "file-%" APR_TIME_T_FMT "-%" APR_OFF_T_FMT,
+                     request->mtime, request->finfo.size);
+  }
+  context->request.version = LAGHU_HTTP_ABI_VERSION;
+  context->request.struct_size = sizeof(context->request);
+  context->request.method = (laghu_buffer){
+      (const unsigned char *)request->method, strlen(request->method)};
+  context->request.scheme =
+      (laghu_buffer){(const unsigned char *)ap_http_scheme(request),
+                     strlen(ap_http_scheme(request))};
+  context->request.authority =
+      (laghu_buffer){(const unsigned char *)authority,
+                     authority == NULL ? 0U : strlen(authority)};
+  context->request.normalized_path =
+      (laghu_buffer){(const unsigned char *)request->uri,
+                     request->uri == NULL ? 0U : strlen(request->uri)};
+  context->request.headers = context->request_headers;
+  context->response.version = LAGHU_HTTP_ABI_VERSION;
+  context->response.struct_size = sizeof(context->response);
+  context->response.status = (unsigned int)request->status;
+  context->response.headers = context->response_headers;
+  context->response.has_declared_length = request->clength >= 0;
+  context->response.declared_length =
+      request->clength >= 0 ? (size_t)request->clength : 0U;
+  context->response.complete = true;
+  context->response.partial = request->status == HTTP_PARTIAL_CONTENT;
+  if (file_validator != NULL) {
+    context->response.source_validator = (laghu_buffer){
+        (const unsigned char *)file_validator, strlen(file_validator)};
+  }
+  context->environment.version = LAGHU_HTTP_ABI_VERSION;
+  context->environment.struct_size = sizeof(context->environment);
+  context->environment.config = context->config->core;
+  context->environment.cache_path = context->config->image_cache != NULL
+                                        ? context->config->image_cache
+                                        : LAGHU_DEFAULT_CACHE;
+  context->environment.worker_queue_path = context->config->worker_queue != NULL
+                                               ? context->config->worker_queue
+                                               : LAGHU_DEFAULT_QUEUE;
+  context->environment.queue = &context->config->queue;
+  context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
+  return true;
+}
+
+static bool laghu_apache_apply_result(
+    request_rec *request, const laghu_http_transaction_result *result) {
+  const char **names = apr_pcalloc(
+      request->pool, result->header_operation_count * sizeof(*names));
+  const char **values = apr_pcalloc(
+      request->pool, result->header_operation_count * sizeof(*values));
+  size_t index;
+  if (result->header_operation_count != 0U &&
+      (names == NULL || values == NULL)) {
+    return false;
+  }
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    names[index] =
+        apr_pstrdup(request->pool, result->header_operations[index].name);
+    if (result->header_operations[index].kind != LAGHU_HTTP_HEADER_REMOVE) {
+      values[index] =
+          apr_pstrdup(request->pool, result->header_operations[index].value);
+    }
+    if (names[index] == NULL ||
+        (result->header_operations[index].kind != LAGHU_HTTP_HEADER_REMOVE &&
+         values[index] == NULL)) {
+      return false;
+    }
+  }
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    switch (result->header_operations[index].kind) {
+      case LAGHU_HTTP_HEADER_SET:
+        apr_table_set(request->headers_out, names[index], values[index]);
+        break;
+      case LAGHU_HTTP_HEADER_APPEND:
+        apr_table_add(request->headers_out, names[index], values[index]);
+        break;
+      case LAGHU_HTTP_HEADER_REMOVE:
+        apr_table_unset(request->headers_out, names[index]);
+        break;
+    }
+  }
+  return true;
+}
+
+apr_status_t laghu_apache_filter(ap_filter_t *filter,
+                                 apr_bucket_brigade *brigade) {
   request_rec *request = filter->r;
   laghu_apache_context *context = filter->ctx;
   apr_bucket *bucket;
@@ -890,6 +1038,178 @@ static apr_status_t laghu_apache_filter(ap_filter_t *filter,
   return ap_pass_brigade(filter->next, brigade);
 }
 
+static apr_status_t laghu_apache_transaction_filter(
+    ap_filter_t *filter, apr_bucket_brigade *brigade) {
+  request_rec *request = filter->r;
+  laghu_apache_context *context = filter->ctx;
+  apr_bucket *bucket;
+  bool eos = false;
+  if (context == NULL) {
+    laghu_apache_config *server_config =
+        ap_get_module_config(request->server->module_config, &laghu_module);
+    laghu_apache_config *directory_config =
+        ap_get_module_config(request->per_dir_config, &laghu_module);
+    laghu_http_transaction_result prepared;
+    bool ok;
+    context = apr_pcalloc(request->pool, sizeof(*context));
+    if (context == NULL) {
+      ap_remove_output_filter(filter);
+      return ap_pass_brigade(filter->next, brigade);
+    }
+    context->config = laghu_apache_merge_config(request->pool, server_config,
+                                                directory_config);
+    if (context->config == NULL || !laghu_apache_normalize(request, context)) {
+      ap_remove_output_filter(filter);
+      return ap_pass_brigade(filter->next, brigade);
+    }
+    ok = laghu_http_transaction_prepare(&context->transaction,
+                                        &context->request, &context->response,
+                                        &context->environment, &prepared);
+    if (!laghu_apache_apply_result(request, &prepared)) {
+      laghu_http_transaction_result_release(&prepared);
+      ap_remove_output_filter(filter);
+      return ap_pass_brigade(filter->next, brigade);
+    }
+    context->action = prepared.action;
+    if (!ok || prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
+      laghu_http_transaction_result_release(&prepared);
+      ap_remove_output_filter(filter);
+      return ap_pass_brigade(filter->next, brigade);
+    }
+    if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
+      context->selected_body = apr_pmemdup(
+          request->pool, prepared.selected.data, prepared.selected.length);
+      context->selected_length = prepared.selected.length;
+      if (context->selected_body == NULL) {
+        laghu_http_transaction_result_release(&prepared);
+        ap_remove_output_filter(filter);
+        return ap_pass_brigade(filter->next, brigade);
+      }
+      context->cache_hit = true;
+    } else {
+      context->capture_capacity = prepared.capture_limit;
+      if (context->response.has_declared_length &&
+          context->response.declared_length < context->capture_capacity) {
+        context->capture_capacity = context->response.declared_length;
+      }
+      context->capture = apr_palloc(request->pool, context->capture_capacity);
+      context->capture_enabled = context->capture != NULL;
+      if (!context->capture_enabled) {
+        laghu_http_transaction_result_release(&prepared);
+        ap_remove_output_filter(filter);
+        return ap_pass_brigade(filter->next, brigade);
+      }
+    }
+    laghu_http_transaction_result_release(&prepared);
+    filter->ctx = context;
+  }
+  if (context->cache_hit) {
+    apr_bucket_brigade *replacement;
+    if (context->cache_sent) {
+      apr_brigade_cleanup(brigade);
+      return APR_SUCCESS;
+    }
+    replacement =
+        apr_brigade_create(request->pool, request->connection->bucket_alloc);
+    if (replacement == NULL) {
+      return ap_pass_brigade(filter->next, brigade);
+    }
+    APR_BRIGADE_INSERT_TAIL(
+        replacement,
+        apr_bucket_pool_create((const char *)context->selected_body,
+                               context->selected_length, request->pool,
+                               request->connection->bucket_alloc));
+    APR_BRIGADE_INSERT_TAIL(
+        replacement, apr_bucket_eos_create(request->connection->bucket_alloc));
+    context->cache_sent = true;
+    apr_brigade_cleanup(brigade);
+    ap_remove_output_filter(filter);
+    return ap_pass_brigade(filter->next, replacement);
+  }
+  for (bucket = APR_BRIGADE_FIRST(brigade);
+       bucket != APR_BRIGADE_SENTINEL(brigade);
+       bucket = APR_BUCKET_NEXT(bucket)) {
+    const char *data;
+    apr_size_t length;
+    apr_status_t status;
+    if (APR_BUCKET_IS_EOS(bucket)) {
+      eos = true;
+      continue;
+    }
+    if (APR_BUCKET_IS_METADATA(bucket)) {
+      continue;
+    }
+    status = apr_bucket_read(bucket, &data, &length, APR_NONBLOCK_READ);
+    if (status != APR_SUCCESS ||
+        length > context->capture_capacity - context->capture_length) {
+      context->capture_enabled = false;
+      break;
+    }
+    memcpy(context->capture + context->capture_length, data, length);
+    context->capture_length += length;
+  }
+  if (eos && context->capture_enabled) {
+    laghu_http_transaction_result result;
+    (void)laghu_http_transaction_finalize(
+        &context->transaction,
+        (laghu_buffer){context->capture, context->capture_length}, &result);
+    if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
+        context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS) {
+      apr_bucket_brigade *replacement;
+      unsigned char *selected = apr_pmemdup(request->pool, result.selected.data,
+                                            result.selected.length);
+      if (selected == NULL || !laghu_apache_apply_result(request, &result)) {
+        laghu_http_transaction_result_release(&result);
+        ap_remove_output_filter(filter);
+        return ap_pass_brigade(filter->next, brigade);
+      }
+      context->selected_length = result.selected.length;
+      laghu_http_transaction_result_release(&result);
+      replacement =
+          apr_brigade_create(request->pool, request->connection->bucket_alloc);
+      if (replacement == NULL) {
+        return ap_pass_brigade(filter->next, brigade);
+      }
+      APR_BRIGADE_INSERT_TAIL(
+          replacement, apr_bucket_pool_create(
+                           (const char *)selected, context->selected_length,
+                           request->pool, request->connection->bucket_alloc));
+      APR_BRIGADE_INSERT_TAIL(
+          replacement,
+          apr_bucket_eos_create(request->connection->bucket_alloc));
+      apr_brigade_cleanup(brigade);
+      ap_remove_output_filter(filter);
+      return ap_pass_brigade(filter->next, replacement);
+    }
+    laghu_http_transaction_result_release(&result);
+    context->capture_enabled = false;
+  }
+  if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
+      context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS) {
+    apr_bucket_brigade *metadata =
+        apr_brigade_create(request->pool, request->connection->bucket_alloc);
+    for (bucket = APR_BRIGADE_FIRST(brigade);
+         bucket != APR_BRIGADE_SENTINEL(brigade);
+         bucket = APR_BUCKET_NEXT(bucket)) {
+      if (APR_BUCKET_IS_METADATA(bucket) && !APR_BUCKET_IS_EOS(bucket)) {
+        apr_bucket *copy = NULL;
+        if (apr_bucket_copy(bucket, &copy) == APR_SUCCESS) {
+          APR_BRIGADE_INSERT_TAIL(metadata, copy);
+        }
+      }
+    }
+    apr_brigade_cleanup(brigade);
+    if (!APR_BRIGADE_EMPTY(metadata)) {
+      return ap_pass_brigade(filter->next, metadata);
+    }
+    return APR_SUCCESS;
+  }
+  if (eos) {
+    ap_remove_output_filter(filter);
+  }
+  return ap_pass_brigade(filter->next, brigade);
+}
+
 static void laghu_apache_insert_filter(request_rec *request) {
   laghu_apache_config *server_config =
       ap_get_module_config(request->server->module_config, &laghu_module);
@@ -1036,16 +1356,44 @@ static int laghu_apache_variant_handler(request_rec *request) {
       }
     }
   }
-  if (!laghu_runtime_cache_lookup_variant(config->image_cache != NULL
-                                              ? config->image_cache
-                                              : LAGHU_DEFAULT_CACHE,
-                                          key, &entry) ||
-      entry.length == 0U || entry.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
-    return HTTP_NOT_FOUND;
-  }
-  body = apr_palloc(request->pool, entry.length);
-  if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
-    return HTTP_NOT_FOUND;
+  {
+    laghu_apache_context transaction_context;
+    laghu_http_transaction_result result;
+    const laghu_http_header_operation *operation;
+    size_t index;
+    memset(&transaction_context, 0, sizeof(transaction_context));
+    memset(&result, 0, sizeof(result));
+    transaction_context.config = config;
+    request->status = HTTP_OK;
+    request->clength = 0;
+    if (!laghu_apache_normalize(request, &transaction_context) ||
+        !laghu_http_transaction_prepare(
+            &transaction_context.transaction, &transaction_context.request,
+            &transaction_context.response, &transaction_context.environment,
+            &result) ||
+        result.action != LAGHU_HTTP_ACTION_SERVE_CACHED ||
+        result.selected.length == 0U ||
+        result.selected.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
+      laghu_http_transaction_result_release(&result);
+      return HTTP_NOT_FOUND;
+    }
+    body = apr_pmemdup(request->pool, result.selected.data,
+                       result.selected.length);
+    if (body == NULL || !laghu_apache_apply_result(request, &result)) {
+      laghu_http_transaction_result_release(&result);
+      return HTTP_INTERNAL_SERVER_ERROR;
+    }
+    entry.length = result.selected.length;
+    entry.content_type[0] = '\0';
+    for (index = 0U; index < result.header_operation_count; ++index) {
+      operation = &result.header_operations[index];
+      if (strcmp(operation->name, "Content-Type") == 0 &&
+          operation->value != NULL) {
+        apr_cpystrn(entry.content_type, operation->value,
+                    sizeof(entry.content_type));
+      }
+    }
+    laghu_http_transaction_result_release(&result);
   }
   ap_set_content_type(request, css_asset ? "text/css" : entry.content_type);
   ap_set_content_length(request, (apr_off_t)entry.length);
@@ -1062,7 +1410,8 @@ static int laghu_apache_variant_handler(request_rec *request) {
 
 static void laghu_apache_register(apr_pool_t *pool) {
   (void)pool;
-  ap_register_output_filter(LAGHU_APACHE_FILTER, laghu_apache_filter, NULL,
+  ap_register_output_filter(LAGHU_APACHE_FILTER,
+                            laghu_apache_transaction_filter, NULL,
                             AP_FTYPE_RESOURCE);
   ap_hook_insert_filter(laghu_apache_insert_filter, NULL, NULL,
                         APR_HOOK_MIDDLE);
