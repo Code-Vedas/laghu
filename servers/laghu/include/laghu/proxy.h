@@ -23,6 +23,20 @@ extern "C" {
 #define LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT 5U
 #define LAGHU_PROXY_DEFAULT_IO_TIMEOUT 30U
 #define LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT 30U
+#define LAGHU_PROXY_MAX_TRUSTED_PROXIES 64U
+
+typedef enum {
+  LAGHU_PROXY_FORWARDED_OFF = 0,
+  LAGHU_PROXY_FORWARDED_STANDARD,
+  LAGHU_PROXY_FORWARDED_X,
+  LAGHU_PROXY_FORWARDED_BOTH
+} laghu_proxy_forwarded_mode;
+
+typedef struct {
+  unsigned char address[16];
+  unsigned int family;
+  unsigned int prefix;
+} laghu_proxy_cidr;
 
 typedef struct {
   char listen_host[256];
@@ -30,6 +44,7 @@ typedef struct {
   char origin_host[256];
   char origin_port[6];
   char origin_authority[264];
+  char origin_ca_file[LAGHU_RUNTIME_PATH_SIZE];
   char cache_path[LAGHU_RUNTIME_PATH_SIZE];
   char worker_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_config config;
@@ -38,6 +53,10 @@ typedef struct {
   unsigned int connect_timeout;
   unsigned int io_timeout;
   unsigned int drain_timeout;
+  laghu_proxy_forwarded_mode forwarded_mode;
+  laghu_proxy_cidr trusted_proxies[LAGHU_PROXY_MAX_TRUSTED_PROXIES];
+  size_t trusted_proxy_count;
+  bool origin_tls;
   bool service_mode;
 } laghu_proxy_options;
 

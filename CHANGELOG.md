@@ -8,8 +8,10 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Verified OpenSSL 3.x HTTPS origins and explicit trusted-forwarding policy for the standalone proxy.
 - Portable standalone `laghu` reverse proxy with bounded HTTP/1.1 request and origin framing, fixed worker-pool backpressure, POSIX and WinSock transport backends, shared `laghu-http` optimization, immutable internal assets, and privacy-bounded beacon handling.
 - Standalone proxy graceful drain and forced cancellation, local health/readiness probes, cache and worker-state validation, Windows service dispatch, privacy-safe JSON Lines, and rootless read-only-container validation.
+- Native Windows AMD64 validation for the Win32 queue/cache runtime, HTTP transaction engine, WinSock proxy, verified TLS origins, trusted forwarding, overload rejection, and Windows Service Control Manager lifecycle.
 - ABI-versioned `laghu-http` prepare/finalize transaction engine with bounded normalized HTTP inputs, atomic body/header results, warm cache lookup, shared HTML/CSS/image orchestration, try-only job publication, frozen conformance vectors, and original-preserving failure behavior without NGINX or APR types.
 - NGINX and Apache response adapters now consume `laghu-http` for eligibility, live worker resolution, capture planning, warm lookup, HTML/CSS/image finalization, immutable asset delivery, dependency identity, body selection, and ordered header operations while retaining native chain and brigade transport mechanics.
 - Conflict-safe `Content-Language` meta conversion plus bounded, deduplicated stylesheet/image preload and third-party DNS-prefetch response headers from the shared cold-original HTML planner, with no resource fetching.

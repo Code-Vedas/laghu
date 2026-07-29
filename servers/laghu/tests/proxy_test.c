@@ -55,6 +55,34 @@ int main(void) {
                        "/tmp/jobs",
                        "--drain-timeout",
                        "0"};
+  char *secure[] = {"laghu",
+                    "--listen",
+                    "127.0.0.1:8080",
+                    "--origin",
+                    "https://example.test",
+                    "--cache",
+                    "/tmp/cache",
+                    "--worker-queue",
+                    "/tmp/jobs",
+                    "--origin-ca-file",
+                    "/tmp/ca.pem",
+                    "--forwarded-headers",
+                    "both",
+                    "--trusted-proxy",
+                    "127.0.0.0/8",
+                    "--trusted-proxy",
+                    "2001:db8::/32"};
+  char *bad_cidr[] = {"laghu",
+                      "--listen",
+                      "127.0.0.1:8080",
+                      "--origin",
+                      "http://127.0.0.1:8000",
+                      "--cache",
+                      "/tmp/cache",
+                      "--worker-queue",
+                      "/tmp/jobs",
+                      "--trusted-proxy",
+                      "127.0.0.1/8"};
   static const unsigned char chunked[] = "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
   unsigned char decoded[16];
   size_t decoded_length = 0U;
@@ -65,6 +93,15 @@ int main(void) {
   CHECK(!strcmp(options.origin_port, "8000"));
   CHECK(options.config.allow_api == LAGHU_MODE_ON);
   CHECK(options.drain_timeout == 45U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(17, secure, &options, error, sizeof(error)) ==
+        LAGHU_PROXY_PARSE_OK);
+  CHECK(options.origin_tls && !strcmp(options.origin_port, "443"));
+  CHECK(options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
+  CHECK(options.trusted_proxy_count == 2U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, bad_cidr, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
 #ifndef _WIN32
   {
     char *service[] = {"laghu", "--service"};

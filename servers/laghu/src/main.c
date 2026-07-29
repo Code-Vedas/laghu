@@ -9,14 +9,17 @@
 
 static void usage(FILE *stream) {
   fputs(
-      "Usage: laghu --listen HOST:PORT --origin http://HOST[:PORT] "
+      "Usage: laghu --listen HOST:PORT --origin http[s]://HOST[:PORT] "
       "--cache PATH --worker-queue PATH [options]\n"
       "Options:\n"
       "  --preset NAME | --rewrite-level NAME\n"
       "  --allow-api --image-beacon --image-quality 1..100\n"
       "  --workers N --connection-queue N\n"
       "  --connect-timeout SECONDS --io-timeout SECONDS\n"
-      "  --drain-timeout SECONDS\n",
+      "  --drain-timeout SECONDS\n"
+      "  --origin-ca-file PATH\n"
+      "  --forwarded-headers off|forwarded|x-forwarded|both\n"
+      "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
       stream);
 #ifdef _WIN32
   fputs("  --service\n", stream);

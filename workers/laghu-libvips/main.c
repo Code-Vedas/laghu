@@ -255,7 +255,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     raise(SIGABRT);
   }
   if (delay != NULL && strcmp(delay, "2") == 0) {
-    sleep(2U);
+    laghu_libvips_pause(2000U);
   }
 #endif
 

@@ -6,7 +6,7 @@ permalink: /standalone-proxy/
 
 # Standalone Proxy
 
-The `laghu` executable applies the same `laghu-http` policy and transformation engine as the NGINX and Apache adapters to one configured HTTP origin. It is suitable when the origin cannot load a native module.
+The `laghu` executable applies the same `laghu-http` policy and transformation engine as the NGINX and Apache adapters to one configured HTTP or HTTPS origin. It is suitable when the origin cannot load a native module.
 
 Start a development build with explicit listener, origin, cache, and worker-queue paths:
 
@@ -18,13 +18,15 @@ laghu \
   --worker-queue /run/laghu/jobs.queue
 ```
 
-The origin must be an `http://` authority without credentials, a path prefix, a query, or a fragment. The proxy uses the balanced preset unless `--preset` or `--rewrite-level` selects another shared policy. `--allow-api`, `--image-quality`, and `--image-beacon` expose the corresponding process-wide settings.
+The origin must be an `http://` or `https://` authority without credentials, a path prefix, a query, or a fragment. HTTPS requires OpenSSL 3.x, TLS 1.2 or newer, system trust, certificate-chain verification, hostname or IP-address verification, and HTTP/1.1 ALPN. `--origin-ca-file` adds a private CA without replacing system trust. Laghu has no certificate-verification bypass. The proxy uses the balanced preset unless `--preset` or `--rewrite-level` selects another shared policy.
 
 The transport accepts one HTTP/1.0 or HTTP/1.1 request per connection and always closes both downstream and origin connections after that transaction. Four worker threads and 64 queued connections are the defaults. `--workers`, `--connection-queue`, `--connect-timeout`, and `--io-timeout` set bounded alternatives.
 
 Request metadata is limited to 64 headers and 64 KiB, with 8 KiB request lines and header values. Fixed-length request bodies are accepted up to 1 MiB. Chunked requests, upgrades, `CONNECT`, `TRACE`, ambiguous framing, and malformed headers are rejected. Origin responses may use fixed-length, chunked, or connection-close framing and captured optimization inputs remain subject to their existing HTML, CSS, and image limits.
 
-The proxy removes hop-by-hop headers, replaces `Host` with the configured origin authority, and does not add or trust forwarding headers. It performs no origin retries. A transformation, worker, queue, or cache failure preserves a complete origin response; an unavailable or malformed origin produces `502 Bad Gateway`.
+The proxy removes hop-by-hop headers, replaces `Host` with the configured origin authority, and strips every inbound `Forwarded` and `X-Forwarded-*` value. `--forwarded-headers forwarded|x-forwarded|both` enables deterministic forwarding output. Repeated `--trusted-proxy` CIDRs allow valid chains from those immediate peers to be retained and extended; untrusted or invalid chains are replaced. No peer is implicitly trusted, and forwarding values and peer addresses are never logged.
+
+TLS connection, handshake, read, and write work remains bounded by the configured deadlines and participates in graceful cancellation. Laghu sends SNI for DNS origins and verifies IP-address subject alternative names for literal origins. It performs no origin retries. A transformation, worker, queue, or cache failure preserves a complete origin response; an unavailable, untrusted, or malformed origin produces `502 Bad Gateway`.
 
 The `/.laghu/image/<sha256>` and `/.laghu/css/<sha256>` routes are served locally through validated content-addressed lookup and are never forwarded. Enabling the image beacon also exposes its fixed script and bounded same-origin POST endpoint locally.
 
@@ -40,4 +42,4 @@ The cache directory must exist and permit exclusive create, write, sync, and rem
 
 The proxy writes JSON Lines to standard error. Lifecycle, readiness, overload, and transaction records include bounded operational fields. Transaction paths omit query strings, and records never contain client addresses, authorities, authorization, cookies, bodies, beacon payloads, cache paths, or queue paths. Logs remain local; the proxy sends no telemetry.
 
-This transport is plaintext HTTP. TLS, persistent connections, origin pooling, HTTP/2, HTTP/3, and trusted-forwarded-header policy remain separate production-hardening capabilities.
+Downstream transport remains plaintext HTTP. Persistent connections, origin pooling, downstream TLS, HTTP/2, and HTTP/3 remain separate production-hardening capabilities.

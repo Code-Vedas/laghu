@@ -6,7 +6,8 @@
 FROM ubuntu:24.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake python3 && rm -rf /var/lib/apt/lists/*
+    build-essential cmake libssl-dev openssl python3 && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 COPY . /workspace
 RUN cmake -S . -B /build -DLAGHU_WITH_VIPS=OFF -DLAGHU_BUILD_TESTS=ON && \
@@ -14,7 +15,8 @@ RUN cmake -S . -B /build -DLAGHU_WITH_VIPS=OFF -DLAGHU_BUILD_TESTS=ON && \
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3t64 openssl python3 && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /build /opt/laghu-build
 COPY --from=build /workspace/servers/laghu/tests/proxy_smoke.py \

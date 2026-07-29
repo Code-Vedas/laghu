@@ -90,7 +90,9 @@ jobs:
       - name: Install libvips on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: vcpkg install "libvips[jpeg,png,webp]:${{ matrix.triplet }}"
+        run: >-
+          vcpkg install "libvips[jpeg,png,webp]:${{ matrix.triplet }}"
+          "openssl[tools]:${{ matrix.triplet }}"
       - name: Build libraries and runtime
         if: runner.os != 'Windows'
         run: scripts/run-build-all

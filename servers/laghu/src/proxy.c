@@ -7,6 +7,8 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +28,7 @@ typedef int laghu_socklen;
 #define LAGHU_SHUT_WRITE SD_SEND
 #define LAGHU_SHUT_BOTH SD_BOTH
 #else
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <pthread.h>
@@ -74,6 +77,12 @@ typedef struct {
   bool chunked;
 } proxy_response;
 
+typedef struct {
+  laghu_socket socket;
+  struct sockaddr_storage peer;
+  laghu_socklen peer_length;
+} proxy_connection;
+
 typedef enum {
   PROXY_STARTING = 0,
   PROXY_RUNNING,
@@ -86,7 +95,7 @@ struct proxy_worker;
 
 typedef struct {
   const laghu_proxy_options *options;
-  laghu_socket *items;
+  proxy_connection *items;
   unsigned int capacity;
   unsigned int head;
   unsigned int count;
@@ -99,6 +108,7 @@ typedef struct {
   unsigned int active_count;
   proxy_lifecycle_state state;
   bool stopping;
+  SSL_CTX *tls_context;
 #ifdef _WIN32
   CRITICAL_SECTION lock;
   CONDITION_VARIABLE ready;
@@ -216,9 +226,18 @@ static bool proxy_origin(const char *value, laghu_proxy_options *options) {
   const char *authority;
   const char *separator;
   size_t length;
-  unsigned int port = 80U;
-  if (value == NULL || strncmp(value, "http://", 7U) != 0) return false;
-  authority = value + 7U;
+  unsigned int port;
+  if (value != NULL && strncmp(value, "http://", 7U) == 0) {
+    options->origin_tls = false;
+    authority = value + 7U;
+    port = 80U;
+  } else if (value != NULL && strncmp(value, "https://", 8U) == 0) {
+    options->origin_tls = true;
+    authority = value + 8U;
+    port = 443U;
+  } else {
+    return false;
+  }
   if (*authority == '\0' || strpbrk(authority, "/?#@") != NULL) return false;
   length = strlen(authority);
   if (length >= sizeof(options->origin_authority)) return false;
@@ -256,6 +275,44 @@ static bool proxy_origin(const char *value, laghu_proxy_options *options) {
   return true;
 }
 
+static bool proxy_parse_cidr(const char *value, laghu_proxy_cidr *cidr) {
+  char address[INET6_ADDRSTRLEN];
+  const char *slash = value == NULL ? NULL : strrchr(value, '/');
+  unsigned int maximum, prefix;
+  size_t length;
+  unsigned int index;
+  if (slash == NULL || slash == value) return false;
+  length = (size_t)(slash - value);
+  if (length >= sizeof(address) || !proxy_uint(slash + 1, 0U, 128U, &prefix))
+    return false;
+  memcpy(address, value, length);
+  address[length] = '\0';
+  memset(cidr, 0, sizeof(*cidr));
+  if (inet_pton(AF_INET, address, cidr->address) == 1) {
+    cidr->family = AF_INET;
+    maximum = 32U;
+  } else if (inet_pton(AF_INET6, address, cidr->address) == 1) {
+    cidr->family = AF_INET6;
+    maximum = 128U;
+  } else {
+    return false;
+  }
+  if (prefix > maximum) return false;
+  cidr->prefix = prefix;
+  for (index = prefix; index < maximum; ++index)
+    if ((cidr->address[index / 8U] &
+         (unsigned char)(1U << (7U - index % 8U))) != 0U)
+      return false;
+  return true;
+}
+
+static bool proxy_cidr_equal(const laghu_proxy_cidr *left,
+                             const laghu_proxy_cidr *right) {
+  size_t length = left->family == AF_INET ? 4U : 16U;
+  return left->family == right->family && left->prefix == right->prefix &&
+         memcmp(left->address, right->address, length) == 0;
+}
+
 void laghu_proxy_options_init(laghu_proxy_options *options) {
   laghu_config child;
   memset(options, 0, sizeof(*options));
@@ -285,6 +342,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
+  bool ca_seen = false, forwarded_seen = false;
   int index;
   if (options == NULL || argc < 1)
     return proxy_error(error, error_size, "invalid arguments");
@@ -389,6 +447,40 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --drain-timeout");
       drain_timeout_seen = true;
+    } else if (strcmp(name, "--origin-ca-file") == 0) {
+      NEED_VALUE();
+      if (ca_seen || !proxy_copy(options->origin_ca_file,
+                                 sizeof(options->origin_ca_file), value))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --origin-ca-file");
+      ca_seen = true;
+    } else if (strcmp(name, "--forwarded-headers") == 0) {
+      NEED_VALUE();
+      if (forwarded_seen)
+        return proxy_error(error, error_size, "duplicate --forwarded-headers");
+      if (strcmp(value, "off") == 0)
+        options->forwarded_mode = LAGHU_PROXY_FORWARDED_OFF;
+      else if (strcmp(value, "forwarded") == 0)
+        options->forwarded_mode = LAGHU_PROXY_FORWARDED_STANDARD;
+      else if (strcmp(value, "x-forwarded") == 0)
+        options->forwarded_mode = LAGHU_PROXY_FORWARDED_X;
+      else if (strcmp(value, "both") == 0)
+        options->forwarded_mode = LAGHU_PROXY_FORWARDED_BOTH;
+      else
+        return proxy_error(error, error_size, "invalid --forwarded-headers");
+      forwarded_seen = true;
+    } else if (strcmp(name, "--trusted-proxy") == 0) {
+      laghu_proxy_cidr parsed;
+      size_t cidr_index;
+      NEED_VALUE();
+      if (options->trusted_proxy_count == LAGHU_PROXY_MAX_TRUSTED_PROXIES ||
+          !proxy_parse_cidr(value, &parsed))
+        return proxy_error(error, error_size, "invalid --trusted-proxy");
+      for (cidr_index = 0U; cidr_index < options->trusted_proxy_count;
+           ++cidr_index)
+        if (proxy_cidr_equal(&parsed, &options->trusted_proxies[cidr_index]))
+          return proxy_error(error, error_size, "duplicate --trusted-proxy");
+      options->trusted_proxies[options->trusted_proxy_count++] = parsed;
     } else if (strcmp(name, "--service") == 0) {
 #ifdef _WIN32
       if (options->service_mode)
@@ -407,6 +499,13 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     return proxy_error(
         error, error_size,
         "--listen, --origin, --cache, and --worker-queue are required");
+  if (ca_seen && !options->origin_tls)
+    return proxy_error(error, error_size,
+                       "--origin-ca-file requires an https origin");
+  if (options->trusted_proxy_count != 0U &&
+      options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF)
+    return proxy_error(error, error_size,
+                       "--trusted-proxy requires forwarded headers");
   return LAGHU_PROXY_PARSE_OK;
 }
 
@@ -673,6 +772,186 @@ static bool proxy_connection_nominates(const proxy_header *headers,
   return false;
 }
 
+static bool proxy_forwarding_name(const char *name) {
+  return proxy_name_equal(name, "Forwarded") ||
+         proxy_name_equal(name, "X-Forwarded-For") ||
+         proxy_name_equal(name, "X-Forwarded-Proto") ||
+         proxy_name_equal(name, "X-Forwarded-Host");
+}
+
+static bool proxy_peer_trusted(const laghu_proxy_options *options,
+                               const proxy_connection *connection) {
+  const unsigned char *peer;
+  size_t index;
+  unsigned int family;
+  if (connection->peer.ss_family == AF_INET) {
+    peer =
+        (const unsigned char *)&((const struct sockaddr_in *)&connection->peer)
+            ->sin_addr;
+    family = AF_INET;
+  } else if (connection->peer.ss_family == AF_INET6) {
+    peer =
+        (const unsigned char *)&((const struct sockaddr_in6 *)&connection->peer)
+            ->sin6_addr;
+    family = AF_INET6;
+  } else {
+    return false;
+  }
+  for (index = 0U; index < options->trusted_proxy_count; ++index) {
+    const laghu_proxy_cidr *cidr = &options->trusted_proxies[index];
+    unsigned int bit;
+    bool equal = cidr->family == family;
+    for (bit = 0U; equal && bit < cidr->prefix; ++bit)
+      equal = (peer[bit / 8U] & (1U << (7U - bit % 8U))) ==
+              (cidr->address[bit / 8U] & (1U << (7U - bit % 8U)));
+    if (equal) return true;
+  }
+  return false;
+}
+
+static bool proxy_peer_text(const proxy_connection *connection, char *output,
+                            size_t capacity, bool bracket_ipv6) {
+  const void *address;
+  char raw[INET6_ADDRSTRLEN];
+  int family = connection->peer.ss_family;
+  if (family == AF_INET)
+    address = &((const struct sockaddr_in *)&connection->peer)->sin_addr;
+  else if (family == AF_INET6)
+    address = &((const struct sockaddr_in6 *)&connection->peer)->sin6_addr;
+  else
+    return false;
+  if (inet_ntop(family, address, raw, sizeof(raw)) == NULL) return false;
+  if (family == AF_INET6 && bracket_ipv6) {
+    int count = snprintf(output, capacity, "\"[%s]\"", raw);
+    return count > 0 && (size_t)count < capacity;
+  }
+  return proxy_copy(output, capacity, raw);
+}
+
+static const char *proxy_single_header(const proxy_request *request,
+                                       const char *name) {
+  const char *value = NULL;
+  size_t index;
+  for (index = 0U; index < request->header_count; ++index) {
+    size_t offset;
+    if (!proxy_name_equal(request->headers[index].name, name)) continue;
+    if (value != NULL || request->headers[index].value[0] == '\0' ||
+        strlen(request->headers[index].value) > LAGHU_HTTP_MAX_HEADER_VALUE)
+      return NULL;
+    for (offset = 0U; request->headers[index].value[offset] != '\0'; ++offset)
+      if ((unsigned char)request->headers[index].value[offset] < 32U ||
+          (unsigned char)request->headers[index].value[offset] == 127U)
+        return NULL;
+    value = request->headers[index].value;
+  }
+  return value;
+}
+
+static bool proxy_forwarded_value_valid(const char *value) {
+  bool quoted = false, escaped = false, content = false, equals = false;
+  size_t index;
+  for (index = 0U; value[index] != '\0'; ++index) {
+    unsigned char byte = (unsigned char)value[index];
+    if (escaped) {
+      escaped = false;
+      content = true;
+    } else if (quoted && byte == '\\') {
+      escaped = true;
+    } else if (byte == '"') {
+      quoted = !quoted;
+      content = true;
+    } else if (!quoted && byte == ',') {
+      if (!content || !equals) return false;
+      content = false;
+      equals = false;
+    } else if (!quoted && byte == '=') {
+      equals = true;
+      content = true;
+    } else if (byte != ' ' && byte != '\t') {
+      content = true;
+    }
+  }
+  return content && equals && !quoted && !escaped;
+}
+
+static bool proxy_xff_value_valid(const char *value) {
+  const char *cursor = value;
+  while (*cursor != '\0') {
+    const char *comma = strchr(cursor, ',');
+    const char *end = comma == NULL ? cursor + strlen(cursor) : comma;
+    char address[INET6_ADDRSTRLEN];
+    unsigned char binary[16];
+    size_t length;
+    while (*cursor == ' ' || *cursor == '\t') ++cursor;
+    while (end > cursor && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    length = (size_t)(end - cursor);
+    if (length == 0U || length >= sizeof(address)) return false;
+    memcpy(address, cursor, length);
+    address[length] = '\0';
+    if (inet_pton(AF_INET, address, binary) != 1 &&
+        inet_pton(AF_INET6, address, binary) != 1)
+      return false;
+    cursor = comma == NULL ? end : comma + 1;
+  }
+  return true;
+}
+
+static bool proxy_append_line(char *output, size_t capacity, size_t *length,
+                              const char *name, const char *existing,
+                              const char *value) {
+  int count = snprintf(output + *length, capacity - *length, "%s: %s%s%s\r\n",
+                       name, existing == NULL ? "" : existing,
+                       existing == NULL ? "" : ", ", value);
+  if (count <= 0 || (size_t)count >= capacity - *length) return false;
+  *length += (size_t)count;
+  return true;
+}
+
+static bool proxy_append_forwarding(const laghu_proxy_options *options,
+                                    const proxy_connection *connection,
+                                    const proxy_request *request,
+                                    const char *host, char *output,
+                                    size_t capacity, size_t *length) {
+  bool trusted = proxy_peer_trusted(options, connection);
+  char peer[INET6_ADDRSTRLEN + 4U];
+  const char *existing;
+  size_t host_index;
+  if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF) return true;
+  for (host_index = 0U; host[host_index] != '\0'; ++host_index)
+    if (!isalnum((unsigned char)host[host_index]) && host[host_index] != '.' &&
+        host[host_index] != '-' && host[host_index] != ':' &&
+        host[host_index] != '[' && host[host_index] != ']')
+      return false;
+  if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_STANDARD ||
+      options->forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
+    char standard[INET6_ADDRSTRLEN + 300U];
+    if (!proxy_peer_text(connection, peer, sizeof(peer), true) ||
+        snprintf(standard, sizeof(standard), "for=%s;proto=http;host=\"%s\"",
+                 peer, host) <= 0)
+      return false;
+    existing = trusted ? proxy_single_header(request, "Forwarded") : NULL;
+    if (existing != NULL && !proxy_forwarded_value_valid(existing))
+      existing = NULL;
+    if (!proxy_append_line(output, capacity, length, "Forwarded", existing,
+                           standard))
+      return false;
+  }
+  if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_X ||
+      options->forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
+    if (!proxy_peer_text(connection, peer, sizeof(peer), false)) return false;
+    existing = trusted ? proxy_single_header(request, "X-Forwarded-For") : NULL;
+    if (existing != NULL && !proxy_xff_value_valid(existing)) existing = NULL;
+    if (!proxy_append_line(output, capacity, length, "X-Forwarded-For",
+                           existing, peer) ||
+        !proxy_append_line(output, capacity, length, "X-Forwarded-Proto", NULL,
+                           "http") ||
+        !proxy_append_line(output, capacity, length, "X-Forwarded-Host", NULL,
+                           host))
+      return false;
+  }
+  return true;
+}
+
 static void proxy_timeout(laghu_socket socket, unsigned int seconds) {
 #ifdef _WIN32
   DWORD value = seconds * 1000U;
@@ -708,13 +987,144 @@ static bool proxy_socket_timed_out(void) {
 #endif
 }
 
-static bool proxy_read_headers(laghu_socket socket, char *buffer,
+static int proxy_origin_recv(laghu_socket socket, SSL *tls, void *data,
+                             size_t length) {
+  if (tls == NULL) return recv(socket, data, (int)length, 0);
+  return SSL_read(tls, data, (int)length);
+}
+
+static bool proxy_origin_send_all(laghu_socket socket, SSL *tls,
+                                  const void *data, size_t length) {
+  const unsigned char *bytes = data;
+  if (tls == NULL) return proxy_send_all(socket, data, length);
+  while (length != 0U) {
+    int sent = SSL_write(tls, bytes, (int)(length > 65536U ? 65536U : length));
+    if (sent <= 0) return false;
+    bytes += sent;
+    length -= (size_t)sent;
+  }
+  return true;
+}
+
+static SSL_CTX *proxy_tls_context(const laghu_proxy_options *options) {
+  SSL_CTX *context;
+  if (!options->origin_tls) return NULL;
+  context = SSL_CTX_new(TLS_client_method());
+  if (context == NULL) return NULL;
+  if (!SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) ||
+      !SSL_CTX_set_default_verify_paths(context) ||
+      (options->origin_ca_file[0] != '\0' &&
+       !SSL_CTX_load_verify_locations(context, options->origin_ca_file,
+                                      NULL))) {
+    SSL_CTX_free(context);
+    return NULL;
+  }
+  SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+  SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
+  return context;
+}
+
+static SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket,
+                                const char *host, unsigned int timeout,
+                                bool *timed_out) {
+  static const unsigned char alpn[] = {8U,  'h', 't', 't', 'p',
+                                       '/', '1', '.', '1'};
+  SSL *tls = SSL_new(worker->queue->tls_context);
+  X509_VERIFY_PARAM *parameters;
+  bool ip_literal;
+  bool complete = false;
+  uint64_t deadline;
+#ifdef _WIN32
+  u_long nonblocking = 1U;
+#else
+  int flags = fcntl(socket, F_GETFL, 0);
+#endif
+  *timed_out = false;
+  if (tls == NULL) return NULL;
+  ip_literal = inet_pton(AF_INET, host, (unsigned char[4]){0}) == 1 ||
+               inet_pton(AF_INET6, host, (unsigned char[16]){0}) == 1;
+  parameters = SSL_get0_param(tls);
+  if ((ip_literal && !X509_VERIFY_PARAM_set1_ip_asc(parameters, host)) ||
+      (!ip_literal &&
+       (!SSL_set_tlsext_host_name(tls, host) || !SSL_set1_host(tls, host))) ||
+      SSL_set_alpn_protos(tls, alpn, sizeof(alpn)) != 0 ||
+      !SSL_set_fd(tls, (int)socket)) {
+    SSL_free(tls);
+    return NULL;
+  }
+#ifdef _WIN32
+  if (ioctlsocket(socket, FIONBIO, &nonblocking) != 0) {
+#else
+  if (flags < 0 || fcntl(socket, F_SETFL, flags | O_NONBLOCK) < 0) {
+#endif
+    SSL_free(tls);
+    return NULL;
+  }
+  deadline = proxy_monotonic_ms() + (uint64_t)timeout * 1000U;
+  for (;;) {
+    int result = SSL_connect(tls);
+    int error;
+    fd_set set;
+    struct timeval wait = {0, 200000};
+    if (result == 1) {
+      complete = true;
+      break;
+    }
+    error = SSL_get_error(tls, result);
+    if (proxy_monotonic_ms() >= deadline) {
+      *timed_out = true;
+#ifdef _WIN32
+      WSASetLastError(WSAETIMEDOUT);
+#else
+      errno = ETIMEDOUT;
+#endif
+      break;
+    }
+    if ((error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) ||
+        proxy_is_forcing(worker->queue)) {
+      break;
+    }
+    FD_ZERO(&set);
+    FD_SET(socket, &set);
+#ifdef _WIN32
+    (void)select(0, error == SSL_ERROR_WANT_READ ? &set : NULL,
+                 error == SSL_ERROR_WANT_WRITE ? &set : NULL, NULL, &wait);
+#else
+    (void)select(socket + 1, error == SSL_ERROR_WANT_READ ? &set : NULL,
+                 error == SSL_ERROR_WANT_WRITE ? &set : NULL, NULL, &wait);
+#endif
+  }
+#ifdef _WIN32
+  nonblocking = 0U;
+  (void)ioctlsocket(socket, FIONBIO, &nonblocking);
+#else
+  (void)fcntl(socket, F_SETFL, flags);
+#endif
+  if (!complete) {
+    SSL_free(tls);
+    return NULL;
+  }
+  {
+    const unsigned char *selected = NULL;
+    unsigned int selected_length = 0U;
+    SSL_get0_alpn_selected(tls, &selected, &selected_length);
+    if (SSL_get_verify_result(tls) != X509_V_OK ||
+        (selected_length != 0U &&
+         (selected_length != 8U || memcmp(selected, "http/1.1", 8U) != 0))) {
+      SSL_free(tls);
+      return NULL;
+    }
+  }
+  return tls;
+}
+
+static bool proxy_read_headers(laghu_socket socket, char *buffer, SSL *tls,
                                size_t *length, unsigned char **body_start,
                                size_t *body_initial) {
   size_t used = 0U;
   while (used < LAGHU_PROXY_HEADER_BYTES) {
-    int got =
-        recv(socket, buffer + used, (int)(LAGHU_PROXY_HEADER_BYTES - used), 0);
+    int got = proxy_origin_recv(socket, tls, buffer + used,
+                                LAGHU_PROXY_HEADER_BYTES - used);
     char *end;
     if (got <= 0) return false;
     used += (size_t)got;
@@ -844,8 +1254,7 @@ static void proxy_reject_connection(proxy_queue *queue, laghu_socket client,
   (void)shutdown(client, LAGHU_SHUT_WRITE);
 #ifdef _WIN32
   {
-    u_long nonblocking = 1U;
-    (void)ioctlsocket(client, FIONBIO, &nonblocking);
+    proxy_timeout(client, 1U);
     while (recv(client, (char *)discarded, sizeof(discarded), 0) > 0) {
     }
   }
@@ -857,10 +1266,10 @@ static void proxy_reject_connection(proxy_queue *queue, laghu_socket client,
   proxy_access_write(queue, &access);
 }
 
-static bool proxy_read_body(laghu_socket socket, const unsigned char *initial,
-                            size_t initial_length, size_t expected,
-                            bool to_close, unsigned char **body,
-                            size_t *length) {
+static bool proxy_read_body(laghu_socket socket, SSL *tls,
+                            const unsigned char *initial, size_t initial_length,
+                            size_t expected, bool to_close,
+                            unsigned char **body, size_t *length) {
   size_t capacity = expected != 0U ? expected : 65536U, used = 0U;
   unsigned char *data;
   if (capacity > LAGHU_PROXY_MAX_BODY) return false;
@@ -890,7 +1299,7 @@ static bool proxy_read_body(laghu_socket socket, const unsigned char *initial,
       data = replacement;
       capacity = grown;
     }
-    got = recv(socket, (char *)data + used, (int)(capacity - used), 0);
+    got = proxy_origin_recv(socket, tls, data + used, capacity - used);
     if (got == 0 && to_close) break;
     if (got <= 0) {
       free(data);
@@ -987,8 +1396,8 @@ static bool proxy_send_result(laghu_socket client, const proxy_response *origin,
          (body.length == 0U || proxy_send_all(client, body.data, body.length));
 }
 
-static bool proxy_stream_body(laghu_socket origin, laghu_socket client,
-                              const unsigned char *initial,
+static bool proxy_stream_body(laghu_socket origin, SSL *tls,
+                              laghu_socket client, const unsigned char *initial,
                               size_t initial_length, size_t expected,
                               bool until_close) {
   unsigned char buffer[65536U];
@@ -1001,7 +1410,7 @@ static bool proxy_stream_body(laghu_socket origin, laghu_socket client,
     size_t wanted = sizeof(buffer);
     int got;
     if (expected != 0U && wanted > expected - sent) wanted = expected - sent;
-    got = recv(origin, (char *)buffer, (int)wanted, 0);
+    got = proxy_origin_recv(origin, tls, buffer, wanted);
     if (got == 0 && until_close) return true;
     if (got <= 0) return false;
     if (!proxy_send_all(client, buffer, (size_t)got)) return false;
@@ -1220,7 +1629,9 @@ static void proxy_access_write(proxy_queue *queue,
   proxy_log_line(queue, line);
 }
 
-static void proxy_handle(laghu_socket client, proxy_worker *worker) {
+static void proxy_handle(const proxy_connection *connection,
+                         proxy_worker *worker) {
+  laghu_socket client = connection->socket;
   const laghu_proxy_options *options = worker->queue->options;
   proxy_request request;
   proxy_response response;
@@ -1229,6 +1640,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
   unsigned char *request_body = NULL, *origin_body = NULL, *decoded = NULL;
   size_t request_body_length = 0U, origin_body_length = 0U;
   laghu_socket origin = LAGHU_INVALID_SOCKET;
+  SSL *origin_tls = NULL;
   char outbound[LAGHU_PROXY_HEADER_BYTES + 1U];
   size_t outbound_length = 0U, index;
   laghu_http_header request_headers[LAGHU_HTTP_MAX_REQUEST_HEADERS];
@@ -1240,6 +1652,8 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
   laghu_http_transaction_result prepared, finalized;
   proxy_access_log access;
   bool prepared_ok = false;
+  bool tls_timed_out = false;
+  proxy_header *request_host = NULL;
   memset(&request, 0, sizeof(request));
   memset(&response, 0, sizeof(response));
   memset(&prepared, 0, sizeof(prepared));
@@ -1252,8 +1666,8 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
     proxy_error_response(client, (code), reason); \
   } while (0)
   proxy_timeout(client, options->io_timeout);
-  if (!proxy_read_headers(client, request.storage, &header_length, &initial,
-                          &initial_length) ||
+  if (!proxy_read_headers(client, request.storage, NULL, &header_length,
+                          &initial, &initial_length) ||
       !proxy_parse_request(&request, header_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
@@ -1268,6 +1682,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
     access.path[length] = '\0';
   }
   access.input_bytes = header_length + request.content_length;
+  request_host = proxy_find(request.headers, request.header_count, "Host");
   if (!strcmp(request.method, "CONNECT") || !strcmp(request.method, "TRACE")) {
     PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
     goto done;
@@ -1289,8 +1704,9 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
     goto done;
   }
   if (request.content_length != 0U &&
-      !proxy_read_body(client, initial, initial_length, request.content_length,
-                       false, &request_body, &request_body_length)) {
+      !proxy_read_body(client, NULL, initial, initial_length,
+                       request.content_length, false, &request_body,
+                       &request_body_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
@@ -1456,6 +1872,15 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
   }
   proxy_worker_origin(worker, origin);
   proxy_timeout(origin, options->io_timeout);
+  if (options->origin_tls) {
+    origin_tls = proxy_tls_handshake(worker, origin, options->origin_host,
+                                     options->connect_timeout, &tls_timed_out);
+    if (origin_tls == NULL) {
+      PROXY_FAIL(502U, "Bad Gateway",
+                 tls_timed_out ? "origin_timeout" : "origin_tls");
+      goto done;
+    }
+  }
   outbound_length = (size_t)snprintf(
       outbound, sizeof(outbound),
       "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n", request.method,
@@ -1465,6 +1890,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
     if (proxy_hop(request.headers[index].name) ||
         proxy_connection_nominates(request.headers, request.header_count,
                                    request.headers[index].name) ||
+        proxy_forwarding_name(request.headers[index].name) ||
         proxy_name_equal(request.headers[index].name, "Host") ||
         proxy_name_equal(request.headers[index].name, "Content-Length"))
       continue;
@@ -1477,6 +1903,13 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
     }
     outbound_length += (size_t)n;
   }
+  if (request_host == NULL ||
+      !proxy_append_forwarding(options, connection, &request,
+                               request_host->value, outbound, sizeof(outbound),
+                               &outbound_length)) {
+    PROXY_FAIL(400U, "Bad Request", "client_parse");
+    goto done;
+  }
   if (request.content_length != 0U)
     outbound_length += (size_t)snprintf(
         outbound + outbound_length, sizeof(outbound) - outbound_length,
@@ -1487,14 +1920,17 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
   }
   memcpy(outbound + outbound_length, "\r\n", 2U);
   outbound_length += 2U;
-  if (!proxy_send_all(origin, outbound, outbound_length) ||
+  if (!proxy_origin_send_all(origin, origin_tls, outbound, outbound_length) ||
       (request_body_length &&
-       !proxy_send_all(origin, request_body, request_body_length)) ||
-      !proxy_read_headers(origin, response.storage, &header_length, &initial,
-                          &initial_length) ||
+       !proxy_origin_send_all(origin, origin_tls, request_body,
+                              request_body_length)) ||
+      !proxy_read_headers(origin, response.storage, origin_tls, &header_length,
+                          &initial, &initial_length) ||
       !proxy_parse_response(&response, header_length)) {
     PROXY_FAIL(502U, "Bad Gateway",
-               proxy_socket_timed_out() ? "origin_timeout" : "origin_protocol");
+               proxy_socket_timed_out()
+                   ? "origin_timeout"
+                   : (origin_tls != NULL ? "origin_tls" : "origin_protocol"));
     goto done;
   }
   for (index = 0U; index < request.header_count; ++index)
@@ -1568,7 +2004,7 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
       if (!proxy_send_headers(client, &response, &prepared,
                               response.content_length,
                               response.has_content_length) ||
-          !proxy_stream_body(origin, client, initial,
+          !proxy_stream_body(origin, origin_tls, client, initial,
                              bodyless ? 0U : initial_length, expected,
                              until_close)) {
         access.failure = "client_disconnect";
@@ -1582,15 +2018,16 @@ static void proxy_handle(laghu_socket client, proxy_worker *worker) {
                     (response.status >= 100U && response.status < 200U) ||
                     response.status == 204U || response.status == 304U;
     if (!proxy_read_body(
-            origin, initial, initial_length,
+            origin, origin_tls, initial, initial_length,
             bodyless
                 ? 0U
                 : (response.has_content_length ? response.content_length : 0U),
             !bodyless && !response.has_content_length, &origin_body,
             &origin_body_length)) {
-      PROXY_FAIL(
-          502U, "Bad Gateway",
-          proxy_socket_timed_out() ? "origin_timeout" : "origin_protocol");
+      PROXY_FAIL(502U, "Bad Gateway",
+                 proxy_socket_timed_out()
+                     ? "origin_timeout"
+                     : (origin_tls != NULL ? "origin_tls" : "origin_protocol"));
       goto done;
     }
   }
@@ -1665,6 +2102,7 @@ done:
   laghu_http_transaction_result_release(&finalized);
   free(request_body);
   free(origin_body);
+  if (origin_tls != NULL) SSL_free(origin_tls);
   free(decoded);
   if (origin != LAGHU_INVALID_SOCKET) {
     proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
@@ -1674,7 +2112,7 @@ done:
 #undef PROXY_FAIL
 }
 
-static bool queue_push(proxy_queue *queue, laghu_socket socket) {
+static bool queue_push(proxy_queue *queue, const proxy_connection *connection) {
   bool accepted = false;
 #ifdef _WIN32
   EnterCriticalSection(&queue->lock);
@@ -1682,7 +2120,7 @@ static bool queue_push(proxy_queue *queue, laghu_socket socket) {
   pthread_mutex_lock(&queue->lock);
 #endif
   if (!queue->stopping && queue->count < queue->capacity) {
-    queue->items[(queue->head + queue->count) % queue->capacity] = socket;
+    queue->items[(queue->head + queue->count) % queue->capacity] = *connection;
     ++queue->count;
     accepted = true;
 #ifdef _WIN32
@@ -1699,8 +2137,8 @@ static bool queue_push(proxy_queue *queue, laghu_socket socket) {
   return accepted;
 }
 
-static laghu_socket queue_pop(proxy_queue *queue) {
-  laghu_socket socket;
+static bool queue_pop(proxy_queue *queue, proxy_connection *connection) {
+  bool available;
 #ifdef _WIN32
   EnterCriticalSection(&queue->lock);
   while (queue->count == 0U && !queue->stopping)
@@ -1710,9 +2148,9 @@ static laghu_socket queue_pop(proxy_queue *queue) {
   while (queue->count == 0U && !queue->stopping)
     pthread_cond_wait(&queue->ready, &queue->lock);
 #endif
-  socket = queue->stopping || queue->count == 0U ? LAGHU_INVALID_SOCKET
-                                                 : queue->items[queue->head];
-  if (socket != LAGHU_INVALID_SOCKET) {
+  available = !queue->stopping && queue->count != 0U;
+  if (available) {
+    *connection = queue->items[queue->head];
     queue->head = (queue->head + 1U) % queue->capacity;
     --queue->count;
   }
@@ -1721,7 +2159,7 @@ static laghu_socket queue_pop(proxy_queue *queue) {
 #else
   pthread_mutex_unlock(&queue->lock);
 #endif
-  return socket;
+  return available;
 }
 
 static void proxy_worker_begin(proxy_worker *worker, laghu_socket client) {
@@ -1752,11 +2190,11 @@ static void *proxy_worker_main(void *argument)
 #endif
 {
   proxy_worker *worker = argument;
-  laghu_socket client;
+  proxy_connection connection;
   laghu_runtime_queue_init(&worker->runtime_queue);
-  while ((client = queue_pop(worker->queue)) != LAGHU_INVALID_SOCKET) {
-    proxy_worker_begin(worker, client);
-    proxy_handle(client, worker);
+  while (queue_pop(worker->queue, &connection)) {
+    proxy_worker_begin(worker, connection.socket);
+    proxy_handle(&connection, worker);
     proxy_worker_end(worker);
   }
   laghu_runtime_queue_close(&worker->runtime_queue);
@@ -1951,7 +2389,7 @@ static void proxy_begin_drain(proxy_queue *queue) {
       proxy_queue_unlock(queue);
       break;
     }
-    client = queue->items[queue->head];
+    client = queue->items[queue->head].socket;
     queue->head = (queue->head + 1U) % queue->capacity;
     --queue->count;
     proxy_queue_unlock(queue);
@@ -2029,6 +2467,11 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_event(&queue, "startup_failure", "stopped");
     goto cleanup;
   }
+  if (options->origin_tls &&
+      (queue.tls_context = proxy_tls_context(options)) == NULL) {
+    proxy_log_event(&queue, "startup_failure", "stopped");
+    goto cleanup;
+  }
   listener = proxy_listen(options->listen_host, options->listen_port);
   if (listener == LAGHU_INVALID_SOCKET) {
     proxy_log_event(&queue, "startup_failure", "stopped");
@@ -2072,9 +2515,15 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_event(&queue, "startup", "running");
     while (proxy_stop_requests == 0) {
       if (proxy_listener_ready(listener)) {
-        laghu_socket client = accept(listener, NULL, NULL);
-        if (client != LAGHU_INVALID_SOCKET && !queue_push(&queue, client))
-          proxy_reject_connection(&queue, client, "queue_saturated");
+        proxy_connection connection;
+        memset(&connection, 0, sizeof(connection));
+        connection.peer_length = (laghu_socklen)sizeof(connection.peer);
+        connection.socket =
+            accept(listener, (struct sockaddr *)&connection.peer,
+                   &connection.peer_length);
+        if (connection.socket != LAGHU_INVALID_SOCKET &&
+            !queue_push(&queue, &connection))
+          proxy_reject_connection(&queue, connection.socket, "queue_saturated");
       }
     }
   }
@@ -2106,6 +2555,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   result = started == options->workers ? 0 : 1;
 cleanup:
   if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);
+  SSL_CTX_free(queue.tls_context);
 #ifdef _WIN32
   if (lock_ready) DeleteCriticalSection(&queue.lock);
 #else

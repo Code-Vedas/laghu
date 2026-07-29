@@ -84,7 +84,7 @@ tmp/build/servers/laghu/laghu \
   --drain-timeout 30
 ```
 
-The proxy exposes local health and readiness JSON beneath `/.laghu/`, drains active requests on shutdown, and emits privacy-bounded JSON Lines to standard error. `scripts/run-proxy-rootless` validates it as a non-root process with a read-only container filesystem.
+The origin may use verified HTTPS. `--origin-ca-file` adds a private CA to system trust; certificate and hostname verification cannot be disabled. Forwarding headers are stripped unless `--forwarded-headers` explicitly enables deterministic output, and only repeated `--trusted-proxy` CIDRs may contribute an existing chain. The proxy exposes local health and readiness JSON beneath `/.laghu/`, drains active requests on shutdown, and emits privacy-bounded JSON Lines to standard error. `scripts/run-proxy-rootless` validates it as a non-root process with a read-only container filesystem.
 
 Server modules are architecture- and ABI-specific. Build each module against the target server ABI.
 

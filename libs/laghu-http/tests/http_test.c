@@ -9,6 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #define CHECK(condition)                                                 \
   do {                                                                   \
     if (!(condition)) {                                                  \
@@ -25,6 +32,17 @@ static char test_cache_path[LAGHU_RUNTIME_PATH_SIZE];
 static char test_queue_path[LAGHU_RUNTIME_PATH_SIZE];
 
 static void initialize_test_paths(void) {
+  unsigned long process_id;
+#ifdef _WIN32
+  char temporary_buffer[LAGHU_RUNTIME_PATH_SIZE];
+  DWORD temporary_length =
+      GetTempPathA((DWORD)sizeof(temporary_buffer), temporary_buffer);
+  const char *temporary =
+      temporary_length > 0U && temporary_length < sizeof(temporary_buffer)
+          ? temporary_buffer
+          : ".";
+  process_id = (unsigned long)GetCurrentProcessId();
+#else
   const char *temporary = getenv("TMPDIR");
   if (temporary == NULL || temporary[0] == '\0') {
     temporary = getenv("TEMP");
@@ -32,10 +50,12 @@ static void initialize_test_paths(void) {
   if (temporary == NULL || temporary[0] == '\0') {
     temporary = ".";
   }
-  CHECK(snprintf(test_cache_path, sizeof(test_cache_path), "%s/%s", temporary,
-                 "laghu-http-test-cache") > 0);
-  CHECK(snprintf(test_queue_path, sizeof(test_queue_path), "%s/%s", temporary,
-                 "laghu-http-test.queue") > 0);
+  process_id = (unsigned long)getpid();
+#endif
+  CHECK(snprintf(test_cache_path, sizeof(test_cache_path),
+                 "%s/laghu-http-test-cache-%lu", temporary, process_id) > 0);
+  CHECK(snprintf(test_queue_path, sizeof(test_queue_path),
+                 "%s/laghu-http-test-%lu.queue", temporary, process_id) > 0);
 }
 
 static void test_config(laghu_config *config) {

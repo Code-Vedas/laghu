@@ -353,11 +353,16 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 ## 6. Production Architecture
 
 - [x] Keep policy resolution, hashing, image/CSS/HTML parsing, catalogs, queue protocol, and cache publication independent of NGINX and Apache types.
-- [ ] Support bounded streaming origin forwarding, connection and header limits, request cancellation, upstream timeouts, trusted forwarded-header policy, TLS to the origin, and original-response fallback.
+- [x] Support bounded HTTP/1.1 origin forwarding, connection and header limits, request cancellation, upstream timeouts, and original-response fallback.
+- [x] Require verified TLS-to-origin and enforce an explicit trusted-forwarding policy.
+- [ ] Add persistent origin connections and bounded per-origin pooling.
+- [ ] Add downstream TLS termination.
 - [x] Add standalone health/readiness, graceful drain, structured access and optimization logs, and rootless/read-only-container operation without making telemetry or a hosted service mandatory.
 - [ ] Keep the standalone proxy entirely self-hostable with no account, license key, feature gate, phone-home behavior, or required Codevedas service.
 
-Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline cancellation, queued-connection rejection, worker joins, local cache and optimizer readiness transitions, query/header/body-safe JSON records, and non-root execution with a read-only container filesystem. The same state machine includes Win32 console and explicit Service Control Manager entrypoints; native Windows execution remains pending in Section 9.
+Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline cancellation, queued-connection rejection, worker joins, local cache and optimizer readiness transitions, query/header/body-safe JSON records, and non-root execution with a read-only container filesystem. Native Windows AMD64 evidence covers the Win32 state machine, WinSock queue saturation and bounded rejection, local health/readiness probes, and an installed Service Control Manager lifecycle from start through health validation and stop.
+
+Origin-security evidence covers OpenSSL 3.x TLS 1.2-or-newer negotiation, system and additive private-CA trust, DNS SNI, DNS/IP certificate identity checks, HTTP/1.1 ALPN, bounded handshake and I/O cancellation, and distinct TLS failure classification. The accepted-connection queue retains binary peer addresses for allocation-free IPv4/IPv6 CIDR matching. Every inbound forwarding family is stripped; enabled output starts a canonical chain for untrusted peers or validates and extends a trusted peer's bounded chain. macOS, sanitizer, Linux AMD64, Windows AMD64, and non-root read-only-container fixtures verify trusted TLS, hostname rejection, spoof removal, trusted append, privacy-safe logs, cold/warm proxy behavior, and shutdown preservation.
 
 - [x] Complete the image-path two-process architecture for both lightweight NGINX and Apache interceptors plus the asynchronous out-of-process service.
 - [x] Serve the original image on first hit while an optimized variant is generated without blocking NGINX event loops or Apache request workers.
@@ -389,7 +394,8 @@ Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline
 - [ ] Ship three user-facing offerings: `ngx-laghu`, `mod-laghu`, and `laghu`; keep `laghu-libvips` an automatically installed internal dependency rather than a fourth product offering. The two native adapter packages are validated; the standalone package remains pending.
 - [ ] Build and smoke the Apache 2.4 `mod_laghu` output filter on Linux and macOS x86_64/arm64, including event, worker, and prefork MPMs.
 - [x] Validate Apache repeated bucket brigades, metadata buckets, `FLUSH`, `EOS`, proxied responses, HTTP/1.1, and HTTP/2 without duplicate output or lost data.
-- [ ] Validate the Win32 queue/cache backend, Job Object deadline isolation, Windows service lifecycle, and matched NGINX/Apache installers on Windows x86_64/arm64.
+- [x] Validate the Win32 queue/cache backend, proxy transport, and Windows service lifecycle natively on Windows x86_64.
+- [ ] Validate Job Object deadline isolation, Windows ARM64 execution, and matched NGINX/Apache installers on Windows x86_64/arm64.
 - [x] Validate Homebrew `ngx-laghu` and `mod-laghu` formula installation, loading, configuration checks, upgrades, and uninstall cleanup.
 
 Homebrew evidence builds a local release archive, installs all three formulas through an ephemeral Codevedas tap, exercises the launchd service, validates NGINX and Apache configuration, reinstalls both adapters, uninstalls every Laghu formula, and restores pre-existing operator configuration.
