@@ -55,6 +55,9 @@ extern "C" {
 #define LAGHU_JAVASCRIPT_TARGET_SIZE 512U
 #define LAGHU_JAVASCRIPT_MAX_SCRIPTS 64U
 #define LAGHU_JAVASCRIPT_DERIVATION_VERSION 1U
+#define LAGHU_INSTRUMENTATION_VERSION 1U
+#define LAGHU_INSTRUMENTATION_MAX_PROVIDERS 32U
+#define LAGHU_INSTRUMENTATION_MAX_SCRIPTS 64U
 
 typedef uint32_t laghu_html_planner_mask;
 
@@ -309,6 +312,37 @@ typedef struct {
   uint16_t rules[LAGHU_CRITICAL_CSS_MAX_RULES];
 } laghu_critical_css_beacon;
 
+typedef struct {
+  char host[LAGHU_FONT_PROVIDER_HOST_SIZE];
+  char path_prefix[LAGHU_FONT_PROVIDER_PREFIX_SIZE];
+} laghu_javascript_observation_rule;
+
+typedef struct {
+  laghu_javascript_observation_rule rules[LAGHU_INSTRUMENTATION_MAX_PROVIDERS];
+  unsigned int count;
+  char digest[LAGHU_RUNTIME_KEY_SIZE];
+} laghu_javascript_observation_set;
+
+typedef struct {
+  char key[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int before_dcl;
+  unsigned int long_tasks;
+} laghu_instrumentation_candidate;
+
+typedef struct {
+  char template_key[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int bucket;
+  unsigned int lcp_ms;
+  unsigned int inp_ms;
+  unsigned int cls_milli;
+  unsigned int dcl_ms;
+  unsigned int load_ms;
+  unsigned int errors;
+  unsigned int rejections;
+  laghu_instrumentation_candidate candidates[LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
+  unsigned int candidate_count;
+} laghu_instrumentation_beacon;
+
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
                                 unsigned int slot_count,
@@ -489,6 +523,21 @@ bool laghu_critical_css_apply_beacon(const char *cache_path,
                                      unsigned int ttl_seconds,
                                      const laghu_critical_css_beacon *beacon);
 const char *laghu_runtime_critical_css_beacon_script(void);
+bool laghu_javascript_observations_load(const char *path,
+                                        laghu_javascript_observation_set *set,
+                                        char *error, size_t error_size);
+bool laghu_runtime_add_instrumentation(
+    const char *cache_path, const laghu_javascript_observation_set *providers,
+    laghu_buffer html, const char *page_path, const char *page_origin,
+    const char *policy_key, uint64_t now, unsigned int ttl_seconds,
+    unsigned int sample_rate, bool csp_allows_self_scripts,
+    laghu_runtime_html_result *result);
+const char *laghu_runtime_instrumentation_script(void);
+bool laghu_runtime_parse_instrumentation_beacon(
+    laghu_buffer json, laghu_instrumentation_beacon *record);
+bool laghu_instrumentation_apply_beacon(
+    const char *cache_path, uint64_t now, unsigned int ttl_seconds,
+    const laghu_instrumentation_beacon *beacon);
 
 #ifdef __cplusplus
 }

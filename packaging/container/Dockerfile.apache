@@ -49,6 +49,7 @@ COPY --from=build /src/build/workers/laghu-resource-fetch/laghu-resource-fetch /
 COPY --from=build /src/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize /usr/bin/laghu-js-optimize
 COPY --from=build /src/apache-module/.libs/mod_laghu.so /usr/lib/apache2/modules/mod_laghu.so
 COPY packaging/font-providers.conf /etc/laghu/font-providers.conf
+COPY packaging/javascript-observation.conf /etc/laghu/javascript-observation.conf
 COPY packaging/apache/laghu.load /etc/apache2/mods-available/laghu.load
 COPY packaging/apache/laghu.conf /etc/apache2/mods-available/laghu.conf
 COPY packaging/container/entrypoint.apache /usr/bin/mod-laghu-entrypoint

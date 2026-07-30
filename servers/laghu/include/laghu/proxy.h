@@ -51,7 +51,9 @@ typedef struct {
   char font_provider_config_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
+  char javascript_observation_config_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_font_provider_set font_providers;
+  laghu_javascript_observation_set javascript_observations;
   laghu_config config;
   unsigned int workers;
   unsigned int connection_queue;
@@ -64,6 +66,7 @@ typedef struct {
   bool origin_tls;
   bool font_providers_loaded;
   bool javascript_queue_enabled;
+  bool javascript_observations_loaded;
   bool service_mode;
 } laghu_proxy_options;
 

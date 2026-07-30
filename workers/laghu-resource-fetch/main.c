@@ -522,13 +522,14 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
     return 1;
   }
   context = SSL_CTX_new(TLS_client_method());
-  if (context == NULL ||
-      !SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) ||
-      !SSL_CTX_set_default_verify_paths(context)
+  if (context == NULL || !SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION)
 #if LAGHU_TEST_HOOKS
-      || (getenv("LAGHU_TEST_FETCH_CA") != NULL &&
-          !SSL_CTX_load_verify_locations(context, getenv("LAGHU_TEST_FETCH_CA"),
-                                         NULL))
+      || (getenv("LAGHU_TEST_FETCH_CA") != NULL
+              ? !SSL_CTX_load_verify_locations(
+                    context, getenv("LAGHU_TEST_FETCH_CA"), NULL)
+              : !SSL_CTX_set_default_verify_paths(context))
+#else
+      || !SSL_CTX_set_default_verify_paths(context)
 #endif
   ) {
     SSL_CTX_free(context);

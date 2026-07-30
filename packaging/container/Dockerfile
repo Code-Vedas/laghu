@@ -90,6 +90,7 @@ COPY --from=build /src/build/workers/laghu-js-optimize/cargo/release/laghu-js-op
   /usr/bin/laghu-js-optimize
 COPY LICENSE packaging/NOTICE-libvips.md /usr/share/licenses/laghu/
 COPY packaging/font-providers.conf /etc/laghu/font-providers.conf
+COPY packaging/javascript-observation.conf /etc/laghu/javascript-observation.conf
 COPY packaging/container/nginx.conf /etc/nginx/nginx.conf
 COPY packaging/container/entrypoint /usr/bin/laghu-container-entrypoint
 RUN printf '%s\n' '<!doctype html><title>Laghu</title><h1>Laghu is running</h1>' \

@@ -31,13 +31,16 @@ typedef struct {
   laghu_runtime_queue font_fetch_runtime_queue;
   laghu_runtime_queue javascript_runtime_queue;
   laghu_font_provider_set font_providers;
+  laghu_javascript_observation_set javascript_observations;
   ngx_str_t worker_queue;
   ngx_str_t font_fetch_queue;
   ngx_str_t font_provider_config;
   ngx_str_t javascript_queue;
   ngx_str_t javascript_target;
+  ngx_str_t javascript_observation_config;
   ngx_str_t image_cache;
   bool font_providers_loaded;
+  bool javascript_observations_loaded;
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
@@ -1198,6 +1201,9 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
           : NULL;
   context->environment.javascript_target =
       (const char *)conf->javascript_target.data;
+  context->environment.javascript_observations =
+      conf->javascript_observations_loaded ? &conf->javascript_observations
+                                           : NULL;
   context->environment.now = (uint64_t)ngx_time();
   return true;
 }
@@ -2123,6 +2129,10 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char beacon_post_path[] = "/.laghu/beacon/images";
   static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
   static const char critical_post_path[] = "/.laghu/beacon/critical-css";
+  static const char instrumentation_script_path[] =
+      "/.laghu/beacon/instrumentation.js";
+  static const char instrumentation_post_path[] =
+      "/.laghu/beacon/instrumentation";
   static const unsigned char beacon_script[] =
       "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
       "forEach"
@@ -2233,6 +2243,57 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
     time_t now = ngx_time();
     if (conf->core.mode != LAGHU_MODE_ON ||
         conf->core.critical_css_beacon != LAGHU_MODE_ON)
+      return NGX_HTTP_NOT_FOUND;
+    if (request->method != NGX_HTTP_POST ||
+        request->headers_in.content_type == NULL ||
+        request->headers_in.content_type->value.len <
+            sizeof("application/json") - 1U ||
+        ngx_strncasecmp(request->headers_in.content_type->value.data,
+                        (u_char *)"application/json",
+                        sizeof("application/json") - 1U) != 0 ||
+        request->headers_in.content_length_n <= 0 ||
+        request->headers_in.content_length_n > 16384 ||
+        !ngx_http_laghu_same_origin(request))
+      return NGX_HTTP_BAD_REQUEST;
+    if (ngx_http_laghu_beacon_window != now) {
+      ngx_http_laghu_beacon_window = now;
+      ngx_http_laghu_beacon_count = 0U;
+    }
+    if (++ngx_http_laghu_beacon_count > 32U) return NGX_HTTP_TOO_MANY_REQUESTS;
+    if (ngx_http_read_client_request_body(
+            request, ngx_http_laghu_beacon_body) >= NGX_HTTP_SPECIAL_RESPONSE)
+      return NGX_HTTP_BAD_REQUEST;
+    return NGX_DONE;
+  }
+  if (request->uri.len == sizeof(instrumentation_script_path) - 1U &&
+      ngx_strncmp(request->uri.data, instrumentation_script_path,
+                  sizeof(instrumentation_script_path) - 1U) == 0) {
+    const char *script = laghu_runtime_instrumentation_script();
+    size_t script_length = strlen(script);
+    if (conf->core.mode != LAGHU_MODE_ON ||
+        conf->core.instrumentation_beacon != LAGHU_MODE_ON ||
+        request->method != NGX_HTTP_GET)
+      return NGX_HTTP_NOT_FOUND;
+    request->headers_out.status = NGX_HTTP_OK;
+    ngx_str_set(&request->headers_out.content_type, "application/javascript");
+    request->headers_out.content_length_n = (off_t)script_length;
+    if (ngx_http_send_header(request) == NGX_ERROR) return NGX_OK;
+    buffer = ngx_calloc_buf(request->pool);
+    if (buffer == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    buffer->pos = (u_char *)script;
+    buffer->last = (u_char *)script + script_length;
+    buffer->memory = 1U;
+    buffer->last_buf = 1U;
+    output.buf = buffer;
+    output.next = NULL;
+    return ngx_http_output_filter(request, &output);
+  }
+  if (request->uri.len == sizeof(instrumentation_post_path) - 1U &&
+      ngx_strncmp(request->uri.data, instrumentation_post_path,
+                  sizeof(instrumentation_post_path) - 1U) == 0) {
+    time_t now = ngx_time();
+    if (conf->core.mode != LAGHU_MODE_ON ||
+        conf->core.instrumentation_beacon != LAGHU_MODE_ON)
       return NGX_HTTP_NOT_FOUND;
     if (request->method != NGX_HTTP_POST ||
         request->headers_in.content_type == NULL ||
@@ -2379,6 +2440,7 @@ static void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
       ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
   laghu_image_beacon_record beacon;
   laghu_critical_css_beacon critical;
+  laghu_instrumentation_beacon instrumentation;
   laghu_policy policy;
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   unsigned char *body;
@@ -2401,7 +2463,15 @@ static void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
     valid = offset == length &&
             laghu_resolve_config_policy(&conf->core, &policy) &&
             laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key);
-    if (valid && request->uri.len == sizeof("/.laghu/beacon/critical-css") - 1U)
+    if (valid &&
+        request->uri.len == sizeof("/.laghu/beacon/instrumentation") - 1U)
+      valid = laghu_runtime_parse_instrumentation_beacon(
+                  (laghu_buffer){body, length}, &instrumentation) &&
+              laghu_instrumentation_apply_beacon(
+                  (const char *)conf->image_cache.data, (uint64_t)ngx_time(),
+                  conf->core.image_metadata_ttl, &instrumentation);
+    else if (valid &&
+             request->uri.len == sizeof("/.laghu/beacon/critical-css") - 1U)
       valid =
           laghu_runtime_parse_critical_css_beacon((laghu_buffer){body, length},
                                                   &critical) &&
@@ -2478,10 +2548,17 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   ngx_conf_merge_str_value(child_conf->javascript_target,
                            parent_conf->javascript_target,
                            "defaults and supports es6-module and not dead");
+  ngx_conf_merge_str_value(child_conf->javascript_observation_config,
+                           parent_conf->javascript_observation_config, "");
   if (!child_conf->font_providers_loaded &&
       parent_conf->font_providers_loaded) {
     child_conf->font_providers = parent_conf->font_providers;
     child_conf->font_providers_loaded = true;
+  }
+  if (!child_conf->javascript_observations_loaded &&
+      parent_conf->javascript_observations_loaded) {
+    child_conf->javascript_observations = parent_conf->javascript_observations;
+    child_conf->javascript_observations_loaded = true;
   }
   ngx_conf_merge_str_value(child_conf->image_cache, parent_conf->image_cache,
                            LAGHU_NGINX_DEFAULT_CACHE);
@@ -2621,6 +2698,27 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return "laghu critical_css_beacon expects 'on' or 'off'";
     return NGX_CONF_OK;
   }
+  if (ngx_strcmp(values[1].data, "instrumentation_beacon") == 0) {
+    if (location->core.instrumentation_beacon != LAGHU_MODE_UNSET)
+      return "duplicate laghu instrumentation_beacon";
+    if (ngx_strcmp(values[2].data, "on") == 0)
+      location->core.instrumentation_beacon = LAGHU_MODE_ON;
+    else if (ngx_strcmp(values[2].data, "off") == 0)
+      location->core.instrumentation_beacon = LAGHU_MODE_OFF;
+    else
+      return "laghu instrumentation_beacon expects 'on' or 'off'";
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "instrumentation_sample_rate") == 0) {
+    ngx_int_t rate = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.instrumentation_sample_rate !=
+        LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET)
+      return "duplicate laghu instrumentation_sample_rate";
+    if (rate < 0 || rate > 100)
+      return "laghu instrumentation_sample_rate expects 0 to 100";
+    location->core.instrumentation_sample_rate = (unsigned int)rate;
+    return NGX_CONF_OK;
+  }
 
   if (ngx_strcmp(values[1].data, "image_inline_limit") == 0) {
     ngx_int_t limit = ngx_atoi(values[2].data, values[2].len);
@@ -2758,6 +2856,21 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
                                            normalized))
       return "laghu javascript_target expects a bounded Browserslist query";
     location->javascript_target = values[2];
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "javascript_observation_config") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (location->javascript_observation_config.len != 0U ||
+        !laghu_javascript_observations_load((const char *)values[2].data,
+                                            &location->javascript_observations,
+                                            error, sizeof(error))) {
+      ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                         "invalid JavaScript observation config \"%V\": %s",
+                         &values[2], error);
+      return NGX_CONF_ERROR;
+    }
+    location->javascript_observation_config = values[2];
+    location->javascript_observations_loaded = true;
     return NGX_CONF_OK;
   }
 

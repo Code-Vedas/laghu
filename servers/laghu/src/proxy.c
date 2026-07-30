@@ -348,6 +348,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool javascript_queue_seen = false, javascript_target_seen = false;
   bool javascript_inline_limit_seen = false;
   bool javascript_outline_threshold_seen = false;
+  bool instrumentation_sample_rate_seen = false;
+  bool javascript_observation_config_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
@@ -429,6 +431,19 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --javascript-target");
       javascript_target_seen = true;
+    } else if (strcmp(name, "--javascript-observation-config") == 0) {
+      NEED_VALUE();
+      if (javascript_observation_config_seen ||
+          !proxy_copy(options->javascript_observation_config_path,
+                      sizeof(options->javascript_observation_config_path),
+                      value) ||
+          !laghu_javascript_observations_load(
+              value, &options->javascript_observations, error, error_size))
+        return proxy_error(
+            error, error_size,
+            "invalid or duplicate --javascript-observation-config");
+      options->javascript_observations_loaded = true;
+      javascript_observation_config_seen = true;
     } else if (strcmp(name, "--javascript-inline-limit") == 0) {
       char *end = NULL;
       unsigned long limit;
@@ -483,6 +498,19 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "duplicate --critical-css-beacon");
       options->config.critical_css_beacon = LAGHU_MODE_ON;
+    } else if (strcmp(name, "--instrumentation-beacon") == 0) {
+      if (options->config.instrumentation_beacon == LAGHU_MODE_ON)
+        return proxy_error(error, error_size,
+                           "duplicate --instrumentation-beacon");
+      options->config.instrumentation_beacon = LAGHU_MODE_ON;
+    } else if (strcmp(name, "--instrumentation-sample-rate") == 0) {
+      NEED_VALUE();
+      if (instrumentation_sample_rate_seen ||
+          !proxy_uint(value, 0U, 100U,
+                      &options->config.instrumentation_sample_rate))
+        return proxy_error(error, error_size,
+                           "invalid --instrumentation-sample-rate");
+      instrumentation_sample_rate_seen = true;
     } else if (strcmp(name, "--image-quality") == 0) {
       NEED_VALUE();
       if (quality_seen ||
@@ -1941,6 +1969,57 @@ static void proxy_handle(const proxy_connection *connection,
       }
       goto done;
     }
+    if (!strcmp(request.target, "/.laghu/beacon/instrumentation.js") &&
+        options->config.instrumentation_beacon == LAGHU_MODE_ON &&
+        !strcmp(request.method, "GET")) {
+      const char *script = laghu_runtime_instrumentation_script();
+      char head[256];
+      size_t script_length = strlen(script);
+      int n =
+          snprintf(head, sizeof(head),
+                   "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n"
+                   "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+                   script_length);
+      if (n > 0) {
+        (void)proxy_send_all(client, head, (size_t)n);
+        (void)proxy_send_all(client, script, script_length);
+      }
+      access.status = 200U;
+      access.output_bytes = script_length;
+      goto done;
+    }
+    if (!strcmp(request.target, "/.laghu/beacon/instrumentation") &&
+        options->config.instrumentation_beacon == LAGHU_MODE_ON &&
+        !strcmp(request.method, "POST")) {
+      proxy_header *type =
+          proxy_find(request.headers, request.header_count, "Content-Type");
+      proxy_header *site =
+          proxy_find(request.headers, request.header_count, "Sec-Fetch-Site");
+      laghu_instrumentation_beacon beacon;
+      uint64_t now = (uint64_t)time(NULL);
+      if (type == NULL || strncmp(type->value, "application/json", 16U) != 0 ||
+          site == NULL || !proxy_name_equal(site->value, "same-origin") ||
+          request_body_length == 0U ||
+          request_body_length > LAGHU_PROXY_BEACON_BODY) {
+        PROXY_FAIL(400U, "Bad Request", "client_parse");
+      } else if (!proxy_beacon_allowed(worker->queue, now)) {
+        PROXY_FAIL(429U, "Too Many Requests", "request_limit");
+      } else if (!laghu_runtime_parse_instrumentation_beacon(
+                     (laghu_buffer){request_body, request_body_length},
+                     &beacon) ||
+                 !laghu_instrumentation_apply_beacon(
+                     options->cache_path, now,
+                     options->config.image_metadata_ttl, &beacon)) {
+        PROXY_FAIL(400U, "Bad Request", "worker");
+      } else {
+        static const char response_204[] =
+            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n";
+        (void)proxy_send_all(client, response_204, sizeof(response_204) - 1U);
+        access.status = 204U;
+      }
+      goto done;
+    }
     if (strcmp(request.method, "GET") != 0 &&
         strcmp(request.method, "HEAD") != 0) {
       PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
@@ -1997,6 +2076,9 @@ static void proxy_handle(const proxy_connection *connection,
                                 ? &worker->javascript_queue
                                 : NULL,
         .javascript_target = options->javascript_target,
+        .javascript_observations = options->javascript_observations_loaded
+                                       ? &options->javascript_observations
+                                       : NULL,
         .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request,
@@ -2144,6 +2226,9 @@ static void proxy_handle(const proxy_connection *connection,
       .javascript_queue =
           options->javascript_queue_enabled ? &worker->javascript_queue : NULL,
       .javascript_target = options->javascript_target,
+      .javascript_observations = options->javascript_observations_loaded
+                                     ? &options->javascript_observations
+                                     : NULL,
       .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless = !strcmp(request.method, "HEAD") ||

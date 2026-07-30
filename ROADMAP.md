@@ -145,12 +145,14 @@ JavaScript rewrite evidence: the native `laghu-js-optimize` Rust worker builds p
 - [x] `remove_quotes`: remove unnecessary attribute quotes.
 - [x] `elide_attributes`: remove default-value attributes.
 - [x] `convert_meta_tags`: convert eligible HTTP-equivalent meta tags to headers.
-- [ ] `add_instrumentation`: inject opt-in real-user measurement instrumentation.
+- [x] `add_instrumentation`: inject opt-in real-user measurement instrumentation.
 - [x] `hint_preload_subresources`: add preload link hints.
 - [x] `insert_dns_prefetch`: add DNS-prefetch hints for third parties.
 - [ ] `trim_urls`: shorten URLs relative to the document base.
 
 Safe HTML normalization evidence: the versioned shared planner mask enables the four lexical filters whenever HTML minification is selected, including the non-structural bandwidth level. Unit tests cover protected/raw contexts, Unicode whitespace, every retained comment marker, safe and unsafe attribute values, duplicate/malformed attributes, and the exact MIME-elision table. NGINX and Apache smoke fixtures verify byte-identical cold responses, strictly-smaller warm responses, protected bytes, and dependency ETags. Safe header evidence: the shared planner converts only conflict-free head-level Content-Language metadata and emits at most four ready same-origin preload and eight discovered third-party DNS-prefetch Link headers. Unit tests cover cold publication, catalog-validated CSS/image targets, conflicts, and deterministic header derivation; NGINX and Apache smoke fixtures verify byte-identical cold responses and atomic warm body/header delivery.
+
+Instrumentation evidence: inherited opt-in settings default to off with a 10-percent client sample and reject rates outside `0..100`. A strict administrator-owned observation file extends the always-eligible same-origin script catalog with exact HTTPS host and slash-terminated path prefixes while rejecting wildcards, IP literals, credentials, unsafe paths, duplicates, and overlaps. The shared planner fingerprints bounded document structure, ordered script dependencies, policy, provider digest, sample rate, and implementation versions; injects one fixed deferred same-origin script only when CSP permits it; and publishes at most 64 opaque server-owned script keys. Same-origin bounded reports cover mobile/desktop LCP, INP, CLS, lifecycle timing, anonymous error counts, and opaque script timing. The runtime validates metric bounds and catalog membership, then stores only checksummed aggregate histograms and counters under per-template locking and metadata-TTL expiry. Core/runtime/HTTP tests and NGINX, Apache, and standalone smoke lanes cover configuration, injection, fixed-script delivery, aggregation, invalid input, and fail-open behavior. The intentionally added tag is the only instrumentation HTML-growth exception; optimization transfer gates remain unchanged.
 
 ### 3.6 Caching and URL Filters
 
@@ -179,7 +181,7 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 - [ ] Per-request query-string filter overrides.
 - [ ] Purge method, cache flush file, and query-driven purge (`PurgeMethod` and purge-query migration inputs).
 - [x] In-place image-resource optimization with validator-keyed cold-original and warm-variant delivery.
-- [x] Client beaconing for critical-image and critical-CSS discovery.
+- [x] Client beaconing for critical-image, critical-CSS, and aggregate RUM discovery.
 - [ ] Experiment framework for controlled filter-set rollout.
 
 ### 3.8 Legacy Pain-Point Non-Regression
@@ -253,7 +255,7 @@ Completion evidence for the checked geometry features is shared with Section 3.2
 - [ ] Emit the standalone JSON transaction schema from NGINX, Apache, and `laghu-libvips` so every process has one operational log contract.
 - [ ] Emit OpenTelemetry traces across the optimization path.
 - [ ] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
-- [ ] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
+- [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
 - [ ] Ship a Grafana dashboard.
 - [ ] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.
 

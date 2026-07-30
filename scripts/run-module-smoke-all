@@ -78,6 +78,8 @@ printf '%s\n' '<html><body><script>function inlinePublic(longLocal) { return lon
   >"${SMOKE_DIR}/html/javascript-inline.html"
 printf '%s\n' '<html><body><script src="/app.js"></script><script>function externalPageHelper(veryLongLocalArgument) { return veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument; }</script></body></html>' \
   >"${SMOKE_DIR}/html/javascript-external.html"
+printf '%s\n' '<html><body>rum<script src="/app.js"></script></body></html>' \
+  >"${SMOKE_DIR}/html/instrumentation.html"
 printf '%s\n' "console.log('combine one value'); console.log('combine one value again');" >"${SMOKE_DIR}/html/combine-one.js"
 printf '%s\n' "console.log('combine two value'); console.log('combine two value again');" >"${SMOKE_DIR}/html/combine-two.js"
 printf '%s\n' '<html><body><script src="/combine-one.js" data-laghu-combine="application-main"></script><script src="/combine-two.js" data-laghu-combine="application-main"></script></body></html>' >"${SMOKE_DIR}/html/javascript-combine.html"
@@ -169,6 +171,15 @@ http {
       laghu rewrite_level all;
       default_type text/html;
       try_files /javascript-external.html =404;
+    }
+    location = /instrumentation.html {
+      laghu instrumentation_beacon on;
+      laghu instrumentation_sample_rate 100;
+      default_type text/html;
+      try_files /instrumentation.html =404;
+    }
+    location ~ ^/\.laghu/beacon/instrumentation(\.js)?$ {
+      laghu instrumentation_beacon on;
     }
 
     location ~ ^/combine-(one|two)\.js$ {
@@ -650,6 +661,21 @@ if [ "${image_smoke}" -eq 1 ]; then
   curl --fail --silent --show-error \
     "http://127.0.0.1:${PORT}/.laghu/beacon/critical-css.js" | \
     grep 'data-laghu-critical' >/dev/null
+  curl --fail --silent --show-error \
+    "http://127.0.0.1:${PORT}/instrumentation.html" \
+    >"${SMOKE_DIR}/instrumentation.html"
+  grep 'data-laghu-sample="100"' "${SMOKE_DIR}/instrumentation.html" >/dev/null
+  curl --fail --silent --show-error \
+    "http://127.0.0.1:${PORT}/.laghu/beacon/instrumentation.js" | \
+    grep 'largest-contentful-paint' >/dev/null
+  instrumentation_key=$(sed -n 's/.*data-laghu-template="\([0-9a-f]\{64\}\)".*/\1/p' \
+    "${SMOKE_DIR}/instrumentation.html")
+  instrumentation_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'Content-Type: application/json' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --data "{\"version\":1,\"template\":\"${instrumentation_key}\",\"bucket\":0,\"lcp_ms\":1200,\"inp_ms\":100,\"cls_milli\":50,\"dcl_ms\":500,\"load_ms\":700,\"errors\":0,\"rejections\":0,\"candidates\":[]}" \
+    "http://127.0.0.1:${PORT}/.laghu/beacon/instrumentation")
+  [ "${instrumentation_status}" = 204 ]
   beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header 'Sec-Fetch-Site: same-origin' \

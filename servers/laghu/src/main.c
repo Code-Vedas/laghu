@@ -14,6 +14,7 @@ static void usage(FILE *stream) {
       "Options:\n"
       "  --preset NAME | --rewrite-level NAME\n"
       "  --allow-api --image-beacon --critical-css-beacon "
+      "--instrumentation-beacon "
       "--image-quality 1..100\n"
       "  --workers N --connection-queue N\n"
       "  --connect-timeout SECONDS --io-timeout SECONDS\n"
@@ -25,6 +26,8 @@ static void usage(FILE *stream) {
       "  --javascript-target QUERY\n"
       "  --javascript-inline-limit 0..65536\n"
       "  --javascript-outline-threshold 1024..1048576\n"
+      "  --instrumentation-sample-rate 0..100\n"
+      "  --javascript-observation-config PATH\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
       stream);

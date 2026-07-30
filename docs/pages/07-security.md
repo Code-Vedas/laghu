@@ -20,6 +20,7 @@ Laghu treats response rewriting as a privileged parsing boundary.
 - converts only validated `Content-Language` metadata; CSP, refresh, cookies, content type, compatibility, and unknown HTTP-equivalent metadata remain untouched
 - derives preload and DNS-prefetch headers only from bounded document parsing; discovery performs no DNS resolution or outbound connection
 - accepts opt-in critical-CSS observations only from same-origin bounded JSON; stored learning contains opaque hashes, viewport buckets, counters, and rule indexes rather than page or selector content
+- injects opt-in RUM only when CSP permits an ordinary same-origin external script; accepts bounded same-origin JSON and stores only opaque template/script keys and aggregate histograms or counters, never raw reports, URLs, page content, identifiers, error messages, or stacks
 - never fetches JavaScript; structural JavaScript rewrites require ready same-origin observations, checksummed SWC safety flags, compatible CSP and attributes, bounded groups, and a strictly smaller aggregate transfer
 - never loads a generic ImageMagick fallback for untrusted image bytes
 - accepts image type from decoded magic and an explicit loader, not the declared response content type

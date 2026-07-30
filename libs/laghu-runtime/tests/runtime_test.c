@@ -1301,6 +1301,78 @@ int main(void) {
              parsed.rules[1] == 7U);
     }
   }
+  {
+    char observation_path[LAGHU_RUNTIME_PATH_SIZE];
+    laghu_javascript_observation_set providers;
+    laghu_runtime_html_result rum_page;
+    laghu_instrumentation_beacon rum;
+    char script_key[LAGHU_RUNTIME_KEY_SIZE];
+    char json[2048U];
+    const char *marker;
+    FILE *configuration;
+    assert(snprintf(observation_path, sizeof(observation_path), "%s/%s",
+                    temporary, "javascript-observation.conf") > 0);
+    configuration = fopen(observation_path, "wb");
+    assert(configuration != NULL);
+    assert(fputs("# exact observation rules\nhost cdn.example.test /assets/\n",
+                 configuration) >= 0);
+    assert(fclose(configuration) == 0);
+    assert(laghu_javascript_observations_load(observation_path, &providers,
+                                              NULL, 0U));
+    assert(providers.count == 1U && providers.digest[0] != '\0');
+    assert(laghu_runtime_add_instrumentation(
+        temporary, &providers,
+        (laghu_buffer){
+            (const unsigned char
+                 *)"<html><body><script src=\"/app.js\"></script>"
+                   "<script src=\"https://cdn.example.test/assets/a.js\">"
+                   "</script></body></html>",
+            sizeof("<html><body><script src=\"/app.js\"></script>"
+                   "<script src=\"https://cdn.example.test/assets/a.js\">"
+                   "</script></body></html>") -
+                1U},
+        "/rum", "https://example.test", policy_key, 3000U, 604800U, 10U, true,
+        &rum_page));
+    assert(rum_page.rewritten);
+    marker = strstr((const char *)rum_page.data, "data-laghu-template=\"");
+    assert(marker != NULL);
+    marker += sizeof("data-laghu-template=\"") - 1U;
+    memset(&rum, 0, sizeof(rum));
+    memcpy(rum.template_key, marker, LAGHU_SHA256_HEX_LENGTH);
+    rum.template_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+    assert(laghu_sha256_hex(
+        (laghu_buffer){(const unsigned char *)"https://example.test/app.js",
+                       sizeof("https://example.test/app.js") - 1U},
+        script_key));
+    assert(snprintf(json, sizeof(json),
+                    "{\"version\":1,\"template\":\"%s\",\"bucket\":1,"
+                    "\"lcp_ms\":2200,\"inp_ms\":180,\"cls_milli\":80,"
+                    "\"dcl_ms\":900,\"load_ms\":1200,\"errors\":0,"
+                    "\"rejections\":0,\"candidates\":[{\"key\":\"%s\","
+                    "\"before_dcl\":1,\"long_tasks\":0}]}",
+                    rum.template_key, script_key) > 0);
+    assert(laghu_runtime_parse_instrumentation_beacon(
+        (laghu_buffer){(const unsigned char *)json, strlen(json)}, &rum));
+    assert(rum.candidate_count == 1U && rum.lcp_ms == 2200U);
+    assert(laghu_instrumentation_apply_beacon(temporary, 3001U, 604800U, &rum));
+    assert(strstr(laghu_runtime_instrumentation_script(),
+                  "largest-contentful-paint") != NULL);
+    laghu_runtime_html_result_release(&rum_page);
+    configuration = fopen(observation_path, "wb");
+    assert(configuration != NULL);
+    assert(fputs("host 127.0.0.1 /assets/\n", configuration) >= 0);
+    assert(fclose(configuration) == 0);
+    assert(!laghu_javascript_observations_load(observation_path, &providers,
+                                               NULL, 0U));
+    configuration = fopen(observation_path, "wb");
+    assert(configuration != NULL);
+    assert(fputs("host cdn.example.test /assets/\n"
+                 "host cdn.example.test /assets/js/\n",
+                 configuration) >= 0);
+    assert(fclose(configuration) == 0);
+    assert(!laghu_javascript_observations_load(observation_path, &providers,
+                                               NULL, 0U));
+  }
   assert(!laghu_runtime_cache_lookup(temporary, index_key, NULL, &entry));
   assert(laghu_runtime_cache_lookup(temporary, index_key, "etag", &entry));
   assert(laghu_runtime_cache_lookup_variant(temporary, policy_key, &entry));

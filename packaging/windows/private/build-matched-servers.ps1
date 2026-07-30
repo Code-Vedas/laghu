@@ -91,6 +91,35 @@ function Expand-VerifiedArchive([string] $Archive, [string] $Destination) {
   }
 }
 
+function Initialize-VerifiedSources(
+  [string] $Destination,
+  [string] $Identity,
+  [scriptblock] $Expand
+) {
+  $marker = Join-Path $Destination ".laghu-sources.sha256"
+  if ((Test-Path $marker) -and (Get-Content -Raw $marker).Trim() -eq $Identity) {
+    return $true
+  }
+  Remove-Item -Recurse -Force $Destination -ErrorAction SilentlyContinue
+  if (Test-Path $Destination) {
+    throw "Unable to replace the matched-server source directory '$Destination'. Close processes using that directory and run the build again."
+  }
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  & $Expand
+  Set-Content -Encoding ASCII $marker $Identity
+  return $false
+}
+
+function Get-TextSha256([string] $Value) {
+  $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($algorithm.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant()
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
 function Get-MsysBash {
   $candidates = @(
     "C:\msys64\usr\bin\bash.exe",
@@ -177,14 +206,16 @@ function Build-Nginx {
   $sourceParent = Join-Path $workRoot "nginx-source"
   $source = Join-Path $sourceParent "nginx-$($sources.Nginx.Version)"
   $libraries = Join-Path $source "build-libs"
-  Remove-Item -Recurse -Force $sourceParent -ErrorAction SilentlyContinue
-  if (Test-Path $sourceParent) {
-    throw "Unable to replace the NGINX build directory '$sourceParent'. Close processes using that directory and run the build again."
+  $sourceIdentity = @(
+    $sources.Nginx.Sha256, $sources.Pcre2.Sha256,
+    $sources.Zlib.Sha256, $sources.OpenSsl.Sha256
+  ) -join "`n"
+  $sourcesCached = Initialize-VerifiedSources $sourceParent $sourceIdentity {
+    Expand-VerifiedArchive $archive $sourceParent
+    Expand-VerifiedArchive $pcre $libraries
+    Expand-VerifiedArchive $zlib $libraries
+    Expand-VerifiedArchive $openssl $libraries
   }
-  Expand-VerifiedArchive $archive $sourceParent
-  Expand-VerifiedArchive $pcre $libraries
-  Expand-VerifiedArchive $zlib $libraries
-  Expand-VerifiedArchive $openssl $libraries
   $laghuSnapshot = Join-Path $source "laghu"
   Remove-Item -Recurse -Force $laghuSnapshot -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path "$laghuSnapshot\libs", "$laghuSnapshot\modules" | Out-Null
@@ -220,7 +251,18 @@ function Build-Nginx {
     "--with-openssl=$librariesBuildPath/openssl-$($sources.OpenSsl.Version) --with-openssl-opt='no-asm no-tests'",
     "--with-http_ssl_module --add-module='$moduleMsys'"
   ) -join " "
-  $configuration = "export PATH='$msvcBinMsys':/c/Strawberry/perl/bin:/usr/bin:`$PATH && cd '$sourceMsys' && $configurationArguments && nmake"
+  $configurationIdentity = Get-TextSha256 "$configurationArguments`n$([IO.File]::ReadAllText((Join-Path $repo 'modules/ngx_http_laghu_module/config')))"
+  $configurationMarker = Join-Path $source ".laghu-nginx-config.sha256"
+  $makefile = Join-Path $source "objs\Makefile"
+  $moduleConfiguration = Join-Path $repo "modules\ngx_http_laghu_module\config"
+  $legacyConfigurationCached = $sourcesCached -and
+    -not (Test-Path $configurationMarker) -and (Test-Path $makefile) -and
+    (Get-Item $moduleConfiguration).LastWriteTimeUtc -le (Get-Item $makefile).LastWriteTimeUtc
+  $configurationCached = $sourcesCached -and (Test-Path $configurationMarker) -and
+    (Get-Content -Raw $configurationMarker).Trim() -eq $configurationIdentity
+  $configurationCached = $configurationCached -or $legacyConfigurationCached
+  $buildCommand = if ($configurationCached) { "nmake" } else { "$configurationArguments && nmake" }
+  $configuration = "export PATH='$msvcBinMsys':/c/Strawberry/perl/bin:/usr/bin:`$PATH && cd '$sourceMsys' && $buildCommand"
   $log = Join-Path $workRoot "nginx-build.log"
   $savedErrorActionPreference = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
@@ -228,6 +270,7 @@ function Build-Nginx {
   $buildExitCode = $LASTEXITCODE
   $ErrorActionPreference = $savedErrorActionPreference
   if ($buildExitCode -ne 0) { throw "NGINX build failed; inspect $log" }
+  Set-Content -Encoding ASCII $configurationMarker $configurationIdentity
   $root = Join-Path $outputRoot "nginx-$($sources.Nginx.Version)-$Architecture"
   Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path "$root\conf", "$root\logs", "$root\temp" | Out-Null
@@ -262,12 +305,16 @@ function Build-Apache {
   $apr = Get-VerifiedArchive "apr" $sources.Apr
   $aprUtil = Get-VerifiedArchive "apr-util" $sources.AprUtil
   $sourceParent = Join-Path $workRoot "apache-source"
-  Remove-Item -Recurse -Force $sourceParent -ErrorAction SilentlyContinue
-  Expand-VerifiedArchive $archive $sourceParent
   $source = Join-Path $sourceParent "httpd-$($sources.Apache.Version)"
   $dependencySource = Join-Path $workRoot "apache-dependencies"
-  Expand-VerifiedArchive $apr $dependencySource
-  Expand-VerifiedArchive $aprUtil $dependencySource
+  $null = Initialize-VerifiedSources $sourceParent $sources.Apache.Sha256 {
+    Expand-VerifiedArchive $archive $sourceParent
+  }
+  $dependencyIdentity = @($sources.Apr.Sha256, $sources.AprUtil.Sha256) -join "`n"
+  $null = Initialize-VerifiedSources $dependencySource $dependencyIdentity {
+    Expand-VerifiedArchive $apr $dependencySource
+    Expand-VerifiedArchive $aprUtil $dependencySource
+  }
   $aprSource = Join-Path $dependencySource "apr-$($sources.Apr.Version)"
   $aprUtilSource = Join-Path $dependencySource "apr-util-$($sources.AprUtil.Version)"
   $aprBuild = Join-Path $workRoot "apr-build"

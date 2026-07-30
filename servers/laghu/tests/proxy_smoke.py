@@ -546,6 +546,9 @@ def main():
                 "--rewrite-level",
                 "all",
                 "--critical-css-beacon",
+                "--instrumentation-beacon",
+                "--instrumentation-sample-rate",
+                "100",
                 "--io-timeout",
                 "1",
                 "--workers",
@@ -565,7 +568,9 @@ def main():
                     time.sleep(0.05)
             else:
                 raise AssertionError("proxy did not start")
-            assert first_body == BODY, (first_head, first_body)
+            assert b"<body>hello" in first_body, (first_head, first_body)
+            assert b"/.laghu/beacon/instrumentation.js" in first_body
+            assert b'data-laghu-sample="100"' in first_body
             assert b"x-laghu: pass" in first_head, first_head
             javascript_head, javascript_cold = request(proxy_port, "/app.js")
             assert javascript_cold == b"function publicName(longLocal) { return longLocal + 1; }"
@@ -613,7 +618,7 @@ def main():
             assert b"inlinePublic(longLocal)" in inline_cold
             for _ in range(50):
                 inline_head, inline_warm = request(proxy_port, "/javascript-inline.html")
-                if b'etag: "laghu-html-' in inline_head:
+                if b"inlinePublic(n){return n+1;}" in inline_warm:
                     break
                 time.sleep(0.05)
             else:
@@ -638,6 +643,31 @@ def main():
             )
             assert b" 200 " in critical_head.split(b"\r\n", 1)[0]
             assert b"data-laghu-critical" in critical_body
+            rum_head, rum_body = request(
+                proxy_port, "/.laghu/beacon/instrumentation.js"
+            )
+            assert b" 200 " in rum_head.split(b"\r\n", 1)[0]
+            assert b"largest-contentful-paint" in rum_body
+            template_key = re.search(
+                rb'data-laghu-template="([0-9a-f]{64})"', first_body
+            ).group(1).decode()
+            rum_post_head, rum_post_body = request(
+                proxy_port,
+                "/.laghu/beacon/instrumentation",
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Sec-Fetch-Site": "same-origin",
+                },
+                body=json.dumps({
+                    "version": 1, "template": template_key, "bucket": 0,
+                    "lcp_ms": 1200, "inp_ms": 100, "cls_milli": 50,
+                    "dcl_ms": 500, "load_ms": 700, "errors": 0,
+                    "rejections": 0, "candidates": [],
+                }).encode(),
+            )
+            assert b" 204 " in rum_post_head.split(b"\r\n", 1)[0]
+            assert rum_post_body == b""
             health_head, health_body = request(proxy_port, "/.laghu/health")
             assert b" 200 " in health_head.split(b"\r\n", 1)[0]
             assert health_body == b'{"status":"ok","state":"running"}'
@@ -680,7 +710,8 @@ def main():
             assert b" 503 " in unavailable_head.split(b"\r\n", 1)[0]
             assert b'"cache":"unavailable"' in unavailable_body
             second_head, second_body = request(proxy_port, "/index.html")
-            assert len(second_body) < len(BODY)
+            assert b"<!-- remove -->" not in second_body
+            assert b"/.laghu/beacon/instrumentation.js" in second_body
             assert b"etag: \"laghu-html-" in second_head
             css_cold_head, css_cold_body = request(proxy_port, "/site.css")
             assert css_cold_body == b"body { color: red; }"
@@ -730,7 +761,8 @@ def main():
             assert b" 502 " in truncated_head.split(b"\r\n", 1)[0]
             assert truncated_body == b""
             chunked_head, chunked_body = request(proxy_port, "/chunked")
-            assert len(chunked_body) <= len(BODY)
+            assert b"<!-- remove -->" not in chunked_body
+            assert b"/.laghu/beacon/instrumentation.js" in chunked_body
             assert b"x-laghu: pass" in chunked_head
             bad_chunk_head, bad_chunk_body = request(proxy_port, "/bad-chunk")
             assert b" 502 " in bad_chunk_head.split(b"\r\n", 1)[0]
@@ -789,7 +821,8 @@ def main():
                 if cached.is_file():
                     cached.write_bytes(b"corrupt")
             corrupt_head, corrupt_body = request(proxy_port, "/index.html")
-            assert corrupt_body == BODY
+            assert b"<body>hello" in corrupt_body
+            assert b"/.laghu/beacon/instrumentation.js" in corrupt_body
             assert (
                 b"x-laghu: pass" in corrupt_head
                 or b"x-laghu: bypass-error" in corrupt_head

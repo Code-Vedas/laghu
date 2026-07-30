@@ -43,12 +43,15 @@ typedef struct {
   const char *font_provider_config;
   const char *javascript_queue;
   const char *javascript_target;
+  const char *javascript_observation_config;
   const char *image_cache;
   laghu_runtime_queue queue;
   laghu_runtime_queue font_queue;
   laghu_runtime_queue javascript_runtime_queue;
   laghu_font_provider_set font_providers;
+  laghu_javascript_observation_set javascript_observations;
   bool font_providers_loaded;
+  bool javascript_observations_loaded;
 } laghu_apache_config;
 
 typedef struct {
@@ -176,12 +179,23 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   merged->javascript_target = child->javascript_target != NULL
                                   ? child->javascript_target
                                   : parent->javascript_target;
+  merged->javascript_observation_config =
+      child->javascript_observation_config != NULL
+          ? child->javascript_observation_config
+          : parent->javascript_observation_config;
   if (child->font_providers_loaded) {
     merged->font_providers = child->font_providers;
     merged->font_providers_loaded = true;
   } else if (parent->font_providers_loaded) {
     merged->font_providers = parent->font_providers;
     merged->font_providers_loaded = true;
+  }
+  if (child->javascript_observations_loaded) {
+    merged->javascript_observations = child->javascript_observations;
+    merged->javascript_observations_loaded = true;
+  } else if (parent->javascript_observations_loaded) {
+    merged->javascript_observations = parent->javascript_observations;
+    merged->javascript_observations_loaded = true;
   }
   laghu_runtime_queue_init(&merged->queue);
   laghu_runtime_queue_init(&merged->font_queue);
@@ -277,6 +291,22 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
       return "Laghu CriticalCssBeacon expects On or Off exactly once in this "
              "scope";
     }
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "InstrumentationBeacon") == 0) {
+    if (config->core.instrumentation_beacon != LAGHU_MODE_UNSET ||
+        !laghu_apache_on_off(parameter, &config->core.instrumentation_beacon))
+      return "Laghu InstrumentationBeacon expects On or Off exactly once";
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "InstrumentationSampleRate") == 0) {
+    quality = strtoul(parameter, &end, 10);
+    if (config->core.instrumentation_sample_rate !=
+            LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET ||
+        end == parameter || *end != '\0' || quality > 100U)
+      return "Laghu InstrumentationSampleRate expects 0 through 100 exactly "
+             "once";
+    config->core.instrumentation_sample_rate = (unsigned int)quality;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "ImageInlineLimit") == 0) {
@@ -397,6 +427,19 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
         !laghu_javascript_target_normalize(parameter, normalized))
       return "Laghu JavaScriptTarget expects a bounded Browserslist query";
     config->javascript_target = apr_pstrdup(command->pool, normalized);
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "JavaScriptObservationConfig") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (config->javascript_observation_config != NULL ||
+        !laghu_javascript_observations_load(
+            parameter, &config->javascript_observations, error, sizeof(error)))
+      return apr_psprintf(command->pool,
+                          "Laghu JavaScriptObservationConfig is invalid: %s",
+                          error);
+    config->javascript_observation_config =
+        apr_pstrdup(command->pool, parameter);
+    config->javascript_observations_loaded = true;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "ImageCache") == 0) {
@@ -755,6 +798,10 @@ static bool laghu_apache_normalize(request_rec *request,
       context->config->javascript_target != NULL
           ? context->config->javascript_target
           : "defaults and supports es6-module and not dead";
+  context->environment.javascript_observations =
+      context->config->javascript_observations_loaded
+          ? &context->config->javascript_observations
+          : NULL;
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;
 }
@@ -1404,6 +1451,10 @@ static int laghu_apache_variant_handler(request_rec *request) {
   static const char post_path[] = "/.laghu/beacon/images";
   static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
   static const char critical_post_path[] = "/.laghu/beacon/critical-css";
+  static const char instrumentation_script_path[] =
+      "/.laghu/beacon/instrumentation.js";
+  static const char instrumentation_post_path[] =
+      "/.laghu/beacon/instrumentation";
   static const char script[] =
       "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
       "forEach"
@@ -1565,6 +1616,63 @@ static int laghu_apache_variant_handler(request_rec *request) {
             config->image_cache != NULL ? config->image_cache
                                         : LAGHU_DEFAULT_CACHE,
             policy_key, now, config->core.image_metadata_ttl, &critical))
+      return HTTP_BAD_REQUEST;
+    request->status = HTTP_NO_CONTENT;
+    return OK;
+  }
+  if (strcmp(request->uri, instrumentation_script_path) == 0) {
+    const char *rum_script = laghu_runtime_instrumentation_script();
+    size_t length = strlen(rum_script);
+    if (config->core.instrumentation_beacon != LAGHU_MODE_ON ||
+        request->method_number != M_GET)
+      return HTTP_NOT_FOUND;
+    ap_set_content_type(request, "application/javascript");
+    ap_set_content_length(request, (apr_off_t)length);
+    return request->header_only || ap_rwrite(rum_script, length, request) >= 0
+               ? OK
+               : HTTP_INTERNAL_SERVER_ERROR;
+  }
+  if (strcmp(request->uri, instrumentation_post_path) == 0) {
+    const char *type = apr_table_get(request->headers_in, "Content-Type");
+    const char *site = apr_table_get(request->headers_in, "Sec-Fetch-Site");
+    const char *content_length =
+        apr_table_get(request->headers_in, "Content-Length");
+    char body_buffer[16385U];
+    char *content_length_end = NULL;
+    unsigned long declared_length =
+        content_length != NULL
+            ? strtoul(content_length, &content_length_end, 10)
+            : 0U;
+    long length, total = 0;
+    uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
+    laghu_instrumentation_beacon rum;
+    if (config->core.instrumentation_beacon != LAGHU_MODE_ON ||
+        request->method_number != M_POST || type == NULL ||
+        ap_cstr_casecmpn(type, "application/json", 16U) != 0 || site == NULL ||
+        ap_cstr_casecmp(site, "same-origin") != 0 || content_length == NULL ||
+        content_length_end == content_length || *content_length_end != '\0' ||
+        declared_length == 0U || declared_length > 16384U ||
+        ap_setup_client_block(request, REQUEST_CHUNKED_ERROR) != OK ||
+        !ap_should_client_block(request))
+      return HTTP_BAD_REQUEST;
+    if (laghu_apache_beacon_window != (apr_time_t)now) {
+      laghu_apache_beacon_window = (apr_time_t)now;
+      laghu_apache_beacon_count = 0U;
+    }
+    if (++laghu_apache_beacon_count > 32U) return HTTP_TOO_MANY_REQUESTS;
+    while ((length = ap_get_client_block(request, body_buffer + total,
+                                         16384U - (size_t)total)) > 0) {
+      total += length;
+      if (total > 16384) return HTTP_REQUEST_ENTITY_TOO_LARGE;
+    }
+    if (length < 0 ||
+        !laghu_runtime_parse_instrumentation_beacon(
+            (laghu_buffer){(const unsigned char *)body_buffer, (size_t)total},
+            &rum) ||
+        !laghu_instrumentation_apply_beacon(
+            config->image_cache != NULL ? config->image_cache
+                                        : LAGHU_DEFAULT_CACHE,
+            now, config->core.image_metadata_ttl, &rum))
       return HTTP_BAD_REQUEST;
     request->status = HTTP_NO_CONTENT;
     return OK;

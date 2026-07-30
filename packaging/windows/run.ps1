@@ -24,11 +24,13 @@ $triplet = if ($Architecture -eq "x64") { "x64-windows" } else { "arm64-windows"
 $vcpkg = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { "C:/vcpkg" }
 $toolchain = Join-Path $vcpkg "scripts/buildsystems/vcpkg.cmake"
 $runtime = "tmp/windows-runtime/$Architecture"
+$cargoTarget = "tmp/windows-cargo/$Architecture"
 $nginx = "tmp/windows-servers/nginx-1.31.3-$Architecture"
 $apache = "tmp/windows-servers/apache-2.4.68-$Architecture"
 $configuration = @(
   "-S", ".", "-B", $BuildDirectory, "-G", "Visual Studio 17 2022", "-A", $cmakeArchitecture,
   "-DLAGHU_WITH_VIPS=ON", "-DLAGHU_BUILD_SERVICE=ON",
+  "-DLAGHU_JS_TARGET_DIR=$cargoTarget",
   "-DCMAKE_TOOLCHAIN_FILE=$toolchain", "-DVCPKG_TARGET_TRIPLET=$triplet"
 )
 
@@ -74,7 +76,8 @@ function Invoke-Test {
   $noVips = "$BuildDirectory-no-vips"
   & cmake -S . -B $noVips -G "Visual Studio 17 2022" -A $cmakeArchitecture `
     -DLAGHU_WITH_VIPS=OFF `
-    -DLAGHU_BUILD_SERVICE=ON "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+    -DLAGHU_BUILD_SERVICE=ON "-DLAGHU_JS_TARGET_DIR=$cargoTarget" `
+    "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
     "-DVCPKG_TARGET_TRIPLET=$triplet"
   if ($LASTEXITCODE -ne 0) { throw "Windows no-libvips configuration failed" }
   & cmake --build $noVips --config Debug --parallel

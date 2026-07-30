@@ -17,7 +17,7 @@ extern "C" {
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
-#define LAGHU_VARIANT_KEY_VERSION 5U
+#define LAGHU_VARIANT_KEY_VERSION 6U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -33,6 +33,8 @@ extern "C" {
 #define LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT 2048U
 #define LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET 0U
 #define LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT 8192U
+#define LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET UINT32_MAX
+#define LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT 10U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -108,6 +110,8 @@ typedef struct {
   laghu_mode allow_api;
   laghu_mode image_beacon;
   laghu_mode critical_css_beacon;
+  laghu_mode instrumentation_beacon;
+  unsigned int instrumentation_sample_rate;
   unsigned int image_quality;
   unsigned int image_inline_limit;
   unsigned int image_metadata_limit;

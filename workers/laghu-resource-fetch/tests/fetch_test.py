@@ -118,6 +118,12 @@ def main():
             else:
                 raise AssertionError("font fetch queue did not accept a job")
             while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    stdout, stderr = process.communicate(timeout=5)
+                    raise AssertionError(
+                        f"font fetch worker exited with {process.returncode}\n"
+                        f"worker stdout:\n{stdout}\nworker stderr:\n{stderr}"
+                    )
                 ready = subprocess.run(
                     [
                         fixture,

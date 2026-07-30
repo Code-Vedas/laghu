@@ -19,6 +19,7 @@ class ModLaghu < Formula
   depends_on "laghu-js-optimize"
 
   def install
+    (share/"laghu").install "packaging/javascript-observation.conf"
     ENV["APXS"] = formula_opt_bin("httpd")/"apxs"
     ENV["APACHE_BUILD_DIR"] = buildpath/"apache-module"
     system "scripts/build-apache-module"
@@ -30,11 +31,15 @@ class ModLaghu < Formula
       Laghu WorkerQueue #{var}/run/laghu/jobs.queue
       Laghu FontFetchQueue #{var}/run/laghu/fonts.queue
       Laghu FontProviderConfig #{etc}/laghu/font-providers.conf
+      Laghu JavaScriptObservationConfig #{etc}/laghu/javascript-observation.conf
       Laghu ImageCache #{var}/cache/laghu/images
     EOS
   end
 
   def post_install
+    observation_config = etc/"laghu/javascript-observation.conf"
+    observation_config.dirname.mkpath
+    observation_config.write((share/"laghu/javascript-observation.conf").read) unless observation_config.exist?
     config = etc/"httpd/httpd.conf"
     laghu_config = etc/"httpd/extra/mod-laghu.conf"
     laghu_config.dirname.mkpath

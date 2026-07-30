@@ -76,6 +76,7 @@ typedef struct {
   laghu_runtime_queue *javascript_queue;
   const char *javascript_target;
   const laghu_font_provider_set *font_providers;
+  const laghu_javascript_observation_set *javascript_observations;
   uint64_t now;
 } laghu_http_environment;
 

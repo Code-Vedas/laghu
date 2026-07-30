@@ -77,6 +77,8 @@ printf '%s\n' '<html><body><script>function inlinePublic(longLocal) { return lon
   >"${work}/htdocs/javascript-inline.html"
 printf '%s\n' '<html><body><script src="/app.js"></script><script>function externalPageHelper(veryLongLocalArgument) { return veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument; }</script></body></html>' \
   >"${work}/htdocs/javascript-external.html"
+printf '%s\n' '<html><body>rum<script src="/app.js"></script></body></html>' \
+  >"${work}/htdocs/instrumentation.html"
 printf '%s\n' "console.log('combine one value'); console.log('combine one value again');" >"${work}/htdocs/combine-one.js"
 printf '%s\n' "console.log('combine two value'); console.log('combine two value again');" >"${work}/htdocs/combine-two.js"
 printf '%s\n' '<html><body><script src="/combine-one.js" data-laghu-combine="application-main"></script><script src="/combine-two.js" data-laghu-combine="application-main"></script></body></html>' >"${work}/htdocs/javascript-combine.html"
@@ -156,6 +158,8 @@ load_first_mpm() {
   printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-external.html">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<Location "/instrumentation.html">\nLaghu RewriteLevel core\nLaghu InstrumentationBeacon On\nLaghu InstrumentationSampleRate 100\n</Location>\n'
+  printf '<LocationMatch "^/\\.laghu/beacon/instrumentation(\\.js)?$">\nLaghu InstrumentationBeacon On\n</LocationMatch>\n'
   printf '<LocationMatch "^/(combine-(one|two)\\.js|javascript-(combine|outline)\\.html)$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
   if [ -x "${javascript_service}" ]; then
@@ -164,7 +168,7 @@ load_first_mpm() {
     printf 'Laghu JavaScriptInlineLimit 2048\n'
     printf 'Laghu JavaScriptOutlineThreshold 8192\n'
   fi
-  printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
+  printf '<Location "/.laghu/">\nLaghu RewriteLevel core\nLaghu InstrumentationBeacon On\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
   if [ -f "${modules}/mod_http2.so" ]; then
     printf 'Protocols h2c http/1.1\nH2Direct on\n'
@@ -617,6 +621,20 @@ if [ "${service_pid}" != "" ]; then
   curl --fail --silent \
     http://127.0.0.1:18081/.laghu/beacon/critical-css.js | \
     grep 'data-laghu-critical' >/dev/null
+  curl --fail --silent http://127.0.0.1:18081/instrumentation.html \
+    >"${work}/instrumentation.html"
+  grep 'data-laghu-sample="100"' "${work}/instrumentation.html" >/dev/null
+  curl --fail --silent \
+    http://127.0.0.1:18081/.laghu/beacon/instrumentation.js | \
+    grep 'largest-contentful-paint' >/dev/null
+  instrumentation_key=$(sed -n 's/.*data-laghu-template="\([0-9a-f]\{64\}\)".*/\1/p' \
+    "${work}/instrumentation.html")
+  instrumentation_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --request POST --header 'Content-Type: application/json' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --data "{\"version\":1,\"template\":\"${instrumentation_key}\",\"bucket\":0,\"lcp_ms\":1200,\"inp_ms\":100,\"cls_milli\":50,\"dcl_ms\":500,\"load_ms\":700,\"errors\":0,\"rejections\":0,\"candidates\":[]}" \
+    http://127.0.0.1:18081/.laghu/beacon/instrumentation)
+  [ "${instrumentation_status}" = 204 ]
   beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header 'Sec-Fetch-Site: same-origin' \

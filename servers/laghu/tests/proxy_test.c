@@ -30,6 +30,9 @@ int main(void) {
                    "/tmp/jobs",
                    "--allow-api",
                    "--critical-css-beacon",
+                   "--instrumentation-beacon",
+                   "--instrumentation-sample-rate",
+                   "50",
                    "--javascript-inline-limit",
                    "4096",
                    "--javascript-outline-threshold",
@@ -92,12 +95,14 @@ int main(void) {
   unsigned char decoded[16];
   size_t decoded_length = 0U;
   laghu_proxy_options_init(&options);
-  CHECK(laghu_proxy_parse_options(17, valid, &options, error, sizeof(error)) ==
+  CHECK(laghu_proxy_parse_options(20, valid, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.origin_host, "127.0.0.1"));
   CHECK(!strcmp(options.origin_port, "8000"));
   CHECK(options.config.allow_api == LAGHU_MODE_ON);
   CHECK(options.config.critical_css_beacon == LAGHU_MODE_ON);
+  CHECK(options.config.instrumentation_beacon == LAGHU_MODE_ON);
+  CHECK(options.config.instrumentation_sample_rate == 50U);
   CHECK(options.config.javascript_inline_limit == 4096U);
   CHECK(options.config.javascript_outline_threshold == 16384U);
   CHECK(options.drain_timeout == 45U);

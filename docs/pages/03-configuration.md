@@ -17,6 +17,9 @@ Both modules expose the same configuration semantics. NGINX uses the lowercase `
 | `laghu image_quality 82;` | `Laghu ImageQuality 82` |
 | `laghu image_beacon off;` | `Laghu ImageBeacon Off` |
 | `laghu critical_css_beacon off;` | `Laghu CriticalCssBeacon Off` |
+| `laghu instrumentation_beacon off;` | `Laghu InstrumentationBeacon Off` |
+| `laghu instrumentation_sample_rate 10;` | `Laghu InstrumentationSampleRate 10` |
+| `laghu javascript_observation_config /etc/laghu/javascript-observation.conf;` | `Laghu JavaScriptObservationConfig /etc/laghu/javascript-observation.conf` |
 | `laghu image_inline_limit 2048;` | `Laghu ImageInlineLimit 2048` |
 | `laghu image_metadata_limit 10000;` | `Laghu ImageMetadataLimit 10000` |
 | `laghu image_metadata_ttl 7d;` | `Laghu ImageMetadataTtl 7d` |
@@ -91,6 +94,9 @@ laghu rewrite_level core;
 laghu image_quality 82;
 laghu image_beacon off;
 laghu critical_css_beacon off;
+laghu instrumentation_beacon off;
+laghu instrumentation_sample_rate 10;
+laghu javascript_observation_config /etc/laghu/javascript-observation.conf;
 laghu image_inline_limit 2048;
 laghu image_metadata_limit 10000;
 laghu image_metadata_ttl 7d;
@@ -123,6 +129,12 @@ The line-oriented provider format starts a definition with `provider ID`, ends i
 Eligible links remain unchanged on a cold miss or any queue, worker, network, TLS, parser, CSP, or cache failure. Ready CSS is inlined only when its media and supported attributes can be preserved and the resulting HTML is no larger. The fixed WOFF2-oriented fetch profile does not forward browser headers, cookies, credentials, client addresses, or proxy headers, and referenced font binaries remain external.
 
 Beaconing is inherited and disabled by default. `critical_css_beacon` is independent from image beaconing and is exposed as `Laghu CriticalCssBeacon` or standalone `--critical-css-beacon`. Inline payloads default to a 2 KiB maximum. Image metadata and learned critical-CSS observations use the configured seven-day metadata TTL.
+
+RUM instrumentation is independently opt-in through `instrumentation_beacon`, `Laghu InstrumentationBeacon`, or standalone `--instrumentation-beacon`. Its client-side sampling rate defaults to 10 percent and accepts `0..100`; HTML remains deterministic because each browser makes the sampling decision. Eligible complete documents receive one deferred same-origin script before `</body>`. Hash-only, nonce-only, `strict-dynamic`, malformed, and oversized documents remain unchanged.
+
+The administrator-owned JavaScript observation file uses one strict directive per line: `host exact.example /path/prefix/`. Prefixes must end in `/`. Wildcards, IP literals, credentials, URLs, overlapping entries, unsafe paths, and unknown fields fail configuration loading. Same-origin scripts are always cataloged; configured exact HTTPS host and path pairs add bounded third-party candidates. A normal server reload applies file changes.
+
+The fixed script is served at `/.laghu/beacon/instrumentation.js` and submits at most one bounded same-origin JSON report to `/.laghu/beacon/instrumentation` during `pagehide`. Reports contain an opaque template key, a mobile or desktop bucket, bounded Core Web Vitals and lifecycle values, error counters without messages or stacks, and opaque hashes for cataloged scripts. Laghu stores checksummed aggregate histograms and counters only; it never stores raw reports, complete URLs, queries, cookies, addresses, client identifiers, page text, selectors, error messages, or stacks. Unsupported browser timing APIs simply omit useful observations. Aggregate expiry uses `image_metadata_ttl`.
 
 Stylesheet inlining defaults to 2 KiB and accepts `0..65536`; zero disables it. Outlining considers complete inline style blocks from 8 KiB by default and accepts `1024..1048576`. Inlining requires a ready same-origin stylesheet, inline-style CSP permission, and the strict integrity/nonce/media/import/font eligibility checks. Outlining requires structural-rewrite permission. Both preserve the first HTML response and apply only after their catalog dependency is ready and the combined HTML/CSS transfer is smaller.
 

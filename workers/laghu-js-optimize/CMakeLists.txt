@@ -4,7 +4,11 @@
 # LICENSE file in the root directory of this source tree.
 
 find_program(LAGHU_CARGO_EXECUTABLE cargo REQUIRED)
-set(LAGHU_JS_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargo")
+set(
+  LAGHU_JS_TARGET_DIR
+  "${CMAKE_CURRENT_BINARY_DIR}/cargo"
+  CACHE PATH "Cargo target directory for the JavaScript optimizer"
+)
 set(LAGHU_JS_CARGO_TARGET_ARGS)
 if(WIN32 AND CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
   set(LAGHU_JS_RUST_TARGET "aarch64-pc-windows-msvc")

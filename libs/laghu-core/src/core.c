@@ -345,6 +345,8 @@ void laghu_config_init(laghu_config *config) {
   config->allow_api = LAGHU_MODE_UNSET;
   config->image_beacon = LAGHU_MODE_UNSET;
   config->critical_css_beacon = LAGHU_MODE_UNSET;
+  config->instrumentation_beacon = LAGHU_MODE_UNSET;
+  config->instrumentation_sample_rate = LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET;
   config->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   config->image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_UNSET;
   config->image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_UNSET;
@@ -364,6 +366,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   laghu_mode parent_allow_api = LAGHU_MODE_OFF;
   laghu_mode parent_image_beacon = LAGHU_MODE_OFF;
   laghu_mode parent_critical_css_beacon = LAGHU_MODE_OFF;
+  laghu_mode parent_instrumentation_beacon = LAGHU_MODE_OFF;
+  unsigned int parent_instrumentation_sample_rate =
+      LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT;
   unsigned int parent_image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   unsigned int parent_image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_DEFAULT;
   unsigned int parent_image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_DEFAULT;
@@ -400,6 +405,11 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     if (parent->critical_css_beacon != LAGHU_MODE_UNSET) {
       parent_critical_css_beacon = parent->critical_css_beacon;
     }
+    if (parent->instrumentation_beacon != LAGHU_MODE_UNSET)
+      parent_instrumentation_beacon = parent->instrumentation_beacon;
+    if (parent->instrumentation_sample_rate !=
+        LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET)
+      parent_instrumentation_sample_rate = parent->instrumentation_sample_rate;
     if (parent->image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET) {
       parent_image_inline_limit = parent->image_inline_limit;
     }
@@ -450,6 +460,15 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       child != NULL && child->critical_css_beacon != LAGHU_MODE_UNSET
           ? child->critical_css_beacon
           : parent_critical_css_beacon;
+  result->instrumentation_beacon =
+      child != NULL && child->instrumentation_beacon != LAGHU_MODE_UNSET
+          ? child->instrumentation_beacon
+          : parent_instrumentation_beacon;
+  result->instrumentation_sample_rate =
+      child != NULL && child->instrumentation_sample_rate !=
+                           LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET
+          ? child->instrumentation_sample_rate
+          : parent_instrumentation_sample_rate;
   result->image_inline_limit =
       child != NULL &&
               child->image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET
@@ -694,6 +713,10 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   if (config == NULL || policy == NULL) {
     return false;
   }
+  if (config->instrumentation_sample_rate !=
+          LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET &&
+      config->instrumentation_sample_rate > 100U)
+    return false;
 
   has_preset = config->preset != LAGHU_PRESET_UNSET;
   has_rewrite_level = config->rewrite_level != LAGHU_REWRITE_LEVEL_UNSET;

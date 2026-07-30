@@ -33,6 +33,7 @@ Copy-Item $binary $destination
 Copy-Item $fetchBinary $destination
 Copy-Item $javascriptBinary $destination
 Copy-Item (Join-Path $repo "packaging/font-providers.conf") $destination
+Copy-Item (Join-Path $repo "packaging/javascript-observation.conf") $destination
 Get-ChildItem (Split-Path $binary) -Filter "*.dll" | Copy-Item -Destination $destination
 Get-ChildItem (Split-Path $fetchBinary) -Filter "*.dll" | Copy-Item -Destination $destination
 
@@ -125,6 +126,7 @@ $manifest = [ordered]@{
   fetch_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-resource-fetch.exe")).Hash.ToLowerInvariant()
   javascript_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-js-optimize.exe")).Hash.ToLowerInvariant()
   providers_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "font-providers.conf")).Hash.ToLowerInvariant()
+  javascript_observations_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "javascript-observation.conf")).Hash.ToLowerInvariant()
   dlls = [ordered]@{}
 }
 Get-ChildItem $destination -Filter "*.dll" | Sort-Object Name | ForEach-Object {
