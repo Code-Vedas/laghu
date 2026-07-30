@@ -32,6 +32,17 @@
 
 #define LAGHU_SERVICE_TIMEOUT_SECONDS 30U
 
+#ifdef _WIN32
+static HANDLE laghu_service_stop_event;
+
+static bool laghu_libvips_stop_requested(void) {
+  return laghu_service_stop_event != NULL &&
+         WaitForSingleObject(laghu_service_stop_event, 0U) == WAIT_OBJECT_0;
+}
+#else
+static bool laghu_libvips_stop_requested(void) { return false; }
+#endif
+
 static void laghu_libvips_pause(unsigned int milliseconds) {
 #ifdef _WIN32
   Sleep(milliseconds);
@@ -102,7 +113,12 @@ static void laghu_libvips_job_diagnostic(const laghu_runtime_job *job,
   fprintf(stderr,
           "laghu-libvips: job preserved original path=%s type=%s reason=%s\n",
           job->request_path, job->content_type,
-          status == 4 ? "no-valid-smaller-candidate" : "worker-failure");
+          status == 4   ? "no-valid-smaller-candidate"
+          : status == 5 ? "sprite-cache-lookup"
+          : status == 6 ? "sprite-cache-read"
+          : status == 7 ? "sprite-candidate-rejected"
+          : status == 8 ? "sprite-cache-publication"
+                        : "worker-failure");
 }
 
 static unsigned char *laghu_read_file(const char *path, size_t *length) {
@@ -212,18 +228,20 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     unsigned char *buffers[LAGHU_RUNTIME_MAX_SPRITE_INPUTS] = {0};
     laghu_runtime_cache_entry published;
     unsigned int index;
-    int sprite_status = 1;
+    int sprite_status = 5;
     if (job->sprite_count < 2U ||
         job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
         !laghu_image_backend_probe(&backend) || !backend.available) {
       return 1;
     }
     for (index = 0U; index < job->sprite_count; ++index) {
+      sprite_status = 5;
       if (!laghu_runtime_cache_lookup_variant(
               cache_path, job->sprite_variant_keys[index], &inputs[index])) {
         goto sprite_finished;
       }
       buffers[index] = malloc(inputs[index].length);
+      sprite_status = 6;
       if (buffers[index] == NULL ||
           !laghu_runtime_cache_read(&inputs[index], buffers[index],
                                     inputs[index].length)) {
@@ -232,13 +250,19 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
       items[index].original =
           (laghu_buffer){buffers[index], inputs[index].length};
     }
-    if (laghu_image_build_sprite(&backend, items, job->sprite_count,
-                                 LAGHU_IMAGE_FORMAT_PNG, &sprite) &&
-        laghu_runtime_cache_publish(
+    if (!laghu_image_build_sprite(&backend, items, job->sprite_count,
+                                  LAGHU_IMAGE_FORMAT_PNG, &sprite)) {
+      sprite_status = 7;
+      goto sprite_finished;
+    }
+    if (laghu_runtime_cache_publish(
             cache_path, job->index_key, job->index_key, job->validator,
             "image/png", backend.backend_id,
             (laghu_buffer){sprite.data, sprite.length}, &published)) {
       sprite_status = 0;
+      laghu_image_sprite_result_release(&sprite);
+    } else {
+      sprite_status = 8;
       laghu_image_sprite_result_release(&sprite);
     }
   sprite_finished:
@@ -447,9 +471,18 @@ static int laghu_libvips_run_isolated(const laghu_runtime_job *job,
     return 1;
   }
   ResumeThread(process.hThread);
-  wait_status =
-      WaitForSingleObject(process.hProcess, laghu_libvips_timeout() * 1000U);
+  if (laghu_service_stop_event != NULL) {
+    HANDLE waits[] = {process.hProcess, laghu_service_stop_event};
+    wait_status = WaitForMultipleObjects(2U, waits, FALSE,
+                                         laghu_libvips_timeout() * 1000U);
+  } else {
+    wait_status =
+        WaitForSingleObject(process.hProcess, laghu_libvips_timeout() * 1000U);
+  }
   if (wait_status == WAIT_TIMEOUT) {
+    (void)TerminateJobObject(job_object, 1U);
+    (void)WaitForSingleObject(process.hProcess, INFINITE);
+  } else if (wait_status == WAIT_OBJECT_0 + 1U) {
     (void)TerminateJobObject(job_object, 1U);
     (void)WaitForSingleObject(process.hProcess, INFINITE);
   } else if (wait_status == WAIT_OBJECT_0) {
@@ -501,8 +534,10 @@ static int laghu_libvips_process_file(const char *job_path,
     return 1;
   }
   memcpy(&job, file_data, sizeof(job));
-  if (job.payload.length == 0U ||
-      job.payload.length != file_length - sizeof(job)) {
+  if (job.payload.length != file_length - sizeof(job) ||
+      (job.kind == LAGHU_RUNTIME_JOB_IMAGE && job.payload.length == 0U) ||
+      (job.kind != LAGHU_RUNTIME_JOB_IMAGE &&
+       job.kind != LAGHU_RUNTIME_JOB_SPRITE)) {
     free(file_data);
     return 1;
   }
@@ -601,6 +636,9 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     return 1;
   }
   for (;;) {
+    if (laghu_libvips_stop_requested()) {
+      break;
+    }
     (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
     if (laghu_runtime_queue_try_take(&queue, &job, payload,
                                      queue.slot_payload_size)) {
@@ -661,10 +699,13 @@ static SERVICE_STATUS laghu_service_status;
 
 static void WINAPI laghu_libvips_service_control(DWORD control) {
   if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN) {
-    laghu_service_status.dwCurrentState = SERVICE_STOPPED;
+    laghu_service_status.dwCurrentState = SERVICE_STOP_PENDING;
     laghu_service_status.dwControlsAccepted = 0U;
+    laghu_service_status.dwWaitHint = 5000U;
     (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
-    ExitProcess(0U);
+    if (laghu_service_stop_event != NULL) {
+      (void)SetEvent(laghu_service_stop_event);
+    }
   }
 }
 
@@ -678,9 +719,15 @@ static void WINAPI laghu_libvips_service_main(DWORD argument_count,
   memset(&laghu_service_status, 0, sizeof(laghu_service_status));
   laghu_service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
   laghu_service_status.dwCurrentState = SERVICE_START_PENDING;
+  laghu_service_stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+  if (laghu_service_stop_event == NULL) {
+    return;
+  }
   laghu_service_handle = RegisterServiceCtrlHandlerA(
       "laghu-libvips", laghu_libvips_service_control);
   if (laghu_service_handle == NULL) {
+    CloseHandle(laghu_service_stop_event);
+    laghu_service_stop_event = NULL;
     return;
   }
   (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
@@ -696,6 +743,8 @@ static void WINAPI laghu_libvips_service_main(DWORD argument_count,
   laghu_service_status.dwWin32ExitCode = (DWORD)status;
   laghu_service_status.dwControlsAccepted = 0U;
   (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
+  CloseHandle(laghu_service_stop_event);
+  laghu_service_stop_event = NULL;
 }
 
 static int laghu_libvips_run_service(void) {

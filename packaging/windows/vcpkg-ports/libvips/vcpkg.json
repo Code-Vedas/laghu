@@ -1,0 +1,36 @@
+{
+  "name": "libvips",
+  "version": "8.18.2",
+  "description": "libvips with explicit codec features for Laghu Windows builds",
+  "homepage": "https://github.com/libvips/libvips",
+  "license": "LGPL-2.1-or-later",
+  "dependencies": [
+    "expat",
+    "glib",
+    {
+      "name": "glib",
+      "host": true
+    },
+    {
+      "name": "vcpkg-tool-meson",
+      "host": true
+    }
+  ],
+  "features": {
+    "jpeg": {
+      "description": "Build with JPEG support",
+      "dependencies": ["libjpeg-turbo"]
+    },
+    "nsgif": {
+      "description": "Build the bundled GIF loader"
+    },
+    "png": {
+      "description": "Build with PNG support",
+      "dependencies": ["libpng"]
+    },
+    "webp": {
+      "description": "Build with WebP support",
+      "dependencies": ["libwebp"]
+    }
+  }
+}

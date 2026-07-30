@@ -93,6 +93,10 @@ static test_encoded_image test_encode(VipsImage *image,
 static test_encoded_image test_static_image(laghu_image_format format,
                                             bool alpha) {
   VipsImage *image = test_pattern(512U, 384U, alpha);
+  static const unsigned char exif_segment[] = {
+      0xff, 0xe1, 0x00, 0x16, 'E',  'x',  'i',  'f',  0x00, 0x00, 'I',
+      'I',  0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  test_encoded_image encoded;
 
   if (format == LAGHU_IMAGE_FORMAT_JPEG) {
     VipsBlob *profile = NULL;
@@ -105,8 +109,21 @@ static test_encoded_image test_static_image(laghu_image_format format,
                              profile_length);
     vips_area_unref((VipsArea *)profile);
   }
-  test_encoded_image encoded = test_encode(image, format);
+  encoded = test_encode(image, format);
   g_object_unref(image);
+  if (format == LAGHU_IMAGE_FORMAT_JPEG) {
+    unsigned char *with_exif = g_malloc(encoded.length + sizeof(exif_segment));
+    assert(with_exif != NULL && encoded.length >= 2U &&
+           ((unsigned char *)encoded.data)[0] == 0xff &&
+           ((unsigned char *)encoded.data)[1] == 0xd8);
+    memcpy(with_exif, encoded.data, 2U);
+    memcpy(with_exif + 2U, exif_segment, sizeof(exif_segment));
+    memcpy(with_exif + 2U + sizeof(exif_segment),
+           (unsigned char *)encoded.data + 2U, encoded.length - 2U);
+    g_free(encoded.data);
+    encoded.data = with_exif;
+    encoded.length += sizeof(exif_segment);
+  }
   return encoded;
 }
 
@@ -131,77 +148,53 @@ static test_encoded_image test_opaque_alpha_png(void) {
   return encoded;
 }
 
-static VipsImage *test_pattern_with_alpha(unsigned int width,
-                                          unsigned int height,
-                                          double alpha_value,
-                                          double color_offset) {
-  VipsImage *pattern = test_pattern(width, height, false);
-  VipsImage *colored = NULL;
-  VipsImage *alpha_base = NULL;
-  VipsImage *alpha_linear = NULL;
-  VipsImage *alpha = NULL;
-  VipsImage *rgba = NULL;
+static test_encoded_image test_animated_gif(void) {
+  static const unsigned char bytes[] = {
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x21, 0xff, 0x0b,
+      0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30,
+      0x03, 0x01, 0x03, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x08, 0x00,
+      0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+      0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x0e,
+      0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+      0x00, 0x00, 0x02, 0x02, 0x4c, 0x01, 0x00, 0x3b};
+  test_encoded_image encoded = {g_memdup2(bytes, sizeof(bytes)), sizeof(bytes)};
 
-  assert(vips_linear1(pattern, &colored, 1.0, color_offset, NULL) == 0);
-  assert(vips_black(&alpha_base, (int)width, (int)height, NULL) == 0);
-  assert(vips_linear1(alpha_base, &alpha_linear, 1.0, alpha_value, NULL) == 0);
-  assert(vips_cast(alpha_linear, &alpha, VIPS_FORMAT_UCHAR, NULL) == 0);
-  assert(vips_bandjoin2(colored, alpha, &rgba, NULL) == 0);
-  g_object_unref(alpha);
-  g_object_unref(alpha_linear);
-  g_object_unref(alpha_base);
-  g_object_unref(colored);
-  g_object_unref(pattern);
-  return rgba;
+  assert(encoded.data != NULL);
+  return encoded;
 }
 
-static test_encoded_image test_animated_gif(void) {
-  VipsImage *first = test_pattern_with_alpha(256U, 192U, 0.0, 0.0);
-  VipsImage *second = test_pattern_with_alpha(256U, 192U, 255.0, 20.0);
-  VipsImage *pages = NULL;
-  int delays[] = {80, 140};
-  test_encoded_image encoded;
+static test_encoded_image test_static_gif(void) {
+  static const unsigned char bytes[] = {
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x2c, 0x00, 0x00, 0x00, 0x00,
+      0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b};
+  test_encoded_image encoded = {g_memdup2(bytes, sizeof(bytes)), sizeof(bytes)};
 
-  assert(vips_join(first, second, &pages, VIPS_DIRECTION_VERTICAL, NULL) == 0);
-  vips_image_set_int(pages, "page-height", 192);
-  vips_image_set_array_int(pages, "delay", delays, 2);
-  vips_image_set_int(pages, "loop", 3);
-  encoded = test_encode(pages, LAGHU_IMAGE_FORMAT_GIF);
-  g_object_unref(pages);
-  g_object_unref(second);
-  g_object_unref(first);
+  assert(encoded.data != NULL);
   return encoded;
 }
 
 static test_encoded_image test_many_frame_gif(unsigned int frame_count) {
-  VipsImage *pages = NULL;
-  VipsImage **frames = calloc(frame_count, sizeof(*frames));
-  int *delays = calloc(frame_count, sizeof(*delays));
-  test_encoded_image encoded;
+  static const unsigned char header[] = {
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00,
+      0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff};
+  static const unsigned char frame[] = {
+      0x21, 0xf9, 0x04, 0x01, 0x0a, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00,
+      0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00};
+  test_encoded_image encoded = {0};
   unsigned int index;
 
-  assert(delays != NULL && frames != NULL);
+  encoded.length = sizeof(header) + frame_count * sizeof(frame) + 1U;
+  encoded.data = g_malloc(encoded.length);
+  assert(encoded.data != NULL);
+  memcpy(encoded.data, header, sizeof(header));
   for (index = 0U; index < frame_count; ++index) {
-    VipsImage *noise = NULL;
-    delays[index] = 10;
-    assert(vips_gaussnoise(&noise, 8, 8, "seed", (int)index + 1, "mean", 128.0,
-                           "sigma", 40.0, NULL) == 0);
-    assert(vips_cast(noise, &frames[index], VIPS_FORMAT_UCHAR, NULL) == 0);
-    g_object_unref(noise);
+    memcpy(
+        (unsigned char *)encoded.data + sizeof(header) + index * sizeof(frame),
+        frame, sizeof(frame));
   }
-  assert(vips_arrayjoin(frames, &pages, (int)frame_count, "across", 1, NULL) ==
-         0);
-  vips_image_set_int(pages, "page-height", 8);
-  vips_image_set_int(pages, "n-pages", (int)frame_count);
-  vips_image_set_array_int(pages, "delay", delays, (int)frame_count);
-  vips_image_set_int(pages, "loop", 0);
-  encoded = test_encode(pages, LAGHU_IMAGE_FORMAT_GIF);
-  g_object_unref(pages);
-  for (index = 0U; index < frame_count; ++index) {
-    g_object_unref(frames[index]);
-  }
-  free(frames);
-  free(delays);
+  ((unsigned char *)encoded.data)[encoded.length - 1U] = 0x3b;
   return encoded;
 }
 
@@ -462,7 +455,7 @@ static void test_byte_filters(void) {
   png = test_static_image(LAGHU_IMAGE_FORMAT_PNG, false);
   alpha_png = test_static_image(LAGHU_IMAGE_FORMAT_PNG, true);
   opaque_alpha_png = test_opaque_alpha_png();
-  gif = test_static_image(LAGHU_IMAGE_FORMAT_GIF, false);
+  gif = test_static_gif();
   gif.data = g_realloc(gif.data, gif.length + 65536U);
   assert(gif.data != NULL);
   memset((unsigned char *)gif.data + gif.length, 0, 65536U);

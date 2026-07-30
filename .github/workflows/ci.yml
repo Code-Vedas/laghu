@@ -59,11 +59,15 @@ jobs:
           - label: Windows x86_64
             runner: windows-2025
             architecture: AMD64
+            cmake_architecture: x64
+            package_architecture: x64
             vips: "ON"
             triplet: x64-windows
           - label: Windows arm64
             runner: windows-11-arm
             architecture: ARM64
+            cmake_architecture: ARM64
+            package_architecture: arm64
             vips: "ON"
             triplet: arm64-windows
     steps:
@@ -87,12 +91,10 @@ jobs:
       - name: Install libvips on macOS
         if: runner.os == 'macOS' && matrix.vips == 'ON'
         run: brew install vips
-      - name: Install libvips on Windows
+      - name: Bootstrap Windows validation
         if: runner.os == 'Windows'
         shell: pwsh
-        run: >-
-          vcpkg install "libvips[jpeg,png,webp]:${{ matrix.triplet }}"
-          "openssl[tools]:${{ matrix.triplet }}"
+        run: packaging/windows/run.ps1 Bootstrap -Architecture ${{ matrix.package_architecture }}
       - name: Build libraries and runtime
         if: runner.os != 'Windows'
         run: scripts/run-build-all
@@ -111,21 +113,54 @@ jobs:
       - name: Test Homebrew packages
         if: runner.os == 'macOS'
         run: scripts/run-homebrew-smoke
-      - name: Configure tests on Windows
+      - name: Select Windows test dependencies
         if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "$env:VCPKG_ROOT\installed\${{ matrix.triplet }}\debug\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "$env:VCPKG_ROOT\installed\${{ matrix.triplet }}\tools\openssl" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build, test, and package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: packaging/windows/run.ps1 All -Architecture ${{ matrix.package_architecture }}
+      - name: Upload Windows validation artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: laghu-windows-${{ matrix.cmake_architecture }}
+          path: |
+            tmp/windows-servers/nginx-1.31.3-${{ matrix.package_architecture }}/
+            tmp/windows-servers/apache-2.4.68-${{ matrix.package_architecture }}/
+            tmp/windows-runtime/${{ matrix.package_architecture }}/
+            tmp/windows-installers/*.exe
+            tmp/windows/Testing/Temporary/LastTest.log
+          if-no-files-found: error
+
+  windows_manifests:
+    name: Test · Windows Winget manifests
+    needs: test
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v5
+        with:
+          name: laghu-windows-x64
+          path: tmp/windows-artifacts/x64
+      - uses: actions/download-artifact@v5
+        with:
+          name: laghu-windows-ARM64
+          path: tmp/windows-artifacts/arm64
+      - name: Generate local Winget manifest fixtures
+        shell: pwsh
         run: >-
-          cmake -S . -B tmp/windows
-          -DLAGHU_WITH_VIPS=ON
-          -DLAGHU_BUILD_SERVICE=ON
-          -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
-          -DCMAKE_BUILD_TYPE=Debug
-      - name: Build tests on Windows
-        if: runner.os == 'Windows'
-        run: cmake --build tmp/windows --config Debug --parallel
-      - name: Run tests on Windows
-        if: runner.os == 'Windows'
-        run: ctest --test-dir tmp/windows -C Debug --output-on-failure
+          packaging/windows/run.ps1 Manifests
+          -X64Artifacts tmp/windows-artifacts/x64
+          -Arm64Artifacts tmp/windows-artifacts/arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laghu-windows-winget-manifests
+          path: tmp/windows-winget/*.yaml
+          if-no-files-found: error
 
   nginx_module:
     name: NGINX ${{ matrix.nginx_version }} · ${{ matrix.label }}

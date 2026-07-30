@@ -193,13 +193,15 @@ static bool laghu_read(HANDLE file, void *data, size_t length) {
 }
 
 static bool laghu_path(char output[LAGHU_RUNTIME_PATH_SIZE], const char *root,
-                       const char *name, const char *suffix) {
+                       const char *prefix, const char *name,
+                       const char *suffix) {
   int count;
-  if (output == NULL || root == NULL || name == NULL || suffix == NULL) {
+  if (output == NULL || root == NULL || prefix == NULL || name == NULL ||
+      suffix == NULL) {
     return false;
   }
-  count =
-      snprintf(output, LAGHU_RUNTIME_PATH_SIZE, "%s/%s%s", root, name, suffix);
+  count = snprintf(output, LAGHU_RUNTIME_PATH_SIZE, "%s/%s%s%s", root, prefix,
+                   name, suffix);
   return count > 0 && (size_t)count < LAGHU_RUNTIME_PATH_SIZE;
 }
 
@@ -589,8 +591,8 @@ bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
       GetLastError() != ERROR_ALREADY_EXISTS) {
     return false;
   }
-  if (!laghu_path(body_path, cache_path, variant_key, ".body") ||
-      !laghu_path(metadata_path, cache_path, index_key, ".meta")) {
+  if (!laghu_path(body_path, cache_path, "variant-", variant_key, ".bin") ||
+      !laghu_path(metadata_path, cache_path, "index-", index_key, ".meta")) {
     return false;
   }
   memset(&metadata, 0, sizeof(metadata));
@@ -610,7 +612,7 @@ bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
     return false;
   }
   if (strcmp(index_key, variant_key) != 0 &&
-      (!laghu_path(metadata_path, cache_path, variant_key, ".meta") ||
+      (!laghu_path(metadata_path, cache_path, "index-", variant_key, ".meta") ||
        !laghu_write_atomic(metadata_path, &metadata, sizeof(metadata)))) {
     return false;
   }
@@ -636,7 +638,7 @@ bool laghu_runtime_cache_lookup_variant(const char *cache_path,
   HANDLE file = INVALID_HANDLE_VALUE;
   LARGE_INTEGER size;
   if (cache_path == NULL || !laghu_hash_valid(variant_key) || entry == NULL ||
-      !laghu_path(metadata_path, cache_path, variant_key, ".meta") ||
+      !laghu_path(metadata_path, cache_path, "index-", variant_key, ".meta") ||
       !laghu_open(metadata_path, GENERIC_READ, OPEN_EXISTING, &file)) {
     return false;
   }
@@ -651,7 +653,8 @@ bool laghu_runtime_cache_lookup_variant(const char *cache_path,
       !laghu_hash_valid(metadata.variant_key) ||
       !laghu_hash_valid(metadata.payload_hash) ||
       strcmp(metadata.variant_key, variant_key) != 0 ||
-      !laghu_path(body_path, cache_path, metadata.variant_key, ".body") ||
+      !laghu_path(body_path, cache_path, "variant-", metadata.variant_key,
+                  ".bin") ||
       !laghu_open(body_path, GENERIC_READ, OPEN_EXISTING, &file) ||
       !GetFileSizeEx(file, &size) ||
       size.QuadPart != (LONGLONG)metadata.length) {
@@ -686,7 +689,7 @@ bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key,
   LARGE_INTEGER size;
   if (cache_path == NULL || !laghu_hash_valid(index_key) || validator == NULL ||
       entry == NULL ||
-      !laghu_path(metadata_path, cache_path, index_key, ".meta") ||
+      !laghu_path(metadata_path, cache_path, "index-", index_key, ".meta") ||
       !laghu_open(metadata_path, GENERIC_READ, OPEN_EXISTING, &file)) {
     return false;
   }
@@ -701,7 +704,8 @@ bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key,
       !laghu_hash_valid(metadata.variant_key) ||
       !laghu_hash_valid(metadata.payload_hash) ||
       strcmp(metadata.validator, validator) != 0 ||
-      !laghu_path(body_path, cache_path, metadata.variant_key, ".body") ||
+      !laghu_path(body_path, cache_path, "variant-", metadata.variant_key,
+                  ".bin") ||
       !laghu_open(body_path, GENERIC_READ, OPEN_EXISTING, &file) ||
       !GetFileSizeEx(file, &size) ||
       size.QuadPart != (LONGLONG)metadata.length) {

@@ -12,6 +12,14 @@
 #include "laghu/image.h"
 #include "laghu/runtime.h"
 
+#ifdef _WIN32
+#define LAGHU_NGINX_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
+#define LAGHU_NGINX_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
+#else
+#define LAGHU_NGINX_DEFAULT_QUEUE "/run/laghu/jobs.queue"
+#define LAGHU_NGINX_DEFAULT_CACHE "/var/cache/laghu/images"
+#endif
+
 typedef struct {
   laghu_config core;
   laghu_runtime_queue runtime_queue;
@@ -286,6 +294,29 @@ static bool ngx_http_laghu_accepts_webp(ngx_table_elt_t *header) {
 #else
     break;
 #endif
+  }
+  return false;
+}
+
+static bool ngx_http_laghu_request_accepts_webp(ngx_http_request_t *request) {
+  ngx_list_part_t *part = &request->headers_in.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+
+  for (;;) {
+    for (index = 0U; index < part->nelts; ++index) {
+      if (headers[index].hash != 0U && headers[index].key.len == 6U &&
+          ngx_strncasecmp(headers[index].key.data, (u_char *)"Accept", 6U) ==
+              0 &&
+          ngx_http_laghu_accepts_webp(&headers[index])) {
+        return true;
+      }
+    }
+    if (part->next == NULL) {
+      break;
+    }
+    part = part->next;
+    headers = part->elts;
   }
   return false;
 }
@@ -1213,8 +1244,7 @@ ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
                            context->policy_key)) {
       decision = LAGHU_DECISION_BYPASS_ERROR;
     } else {
-      context->accept_webp =
-          ngx_http_laghu_accepts_webp(request->headers_in.accept);
+      context->accept_webp = ngx_http_laghu_request_accepts_webp(request);
       (void)ngx_http_laghu_validator(request, context->validator);
       if (!laghu_runtime_index_key(
               response.request_path != NULL ? response.request_path : "",
@@ -2238,9 +2268,9 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   laghu_config_merge(&merged, &parent_conf->core, &child_conf->core);
   child_conf->core = merged;
   ngx_conf_merge_str_value(child_conf->worker_queue, parent_conf->worker_queue,
-                           "/run/laghu/jobs.queue");
+                           LAGHU_NGINX_DEFAULT_QUEUE);
   ngx_conf_merge_str_value(child_conf->image_cache, parent_conf->image_cache,
-                           "/var/cache/laghu/images");
+                           LAGHU_NGINX_DEFAULT_CACHE);
   return NGX_CONF_OK;
 }
 

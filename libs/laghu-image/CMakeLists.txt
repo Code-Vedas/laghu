@@ -11,7 +11,7 @@ endif()
 
 if(NOT LAGHU_WITH_VIPS STREQUAL "OFF")
   find_package(PkgConfig QUIET)
-  if(PkgConfig_FOUND)
+  if(PkgConfig_FOUND AND NOT MSVC)
     pkg_check_modules(VIPS QUIET IMPORTED_TARGET vips>=8.15)
   endif()
   if(VIPS_FOUND)
@@ -20,11 +20,19 @@ if(NOT LAGHU_WITH_VIPS STREQUAL "OFF")
   else()
     find_path(VIPS_INCLUDE_DIR NAMES vips/vips.h)
     find_library(VIPS_LIBRARY NAMES vips libvips)
-    if(VIPS_INCLUDE_DIR AND VIPS_LIBRARY)
+    find_path(GLIB_INCLUDE_DIR NAMES glib.h PATH_SUFFIXES glib-2.0)
+    find_path(GLIB_CONFIG_INCLUDE_DIR NAMES glibconfig.h
+              PATH_SUFFIXES lib/glib-2.0/include)
+    find_library(GLIB_LIBRARY NAMES glib-2.0)
+    find_library(GOBJECT_LIBRARY NAMES gobject-2.0)
+    if(VIPS_INCLUDE_DIR AND VIPS_LIBRARY AND GLIB_INCLUDE_DIR AND
+       GLIB_CONFIG_INCLUDE_DIR AND GLIB_LIBRARY AND GOBJECT_LIBRARY)
       add_library(LaghuVips UNKNOWN IMPORTED)
       set_target_properties(LaghuVips PROPERTIES
         IMPORTED_LOCATION "${VIPS_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${VIPS_INCLUDE_DIR}"
+        INTERFACE_INCLUDE_DIRECTORIES
+          "${VIPS_INCLUDE_DIR};${GLIB_INCLUDE_DIR};${GLIB_CONFIG_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "${GLIB_LIBRARY};${GOBJECT_LIBRARY}"
       )
       set(LAGHU_VIPS_TARGET LaghuVips)
       set(LAGHU_HAVE_VIPS ON)

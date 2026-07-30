@@ -28,8 +28,6 @@ endif()
 
 if(LAGHU_BUILD_TESTS)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
-  add_executable(laghu_proxy_cache_fixture tests/cache_fixture.c)
-  target_link_libraries(laghu_proxy_cache_fixture PRIVATE Laghu::Runtime)
   add_executable(laghu_proxy_test tests/proxy_test.c)
   target_link_libraries(laghu_proxy_test PRIVATE laghu_proxy)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -42,5 +40,5 @@ if(LAGHU_BUILD_TESTS)
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/proxy_smoke.py
                    $<TARGET_FILE:laghu>
-                   $<TARGET_FILE:laghu_proxy_cache_fixture>)
+                   $<TARGET_FILE:laghu_runtime_cache_fixture>)
 endif()

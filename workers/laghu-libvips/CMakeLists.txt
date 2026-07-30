@@ -9,12 +9,30 @@ target_compile_definitions(
   laghu-libvips PRIVATE LAGHU_TEST_HOOKS=$<BOOL:${LAGHU_BUILD_TESTS}>
 )
 
-if(LAGHU_BUILD_TESTS AND LAGHU_HAVE_VIPS AND NOT WIN32)
+if(LAGHU_BUILD_TESTS AND LAGHU_HAVE_VIPS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  find_program(
+    LAGHU_VIPS_EXECUTABLE
+    NAMES vips vips.exe
+    HINTS
+      "$ENV{VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}/tools/libvips"
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/libvips"
+    REQUIRED
+  )
   add_test(
     NAME laghu_libvips_integration_test
-    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_test.sh
-            $<TARGET_FILE:laghu-libvips>
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_test.py
+            $<TARGET_FILE:laghu-libvips> ${LAGHU_VIPS_EXECUTABLE}
+            $<TARGET_FILE:laghu_runtime_cache_fixture>
   )
+  if(WIN32)
+    set_tests_properties(
+      laghu_libvips_integration_test
+      PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+    )
+  endif()
 endif()
 if(LAGHU_BUILD_TESTS AND WIN32)
   add_test(NAME laghu_libvips_windows_probe

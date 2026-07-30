@@ -395,7 +395,12 @@ Origin-security evidence covers OpenSSL 3.x TLS 1.2-or-newer negotiation, system
 - [ ] Build and smoke the Apache 2.4 `mod_laghu` output filter on Linux and macOS x86_64/arm64, including event, worker, and prefork MPMs.
 - [x] Validate Apache repeated bucket brigades, metadata buckets, `FLUSH`, `EOS`, proxied responses, HTTP/1.1, and HTTP/2 without duplicate output or lost data.
 - [x] Validate the Win32 queue/cache backend, proxy transport, and Windows service lifecycle natively on Windows x86_64.
-- [ ] Validate Job Object deadline isolation, Windows ARM64 execution, and matched NGINX/Apache installers on Windows x86_64/arm64.
+- [x] Validate the codec-enabled native `laghu-libvips` build and real JPEG, PNG, GIF, WebP, and sprite jobs on Windows x86_64/arm64.
+- [x] Validate Job Object deadline isolation, forced service-stop child cleanup, atomic-cache preservation, and worker recovery on Windows x86_64/arm64.
+- [x] Execute the full shared runtime, worker, and proxy suite natively on Windows ARM64.
+- [x] Build source-verified matched NGINX and Apache Windows roots and validate installer install, repair, upgrade, downgrade rejection, ABI rejection, dual-install reference counting, rollback, and cleanup on x86_64/arm64.
+
+Native Windows x86_64 and ARM64 evidence covers codec-enabled JPEG, PNG, static and animated GIF, WebP, and sprite jobs; strictly-smaller fallback; Job Object deadline termination and recovery; forced service-stop cleanup; source-verified NGINX 1.31.3 and Apache HTTP Server 2.4.68 roots; and installer validation from fresh and silent installation through repair, upgrade, downgrade and ABI rejection, dual-install ownership, rollback, ordered uninstall, and final shared-service cleanup.
 - [x] Validate Homebrew `ngx-laghu` and `mod-laghu` formula installation, loading, configuration checks, upgrades, and uninstall cleanup.
 
 Homebrew evidence builds a local release archive, installs all three formulas through an ephemeral Codevedas tap, exercises the launchd service, validates NGINX and Apache configuration, reinstalls both adapters, uninstalls every Laghu formula, and restores pre-existing operator configuration.

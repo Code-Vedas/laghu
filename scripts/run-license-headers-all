@@ -16,7 +16,7 @@ requires_header() {
   base=${path##*/}
 
   case "${path}" in
-    *.c|*.h|*.conf|*.yml|*.yaml|*.html|*.scss|*.svg)
+    *.c|*.h|*.py|*.ps1|*.psd1|*.iss|*.conf|*.yml|*.yaml|*.html|*.scss|*.svg)
       return 0
       ;;
     scripts/*|*/CMakeLists.txt|CMakeLists.txt|*/Dockerfile|Dockerfile.*)

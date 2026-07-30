@@ -55,7 +55,24 @@ NGINX integration belongs under `modules/ngx_http_laghu_module/`; Apache integra
 
 Build against both the recorded stable and mainline versions before changing the compatibility matrix.
 
-CI runs stable/mainline NGINX and Apache 2.4 adapter smoke tests. Linux, macOS, and Windows x86_64/arm64 run the shared runtime and `laghu-libvips` tests using their native platform backend.
+CI runs stable/mainline NGINX and Apache 2.4 adapter smoke tests. Linux, macOS, and native Windows x86_64/arm64 runners execute the shared runtime and `laghu-libvips` tests using their platform backend.
+
+## Native Windows Validation
+
+Windows validation has one supported entry point. `run.ps1` delegates focused implementation work to scripts under `packaging/windows/private`; those private scripts are not a developer or CI interface.
+
+```powershell
+packaging/windows/run.ps1 Bootstrap -Architecture x64
+packaging/windows/run.ps1 All -Architecture x64
+```
+
+`Bootstrap` installs the pinned codec and build prerequisites. `Build`, `Test`, and `Package` run individual phases, while `All` validates the PowerShell sources and executes every phase. `Manifests` combines native x64 and ARM64 installer artifacts into local Winget fixtures.
+
+Use `-Architecture arm64` only on a native Windows ARM64 runner. Native x64 and ARM64 validation covers the codec-enabled and fail-open workers, Job Object isolation, matched servers, installer lifecycle, and service cleanup. `windows-sources.psd1` is the source-version and digest manifest for NGINX, Apache HTTP Server, APR, APR-util, OpenSSL, PCRE2, and zlib.
+
+The Windows build-tool bootstrap verifies its native Strawberry Perl package by SHA-256 and verifies the Inno Setup publisher signature before installation.
+
+The matched NGINX root contains a statically included Laghu adapter. The matched Apache root contains `mod_laghu.so` built against that root's HTTP Server and APR import libraries. `laghu-build.json` records the server version, architecture, compiler, Laghu revision, source archives, source hashes, and adapter artifact hashes; installer construction rejects a mismatched manifest, machine type, server binary, or Apache module.
 
 ## Packaging Work
 

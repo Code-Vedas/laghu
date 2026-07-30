@@ -18,9 +18,12 @@ run_cmd shell-syntax sh -c '
     [ -f "${script}" ] || continue
     sh -n "${script}"
   done
-  sh -n "${1}/workers/laghu-libvips/tests/worker_test.sh"
   sh -n "${1}/packaging/debian/laghu-libvips.postinst"
 ' sh "${REPO_ROOT}"
+
+run_cmd python-syntax env PYTHONPYCACHEPREFIX="${REPO_ROOT}/tmp/pycache" \
+  "${PYTHON:-python3}" -m py_compile \
+  "${REPO_ROOT}/workers/laghu-libvips/tests/worker_test.py"
 
 if has_command shellcheck; then
   # SC1091 is disabled because the shared helper path is calculated at runtime.
@@ -69,7 +72,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/servers/laghu/src/proxy.c \
     "${REPO_ROOT}"/servers/laghu/src/main.c \
     "${REPO_ROOT}"/servers/laghu/tests/proxy_test.c \
-    "${REPO_ROOT}"/servers/laghu/tests/cache_fixture.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/tests/cache_fixture.c \
     "${REPO_ROOT}"/workers/laghu-libvips/main.c \
     "${REPO_ROOT}"/modules/mod_laghu/mod_laghu.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/ngx_http_laghu_module.c

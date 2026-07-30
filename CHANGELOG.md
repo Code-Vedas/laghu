@@ -8,6 +8,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Hash-pinned native Windows x86_64/arm64 builds for runtime-only matched NGINX and Apache roots, dependency-closed codec workers, Job Object and service-stop isolation, dual-adapter Inno installer lifecycle checks, and local cross-architecture Winget manifests behind one supported `run.ps1` entry point.
 - Verified OpenSSL 3.x HTTPS origins and explicit trusted-forwarding policy for the standalone proxy.
 - Portable standalone `laghu` reverse proxy with bounded HTTP/1.1 request and origin framing, fixed worker-pool backpressure, POSIX and WinSock transport backends, shared `laghu-http` optimization, immutable internal assets, and privacy-bounded beacon handling.
 - Standalone proxy graceful drain and forced cancellation, local health/readiness probes, cache and worker-state validation, Windows service dispatch, privacy-safe JSON Lines, and rootless read-only-container validation.

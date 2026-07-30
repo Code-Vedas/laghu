@@ -35,6 +35,8 @@ if(LAGHU_BUILD_FUZZERS)
 endif()
 
 if(LAGHU_BUILD_TESTS)
+  add_executable(laghu_runtime_cache_fixture tests/cache_fixture.c)
+  target_link_libraries(laghu_runtime_cache_fixture PRIVATE Laghu::Runtime)
   add_executable(laghu_runtime_test tests/runtime_test.c)
   target_link_libraries(laghu_runtime_test PRIVATE Laghu::Runtime)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

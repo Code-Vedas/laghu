@@ -22,4 +22,4 @@ COPY --from=build /build /opt/laghu-build
 COPY --from=build /workspace/servers/laghu/tests/proxy_smoke.py \
     /workspace/servers/laghu/tests/proxy_smoke.py
 USER 65532:65532
-ENTRYPOINT ["python3", "/workspace/servers/laghu/tests/proxy_smoke.py", "/opt/laghu-build/servers/laghu/laghu", "/opt/laghu-build/servers/laghu/laghu_proxy_cache_fixture"]
+ENTRYPOINT ["python3", "/workspace/servers/laghu/tests/proxy_smoke.py", "/opt/laghu-build/servers/laghu/laghu", "/opt/laghu-build/libs/laghu-runtime/laghu_runtime_cache_fixture"]
