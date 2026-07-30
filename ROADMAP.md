@@ -22,7 +22,7 @@ This is a temporary internal execution tracker. It preserves the complete work i
 - [x] Add server-independent image and queue/cache runtime libraries plus the out-of-process `laghu-libvips` service.
 - [x] Add a native NGINX HTTP auxiliary-filter module skeleton.
 - [x] Add a first-class Apache 2.4 output-filter module using APR bucket brigades.
-- [ ] Add a first-class self-hosted `laghu` reverse-proxy executable that can optimize responses from any HTTP origin without NGINX or Apache integration.
+- [x] Add a first-class self-hosted `laghu` reverse-proxy executable that can optimize responses from any HTTP origin without NGINX or Apache integration.
 - [x] Build and runtime-smoke the module against pinned stable and mainline NGINX.
 - [x] Build and runtime-smoke both adapters through cold-original and warm-variant image delivery.
 - [x] Add a standalone Just the Docs site with custom includes and light/dark theme assets.
@@ -52,16 +52,16 @@ Completion evidence: the server-independent core resolves all preset policies, a
 
 ### 3.0 Three-Surface Delivery Foundation
 
-This is the next milestone and precedes Section 3.4 JavaScript work. Existing NGINX and Apache filter evidence remains valid, but new shared capabilities must not deepen adapter duplication while the standalone surface is added.
+This completed foundation precedes Section 3.4 JavaScript work. Existing NGINX and Apache filter evidence remains valid, and new shared capabilities must use the shared engine rather than deepen adapter duplication.
 
 - [x] Inventory duplicated native-adapter orchestration and assign request classification, policy invocation, warm lookup, derivation, header planning, body selection, and fail-open behavior to a shared engine while retaining capture and transport mechanics in each adapter.
 - [x] Add a bounded, versioned `laghu_http_transaction` API in a shared library without NGINX, APR, socket, TLS, or event-loop types.
 - [x] Add table-driven conformance fixtures that feed normalized HTTP transactions through the shared engine and assert decisions, body bytes, header operations, dependency ETags, cache keys, and failure results.
 - [x] Refactor `ngx-laghu` and `mod-laghu` into transport/configuration adapters over that contract without regressing NGINX chains or Apache brigades.
-- [x] Implement the standalone `laghu` reverse proxy with bounded HTTP/1.1 origin forwarding first, then add HTTP/2 and HTTP/3 as separately validated transport milestones.
+- [x] Implement the standalone `laghu` reverse proxy with bounded HTTP/1.1 origin forwarding; HTTP/2 and HTTP/3 remain separately tracked transport milestones.
 - [x] Validate cold-original and warm-derived HTML, CSS, image, internal asset, API/auth/private bypass, worker-loss, cache-corruption, timeout, disconnect, and malformed-origin behavior through all three surfaces.
 
-Completion evidence: the C11 `Laghu::Http` library defines ABI version 1 with bounded borrowed request/response views, an optional explicit source validator, engine-derived live worker capabilities, ordered owned header operations, explicit result release, and prepare/finalize phases. The executable engine performs eligibility, policy and planner resolution, bounded capture selection, validator-keyed warm image lookup, HTML/CSS finalization, image target propagation and queue publication, dependency and cache identity, immutable asset delivery, body selection, and fail-open fallback without server types. Table-driven CTest fixtures cover decision precedence, malformed ABI and bounds, encoded/partial/HEAD responses, incomplete capture, frozen policy/index keys, strong and weak validators, worker heartbeat expiry, client hints, cold queue publication, warm cached images, internal assets, and cold/warm HTML and CSS behavior. NGINX normalizes native header lists and buffers NGINX chains; Apache preserves APR header multiplicity and brigade metadata, `FLUSH`, and `EOS`; the standalone proxy owns bounded HTTP/1.1 framing, a fixed worker pool, POSIX and WinSock sockets, origin deadlines, and local internal routes. All three adapters copy engine results into transport-owned storage and apply the same ordered header plan atomically. Native adapter smoke suites and the standalone loopback suite cover cold/warm output, bypasses, immutable routes, worker/cache degradation, malformed input, and original preservation. Beacon POST ingestion remains adapter-owned on every surface. TLS, persistent connections, HTTP/2, HTTP/3, and production proxy packaging remain in Sections 6 and 9.
+Completion evidence: the C11 `Laghu::Http` library defines ABI version 1 with bounded borrowed request/response views, an optional explicit source validator, engine-derived live worker capabilities, ordered owned header operations, explicit result release, and prepare/finalize phases. The executable engine performs eligibility, policy and planner resolution, bounded capture selection, validator-keyed warm image lookup, HTML/CSS finalization, image target propagation and queue publication, dependency and cache identity, immutable asset delivery, body selection, and fail-open fallback without server types. Table-driven CTest fixtures cover decision precedence, malformed ABI and bounds, encoded/partial/HEAD responses, incomplete capture, frozen policy/index keys, strong and weak validators, worker heartbeat expiry, client hints, cold queue publication, warm cached images, internal assets, and cold/warm HTML and CSS behavior. NGINX normalizes native header lists and buffers NGINX chains; Apache preserves APR header multiplicity and brigade metadata, `FLUSH`, and `EOS`; the standalone proxy owns bounded HTTP/1.1 framing, a fixed worker pool, POSIX and WinSock sockets, origin deadlines, and local internal routes. All three adapters copy engine results into transport-owned storage and apply the same ordered header plan atomically. Native adapter smoke suites and the standalone loopback suite cover cold/warm output, bypasses, immutable routes, worker/cache degradation, malformed input, and original preservation. Beacon POST ingestion remains adapter-owned on every surface. Downstream TLS, persistent connections, HTTP/2, HTTP/3, and production proxy packaging remain in Sections 6 and 9.
 
 ### 3.1 Rewrite Levels
 
@@ -201,14 +201,16 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 - [ ] Photo, screenshot, illustration, and flat-color classification with content-aware presets.
 - [ ] Denoise-before-encode for suitable noisy sources.
 - [ ] Mobile, tablet, and desktop viewport-width variants.
-- [ ] 1x and 2x pixel-density variants.
+- [x] 1x and 2x pixel-density variants.
 - [ ] Lower-quality `Save-Data` variants.
 - [ ] Client-hint-aware selection using `Sec-CH-DPR` and `Sec-CH-Viewport-Width`.
 - [ ] SVG optimization and optional simple raster-to-vector conversion.
-- [ ] LQIP and blur-placeholder generation.
-- [ ] Automatic width, height, and aspect-ratio injection.
+- [x] LQIP and blur-placeholder generation.
+- [x] Automatic width and height injection.
 - [ ] LCP-image `fetchpriority=high` with safe below-fold lazy loading.
 - [ ] Large animated GIF conversion to MP4/WebM video markup.
+
+Completion evidence for the checked geometry features is shared with Section 3.2. Queue protocol v5 carries exact 1x/2x targets, catalogs retain natural dimensions and ready variants, and the bounded HTML rewrite injects exact `srcset`, `sizes`, missing width/height attributes, and 24-pixel previews only after every dependency is ready. Unit tests and NGINX, Apache, and standalone cold/warm smoke paths cover the content-addressed variants and original-preserving fallback. Aspect-ratio injection remains unimplemented and is not claimed by the completed dimension item.
 
 ### 4.2 Core Web Vitals
 
@@ -228,8 +230,8 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 - [ ] Validate all transforms and caching behavior under HTTP/2.
 - [ ] Validate all transforms and caching behavior under HTTP/3/QUIC.
 - [ ] Store Brotli and Gzip pre-compressed text variants at optimization time.
-- [ ] Serve immutable, content-hashed resources with safe long TTLs.
-- [ ] Key cached variants by `Vary` inputs and a bounded capability mask.
+- [x] Serve immutable, content-hashed resources with safe long TTLs.
+- [x] Key cached variants by the bounded client-capability inputs that affect each transform.
 - [ ] Emit CDN-safe headers and support origin-shield operation.
 
 ### 4.4 Safety and Security
@@ -358,9 +360,9 @@ Safe HTML normalization evidence: the versioned shared planner mask enables the 
 - [ ] Add persistent origin connections and bounded per-origin pooling.
 - [ ] Add downstream TLS termination.
 - [x] Add standalone health/readiness, graceful drain, structured access and optimization logs, and rootless/read-only-container operation without making telemetry or a hosted service mandatory.
-- [ ] Keep the standalone proxy entirely self-hostable with no account, license key, feature gate, phone-home behavior, or required Codevedas service.
+- [x] Keep the standalone proxy entirely self-hostable with no account, license key, feature gate, phone-home behavior, or required Codevedas service.
 
-Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline cancellation, queued-connection rejection, worker joins, local cache and optimizer readiness transitions, query/header/body-safe JSON records, and non-root execution with a read-only container filesystem. Native Windows AMD64 evidence covers the Win32 state machine, WinSock queue saturation and bounded rejection, local health/readiness probes, and an installed Service Control Manager lifecycle from start through health validation and stop.
+Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline cancellation, queued-connection rejection, worker joins, local cache and optimizer readiness transitions, query/header/body-safe JSON records, and non-root execution with a read-only container filesystem. Native Windows AMD64 and ARM64 evidence covers the Win32 state machine, WinSock queue saturation and bounded rejection, local health/readiness probes, and an installed Service Control Manager lifecycle from start through health validation and stop.
 
 Origin-security evidence covers OpenSSL 3.x TLS 1.2-or-newer negotiation, system and additive private-CA trust, DNS SNI, DNS/IP certificate identity checks, HTTP/1.1 ALPN, bounded handshake and I/O cancellation, and distinct TLS failure classification. The accepted-connection queue retains binary peer addresses for allocation-free IPv4/IPv6 CIDR matching. Every inbound forwarding family is stripped; enabled output starts a canonical chain for untrusted peers or validates and extends a trusted peer's bounded chain. macOS, sanitizer, Linux AMD64, Windows AMD64, and non-root read-only-container fixtures verify trusted TLS, hostname rejection, spoof removal, trusted append, privacy-safe logs, cold/warm proxy behavior, and shutdown preservation.
 
@@ -368,9 +370,9 @@ Origin-security evidence covers OpenSSL 3.x TLS 1.2-or-newer negotiation, system
 - [x] Serve the original image on first hit while an optimized variant is generated without blocking NGINX event loops or Apache request workers.
 - [x] Keep the memory-mapped queue and atomic disk cache interoperable across both adapters and `laghu-libvips`.
 - [ ] Add bounded LRU eviction and per-URL purge.
-- [ ] Reuse `laghu-libvips`, the queue, catalogs, and cache from standalone proxy mode; `laghu-libvips` remains a transform worker and never becomes an HTTP proxy.
+- [x] Reuse `laghu-libvips`, the queue, catalogs, and cache from standalone proxy mode; `laghu-libvips` remains a transform worker and never becomes an HTTP proxy.
 - [x] Make worker, queue, cache, and image-optimization failures fail open.
-- [ ] Generate deterministic content-hashed variant URLs for fleet-safe caching.
+- [x] Generate deterministic content-hashed variant URLs for fleet-safe caching.
 
 ## 7. Open Source and Support
 
