@@ -22,6 +22,8 @@ Both modules expose the same configuration semantics. NGINX uses the lowercase `
 | `laghu image_metadata_ttl 7d;` | `Laghu ImageMetadataTtl 7d` |
 | `laghu css_inline_limit 2048;` | `Laghu CssInlineLimit 2048` |
 | `laghu css_outline_threshold 8192;` | `Laghu CssOutlineThreshold 8192` |
+| `laghu javascript_inline_limit 2048;` | `Laghu JavaScriptInlineLimit 2048` |
+| `laghu javascript_outline_threshold 8192;` | `Laghu JavaScriptOutlineThreshold 8192` |
 
 ## `laghu on|off`
 
@@ -99,6 +101,8 @@ laghu font_fetch_queue /run/laghu/fonts.queue;
 laghu font_provider_config /etc/laghu/font-providers.conf;
 laghu javascript_queue /run/laghu/javascript.queue;
 laghu javascript_target "defaults and supports es6-module and not dead";
+laghu javascript_inline_limit 2048;
+laghu javascript_outline_threshold 8192;
 laghu image_cache /var/cache/laghu/images;
 ```
 
@@ -109,6 +113,10 @@ The queue and cache paths default to the values above. `laghu-libvips` must have
 External font CSS uses the separate bounded `font_fetch_queue` and `laghu-resource-fetch` service. `font_provider_config` names the administrator-owned provider file loaded by both the adapter and worker; invalid files fail configuration loading. Apache exposes the same settings as `Laghu FontFetchQueue` and `Laghu FontProviderConfig`. The standalone proxy uses `--font-fetch-queue` and `--font-provider-config`.
 
 JavaScript rewriting uses the separate bounded `javascript_queue` and native `laghu-js-optimize` Rust service. The inherited `javascript_target` is a bounded Browserslist query and defaults to `defaults and supports es6-module and not dead`; file-loading, environment-expanding, `extends`, empty, and malformed queries are rejected. Apache exposes `Laghu JavaScriptQueue` and `Laghu JavaScriptTarget`, while standalone uses `--javascript-queue` and `--javascript-target`. Laghu observes same-origin external scripts only through ordinary responses and never fetches JavaScript. Inline and external classic/module scripts remain byte-identical until a strictly smaller SWC result is ready. Import maps, data scripts, speculation rules, integrity-protected external scripts, source-map directives, and CSP-hash-sensitive inline scripts without an accepted nonce remain unchanged.
+
+JavaScript inlining defaults to 2 KiB and accepts `0..65536`; zero disables it. Outlining considers executable inline scripts from 8 KiB and accepts `1024..1048576`. The equivalent Apache settings are `Laghu JavaScriptInlineLimit` and `Laghu JavaScriptOutlineThreshold`; standalone uses `--javascript-inline-limit` and `--javascript-outline-threshold`. Inlining and outlining require ready SWC output with a checksummed URL-independence certificate, compatible attributes and CSP, and a strictly smaller combined HTML-plus-JavaScript transfer.
+
+Classic scripts may opt into combination by placing the same bounded `data-laghu-combine="group"` value on 2 through 16 whitespace-adjacent blocking external scripts. Every member must have compatible attributes and SWC's concatenation-safety certificate. Modules, integrity-protected scripts, asynchronous or deferred scripts, declarations that expose global boundaries, URL-sensitive code, source directives, and partially ready groups remain unchanged. Accepted bundles preserve DOM order with explicit statement separators and use immutable `/.laghu/js/<sha256>` routes.
 
 The line-oriented provider format starts a definition with `provider ID`, ends it with `end`, and accepts `stylesheet HOST PATH_PREFIX`, `redirect HOST PATH_PREFIX`, `asset HOST PATH_PREFIX`, `max_css_bytes BYTES`, and `ttl_seconds SECONDS`. Hosts and prefixes are exact and do not accept wildcards, credentials, IP literals, regexes, or HTTP. The installed file enables Google Fonts and Fontsource CDN; adding another provider requires only a normal configuration reload.
 

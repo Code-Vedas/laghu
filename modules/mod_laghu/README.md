@@ -9,3 +9,5 @@ Image markup settings mirror NGINX: `Laghu ImageBeacon On|Off`, `Laghu ImageInli
 Critical-CSS learning is separately opt-in through `Laghu CriticalCssBeacon On|Off` and uses the same bounded, privacy-preserving shared runtime as NGINX and standalone Laghu.
 
 CSS markup settings also mirror NGINX: `Laghu CssInlineLimit 0..65536` (default 2048) and `Laghu CssOutlineThreshold 1024..1048576` (default 8192). Small catalog-ready stylesheets may be inlined and eligible large style blocks may be outlined to immutable `/.laghu/css/<sha256>` assets; both paths preserve the cold response and fail open.
+
+JavaScript markup settings are independent: `Laghu JavaScriptInlineLimit 0..65536` defaults to 2048 and `Laghu JavaScriptOutlineThreshold 1024..1048576` defaults to 8192. Ready URL-independent scripts may be inlined or outlined, while 2 through 16 adjacent classic external scripts can be combined only through a shared `data-laghu-combine` marker and SWC safety certificate. All outputs remain subject to the aggregate transfer-size gate.

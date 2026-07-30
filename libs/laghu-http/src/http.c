@@ -1097,7 +1097,16 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
             (laghu_buffer){selected, selected_length}, transaction->path,
             transaction->policy_key, transaction->environment.javascript_target,
             csp == NULL ? NULL : csp_value, transaction->environment.now,
-            transaction->environment.config.image_metadata_ttl, &javascript)) {
+            transaction->environment.config.image_metadata_ttl,
+            (transaction->policy.filter_families &
+             LAGHU_FILTER_RESOURCE_COMBINE) != 0U &&
+                transaction->policy.allow_structural_rewrite,
+            (transaction->policy.filter_families &
+             LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
+                transaction->policy.allow_resource_inlining,
+            transaction->policy.allow_structural_rewrite,
+            transaction->policy.javascript_inline_limit,
+            transaction->policy.javascript_outline_threshold, &javascript)) {
       laghu_runtime_html_result_release(&critical);
       laghu_runtime_html_result_release(&font);
       laghu_runtime_html_result_release(&rewritten);

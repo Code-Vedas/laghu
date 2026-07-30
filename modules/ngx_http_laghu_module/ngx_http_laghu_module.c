@@ -2686,6 +2686,33 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     return NGX_CONF_OK;
   }
 
+  if (ngx_strcmp(values[1].data, "javascript_inline_limit") == 0) {
+    ngx_int_t limit = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.javascript_inline_limit !=
+        LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET) {
+      return "is duplicate";
+    }
+    if (limit < 0 || limit > 65536) {
+      return "laghu javascript_inline_limit expects an integer from 0 to 65536";
+    }
+    location->core.javascript_inline_limit = (unsigned int)limit;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "javascript_outline_threshold") == 0) {
+    ngx_int_t threshold = ngx_atoi(values[2].data, values[2].len);
+    if (location->core.javascript_outline_threshold !=
+        LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET) {
+      return "is duplicate";
+    }
+    if (threshold < 1024 || threshold > 1048576) {
+      return "laghu javascript_outline_threshold expects an integer from 1024 "
+             "to 1048576";
+    }
+    location->core.javascript_outline_threshold = (unsigned int)threshold;
+    return NGX_CONF_OK;
+  }
+
   if (ngx_strcmp(values[1].data, "worker_queue") == 0) {
     if (location->worker_queue.len != 0U) {
       return "is duplicate";

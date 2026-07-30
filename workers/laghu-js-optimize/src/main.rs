@@ -21,7 +21,10 @@ use swc_core::{
         FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
     },
     ecma::{
-        ast::{EsVersion, Program},
+        ast::{
+            Callee, EsVersion, ExportAll, Ident, ImportDecl, MemberExpr, MetaPropExpr,
+            MetaPropKind, NamedExport, Program, Script, Stmt,
+        },
         codegen::{Config as CodegenConfig, Emitter, text_writer::JsWriter},
         minifier::{
             optimize,
@@ -30,6 +33,7 @@ use swc_core::{
         parser::{EsSyntax, Parser, StringInput, Syntax, lexer::Lexer},
         preset_env::{Config as EnvConfig, EnvConfig as ResolvedEnv, Targets, transform_from_env},
         transforms::base::{assumptions::Assumptions, fixer::fixer, hygiene::hygiene, resolver},
+        visit::{Visit, VisitWith},
     },
 };
 
@@ -51,7 +55,88 @@ const HEADER_SIZE: usize = 176;
 const SLOT_SIZE: usize = 4_544;
 const BACKEND: &str = "laghu-swc-75.0.0-js-v1";
 const CATALOG_MAGIC: u64 = 0x4c41_4748_554a_5343;
-const CATALOG_SIZE: usize = 1_904;
+const CATALOG_SIZE: usize = 1_908;
+const FLAG_MODULE: u32 = 1;
+const FLAG_URL_INDEPENDENT: u32 = 2;
+const FLAG_CONCAT_SAFE: u32 = 4;
+const FLAG_TOP_LEVEL_DECLARATION_FREE: u32 = 8;
+
+#[derive(Default)]
+struct Eligibility {
+    url_independent: bool,
+    concat_safe: bool,
+}
+
+impl Visit for Eligibility {
+    fn visit_ident(&mut self, node: &Ident) {
+        if matches!(&*node.sym, "eval" | "Function" | "currentScript") {
+            self.url_independent = false;
+            self.concat_safe = false;
+        }
+    }
+
+    fn visit_member_expr(&mut self, node: &MemberExpr) {
+        if node.prop.is_ident_with("currentScript") {
+            self.url_independent = false;
+            self.concat_safe = false;
+        }
+        node.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, node: &swc_core::ecma::ast::CallExpr) {
+        if matches!(node.callee, Callee::Import(_)) {
+            self.url_independent = false;
+            self.concat_safe = false;
+        }
+        node.visit_children_with(self);
+    }
+
+    fn visit_meta_prop_expr(&mut self, node: &MetaPropExpr) {
+        if node.kind == MetaPropKind::ImportMeta {
+            self.url_independent = false;
+            self.concat_safe = false;
+        }
+    }
+
+    fn visit_import_decl(&mut self, node: &ImportDecl) {
+        if node.src.value.to_string_lossy().starts_with('.') {
+            self.url_independent = false;
+        }
+        node.visit_children_with(self);
+    }
+
+    fn visit_named_export(&mut self, node: &NamedExport) {
+        if node
+            .src
+            .as_ref()
+            .is_some_and(|src| src.value.to_string_lossy().starts_with('.'))
+        {
+            self.url_independent = false;
+        }
+        node.visit_children_with(self);
+    }
+
+    fn visit_export_all(&mut self, node: &ExportAll) {
+        if node.src.value.to_string_lossy().starts_with('.') {
+            self.url_independent = false;
+        }
+        node.visit_children_with(self);
+    }
+}
+
+fn eligibility(program: &Program, module: bool) -> u32 {
+    let top_level_declaration_free = !module
+        && matches!(program, Program::Script(Script { body, .. }) if body.iter().all(|statement| matches!(statement, Stmt::Expr(_) | Stmt::Empty(_))));
+    let mut result = Eligibility {
+        url_independent: true,
+        concat_safe: top_level_declaration_free,
+    };
+    program.visit_with(&mut result);
+    (u32::from(module) * FLAG_MODULE)
+        | (u32::from(result.url_independent) * FLAG_URL_INDEPENDENT)
+        | (u32::from(result.concat_safe) * FLAG_CONCAT_SAFE)
+        | (u32::from(top_level_declaration_free) * FLAG_TOP_LEVEL_DECLARATION_FREE)
+}
 
 fn c_string(bytes: &[u8]) -> Result<&str> {
     let end = bytes
@@ -111,7 +196,7 @@ fn resolved_target(target: &str) -> Result<String> {
         .join(","))
 }
 
-fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, String)> {
+fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, String, u32)> {
     let matrix = resolved_target(target)?;
     GLOBALS.set(&Globals::new(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -145,6 +230,10 @@ fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, Strin
         };
         if !parser.take_errors().is_empty() {
             bail!("javascript parser recovery was required");
+        }
+        let mut flags = eligibility(&program, module);
+        if source.contains("sourceMappingURL=") || source.contains("sourceURL=") {
+            flags &= !(FLAG_URL_INDEPENDENT | FLAG_CONCAT_SAFE);
         }
         let unresolved = Mark::new();
         let top_level = Mark::new();
@@ -202,7 +291,7 @@ fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, Strin
         if output.len() >= source.len() || output.len() > MAX_INPUT {
             bail!("javascript output is not smaller");
         }
-        Ok((output, matrix))
+        Ok((output, matrix, flags))
     })
 }
 
@@ -399,7 +488,7 @@ fn catalog_key(job: &Job) -> String {
     )
 }
 
-fn publish_catalog(cache: &Path, job: &Job, output: &[u8], matrix: &str) -> Result<()> {
+fn publish_catalog(cache: &Path, job: &Job, output: &[u8], matrix: &str, flags: u32) -> Result<()> {
     if !job.request_path.starts_with('/') || job.policy_key.len() != 64 {
         return Ok(());
     }
@@ -411,7 +500,7 @@ fn publish_catalog(cache: &Path, job: &Job, output: &[u8], matrix: &str) -> Resu
     )?;
     let mut catalog = vec![0u8; CATALOG_SIZE];
     write_u64(&mut catalog, 0, CATALOG_MAGIC);
-    write_u32(&mut catalog, 8, 1);
+    write_u32(&mut catalog, 8, 2);
     write_u32(&mut catalog, 12, u32::from(job.module));
     write_u64(
         &mut catalog,
@@ -426,8 +515,9 @@ fn publish_catalog(cache: &Path, job: &Job, output: &[u8], matrix: &str) -> Resu
     write_fixed(&mut catalog[1641..1706], &job.validator)?;
     write_fixed(&mut catalog[1706..1771], &variant)?;
     write_fixed(&mut catalog[1771..1836], &matrix_digest)?;
-    let checksum = sha256(&catalog[..1836]);
-    write_fixed(&mut catalog[1836..1901], &checksum)?;
+    write_u32(&mut catalog, 1836, flags);
+    let checksum = sha256(&catalog[..1840]);
+    write_fixed(&mut catalog[1840..1905], &checksum)?;
     atomic_write(
         &cache.join(format!("javascript-{}.meta", catalog_key(job))),
         &catalog,
@@ -440,9 +530,9 @@ fn process_one(queue: &mut Queue, cache: &Path) -> Result<bool> {
         return Ok(false);
     };
     let source = std::str::from_utf8(&job.source).context("javascript source is not UTF-8")?;
-    if let Ok((output, matrix)) = transform(source, job.module, &job.target) {
+    if let Ok((output, matrix, flags)) = transform(source, job.module, &job.target) {
         publish(cache, &job, &output)?;
-        publish_catalog(cache, &job, &output, &matrix)?;
+        publish_catalog(cache, &job, &output, &matrix, flags)?;
     }
     Ok(true)
 }
@@ -589,7 +679,7 @@ mod tests {
 
     #[test]
     fn minifies_classic_without_top_level_mangling() {
-        let (output, matrix) = transform(
+        let (output, matrix, _) = transform(
             "function publicName(longLocal){ return longLocal + 1; }",
             false,
             "last 2 chrome versions",
@@ -634,6 +724,61 @@ mod tests {
     fn rejects_file_and_environment_queries() {
         assert!(resolved_target("$BROWSERSLIST").is_err());
         assert!(resolved_target("extends ../targets").is_err());
+    }
+
+    #[test]
+    fn certifies_only_safe_classic_concatenation() {
+        let flags = transform(
+            "console.log('one'); console.log('two');",
+            false,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(flags & FLAG_URL_INDEPENDENT, FLAG_URL_INDEPENDENT);
+        assert_eq!(flags & FLAG_CONCAT_SAFE, FLAG_CONCAT_SAFE);
+        assert_eq!(
+            flags & FLAG_TOP_LEVEL_DECLARATION_FREE,
+            FLAG_TOP_LEVEL_DECLARATION_FREE
+        );
+        let declaration = transform(
+            "let topLevel = 1; console.log(topLevel);",
+            false,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(declaration & FLAG_CONCAT_SAFE, 0);
+        assert_eq!(declaration & FLAG_TOP_LEVEL_DECLARATION_FREE, 0);
+    }
+
+    #[test]
+    fn rejects_url_sensitive_programs() {
+        let current = transform(
+            "console.log(document.currentScript); console.log('current script');",
+            false,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(current & FLAG_URL_INDEPENDENT, 0);
+        let relative = transform(
+            "import value from './value.js'; console.log(value); export { value }",
+            true,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(relative & FLAG_MODULE, FLAG_MODULE);
+        assert_eq!(relative & FLAG_URL_INDEPENDENT, 0);
+        let meta = transform(
+            "console.log(import.meta.url); console.log('module url');",
+            true,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(meta & FLAG_URL_INDEPENDENT, 0);
     }
 
     #[test]

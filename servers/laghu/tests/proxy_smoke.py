@@ -69,6 +69,12 @@ class Origin(http.server.BaseHTTPRequestHandler):
         elif self.path == "/app.js":
             body = b"function publicName(longLocal) { return longLocal + 1; }"
             content_type = "application/javascript"
+        elif self.path == "/combine-one.js":
+            body = b"console.log('combine one value'); console.log('combine one value again');"
+            content_type = "application/javascript"
+        elif self.path == "/combine-two.js":
+            body = b"console.log('combine two value'); console.log('combine two value again');"
+            content_type = "application/javascript"
         elif self.path == "/javascript-inline.html":
             body = b"<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>"
             content_type = "text/html"
@@ -77,6 +83,19 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 b'<html><body><script src="/app.js"></script><script>'
                 b"function externalPageHelper(veryLongLocalArgument) { return "
                 + b" + ".join([b"veryLongLocalArgument"] * 16)
+                + b"; }</script></body></html>"
+            )
+            content_type = "text/html"
+        elif self.path == "/javascript-combine.html":
+            body = (
+                b'<html><body><script src="/combine-one.js" data-laghu-combine="application-main"></script>\n'
+                b'<script src="/combine-two.js" data-laghu-combine="application-main"></script></body></html>'
+            )
+            content_type = "text/html"
+        elif self.path == "/javascript-outline.html":
+            body = (
+                b"<html><body><script>function outlinePublic(veryLongLocalArgument) { return "
+                + b" + ".join([b"veryLongLocalArgument"] * 500)
                 + b"; }</script></body></html>"
             )
             content_type = "text/html"
@@ -520,6 +539,10 @@ def main():
                 str(root / "javascript.queue"),
                 "--javascript-target",
                 "last 2 chrome versions",
+                "--javascript-inline-limit",
+                "2048",
+                "--javascript-outline-threshold",
+                "8192",
                 "--rewrite-level",
                 "all",
                 "--critical-css-beacon",
@@ -556,18 +579,35 @@ def main():
             assert len(javascript_warm) < len(javascript_cold)
             for _ in range(50):
                 _, external_warm = request(proxy_port, "/javascript-external.html")
-                match = re.search(
-                    rb'src="(/\.laghu/js/[0-9a-f]{64})"', external_warm
-                )
-                if match:
+                if b'src="/app.js"' not in external_warm and b"publicName" in external_warm:
                     break
                 time.sleep(0.05)
             else:
                 raise AssertionError("standalone external JavaScript did not become warm")
+            assert b"publicName(n)" in external_warm
+            for asset in ("/combine-one.js", "/combine-two.js"):
+                for _ in range(50):
+                    asset_head, _ = request(proxy_port, asset)
+                    if b'etag: "laghu-js-' in asset_head:
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise AssertionError(f"standalone dependency {asset} did not become warm")
+            for _ in range(50):
+                _, combine_warm = request(proxy_port, "/javascript-combine.html")
+                combine_match = re.search(
+                    rb'src="(/\.laghu/js/[0-9a-f]{64})"', combine_warm
+                )
+                if combine_match:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("standalone JavaScript combine did not become warm")
             immutable_head, immutable_body = request(
-                proxy_port, match.group(1).decode()
+                proxy_port, combine_match.group(1).decode()
             )
-            assert immutable_body == javascript_warm
+            assert b"combine one value" in immutable_body
+            assert b"combine two value" in immutable_body
             assert b"cache-control: public, max-age=31536000, immutable" in immutable_head
             _, inline_cold = request(proxy_port, "/javascript-inline.html")
             assert b"inlinePublic(longLocal)" in inline_cold
@@ -579,6 +619,20 @@ def main():
             else:
                 raise AssertionError("standalone inline JavaScript did not become warm")
             assert b"inlinePublic(n){return n+1;}" in inline_warm
+            _, outline_cold = request(proxy_port, "/javascript-outline.html")
+            assert b"outlinePublic" in outline_cold
+            for _ in range(50):
+                _, outline_warm = request(proxy_port, "/javascript-outline.html")
+                outline_match = re.search(
+                    rb'src="(/\.laghu/js/[0-9a-f]{64})"', outline_warm
+                )
+                if outline_match:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("standalone JavaScript outline did not become warm")
+            _, outline_asset = request(proxy_port, outline_match.group(1).decode())
+            assert b"outlinePublic" in outline_asset
             critical_head, critical_body = request(
                 proxy_port, "/.laghu/beacon/critical-css.js"
             )

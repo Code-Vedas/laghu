@@ -73,12 +73,12 @@ typedef struct {
   char backend_id[LAGHU_RUNTIME_BACKEND_SIZE];
 } laghu_cache_metadata;
 
-_Static_assert(sizeof(laghu_queue_header) == 176U,
-               "queue header wire layout changed");
-_Static_assert(sizeof(laghu_queue_slot) == 4544U,
-               "queue slot wire layout changed");
-_Static_assert(sizeof(laghu_cache_metadata) == 608U,
-               "cache metadata wire layout changed");
+typedef char laghu_queue_header_wire_layout_changed
+    [sizeof(laghu_queue_header) == 176U ? 1 : -1];
+typedef char laghu_queue_slot_wire_layout_changed
+    [sizeof(laghu_queue_slot) == 4544U ? 1 : -1];
+typedef char laghu_cache_metadata_wire_layout_changed
+    [sizeof(laghu_cache_metadata) == 608U ? 1 : -1];
 
 static HANDLE laghu_file(const laghu_runtime_queue *queue) {
   return (HANDLE)(uintptr_t)queue->platform_file;

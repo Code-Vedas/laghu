@@ -374,6 +374,8 @@ bool laghu_runtime_rewrite_javascript_html(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html,
     const char *page_path, const char *policy_key, const char *target,
     const char *content_security_policy, uint64_t now, unsigned int ttl_seconds,
+    bool allow_combine, bool allow_inline, bool allow_outline,
+    unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result);
 void laghu_runtime_javascript_result_release(
     laghu_runtime_javascript_result *result);

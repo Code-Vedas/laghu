@@ -27,7 +27,7 @@ $runtime = "tmp/windows-runtime/$Architecture"
 $nginx = "tmp/windows-servers/nginx-1.31.3-$Architecture"
 $apache = "tmp/windows-servers/apache-2.4.68-$Architecture"
 $configuration = @(
-  "-S", ".", "-B", $BuildDirectory, "-A", $cmakeArchitecture,
+  "-S", ".", "-B", $BuildDirectory, "-G", "Visual Studio 17 2022", "-A", $cmakeArchitecture,
   "-DLAGHU_WITH_VIPS=ON", "-DLAGHU_BUILD_SERVICE=ON",
   "-DCMAKE_TOOLCHAIN_FILE=$toolchain", "-DVCPKG_TARGET_TRIPLET=$triplet"
 )
@@ -72,7 +72,8 @@ function Invoke-Test {
   & ctest --test-dir $BuildDirectory -C Debug --output-on-failure
   if ($LASTEXITCODE -ne 0) { throw "Windows codec-enabled tests failed" }
   $noVips = "$BuildDirectory-no-vips"
-  & cmake -S . -B $noVips -A $cmakeArchitecture -DLAGHU_WITH_VIPS=OFF `
+  & cmake -S . -B $noVips -G "Visual Studio 17 2022" -A $cmakeArchitecture `
+    -DLAGHU_WITH_VIPS=OFF `
     -DLAGHU_BUILD_SERVICE=ON "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
     "-DVCPKG_TARGET_TRIPLET=$triplet"
   if ($LASTEXITCODE -ne 0) { throw "Windows no-libvips configuration failed" }

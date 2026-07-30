@@ -247,6 +247,9 @@ static void laghu_policy_init(laghu_policy *policy) {
   policy->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   policy->css_inline_limit = LAGHU_CSS_INLINE_LIMIT_DEFAULT;
   policy->css_outline_threshold = LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT;
+  policy->javascript_inline_limit = LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT;
+  policy->javascript_outline_threshold =
+      LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT;
 }
 
 static bool laghu_config_has_policy_selector(const laghu_config *config) {
@@ -348,6 +351,9 @@ void laghu_config_init(laghu_config *config) {
   config->image_metadata_ttl = LAGHU_IMAGE_METADATA_TTL_UNSET;
   config->css_inline_limit = LAGHU_CSS_INLINE_LIMIT_UNSET;
   config->css_outline_threshold = LAGHU_CSS_OUTLINE_THRESHOLD_UNSET;
+  config->javascript_inline_limit = LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET;
+  config->javascript_outline_threshold =
+      LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET;
 }
 
 void laghu_config_merge(laghu_config *result, const laghu_config *parent,
@@ -365,6 +371,10 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   unsigned int parent_css_inline_limit = LAGHU_CSS_INLINE_LIMIT_DEFAULT;
   unsigned int parent_css_outline_threshold =
       LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT;
+  unsigned int parent_javascript_inline_limit =
+      LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT;
+  unsigned int parent_javascript_outline_threshold =
+      LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT;
 
   if (result == NULL) {
     return;
@@ -404,6 +414,15 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     }
     if (parent->css_outline_threshold != LAGHU_CSS_OUTLINE_THRESHOLD_UNSET) {
       parent_css_outline_threshold = parent->css_outline_threshold;
+    }
+    if (parent->javascript_inline_limit !=
+        LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET) {
+      parent_javascript_inline_limit = parent->javascript_inline_limit;
+    }
+    if (parent->javascript_outline_threshold !=
+        LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET) {
+      parent_javascript_outline_threshold =
+          parent->javascript_outline_threshold;
     }
   }
 
@@ -455,6 +474,16 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
               child->css_outline_threshold != LAGHU_CSS_OUTLINE_THRESHOLD_UNSET
           ? child->css_outline_threshold
           : parent_css_outline_threshold;
+  result->javascript_inline_limit =
+      child != NULL && child->javascript_inline_limit !=
+                           LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET
+          ? child->javascript_inline_limit
+          : parent_javascript_inline_limit;
+  result->javascript_outline_threshold =
+      child != NULL && child->javascript_outline_threshold !=
+                           LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET
+          ? child->javascript_outline_threshold
+          : parent_javascript_outline_threshold;
 }
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset) {
@@ -692,6 +721,15 @@ bool laghu_resolve_config_policy(const laghu_config *config,
         config->css_outline_threshold == LAGHU_CSS_OUTLINE_THRESHOLD_UNSET
             ? LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT
             : config->css_outline_threshold;
+    policy->javascript_inline_limit =
+        config->javascript_inline_limit == LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET
+            ? LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT
+            : config->javascript_inline_limit;
+    policy->javascript_outline_threshold =
+        config->javascript_outline_threshold ==
+                LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET
+            ? LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT
+            : config->javascript_outline_threshold;
   }
   return resolved;
 }
@@ -830,7 +868,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   static const unsigned char namespace_value[] = "laghu-variant";
   laghu_sha256_context context;
   unsigned char digest[LAGHU_SHA256_DIGEST_SIZE];
-  unsigned char fields[22];
+  unsigned char fields[30];
   bool has_preset;
   bool has_rewrite_level;
   bool preset_is_valid;
@@ -859,6 +897,9 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
       policy->image_quality > 100U || policy->css_inline_limit > 65536U ||
       policy->css_outline_threshold < 1024U ||
       policy->css_outline_threshold > 1048576U ||
+      policy->javascript_inline_limit > 65536U ||
+      policy->javascript_outline_threshold < 1024U ||
+      policy->javascript_outline_threshold > 1048576U ||
       (policy->filter_families & ~((uint32_t)LAGHU_FILTER_ALL)) != 0U) {
     output[0] = '\0';
     return false;
@@ -887,6 +928,14 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   fields[19] = (unsigned char)(policy->css_outline_threshold >> 16U);
   fields[20] = (unsigned char)(policy->css_outline_threshold >> 8U);
   fields[21] = (unsigned char)policy->css_outline_threshold;
+  fields[22] = (unsigned char)(policy->javascript_inline_limit >> 24U);
+  fields[23] = (unsigned char)(policy->javascript_inline_limit >> 16U);
+  fields[24] = (unsigned char)(policy->javascript_inline_limit >> 8U);
+  fields[25] = (unsigned char)policy->javascript_inline_limit;
+  fields[26] = (unsigned char)(policy->javascript_outline_threshold >> 24U);
+  fields[27] = (unsigned char)(policy->javascript_outline_threshold >> 16U);
+  fields[28] = (unsigned char)(policy->javascript_outline_threshold >> 8U);
+  fields[29] = (unsigned char)policy->javascript_outline_threshold;
 
   laghu_sha256_init(&context);
   laghu_sha256_update(&context, namespace_value, sizeof(namespace_value) - 1U);

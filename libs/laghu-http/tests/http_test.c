@@ -308,8 +308,8 @@ static void test_image_cold_warm_and_queue(void) {
     char stale_index[LAGHU_RUNTIME_PATH_SIZE];
     CHECK(snprintf(stale_index, sizeof(stale_index), "%s/index-%s.meta",
                    test_cache_path,
-                   "111bfb603b5f16df2e8f0721d6a45cac664b2c85a037830b199adcd5485"
-                   "ce802") > 0);
+                   "c4eae9bb63e98b25f13587db075a8f67f6c3e447746610c87a7fc47eb1d"
+                   "abf26") > 0);
     (void)remove(stale_index);
   }
   laghu_runtime_queue_init(&queue);
@@ -326,12 +326,12 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(
       strcmp(
           transaction.policy_key,
-          "c10c63029e27e2cf7dbf40a69f3af3d7e3a596140aa51003fc6df00e812ed61e") ==
+          "9314c7a9c6e747788f0a0913bb9170182a959eb94f16613391e1db7b08002e23") ==
       0);
   CHECK(
       strcmp(
           result.cache_key,
-          "111bfb603b5f16df2e8f0721d6a45cac664b2c85a037830b199adcd5485ce802") ==
+          "c4eae9bb63e98b25f13587db075a8f67f6c3e447746610c87a7fc47eb1dabf26") ==
       0);
   laghu_http_transaction_result_release(&result);
   CHECK(laghu_http_transaction_finalize(
@@ -434,13 +434,14 @@ static void test_css_cold_warm(void) {
     if (pass == 1U && finalized.owned_body != NULL) {
       laghu_http_header etag;
       CHECK(finalized.selected.length < sizeof(css) - 1U);
-      CHECK(strcmp(finalized.dependency_key,
-                   "8fba3ecd49cfa15f19e781bdaac6450f9603fcd717366a2235dde792d2e"
-                   "32a32") == 0);
+      CHECK(
+          strcmp(finalized.dependency_key,
+                 "1b4e46a8b63676a054ad51bb767ac672e7ea9d59266f2f48611e8662052d"
+                 "e4b5") == 0);
       CHECK(find_operation_header(&finalized, "ETag", &etag) != NULL);
       CHECK(etag.value.length == sizeof("\"laghu-css-"
-                                        "8fba3ecd49cfa15f19e781bdaac6450f9603fc"
-                                        "d717366a2235dde792d2e32a32\"") -
+                                        "1b4e46a8b63676a054ad51bb767ac672e7ea9"
+                                        "d59266f2f48611e8662052de4b5\"") -
                                      1U);
     }
     laghu_http_transaction_result_release(&finalized);
@@ -515,9 +516,10 @@ static void test_html_cold_warm_headers(void) {
         NULL) {
       CHECK(operation.value.length == 2U);
       CHECK(memcmp(operation.value.data, "en", 2U) == 0);
-      CHECK(strcmp(finalized.dependency_key,
-                   "9d57b1e5cd2cd1a1b6b64e9fcdcacbe0316ca0e2f85af1fbe8babccc511"
-                   "14e11") == 0);
+      CHECK(
+          strcmp(finalized.dependency_key,
+                 "aa1a6517b1be3d7fb79d679edc6501b358459bd19dd93ce43369030eab64c"
+                 "77c") == 0);
       saw_language = true;
     }
     laghu_http_transaction_result_release(&finalized);

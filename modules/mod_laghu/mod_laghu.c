@@ -337,6 +337,28 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     config->core.css_outline_threshold = (unsigned int)quality;
     return NULL;
   }
+  if (ap_cstr_casecmp(name, "JavaScriptInlineLimit") == 0) {
+    quality = strtoul(parameter, &end, 10);
+    if (config->core.javascript_inline_limit !=
+            LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET ||
+        end == parameter || *end != '\0' || quality > 65536U) {
+      return "Laghu JavaScriptInlineLimit expects 0 through 65536 exactly once";
+    }
+    config->core.javascript_inline_limit = (unsigned int)quality;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "JavaScriptOutlineThreshold") == 0) {
+    quality = strtoul(parameter, &end, 10);
+    if (config->core.javascript_outline_threshold !=
+            LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET ||
+        end == parameter || *end != '\0' || quality < 1024U ||
+        quality > 1048576U) {
+      return "Laghu JavaScriptOutlineThreshold expects 1024 through 1048576 "
+             "exactly once";
+    }
+    config->core.javascript_outline_threshold = (unsigned int)quality;
+    return NULL;
+  }
   if (ap_cstr_casecmp(name, "WorkerQueue") == 0) {
     if (config->worker_queue != NULL) {
       return "Laghu WorkerQueue may appear only once in this scope";

@@ -61,9 +61,9 @@ printf '%s\n' "<style>@import \"/${import_long_name}\" print;</style>" \
   >"${work}/htdocs/import-page.html"
 printf '%s\n' '<html><head><meta charset="utf-8"></head> <!--gap--><head><title>heads</title></head><body></body></html>' \
   >"${work}/htdocs/heads-page.html"
-printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
+printf '%s\n' '<html><head><script src="/barrier.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
   >"${work}/htdocs/move-page.html"
-printf '%s\n' '<html><head><script src="/app.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
+printf '%s\n' '<html><head><script src="/barrier.js"></script></head><body><style media="all">.m{color:red}</style></body></html>' \
   >"${work}/htdocs/no-cross-page.html"
 printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
   >"${work}/htdocs/missing-head-page.html"
@@ -77,6 +77,10 @@ printf '%s\n' '<html><body><script>function inlinePublic(longLocal) { return lon
   >"${work}/htdocs/javascript-inline.html"
 printf '%s\n' '<html><body><script src="/app.js"></script><script>function externalPageHelper(veryLongLocalArgument) { return veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument; }</script></body></html>' \
   >"${work}/htdocs/javascript-external.html"
+printf '%s\n' "console.log('combine one value'); console.log('combine one value again');" >"${work}/htdocs/combine-one.js"
+printf '%s\n' "console.log('combine two value'); console.log('combine two value again');" >"${work}/htdocs/combine-two.js"
+printf '%s\n' '<html><body><script src="/combine-one.js" data-laghu-combine="application-main"></script><script src="/combine-two.js" data-laghu-combine="application-main"></script></body></html>' >"${work}/htdocs/javascript-combine.html"
+awk 'BEGIN { printf "<html><body><script>function outlinePublic(veryLongLocalArgument){return "; for (i=0;i<500;i++) printf "%sveryLongLocalArgument", i ? "+" : ""; print ";}</script></body></html>" }' >"${work}/htdocs/javascript-outline.html"
 
 load_if_present() {
   name=$1
@@ -152,10 +156,13 @@ load_first_mpm() {
   printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-external.html">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<LocationMatch "^/(combine-(one|two)\\.js|javascript-(combine|outline)\\.html)$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
   if [ -x "${javascript_service}" ]; then
     printf 'Laghu JavaScriptQueue "%s/javascript.queue"\n' "${work}"
     printf 'Laghu JavaScriptTarget "last 2 chrome versions"\n'
+    printf 'Laghu JavaScriptInlineLimit 2048\n'
+    printf 'Laghu JavaScriptOutlineThreshold 8192\n'
   fi
   printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
@@ -280,25 +287,35 @@ if [ -x "${javascript_service}" ]; then
     sleep 0.1
   done
   [ "${attempt}" -lt 50 ]
+  curl --fail --silent http://127.0.0.1:18081/javascript-external.html >"${work}/javascript-external-warm"
+  if grep 'src="/app.js"' "${work}/javascript-external-warm" >/dev/null; then
+    exit 1
+  fi
+  grep 'publicName(n)' "${work}/javascript-external-warm" >/dev/null
+  for combine_asset in combine-one.js combine-two.js; do
+    attempt=0
+    while [ "${attempt}" -lt 50 ]; do
+      curl --fail --silent --dump-header "${work}/${combine_asset}.headers" "http://127.0.0.1:18081/${combine_asset}" >/dev/null
+      grep -i '^ETag: "laghu-js-' "${work}/${combine_asset}.headers" >/dev/null && break
+      attempt=$((attempt + 1))
+      sleep 0.1
+    done
+    [ "${attempt}" -lt 50 ]
+  done
   attempt=0
   while [ "${attempt}" -lt 50 ]; do
-    curl --fail --silent http://127.0.0.1:18081/javascript-external.html \
-      >"${work}/javascript-external-warm"
-    if grep -o '/\.laghu/js/[0-9a-f]\{64\}' \
-        "${work}/javascript-external-warm" >/dev/null; then
-      break
-    fi
+    curl --fail --silent http://127.0.0.1:18081/javascript-combine.html >"${work}/javascript-combine-warm"
+    javascript_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}' "${work}/javascript-combine-warm" || true)
+    [ "${javascript_route}" != "" ] && break
     attempt=$((attempt + 1))
     sleep 0.1
   done
   [ "${attempt}" -lt 50 ]
-  javascript_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}' \
-    "${work}/javascript-external-warm")
-  [ "${javascript_route}" != "" ]
   curl --fail --silent --dump-header "${work}/javascript-immutable.headers" \
     "http://127.0.0.1:18081${javascript_route}" \
     >"${work}/javascript-immutable"
-  cmp "${work}/javascript-warm" "${work}/javascript-immutable"
+  grep 'combine one value' "${work}/javascript-immutable" >/dev/null
+  grep 'combine two value' "${work}/javascript-immutable" >/dev/null
   grep -i '^Cache-Control: public, max-age=31536000, immutable' \
     "${work}/javascript-immutable.headers" >/dev/null
   curl --fail --silent http://127.0.0.1:18081/javascript-inline.html \
@@ -321,6 +338,17 @@ if [ -x "${javascript_service}" ]; then
   [ "${attempt}" -lt 50 ]
   grep 'function inlinePublic(n){return n+1;}' \
     "${work}/javascript-inline-warm" >/dev/null
+  curl --fail --silent http://127.0.0.1:18081/javascript-outline.html >"${work}/javascript-outline-cold"
+  attempt=0
+  while [ "${attempt}" -lt 50 ]; do
+    curl --fail --silent http://127.0.0.1:18081/javascript-outline.html >"${work}/javascript-outline-warm"
+    outline_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}' "${work}/javascript-outline-warm" || true)
+    [ "${outline_route}" != "" ] && break
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 50 ]
+  curl --fail --silent "http://127.0.0.1:18081${outline_route}" | grep 'outlinePublic' >/dev/null
 fi
 
 curl --fail --silent --dump-header "${work}/css-cold.headers" \
@@ -423,7 +451,7 @@ for page in heads-page move-page; do
 done
 test "$(grep -oi '<head' "${work}/heads-page-warm" | wc -l | tr -d ' ')" = 1
 test "$(grep -bo '<style media=all>' "${work}/move-page-warm" | cut -d: -f1)" -lt \
-  "$(grep -bo '<script src=/app.js>' "${work}/move-page-warm" | cut -d: -f1)"
+  "$(grep -bo '<script src=/barrier.js>' "${work}/move-page-warm" | cut -d: -f1)"
 curl --fail --silent http://127.0.0.1:18081/no-cross-page.html \
   >"${work}/no-cross-page"
 cmp "${work}/htdocs/no-cross-page.html" "${work}/no-cross-page"

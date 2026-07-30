@@ -346,6 +346,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool queue_seen = false, selector_seen = false;
   bool font_queue_seen = false, font_config_seen = false;
   bool javascript_queue_seen = false, javascript_target_seen = false;
+  bool javascript_inline_limit_seen = false;
+  bool javascript_outline_threshold_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
@@ -427,6 +429,29 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --javascript-target");
       javascript_target_seen = true;
+    } else if (strcmp(name, "--javascript-inline-limit") == 0) {
+      char *end = NULL;
+      unsigned long limit;
+      NEED_VALUE();
+      limit = strtoul(value, &end, 10);
+      if (javascript_inline_limit_seen || end == value || *end != '\0' ||
+          limit > 65536U)
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --javascript-inline-limit");
+      options->config.javascript_inline_limit = (unsigned int)limit;
+      javascript_inline_limit_seen = true;
+    } else if (strcmp(name, "--javascript-outline-threshold") == 0) {
+      char *end = NULL;
+      unsigned long threshold;
+      NEED_VALUE();
+      threshold = strtoul(value, &end, 10);
+      if (javascript_outline_threshold_seen || end == value || *end != '\0' ||
+          threshold < 1024U || threshold > 1048576U)
+        return proxy_error(
+            error, error_size,
+            "invalid or duplicate --javascript-outline-threshold");
+      options->config.javascript_outline_threshold = (unsigned int)threshold;
+      javascript_outline_threshold_seen = true;
     } else if (strcmp(name, "--preset") == 0) {
       laghu_preset preset;
       NEED_VALUE();

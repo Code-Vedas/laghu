@@ -140,6 +140,57 @@ static void test_html_lexical_planner(void) {
       lexical, &result));
 }
 
+static void publish_javascript_fixture(const char *cache_path, const char *url,
+                                       const char *policy, const char *target,
+                                       const char *source, const char *derived,
+                                       uint32_t flags, uint64_t updated,
+                                       char variant[LAGHU_RUNTIME_KEY_SIZE]) {
+  unsigned char catalog[1908U] = {0};
+  uint64_t magic = UINT64_C(0x4c414748554a5343);
+  uint64_t source_length = strlen(source), derived_length = strlen(derived);
+  uint32_t version = 2U, module = flags & 1U;
+  char canonical[LAGHU_RUNTIME_PATH_SIZE + LAGHU_RUNTIME_KEY_SIZE +
+                 LAGHU_JAVASCRIPT_TARGET_SIZE + 64U];
+  char catalog_key[LAGHU_RUNTIME_KEY_SIZE], checksum[LAGHU_RUNTIME_KEY_SIZE];
+  char path[LAGHU_RUNTIME_PATH_SIZE];
+  laghu_runtime_cache_entry entry;
+  FILE *file;
+  int length;
+  assert(laghu_sha256_hex(
+      (laghu_buffer){(const unsigned char *)derived, derived_length}, variant));
+  assert(laghu_runtime_cache_publish(
+      cache_path, variant, variant, variant, "application/javascript",
+      "swc-test",
+      (laghu_buffer){(const unsigned char *)derived, derived_length}, &entry));
+  memcpy(catalog, &magic, sizeof(magic));
+  memcpy(catalog + 8U, &version, sizeof(version));
+  memcpy(catalog + 12U, &module, sizeof(module));
+  memcpy(catalog + 16U, &updated, sizeof(updated));
+  memcpy(catalog + 24U, &source_length, sizeof(source_length));
+  memcpy(catalog + 32U, &derived_length, sizeof(derived_length));
+  strcpy((char *)catalog + 40U, url);
+  strcpy((char *)catalog + 1064U, policy);
+  strcpy((char *)catalog + 1129U, target);
+  strcpy((char *)catalog + 1706U, variant);
+  memcpy(catalog + 1836U, &flags, sizeof(flags));
+  assert(laghu_sha256_hex((laghu_buffer){catalog, 1840U}, checksum));
+  strcpy((char *)catalog + 1840U, checksum);
+  length =
+      snprintf(canonical, sizeof(canonical), "laghu-js-url-v1\n%s\n%s\n%s\n%s",
+               url, policy, target, module != 0U ? "module" : "classic");
+  assert(length > 0 && (size_t)length < sizeof(canonical));
+  assert(laghu_sha256_hex(
+      (laghu_buffer){(const unsigned char *)canonical, (size_t)length},
+      catalog_key));
+  length = snprintf(path, sizeof(path), "%s/javascript-%s.meta", cache_path,
+                    catalog_key);
+  assert(length > 0 && (size_t)length < sizeof(path));
+  file = fopen(path, "wb");
+  assert(file != NULL);
+  assert(fwrite(catalog, 1U, sizeof(catalog), file) == sizeof(catalog));
+  assert(fclose(file) == 0);
+}
+
 static void test_head_planner(void) {
   laghu_runtime_head_result result;
   unsigned char *bounded;
@@ -550,8 +601,8 @@ int main(void) {
     char variant[LAGHU_RUNTIME_KEY_SIZE];
     assert(laghu_runtime_rewrite_javascript_html(
         &producer, temporary, (laghu_buffer){html, sizeof(html) - 1U},
-        "/inline", policy_key, "last 2 chrome versions", NULL, 100U, 60U,
-        &javascript_page));
+        "/inline", policy_key, "last 2 chrome versions", NULL, 100U, 60U, false,
+        false, false, 2048U, 8192U, &javascript_page));
     assert(!javascript_page.rewritten && javascript_page.dependencies_pending);
     laghu_runtime_html_result_release(&javascript_page);
     assert(laghu_runtime_queue_try_take(&consumer, &taken, received,
@@ -565,13 +616,66 @@ int main(void) {
         (laghu_buffer){optimized, sizeof(optimized) - 1U}, &javascript_entry));
     assert(laghu_runtime_rewrite_javascript_html(
         &producer, temporary, (laghu_buffer){html, sizeof(html) - 1U},
-        "/inline", policy_key, "last 2 chrome versions", NULL, 101U, 60U,
-        &javascript_page));
+        "/inline", policy_key, "last 2 chrome versions", NULL, 101U, 60U, false,
+        false, false, 2048U, 8192U, &javascript_page));
     assert(javascript_page.rewritten &&
            javascript_page.length < sizeof(html) - 1U);
     assert(strstr((const char *)javascript_page.data,
                   "function publicName(n){return n+1}") != NULL);
     laghu_runtime_html_result_release(&javascript_page);
+  }
+  {
+    static const char source[] =
+        "console.log('one'); console.log('two'); console.log('three');";
+    static const char derived[] = "console.log(1),console.log(2)";
+    static const unsigned char html[] =
+        "<html><body><script src=\"/small.js\"></script><p>padding padding "
+        "padding</p></body></html>";
+    laghu_runtime_html_result page;
+    char fixture_variant[LAGHU_RUNTIME_KEY_SIZE];
+    publish_javascript_fixture(temporary, "/small.js", policy_key,
+                               "last 2 chrome versions", source, derived, 2U,
+                               100U, fixture_variant);
+    assert(laghu_runtime_rewrite_javascript_html(
+        &producer, temporary, (laghu_buffer){html, sizeof(html) - 1U},
+        "/inline-external", policy_key, "last 2 chrome versions", NULL, 101U,
+        60U, false, true, false, 2048U, 8192U, &page));
+    assert(page.rewritten);
+    assert(strstr((const char *)page.data, "src=") == NULL);
+    assert(strstr((const char *)page.data, derived) != NULL);
+    laghu_runtime_html_result_release(&page);
+  }
+  {
+    static const char first_source[] =
+        "console.log('first value'); console.log('first value again');";
+    static const char second_source[] =
+        "console.log('second value'); console.log('second value again');";
+    static const char first[] = "console.log('first')";
+    static const char second[] = "console.log('second')";
+    static const unsigned char html[] =
+        "<html><body><script src=\"/assets/application-one-entry.js\" "
+        "data-laghu-combine=\"application-main\"></script>\n"
+        "<script src=\"/assets/application-two-entry.js\" "
+        "data-laghu-combine=\"application-main\"></script></body></html>";
+    laghu_runtime_html_result page;
+    char fixture_variant[LAGHU_RUNTIME_KEY_SIZE];
+    publish_javascript_fixture(temporary, "/assets/application-one-entry.js",
+                               policy_key, "last 2 chrome versions",
+                               first_source, first, 2U | 4U | 8U, 100U,
+                               fixture_variant);
+    publish_javascript_fixture(temporary, "/assets/application-two-entry.js",
+                               policy_key, "last 2 chrome versions",
+                               second_source, second, 2U | 4U | 8U, 100U,
+                               fixture_variant);
+    assert(laghu_runtime_rewrite_javascript_html(
+        &producer, temporary, (laghu_buffer){html, sizeof(html) - 1U},
+        "/combine", policy_key, "last 2 chrome versions", NULL, 101U, 60U, true,
+        false, false, 2048U, 8192U, &page));
+    assert(page.rewritten);
+    assert(strstr((const char *)page.data, "/.laghu/js/") != NULL);
+    assert(strstr((const char *)page.data,
+                  "data-laghu-combine=\"application-main\"") != NULL);
+    laghu_runtime_html_result_release(&page);
   }
   assert(laghu_catalog_key("/image.png", index_key, policy_key, 0x55aaU,
                            catalog_key));

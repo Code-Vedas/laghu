@@ -23,6 +23,8 @@ static void usage(FILE *stream) {
       "  --font-provider-config PATH\n"
       "  --javascript-queue PATH\n"
       "  --javascript-target QUERY\n"
+      "  --javascript-inline-limit 0..65536\n"
+      "  --javascript-outline-threshold 1024..1048576\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
       stream);
