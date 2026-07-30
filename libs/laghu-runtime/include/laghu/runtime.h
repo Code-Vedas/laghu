@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_QUEUE_VERSION 5U
+#define LAGHU_QUEUE_VERSION 6U
 #define LAGHU_QUEUE_DEFAULT_SLOTS 4U
 #define LAGHU_RUNTIME_KEY_SIZE LAGHU_SHA256_HEX_SIZE
 #define LAGHU_RUNTIME_PATH_SIZE 1024U
@@ -41,6 +41,13 @@ extern "C" {
 #define LAGHU_HTML_MAX_LINK_HEADERS 12U
 #define LAGHU_HTML_HEADER_VALUE_SIZE 1152U
 #define LAGHU_HTML_LANGUAGE_SIZE 128U
+#define LAGHU_FONT_PROVIDER_MAX 16U
+#define LAGHU_FONT_PROVIDER_RULE_MAX 8U
+#define LAGHU_FONT_PROVIDER_ID_SIZE 64U
+#define LAGHU_FONT_PROVIDER_HOST_SIZE 256U
+#define LAGHU_FONT_PROVIDER_PREFIX_SIZE 512U
+#define LAGHU_FONT_CSS_MAX_BYTES 262144U
+#define LAGHU_FONT_FETCH_PROFILE_VERSION 1U
 
 typedef uint32_t laghu_html_planner_mask;
 
@@ -59,7 +66,8 @@ typedef uint32_t laghu_html_planner_mask;
 
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
-  LAGHU_RUNTIME_JOB_SPRITE = 1
+  LAGHU_RUNTIME_JOB_SPRITE = 1,
+  LAGHU_RUNTIME_JOB_FONT_CSS = 2
 } laghu_runtime_job_kind;
 
 typedef struct {
@@ -69,6 +77,8 @@ typedef struct {
   char validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
   char content_type[LAGHU_RUNTIME_TYPE_SIZE];
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  char provider_id[LAGHU_FONT_PROVIDER_ID_SIZE];
+  char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t filters;
   unsigned int quality;
   unsigned int metadata_limit;
@@ -86,6 +96,43 @@ typedef struct {
   bool accept_webp;
   laghu_buffer payload;
 } laghu_runtime_job;
+
+typedef struct {
+  char host[LAGHU_FONT_PROVIDER_HOST_SIZE];
+  char path_prefix[LAGHU_FONT_PROVIDER_PREFIX_SIZE];
+} laghu_font_provider_rule;
+
+typedef struct {
+  char id[LAGHU_FONT_PROVIDER_ID_SIZE];
+  laghu_font_provider_rule stylesheets[LAGHU_FONT_PROVIDER_RULE_MAX];
+  unsigned int stylesheet_count;
+  laghu_font_provider_rule redirects[LAGHU_FONT_PROVIDER_RULE_MAX];
+  unsigned int redirect_count;
+  laghu_font_provider_rule assets[LAGHU_FONT_PROVIDER_RULE_MAX];
+  unsigned int asset_count;
+  unsigned int max_css_bytes;
+  unsigned int ttl_seconds;
+  char digest[LAGHU_RUNTIME_KEY_SIZE];
+} laghu_font_provider;
+
+typedef struct {
+  laghu_font_provider providers[LAGHU_FONT_PROVIDER_MAX];
+  unsigned int count;
+  char digest[LAGHU_RUNTIME_KEY_SIZE];
+} laghu_font_provider_set;
+
+typedef struct {
+  char provider_id[LAGHU_FONT_PROVIDER_ID_SIZE];
+  char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
+  char normalized_url[LAGHU_RUNTIME_PATH_SIZE];
+  char variant_key[LAGHU_RUNTIME_KEY_SIZE];
+  size_t css_length;
+  uint64_t fetched_at;
+  uint64_t retry_after;
+  unsigned int ttl_seconds;
+  bool ready;
+  bool terminally_excluded;
+} laghu_font_stylesheet_record;
 
 typedef struct {
   intptr_t platform_file;
@@ -245,6 +292,26 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
                                   unsigned char *payload,
                                   size_t payload_capacity);
 
+bool laghu_font_providers_load(const char *path, laghu_font_provider_set *set,
+                               char *error, size_t error_size);
+const laghu_font_provider *laghu_font_provider_match(
+    const laghu_font_provider_set *set, const char *url);
+const laghu_font_provider *laghu_font_provider_by_id(
+    const laghu_font_provider_set *set, const char *id);
+bool laghu_font_provider_url_allowed(const laghu_font_provider *provider,
+                                     const char *url, bool redirect,
+                                     bool asset);
+bool laghu_font_css_validate(const laghu_font_provider *provider,
+                             laghu_buffer css);
+bool laghu_font_stylesheet_key(const char *url, const char *provider_digest,
+                               char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_font_stylesheet_publish(const char *cache_path,
+                                   const laghu_font_stylesheet_record *record);
+bool laghu_font_stylesheet_lookup(const char *cache_path, const char *url,
+                                  const laghu_font_provider *provider,
+                                  uint64_t now,
+                                  laghu_font_stylesheet_record *record);
+
 bool laghu_runtime_index_key(const char *request_path, const char *validator,
                              const char *policy_key, bool accept_webp,
                              char output[LAGHU_RUNTIME_KEY_SIZE]);
@@ -306,6 +373,11 @@ bool laghu_runtime_rewrite_css_markup(
     bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
     bool csp_allows_inline_styles, bool csp_allows_self_styles,
     unsigned int inline_limit, unsigned int outline_threshold,
+    laghu_runtime_html_result *result);
+bool laghu_runtime_rewrite_font_css(
+    laghu_runtime_queue *fetch_queue, const char *cache_path,
+    const laghu_font_provider_set *providers, laghu_buffer html, uint64_t now,
+    bool allow_inline, bool csp_allows_inline_styles, unsigned int inline_limit,
     laghu_runtime_html_result *result);
 bool laghu_runtime_combine_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,

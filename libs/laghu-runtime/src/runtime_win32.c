@@ -40,6 +40,8 @@ typedef struct {
   char validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
   char content_type[LAGHU_RUNTIME_TYPE_SIZE];
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  char provider_id[LAGHU_FONT_PROVIDER_ID_SIZE];
+  char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t filters;
   uint32_t quality;
   uint32_t metadata_limit;
@@ -131,6 +133,15 @@ static bool laghu_sprite_job_valid(const laghu_runtime_job *job) {
     }
   }
   return true;
+}
+
+static bool laghu_font_job_valid(const laghu_runtime_job *job) {
+  if (job->kind != LAGHU_RUNTIME_JOB_FONT_CSS)
+    return job->provider_id[0] == '\0' && job->provider_digest[0] == '\0';
+  return job->payload.length == 0U && job->request_path[0] != '\0' &&
+         job->provider_id[0] != '\0' &&
+         memchr(job->provider_id, '\0', sizeof(job->provider_id)) != NULL &&
+         laghu_hash_valid(job->provider_digest);
 }
 
 static size_t laghu_slot_size(size_t payload_size) {
@@ -408,7 +419,7 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
       (job->payload.data == NULL && job->payload.length != 0U) ||
       job->payload.length > queue->slot_payload_size ||
       !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key) ||
-      !laghu_sprite_job_valid(job)) {
+      !laghu_sprite_job_valid(job) || !laghu_font_job_valid(job)) {
     return false;
   }
   file = laghu_file(queue);
@@ -426,6 +437,9 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
     memcpy(slot->validator, job->validator, sizeof(slot->validator));
     memcpy(slot->content_type, job->content_type, sizeof(slot->content_type));
     memcpy(slot->policy_key, job->policy_key, sizeof(slot->policy_key));
+    memcpy(slot->provider_id, job->provider_id, sizeof(slot->provider_id));
+    memcpy(slot->provider_digest, job->provider_digest,
+           sizeof(slot->provider_digest));
     slot->filters = job->filters;
     slot->quality = job->quality;
     slot->metadata_limit = job->metadata_limit;
@@ -476,7 +490,10 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
   if (slot->state == LAGHU_SLOT_READY &&
       slot->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
       slot->sprite_count <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
-      slot->payload_length <= payload_capacity) {
+      slot->payload_length <= payload_capacity &&
+      memchr(slot->provider_id, '\0', sizeof(slot->provider_id)) != NULL &&
+      memchr(slot->provider_digest, '\0', sizeof(slot->provider_digest)) !=
+          NULL) {
     memset(job, 0, sizeof(*job));
     job->kind = (laghu_runtime_job_kind)slot->kind;
     memcpy(job->index_key, slot->index_key, sizeof(job->index_key));
@@ -484,6 +501,9 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
     memcpy(job->validator, slot->validator, sizeof(job->validator));
     memcpy(job->content_type, slot->content_type, sizeof(job->content_type));
     memcpy(job->policy_key, slot->policy_key, sizeof(job->policy_key));
+    memcpy(job->provider_id, slot->provider_id, sizeof(job->provider_id));
+    memcpy(job->provider_digest, slot->provider_digest,
+           sizeof(job->provider_digest));
     job->filters = slot->filters;
     job->quality = slot->quality;
     job->metadata_limit = slot->metadata_limit;

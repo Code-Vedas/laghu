@@ -123,6 +123,7 @@ typedef struct {
 typedef struct proxy_worker {
   proxy_queue *queue;
   laghu_runtime_queue runtime_queue;
+  laghu_runtime_queue font_fetch_queue;
   laghu_socket active_client;
   laghu_socket active_origin;
 } proxy_worker;
@@ -339,6 +340,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                                                    size_t error_size) {
   bool listen_seen = false, origin_seen = false, cache_seen = false;
   bool queue_seen = false, selector_seen = false;
+  bool font_queue_seen = false, font_config_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
@@ -382,6 +384,25 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --worker-queue");
       queue_seen = true;
+    } else if (strcmp(name, "--font-fetch-queue") == 0) {
+      NEED_VALUE();
+      if (font_queue_seen ||
+          !proxy_copy(options->font_fetch_queue_path,
+                      sizeof(options->font_fetch_queue_path), value))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --font-fetch-queue");
+      font_queue_seen = true;
+    } else if (strcmp(name, "--font-provider-config") == 0) {
+      NEED_VALUE();
+      if (font_config_seen ||
+          !proxy_copy(options->font_provider_config_path,
+                      sizeof(options->font_provider_config_path), value) ||
+          !laghu_font_providers_load(value, &options->font_providers, error,
+                                     error_size))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --font-provider-config");
+      options->font_providers_loaded = true;
+      font_config_seen = true;
     } else if (strcmp(name, "--preset") == 0) {
       laghu_preset preset;
       NEED_VALUE();
@@ -499,6 +520,10 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     return proxy_error(
         error, error_size,
         "--listen, --origin, --cache, and --worker-queue are required");
+  if (font_config_seen != font_queue_seen)
+    return proxy_error(
+        error, error_size,
+        "font provider config and fetch queue require each other");
   if (ca_seen && !options->origin_tls)
     return proxy_error(error, error_size,
                        "--origin-ca-file requires an https origin");
@@ -1841,13 +1866,21 @@ static void proxy_handle(const proxy_connection *connection,
                                                 true,
                                                 false,
                                                 {NULL, 0U}};
-    environment = (laghu_http_environment){LAGHU_HTTP_ABI_VERSION,
-                                           sizeof(environment),
-                                           options->config,
-                                           options->cache_path,
-                                           options->worker_queue_path,
-                                           &worker->runtime_queue,
-                                           (uint64_t)time(NULL)};
+    environment = (laghu_http_environment){
+        .version = LAGHU_HTTP_ABI_VERSION,
+        .struct_size = sizeof(environment),
+        .config = options->config,
+        .cache_path = options->cache_path,
+        .worker_queue_path = options->worker_queue_path,
+        .queue = &worker->runtime_queue,
+        .font_fetch_queue_path = options->font_providers_loaded
+                                     ? options->font_fetch_queue_path
+                                     : NULL,
+        .font_fetch_queue =
+            options->font_providers_loaded ? &worker->font_fetch_queue : NULL,
+        .font_providers =
+            options->font_providers_loaded ? &options->font_providers : NULL,
+        .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request,
                                        &normalized_response, &environment,
@@ -1974,13 +2007,21 @@ static void proxy_handle(const proxy_connection *connection,
           proxy_find(response.headers, response.header_count,
                      "Content-Range") != NULL,
       {NULL, 0U}};
-  environment = (laghu_http_environment){LAGHU_HTTP_ABI_VERSION,
-                                         sizeof(environment),
-                                         options->config,
-                                         options->cache_path,
-                                         options->worker_queue_path,
-                                         &worker->runtime_queue,
-                                         (uint64_t)time(NULL)};
+  environment = (laghu_http_environment){
+      .version = LAGHU_HTTP_ABI_VERSION,
+      .struct_size = sizeof(environment),
+      .config = options->config,
+      .cache_path = options->cache_path,
+      .worker_queue_path = options->worker_queue_path,
+      .queue = &worker->runtime_queue,
+      .font_fetch_queue_path = options->font_providers_loaded
+                                   ? options->font_fetch_queue_path
+                                   : NULL,
+      .font_fetch_queue =
+          options->font_providers_loaded ? &worker->font_fetch_queue : NULL,
+      .font_providers =
+          options->font_providers_loaded ? &options->font_providers : NULL,
+      .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless = !strcmp(request.method, "HEAD") ||
                     (response.status >= 100U && response.status < 200U) ||
@@ -2192,12 +2233,18 @@ static void *proxy_worker_main(void *argument)
   proxy_worker *worker = argument;
   proxy_connection connection;
   laghu_runtime_queue_init(&worker->runtime_queue);
+  laghu_runtime_queue_init(&worker->font_fetch_queue);
+  if (worker->queue->options->font_providers_loaded)
+    (void)laghu_runtime_queue_open(
+        &worker->font_fetch_queue,
+        worker->queue->options->font_fetch_queue_path);
   while (queue_pop(worker->queue, &connection)) {
     proxy_worker_begin(worker, connection.socket);
     proxy_handle(&connection, worker);
     proxy_worker_end(worker);
   }
   laghu_runtime_queue_close(&worker->runtime_queue);
+  laghu_runtime_queue_close(&worker->font_fetch_queue);
 #ifdef _WIN32
   return 0U;
 #else
@@ -2463,7 +2510,9 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   queue.optimizer_readiness = -1;
   queue.request_prefix = proxy_monotonic_ms() << 16U;
   if (!proxy_cache_probe(options->cache_path) ||
-      !proxy_queue_path_valid(options->worker_queue_path)) {
+      !proxy_queue_path_valid(options->worker_queue_path) ||
+      (options->font_providers_loaded &&
+       !proxy_queue_path_valid(options->font_fetch_queue_path))) {
     proxy_log_event(&queue, "startup_failure", "stopped");
     goto cleanup;
   }

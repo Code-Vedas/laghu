@@ -17,7 +17,7 @@ WORKDIR /src
 COPY . .
 RUN cmake -S . -B build -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
       -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build --target laghu-libvips --parallel \
+    && cmake --build build --target laghu-libvips laghu-resource-fetch --parallel \
     && APACHE_BUILD_DIR=/src/apache-module scripts/build-apache-module
 
 FROM ubuntu:24.04
@@ -42,7 +42,9 @@ RUN apt-get update \
     && chown -R laghu:laghu /run/laghu /var/cache/laghu
 
 COPY --from=build /src/build/workers/laghu-libvips/laghu-libvips /usr/bin/laghu-libvips
+COPY --from=build /src/build/workers/laghu-resource-fetch/laghu-resource-fetch /usr/bin/laghu-resource-fetch
 COPY --from=build /src/apache-module/.libs/mod_laghu.so /usr/lib/apache2/modules/mod_laghu.so
+COPY packaging/font-providers.conf /etc/laghu/font-providers.conf
 COPY packaging/apache/laghu.load /etc/apache2/mods-available/laghu.load
 COPY packaging/apache/laghu.conf /etc/apache2/mods-available/laghu.conf
 COPY packaging/container/entrypoint.apache /usr/bin/mod-laghu-entrypoint

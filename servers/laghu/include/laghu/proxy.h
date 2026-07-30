@@ -47,6 +47,9 @@ typedef struct {
   char origin_ca_file[LAGHU_RUNTIME_PATH_SIZE];
   char cache_path[LAGHU_RUNTIME_PATH_SIZE];
   char worker_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+  char font_fetch_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+  char font_provider_config_path[LAGHU_RUNTIME_PATH_SIZE];
+  laghu_font_provider_set font_providers;
   laghu_config config;
   unsigned int workers;
   unsigned int connection_queue;
@@ -57,6 +60,7 @@ typedef struct {
   laghu_proxy_cidr trusted_proxies[LAGHU_PROXY_MAX_TRUSTED_PROXIES];
   size_t trusted_proxy_count;
   bool origin_tls;
+  bool font_providers_loaded;
   bool service_mode;
 } laghu_proxy_options;
 

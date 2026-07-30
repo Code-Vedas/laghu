@@ -619,3 +619,184 @@ failed:
   memset(result, 0, sizeof(*result));
   return false;
 }
+
+bool laghu_runtime_rewrite_font_css(
+    laghu_runtime_queue *fetch_queue, const char *cache_path,
+    const laghu_font_provider_set *providers, laghu_buffer html, uint64_t now,
+    bool allow_inline, bool csp_allows_inline_styles, unsigned int inline_limit,
+    laghu_runtime_html_result *result) {
+  laghu_css_markup_builder builder = {0};
+  size_t cursor = 0U;
+  size_t original_bundle = html.length;
+  bool changed = false;
+  if (result == NULL || cache_path == NULL || providers == NULL ||
+      html.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
+    return false;
+  }
+  memset(result, 0, sizeof(*result));
+  if (!allow_inline || !csp_allows_inline_styles || inline_limit == 0U) {
+    return true;
+  }
+  while (cursor < html.length) {
+    const unsigned char *open =
+        memchr(html.data + cursor, '<', html.length - cursor);
+    size_t start;
+    size_t end;
+    if (open == NULL) {
+      if (!laghu_css_markup_append(&builder, html.data + cursor,
+                                   html.length - cursor))
+        goto failed;
+      break;
+    }
+    start = (size_t)(open - html.data);
+    if (!laghu_css_markup_append(&builder, html.data + cursor, start - cursor))
+      goto failed;
+    end = start + 1U;
+    while (end < html.length && html.data[end] != '>') ++end;
+    if (end == html.length) goto unchanged;
+    if (start + 5U <= end &&
+        laghu_css_markup_equal(html.data + start + 1U, 4U, "link")) {
+      const unsigned char *rel = NULL, *href = NULL, *media = NULL;
+      const unsigned char *type = NULL;
+      size_t rel_length = 0U, href_length = 0U, media_length = 0U;
+      size_t type_length = 0U;
+      char url[LAGHU_RUNTIME_PATH_SIZE];
+      const laghu_font_provider *provider = NULL;
+      laghu_font_stylesheet_record record;
+      bool has_media = false;
+      bool eligible =
+          laghu_css_markup_attribute(html.data + start, end - start + 1U, "rel",
+                                     &rel, &rel_length) &&
+          laghu_css_markup_equal(rel, rel_length, "stylesheet") &&
+          laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                     "href", &href, &href_length) &&
+          href_length < sizeof(url) &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "integrity") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U, "nonce") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "disabled") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "alternate") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U,
+                                "onload") &&
+          !laghu_css_markup_has(html.data + start, end - start + 1U, "onerror");
+      if (eligible) {
+        memcpy(url, href, href_length);
+        url[href_length] = '\0';
+        provider = laghu_font_provider_match(providers, url);
+        eligible = provider != NULL;
+      }
+      if (eligible &&
+          laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                     "media", &media, &media_length)) {
+        has_media = true;
+        eligible = laghu_css_markup_safe_attribute(media, media_length);
+      }
+      if (eligible &&
+          laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                     "type", &type, &type_length))
+        eligible = laghu_css_markup_equal(type, type_length, "text/css");
+      if (eligible) {
+        bool found = laghu_font_stylesheet_lookup(cache_path, url, provider,
+                                                  now, &record);
+        if (!found || (!record.ready && now >= record.retry_after)) {
+          laghu_runtime_job job = {0};
+          char key[LAGHU_RUNTIME_KEY_SIZE];
+          if (fetch_queue != NULL &&
+              laghu_font_stylesheet_key(url, provider->digest, key)) {
+            job.kind = LAGHU_RUNTIME_JOB_FONT_CSS;
+            memcpy(job.index_key, key, sizeof(job.index_key));
+            memcpy(job.policy_key, key, sizeof(job.policy_key));
+            (void)snprintf(job.request_path, sizeof(job.request_path), "%s",
+                           url);
+            (void)snprintf(job.content_type, sizeof(job.content_type),
+                           "text/css");
+            (void)snprintf(job.provider_id, sizeof(job.provider_id), "%s",
+                           provider->id);
+            memcpy(job.provider_digest, provider->digest,
+                   sizeof(job.provider_digest));
+            if (laghu_runtime_queue_try_publish(fetch_queue, &job)) {
+              memset(&record, 0, sizeof(record));
+              (void)snprintf(record.provider_id, sizeof(record.provider_id),
+                             "%s", provider->id);
+              memcpy(record.provider_digest, provider->digest,
+                     sizeof(record.provider_digest));
+              (void)snprintf(record.normalized_url,
+                             sizeof(record.normalized_url), "%s", url);
+              record.retry_after = now + 30U;
+              record.ttl_seconds = provider->ttl_seconds;
+              (void)laghu_font_stylesheet_publish(cache_path, &record);
+            }
+          }
+          result->dependencies_pending = true;
+          goto unchanged;
+        }
+        if (record.ready && record.css_length <= inline_limit) {
+          laghu_runtime_cache_entry entry;
+          unsigned char *css = NULL;
+          if (!laghu_runtime_cache_lookup_variant(cache_path,
+                                                  record.variant_key, &entry) ||
+              entry.length != record.css_length ||
+              (css = malloc(entry.length + 1U)) == NULL ||
+              !laghu_runtime_cache_read(&entry, css, entry.length)) {
+            free(css);
+            result->dependencies_pending = true;
+            goto unchanged;
+          }
+          css[entry.length] = '\0';
+          if (!laghu_font_css_validate(provider,
+                                       (laghu_buffer){css, entry.length}) ||
+              !laghu_css_markup_append(&builder, "<style", 6U) ||
+              (has_media &&
+               (!laghu_css_markup_append(&builder, " media=\"", 8U) ||
+                !laghu_css_markup_append(&builder, media, media_length) ||
+                !laghu_css_markup_append(&builder, "\"", 1U))) ||
+              !laghu_css_markup_append(&builder, ">", 1U) ||
+              !laghu_css_markup_append(&builder, css, entry.length) ||
+              !laghu_css_markup_append(&builder, "</style>", 8U)) {
+            free(css);
+            goto failed;
+          }
+          free(css);
+          original_bundle += entry.length;
+          cursor = end + 1U;
+          changed = true;
+          continue;
+        }
+      }
+    }
+    if (!laghu_css_markup_append(&builder, html.data + start, end - start + 1U))
+      goto failed;
+    cursor = end + 1U;
+  }
+  if (!changed || builder.length > original_bundle) goto unchanged;
+  {
+    char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+    char output_hash[LAGHU_RUNTIME_KEY_SIZE];
+    char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 64U];
+    int length;
+    if (!laghu_sha256_hex(html, source_hash) ||
+        !laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
+                          output_hash))
+      goto failed;
+    length = snprintf(material, sizeof(material), "font-markup-v1\n%s\n%s\n%s",
+                      source_hash, output_hash, providers->digest);
+    if (length <= 0 || (size_t)length >= sizeof(material) ||
+        !laghu_sha256_hex(
+            (laghu_buffer){(const unsigned char *)material, (size_t)length},
+            result->dependency_key))
+      goto failed;
+  }
+  result->data = builder.data;
+  result->length = builder.length;
+  result->rewritten = true;
+  return true;
+unchanged:
+  free(builder.data);
+  return true;
+failed:
+  free(builder.data);
+  memset(result, 0, sizeof(*result));
+  return false;
+}

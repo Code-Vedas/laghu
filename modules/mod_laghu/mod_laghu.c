@@ -27,16 +27,23 @@
 #ifdef _WIN32
 #define LAGHU_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
 #define LAGHU_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
+#define LAGHU_DEFAULT_FONT_QUEUE "C:/ProgramData/Laghu/fonts.queue"
 #else
 #define LAGHU_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_DEFAULT_CACHE "/var/cache/laghu/images"
+#define LAGHU_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
 #endif
 
 typedef struct {
   laghu_config core;
   const char *worker_queue;
+  const char *font_fetch_queue;
+  const char *font_provider_config;
   const char *image_cache;
   laghu_runtime_queue queue;
+  laghu_runtime_queue font_queue;
+  laghu_font_provider_set font_providers;
+  bool font_providers_loaded;
 } laghu_apache_config;
 
 typedef struct {
@@ -114,6 +121,7 @@ static unsigned int laghu_apache_viewport_header(request_rec *request) {
 static apr_status_t laghu_apache_queue_cleanup(void *data) {
   laghu_apache_config *config = data;
   laghu_runtime_queue_close(&config->queue);
+  laghu_runtime_queue_close(&config->font_queue);
   return APR_SUCCESS;
 }
 
@@ -123,6 +131,7 @@ static void *laghu_apache_create_config(apr_pool_t *pool, char *path) {
   if (config != NULL) {
     laghu_config_init(&config->core);
     laghu_runtime_queue_init(&config->queue);
+    laghu_runtime_queue_init(&config->font_queue);
     apr_pool_cleanup_register(pool, config, laghu_apache_queue_cleanup,
                               apr_pool_cleanup_null);
   }
@@ -148,7 +157,21 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
       child->worker_queue != NULL ? child->worker_queue : parent->worker_queue;
   merged->image_cache =
       child->image_cache != NULL ? child->image_cache : parent->image_cache;
+  merged->font_fetch_queue = child->font_fetch_queue != NULL
+                                 ? child->font_fetch_queue
+                                 : parent->font_fetch_queue;
+  merged->font_provider_config = child->font_provider_config != NULL
+                                     ? child->font_provider_config
+                                     : parent->font_provider_config;
+  if (child->font_providers_loaded) {
+    merged->font_providers = child->font_providers;
+    merged->font_providers_loaded = true;
+  } else if (parent->font_providers_loaded) {
+    merged->font_providers = parent->font_providers;
+    merged->font_providers_loaded = true;
+  }
   laghu_runtime_queue_init(&merged->queue);
+  laghu_runtime_queue_init(&merged->font_queue);
   apr_pool_cleanup_register(pool, merged, laghu_apache_queue_cleanup,
                             apr_pool_cleanup_null);
   return merged;
@@ -297,6 +320,25 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
       return "Laghu WorkerQueue may appear only once in this scope";
     }
     config->worker_queue = apr_pstrdup(command->pool, parameter);
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "FontFetchQueue") == 0) {
+    if (config->font_fetch_queue != NULL) {
+      return "Laghu FontFetchQueue may appear only once in this scope";
+    }
+    config->font_fetch_queue = apr_pstrdup(command->pool, parameter);
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "FontProviderConfig") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (config->font_provider_config != NULL ||
+        !laghu_font_providers_load(parameter, &config->font_providers, error,
+                                   sizeof(error))) {
+      return apr_psprintf(command->pool,
+                          "Laghu FontProviderConfig is invalid: %s", error);
+    }
+    config->font_provider_config = apr_pstrdup(command->pool, parameter);
+    config->font_providers_loaded = true;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "ImageCache") == 0) {
@@ -625,6 +667,20 @@ static bool laghu_apache_normalize(request_rec *request,
                                                ? context->config->worker_queue
                                                : LAGHU_DEFAULT_QUEUE;
   context->environment.queue = &context->config->queue;
+  context->environment.font_fetch_queue_path =
+      context->config->font_fetch_queue != NULL
+          ? context->config->font_fetch_queue
+          : LAGHU_DEFAULT_FONT_QUEUE;
+  if (context->config->font_providers_loaded &&
+      ((context->config->font_queue.mapping != NULL &&
+        laghu_runtime_queue_refresh(&context->config->font_queue)) ||
+       (context->config->font_queue.mapping == NULL &&
+        laghu_runtime_queue_open(
+            &context->config->font_queue,
+            context->environment.font_fetch_queue_path)))) {
+    context->environment.font_fetch_queue = &context->config->font_queue;
+    context->environment.font_providers = &context->config->font_providers;
+  }
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;
 }

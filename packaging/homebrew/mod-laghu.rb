@@ -15,6 +15,7 @@ class ModLaghu < Formula
 
   depends_on "httpd"
   depends_on "laghu-libvips"
+  depends_on "laghu-resource-fetch"
 
   def install
     ENV["APXS"] = formula_opt_bin("httpd")/"apxs"
@@ -26,6 +27,8 @@ class ModLaghu < Formula
       Laghu Off
       Laghu Preset balanced
       Laghu WorkerQueue #{var}/run/laghu/jobs.queue
+      Laghu FontFetchQueue #{var}/run/laghu/fonts.queue
+      Laghu FontProviderConfig #{etc}/laghu/font-providers.conf
       Laghu ImageCache #{var}/cache/laghu/images
     EOS
   end

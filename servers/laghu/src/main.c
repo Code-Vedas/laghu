@@ -18,6 +18,8 @@ static void usage(FILE *stream) {
       "  --connect-timeout SECONDS --io-timeout SECONDS\n"
       "  --drain-timeout SECONDS\n"
       "  --origin-ca-file PATH\n"
+      "  --font-fetch-queue PATH\n"
+      "  --font-provider-config PATH\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
       stream);

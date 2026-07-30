@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "laghu/runtime.h"
 
@@ -32,6 +33,45 @@ static unsigned char *read_file(const char *path, size_t *length) {
 int main(int argc, char **argv) {
   static const unsigned char body[] = "immutable-fixture";
   laghu_runtime_cache_entry entry;
+  if (argc == 5 && strcmp(argv[1], "--font-job") == 0) {
+    laghu_font_provider_set providers;
+    const laghu_font_provider *provider;
+    laghu_runtime_queue queue;
+    laghu_runtime_job job = {0};
+    char error[128];
+    if (!laghu_font_providers_load(argv[3], &providers, error, sizeof(error)) ||
+        (provider = laghu_font_provider_match(&providers, argv[4])) == NULL ||
+        !laghu_font_stylesheet_key(argv[4], provider->digest, job.index_key))
+      return 1;
+    job.kind = LAGHU_RUNTIME_JOB_FONT_CSS;
+    memcpy(job.policy_key, job.index_key, sizeof(job.policy_key));
+    (void)snprintf(job.request_path, sizeof(job.request_path), "%s", argv[4]);
+    (void)snprintf(job.content_type, sizeof(job.content_type), "text/css");
+    (void)snprintf(job.provider_id, sizeof(job.provider_id), "%s",
+                   provider->id);
+    memcpy(job.provider_digest, provider->digest, sizeof(job.provider_digest));
+    laghu_runtime_queue_init(&queue);
+    if (!laghu_runtime_queue_open(&queue, argv[2]) ||
+        !laghu_runtime_queue_try_publish(&queue, &job)) {
+      laghu_runtime_queue_close(&queue);
+      return 1;
+    }
+    laghu_runtime_queue_close(&queue);
+    return 0;
+  }
+  if (argc == 5 && strcmp(argv[1], "--font-ready") == 0) {
+    laghu_font_provider_set providers;
+    const laghu_font_provider *provider;
+    laghu_font_stylesheet_record record;
+    char error[128];
+    if (!laghu_font_providers_load(argv[3], &providers, error, sizeof(error)) ||
+        (provider = laghu_font_provider_match(&providers, argv[4])) == NULL ||
+        !laghu_font_stylesheet_lookup(argv[2], argv[4], provider,
+                                      (uint64_t)time(NULL), &record) ||
+        !record.ready)
+      return 1;
+    return 0;
+  }
   if (argc == 4 && strcmp(argv[1], "--queue") == 0) {
     laghu_runtime_queue queue;
     uint64_t now = (uint64_t)strtoull(argv[3], NULL, 10);

@@ -15,16 +15,23 @@
 #ifdef _WIN32
 #define LAGHU_NGINX_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
 #define LAGHU_NGINX_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
+#define LAGHU_NGINX_DEFAULT_FONT_QUEUE "C:/ProgramData/Laghu/fonts.queue"
 #else
 #define LAGHU_NGINX_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_NGINX_DEFAULT_CACHE "/var/cache/laghu/images"
+#define LAGHU_NGINX_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
 #endif
 
 typedef struct {
   laghu_config core;
   laghu_runtime_queue runtime_queue;
+  laghu_runtime_queue font_fetch_runtime_queue;
+  laghu_font_provider_set font_providers;
   ngx_str_t worker_queue;
+  ngx_str_t font_fetch_queue;
+  ngx_str_t font_provider_config;
   ngx_str_t image_cache;
+  bool font_providers_loaded;
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
@@ -78,6 +85,17 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
 
 static void ngx_http_laghu_queue_cleanup(void *data) {
   laghu_runtime_queue_close(data);
+}
+
+static bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue *queue = &conf->font_fetch_runtime_queue;
+  if (!conf->font_providers_loaded || conf->font_fetch_queue.len == 0U)
+    return false;
+  if (queue->mapping == NULL &&
+      !laghu_runtime_queue_open(queue,
+                                (const char *)conf->font_fetch_queue.data))
+    return false;
+  return laghu_runtime_queue_refresh(queue);
 }
 
 static ngx_command_t ngx_http_laghu_commands[] = {
@@ -1120,6 +1138,15 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->environment.worker_queue_path =
       (const char *)conf->worker_queue.data;
   context->environment.queue = &conf->runtime_queue;
+  context->environment.font_fetch_queue_path =
+      conf->font_fetch_queue.len == 0U
+          ? NULL
+          : (const char *)conf->font_fetch_queue.data;
+  context->environment.font_fetch_queue =
+      ngx_http_laghu_font_queue_refresh(conf) ? &conf->font_fetch_runtime_queue
+                                              : NULL;
+  context->environment.font_providers =
+      conf->font_providers_loaded ? &conf->font_providers : NULL;
   context->environment.now = (uint64_t)ngx_time();
   return true;
 }
@@ -2248,12 +2275,19 @@ static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
 
   laghu_config_init(&conf->core);
   laghu_runtime_queue_init(&conf->runtime_queue);
+  laghu_runtime_queue_init(&conf->font_fetch_runtime_queue);
   cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
   if (cleanup == NULL) {
     return NULL;
   }
   cleanup->handler = ngx_http_laghu_queue_cleanup;
   cleanup->data = &conf->runtime_queue;
+  cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
+  if (cleanup == NULL) {
+    return NULL;
+  }
+  cleanup->handler = ngx_http_laghu_queue_cleanup;
+  cleanup->data = &conf->font_fetch_runtime_queue;
   return conf;
 }
 
@@ -2269,6 +2303,16 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   child_conf->core = merged;
   ngx_conf_merge_str_value(child_conf->worker_queue, parent_conf->worker_queue,
                            LAGHU_NGINX_DEFAULT_QUEUE);
+  ngx_conf_merge_str_value(child_conf->font_fetch_queue,
+                           parent_conf->font_fetch_queue,
+                           LAGHU_NGINX_DEFAULT_FONT_QUEUE);
+  ngx_conf_merge_str_value(child_conf->font_provider_config,
+                           parent_conf->font_provider_config, "");
+  if (!child_conf->font_providers_loaded &&
+      parent_conf->font_providers_loaded) {
+    child_conf->font_providers = parent_conf->font_providers;
+    child_conf->font_providers_loaded = true;
+  }
   ngx_conf_merge_str_value(child_conf->image_cache, parent_conf->image_cache,
                            LAGHU_NGINX_DEFAULT_CACHE);
   return NGX_CONF_OK;
@@ -2466,6 +2510,30 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return "is duplicate";
     }
     location->worker_queue = values[2];
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "font_fetch_queue") == 0) {
+    if (location->font_fetch_queue.len != 0U) {
+      return "is duplicate";
+    }
+    location->font_fetch_queue = values[2];
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "font_provider_config") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (location->font_provider_config.len != 0U ||
+        !laghu_font_providers_load((const char *)values[2].data,
+                                   &location->font_providers, error,
+                                   sizeof(error))) {
+      ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                         "invalid Laghu font provider config \"%V\": %s",
+                         &values[2], error);
+      return NGX_CONF_ERROR;
+    }
+    location->font_provider_config = values[2];
+    location->font_providers_loaded = true;
     return NGX_CONF_OK;
   }
 

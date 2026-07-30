@@ -8,14 +8,21 @@ set -eu
 
 queue=${LAGHU_QUEUE_PATH:-/run/laghu/jobs.queue}
 cache=${LAGHU_CACHE_PATH:-/var/cache/laghu/images}
+font_queue=${LAGHU_FONT_FETCH_QUEUE:-/run/laghu/fonts.queue}
+font_config=${LAGHU_FONT_PROVIDER_CONFIG:-/etc/laghu/font-providers.conf}
 
 runuser -u laghu -- laghu-libvips --init "${queue}" "${cache}"
 runuser -u laghu -- laghu-libvips --serve "${queue}" "${cache}" &
 service_pid=$!
+runuser -u laghu -- laghu-resource-fetch --init "${font_queue}" "${cache}" "${font_config}"
+runuser -u laghu -- laghu-resource-fetch --serve "${font_queue}" "${cache}" "${font_config}" &
+font_pid=$!
 
 cleanup() {
   kill "${service_pid}" 2>/dev/null || true
+  kill "${font_pid}" 2>/dev/null || true
   wait "${service_pid}" 2>/dev/null || true
+  wait "${font_pid}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

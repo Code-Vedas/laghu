@@ -70,6 +70,9 @@ typedef struct {
   const char *cache_path;
   const char *worker_queue_path;
   laghu_runtime_queue *queue;
+  const char *font_fetch_queue_path;
+  laghu_runtime_queue *font_fetch_queue;
+  const laghu_font_provider_set *font_providers;
   uint64_t now;
 } laghu_http_environment;
 

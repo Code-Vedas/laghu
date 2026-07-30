@@ -64,6 +64,7 @@ Root: HKLM; Subkey: "Software\Codevedas\Laghu\Offerings\{#OFFERING}"; ValueType:
 [Code]
 const
   SharedRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-libvips.exe';
+  FetchRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-resource-fetch.exe';
 
 procedure ExitProcess(ExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -71,6 +72,8 @@ procedure ExitProcess(ExitCode: Cardinal);
 var
   ServiceCreatedBySetup: Boolean;
   ServiceWasPresent: Boolean;
+  FetchServiceCreatedBySetup: Boolean;
+  FetchServiceWasPresent: Boolean;
   InstallSucceeded: Boolean;
 
 function VersionWeight(const Value: String): Integer;
@@ -128,6 +131,15 @@ begin
   Result := ResultCode = 0;
 end;
 
+function FetchServiceExists(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'query laghu-resource-fetch', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  Result := ResultCode = 0;
+end;
+
 function StopSharedService(): Boolean;
 var
   PowerShell, Command: String;
@@ -146,12 +158,60 @@ begin
                  ResultCode) and (ResultCode = 0);
 end;
 
+function StopFetchService(): Boolean;
+var
+  PowerShell, Command: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  if not FetchServiceExists() then
+    exit;
+  PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Command := '-NoProfile -NonInteractive -Command "' +
+    '$service = Get-Service laghu-resource-fetch -ErrorAction Stop; ' +
+    'if ($service.Status -ne ''Stopped'') { ' +
+    '$null = & sc.exe stop laghu-resource-fetch; ' +
+    '$service.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(30)) }"';
+  Result := Exec(PowerShell, Command, '', SW_HIDE, ewWaitUntilTerminated,
+                 ResultCode) and (ResultCode = 0);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   ServiceWasPresent := ServiceExists();
+  FetchServiceWasPresent := FetchServiceExists();
   if ServiceWasPresent and not StopSharedService() then
     Result := 'Unable to stop the existing laghu-libvips service.';
+  if (Result = '') and FetchServiceWasPresent and not StopFetchService() then
+    Result := 'Unable to stop the existing laghu-resource-fetch service.';
+end;
+
+procedure ConfigureFetchService();
+var
+  BinaryPath, QueuePath, CachePath, ProvidersPath: String;
+begin
+  QueuePath := ExpandConstant('{commonappdata}\Laghu\fonts.queue');
+  CachePath := ExpandConstant('{commonappdata}\Laghu\images');
+  ProvidersPath := ExpandConstant('{commonpf}\Codevedas\Laghu\bin\font-providers.conf');
+  if not FileExists(QueuePath) then
+    RunAndRequire(ExpandConstant(FetchRuntime),
+      '--init "' + QueuePath + '" "' + CachePath + '" "' + ProvidersPath + '"',
+      'Unable to initialize the Laghu font fetch queue');
+  BinaryPath := GetShortName(ExpandConstant(FetchRuntime)) + ' --service ' +
+    GetShortName(QueuePath) + ' ' + GetShortName(CachePath) + ' ' +
+    GetShortName(ProvidersPath);
+  if not FetchServiceExists() then begin
+    RunAndRequire(ExpandConstant('{sys}\sc.exe'),
+      'create laghu-resource-fetch start= auto binPath= "' + BinaryPath + '"',
+      'Unable to create laghu-resource-fetch service');
+    FetchServiceCreatedBySetup := True;
+  end else
+    RunAndRequire(ExpandConstant('{sys}\sc.exe'),
+      'config laghu-resource-fetch start= auto binPath= "' + BinaryPath + '"',
+      'Unable to update laghu-resource-fetch service');
+  RunAndRequire(ExpandConstant('{sys}\sc.exe'), 'start laghu-resource-fetch',
+    'Unable to start laghu-resource-fetch service');
 end;
 
 procedure ConfigureSharedService();
@@ -214,6 +274,14 @@ begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-libvips', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
   end;
+  if FetchServiceCreatedBySetup then begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end else if FetchServiceWasPresent then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
   RegDeleteKeyIncludingSubkeys(HKLM,
     'Software\Codevedas\Laghu\Offerings\{#OFFERING}');
   RegDeleteKeyIncludingSubkeys(HKLM,
@@ -233,6 +301,7 @@ begin
         ExpandConstant('{#ConfigParams}'),
         'Matched server configuration validation failed');
       ConfigureSharedService();
+      ConfigureFetchService();
     except
       RollBackFailedInstall();
       ExitProcess(7);
@@ -255,6 +324,14 @@ begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-libvips', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
   end;
+  if not InstallSucceeded and FetchServiceCreatedBySetup then begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end else if not InstallSucceeded and FetchServiceWasPresent then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -263,7 +340,10 @@ var
 begin
   if (CurUninstallStep = usUninstall) and LastRuntimeReference() then begin
     StopSharedService();
+    StopFetchService();
     Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-libvips', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-resource-fetch', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     DelTree(ExpandConstant('{commonpf}\Codevedas\Laghu'), True, True, True);
     DelTree(ExpandConstant('{commonappdata}\Laghu'), True, True, True);

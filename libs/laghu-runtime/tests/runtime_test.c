@@ -324,6 +324,7 @@ int main(void) {
   laghu_catalog_record catalog = {0};
   laghu_catalog_record loaded;
   char catalog_key[LAGHU_RUNTIME_KEY_SIZE];
+  char providers_path[LAGHU_RUNTIME_PATH_SIZE];
 
   laghu_runtime_queue_init(&producer);
   laghu_runtime_queue_init(&consumer);
@@ -341,6 +342,114 @@ int main(void) {
   strcpy(temporary, "/tmp/laghu-runtime-XXXXXX");
   assert(mkdtemp(temporary) != NULL);
 #endif
+  {
+    static const char config[] =
+        "provider google_fonts\n"
+        "stylesheet fonts.googleapis.com /css\n"
+        "stylesheet fonts.googleapis.com /css2\n"
+        "asset fonts.gstatic.com /\n"
+        "max_css_bytes 262144\n"
+        "ttl_seconds 604800\n"
+        "end\n"
+        "provider fontsource_cdn\n"
+        "stylesheet cdn.jsdelivr.net /fontsource/css/\n"
+        "asset cdn.jsdelivr.net /fontsource/fonts/\n"
+        "end\n";
+    static const unsigned char google_css[] =
+        "@font-face{font-family:'Roboto';src:url(https://fonts.gstatic.com/s/"
+        "roboto/v1/a.woff2) format('woff2')}";
+    static const unsigned char hostile_css[] =
+        "@font-face{src:url(https://example.test/a.woff2)}";
+    laghu_font_provider_set providers;
+    const laghu_font_provider *google;
+    const laghu_font_provider *fontsource;
+    char error[128];
+    FILE *file;
+    assert(snprintf(providers_path, sizeof(providers_path),
+                    "%s/font-providers.conf", temporary) > 0);
+    file = fopen(providers_path, "wb");
+    assert(file != NULL);
+    assert(fwrite(config, 1U, sizeof(config) - 1U, file) ==
+           sizeof(config) - 1U);
+    assert(fclose(file) == 0);
+    assert(laghu_font_providers_load(providers_path, &providers, error,
+                                     sizeof(error)));
+    assert(providers.count == 2U);
+    google = laghu_font_provider_match(
+        &providers,
+        "https://fonts.googleapis.com/css2?family=Roboto&display=swap");
+    fontsource = laghu_font_provider_match(
+        &providers,
+        "https://cdn.jsdelivr.net/fontsource/css/open-sans@5.2.7/index.css");
+    assert(google != NULL && strcmp(google->id, "google_fonts") == 0);
+    assert(laghu_font_provider_url_allowed(
+        &providers.providers[1],
+        "https://cdn.jsdelivr.net/fontsource/css/open-sans@5.2.7/index.css",
+        false, false));
+    assert(fontsource != NULL && strcmp(fontsource->id, "fontsource_cdn") == 0);
+    assert(laghu_font_provider_match(
+               &providers, "https://fonts.googleapis.com/evil") == NULL);
+    assert(laghu_font_css_validate(
+        google, (laghu_buffer){google_css, sizeof(google_css) - 1U}));
+    assert(!laghu_font_css_validate(
+        google, (laghu_buffer){hostile_css, sizeof(hostile_css) - 1U}));
+    {
+      static const unsigned char page[] =
+          "<html><head><link rel=stylesheet href=\"https://fonts.googleapis."
+          "com/css2?family=Roboto\"></head><body></body></html>";
+      char font_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+      laghu_runtime_queue font_producer;
+      laghu_runtime_queue font_consumer;
+      laghu_runtime_job font_job;
+      laghu_runtime_html_result font_page;
+      laghu_runtime_cache_entry css_entry;
+      laghu_font_stylesheet_record font_record = {0};
+      unsigned char ignored[1];
+      char css_key[LAGHU_RUNTIME_KEY_SIZE];
+      laghu_runtime_queue_init(&font_producer);
+      laghu_runtime_queue_init(&font_consumer);
+      assert(snprintf(font_queue_path, sizeof(font_queue_path),
+                      "%s/fonts.queue", temporary) > 0);
+      assert(
+          laghu_runtime_queue_create(&font_producer, font_queue_path, 2U, 1U));
+      assert(laghu_runtime_queue_open(&font_consumer, font_queue_path));
+      assert(laghu_runtime_rewrite_font_css(
+          &font_producer, temporary, &providers,
+          (laghu_buffer){page, sizeof(page) - 1U}, 100U, true, true, 2048U,
+          &font_page));
+      assert(!font_page.rewritten && font_page.dependencies_pending);
+      assert(laghu_runtime_queue_try_take(&font_consumer, &font_job, ignored,
+                                          sizeof(ignored)));
+      assert(font_job.kind == LAGHU_RUNTIME_JOB_FONT_CSS);
+      assert(strcmp(font_job.provider_id, "google_fonts") == 0);
+      assert(laghu_sha256_hex(
+          (laghu_buffer){google_css, sizeof(google_css) - 1U}, css_key));
+      assert(laghu_runtime_cache_publish(
+          temporary, css_key, css_key, css_key, "text/css", "test-font-fetch",
+          (laghu_buffer){google_css, sizeof(google_css) - 1U}, &css_entry));
+      strcpy(font_record.provider_id, google->id);
+      strcpy(font_record.provider_digest, google->digest);
+      strcpy(font_record.normalized_url,
+             "https://fonts.googleapis.com/css2?family=Roboto");
+      strcpy(font_record.variant_key, css_key);
+      font_record.css_length = sizeof(google_css) - 1U;
+      font_record.fetched_at = 100U;
+      font_record.ttl_seconds = 604800U;
+      font_record.ready = true;
+      assert(laghu_font_stylesheet_publish(temporary, &font_record));
+      assert(laghu_runtime_rewrite_font_css(
+          &font_producer, temporary, &providers,
+          (laghu_buffer){page, sizeof(page) - 1U}, 101U, true, true, 2048U,
+          &font_page));
+      assert(font_page.rewritten && !font_page.dependencies_pending);
+      assert(strstr((const char *)font_page.data, "<style>@font-face") != NULL);
+      assert(strstr((const char *)font_page.data, "fonts.googleapis.com") ==
+             NULL);
+      laghu_runtime_html_result_release(&font_page);
+      laghu_runtime_queue_close(&font_consumer);
+      laghu_runtime_queue_close(&font_producer);
+    }
+  }
   assert(snprintf(queue_path, sizeof(queue_path), "%s/jobs.queue", temporary) >
          0);
   assert(laghu_sha256_hex((laghu_buffer){payload, sizeof(payload) - 1U},

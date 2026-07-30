@@ -93,12 +93,20 @@ laghu image_metadata_ttl 7d;
 laghu css_inline_limit 2048;
 laghu css_outline_threshold 8192;
 laghu worker_queue /run/laghu/jobs.queue;
+laghu font_fetch_queue /run/laghu/fonts.queue;
+laghu font_provider_config /etc/laghu/font-providers.conf;
 laghu image_cache /var/cache/laghu/images;
 ```
 
 All image runtime directives inherit through `http`, `server`, and `location`. Quality must be `1..100`. Without an override, ecommerce uses 85; balanced/core/blog/bandwidth use 82; and aggressive/static/all/experimental use 75. Safe permits no lossy output, so an inherited quality does not relax it.
 
 The queue and cache paths default to the values above. `laghu-libvips` must have write access; the selected server needs queue access and read access to published cache entries.
+
+External font CSS uses the separate bounded `font_fetch_queue` and `laghu-resource-fetch` service. `font_provider_config` names the administrator-owned provider file loaded by both the adapter and worker; invalid files fail configuration loading. Apache exposes the same settings as `Laghu FontFetchQueue` and `Laghu FontProviderConfig`. The standalone proxy uses `--font-fetch-queue` and `--font-provider-config`.
+
+The line-oriented provider format starts a definition with `provider ID`, ends it with `end`, and accepts `stylesheet HOST PATH_PREFIX`, `redirect HOST PATH_PREFIX`, `asset HOST PATH_PREFIX`, `max_css_bytes BYTES`, and `ttl_seconds SECONDS`. Hosts and prefixes are exact and do not accept wildcards, credentials, IP literals, regexes, or HTTP. The installed file enables Google Fonts and Fontsource CDN; adding another provider requires only a normal configuration reload.
+
+Eligible links remain unchanged on a cold miss or any queue, worker, network, TLS, parser, CSP, or cache failure. Ready CSS is inlined only when its media and supported attributes can be preserved and the resulting HTML is no larger. The fixed WOFF2-oriented fetch profile does not forward browser headers, cookies, credentials, client addresses, or proxy headers, and referenced font binaries remain external.
 
 Beaconing is inherited and disabled by default. Inline payloads default to a 2 KiB maximum and may be configured from `0..16384`. Image metadata defaults to 10,000 entries with a seven-day TTL; accepted TTLs range from `1h..30d`. The same settings are exposed by Apache as `Laghu ImageBeacon`, `Laghu ImageInlineLimit`, `Laghu ImageMetadataLimit`, and `Laghu ImageMetadataTtl`.
 

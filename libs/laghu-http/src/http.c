@@ -934,6 +934,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
                                      laghu_buffer body,
                                      laghu_http_transaction_result *result) {
   laghu_runtime_html_result rewritten;
+  laghu_runtime_html_result font = {0};
   laghu_runtime_html_result hinted;
   laghu_runtime_html_result finalized;
   const laghu_http_header *csp = laghu_http_find_header(
@@ -995,6 +996,41 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     selected = rewritten.data;
     selected_length = rewritten.length;
   }
+  if (transaction->environment.font_providers != NULL) {
+    if (!laghu_runtime_rewrite_font_css(
+            transaction->environment.font_fetch_queue,
+            transaction->environment.cache_path,
+            transaction->environment.font_providers,
+            (laghu_buffer){selected, selected_length},
+            transaction->environment.now,
+            (transaction->policy.filter_families &
+             LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
+                transaction->policy.allow_resource_inlining,
+            csp_inline, transaction->environment.config.css_inline_limit,
+            &font)) {
+      laghu_runtime_html_result_release(&rewritten);
+      return false;
+    }
+    if (font.dependencies_pending) {
+      laghu_runtime_html_result_release(&font);
+      laghu_runtime_html_result_release(&rewritten);
+      return true;
+    }
+    if (font.rewritten) {
+      char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
+      int length;
+      selected = font.data;
+      selected_length = font.length;
+      base_rewritten = true;
+      length = snprintf(material, sizeof(material), "%s\n%s", base_dependency,
+                        font.dependency_key);
+      if (length > 0 && (size_t)length < sizeof(material))
+        (void)laghu_sha256_hex(
+            (laghu_buffer){(const unsigned char *)material, (size_t)length},
+            base_dependency);
+      memcpy(dependency, base_dependency, sizeof(dependency));
+    }
+  }
   if (!laghu_runtime_finalize_html_headers(
           transaction->environment.cache_path, body, transaction->path,
           transaction->origin, transaction->policy_key,
@@ -1015,6 +1051,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
           transaction->environment.config.css_outline_threshold, base_rewritten,
           &finalized)) {
     laghu_runtime_html_result_release(&rewritten);
+    laghu_runtime_html_result_release(&font);
     return false;
   }
   if (hinted.invalid || hinted.dependencies_pending || finalized.invalid ||
@@ -1043,6 +1080,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
         laghu_runtime_html_result_release(&hinted);
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
+        laghu_runtime_html_result_release(&font);
         return false;
       }
       header_changed = true;
@@ -1054,6 +1092,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
         laghu_runtime_html_result_release(&hinted);
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
+        laghu_runtime_html_result_release(&font);
         return false;
       }
       header_changed = true;
@@ -1064,11 +1103,13 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     laghu_runtime_html_result_release(&hinted);
     laghu_runtime_html_result_release(&finalized);
     laghu_runtime_html_result_release(&rewritten);
+    laghu_runtime_html_result_release(&font);
     return false;
   }
   laghu_runtime_html_result_release(&hinted);
   laghu_runtime_html_result_release(&finalized);
   laghu_runtime_html_result_release(&rewritten);
+  laghu_runtime_html_result_release(&font);
   if (!base_rewritten && !header_changed) {
     return true;
   }

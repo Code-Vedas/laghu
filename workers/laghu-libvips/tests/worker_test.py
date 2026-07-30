@@ -89,7 +89,7 @@ def main():
     capabilities = int(capability_match.group(1), 16)
     assert capabilities & 0x1DF == 0x1DF, probe.stdout
     if sys.platform == "win32":
-        assert capabilities == 0x1DF, probe.stdout
+        assert capabilities == 0x1FF, probe.stdout
 
     with tempfile.TemporaryDirectory(prefix="laghu-worker-") as temporary:
         root = Path(temporary)

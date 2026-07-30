@@ -32,7 +32,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
 Replaces: laghu-optimizer (<< ${binary:Version})
 Breaks: laghu-optimizer (<< ${binary:Version})
 Description: shared asynchronous libvips service for Laghu
- Converts Laghu image jobs outside NGINX and publishes validated variants.
+ Converts Laghu image jobs and fetches explicitly configured external font
+ stylesheets outside request-serving processes.
  The official Ubuntu 24.04 build requires the distribution libvips runtime and
  its JPEG, PNG, GIF, and WebP codec dependencies.
 

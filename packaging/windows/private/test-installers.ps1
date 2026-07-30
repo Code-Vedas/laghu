@@ -78,6 +78,21 @@ function Require-Service([bool] $Present) {
   }
 }
 
+function Require-FetchService([bool] $Present) {
+  $service = Get-Service laghu-resource-fetch -ErrorAction SilentlyContinue
+  if ($Present -and $null -ne $service) {
+    $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Running,
+                           [TimeSpan]::FromSeconds(15))
+    $service.Refresh()
+  }
+  if ($Present -and ($null -eq $service -or $service.Status -ne "Running")) {
+    throw "laghu-resource-fetch service is not running"
+  }
+  if (-not $Present -and $null -ne $service) {
+    throw "laghu-resource-fetch service was not removed"
+  }
+}
+
 foreach ($offering in @("ngx-laghu", "mod-laghu")) {
   Remove-Item "HKLM:\Software\Codevedas\Laghu\Offerings\$offering" -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -88,6 +103,7 @@ try {
   Write-Output "upgrade ngx-laghu to 0.1.0"
   Invoke-Installer $nginxInstallerPath $nginxRoot
   Require-Service $true
+  Require-FetchService $true
   Write-Output "validate installed NGINX"
   & "$nginxRoot\server\nginx.exe" -t -p "$nginxRoot\server"
   if ($LASTEXITCODE -ne 0) { throw "installed NGINX validation failed" }
@@ -95,6 +111,7 @@ try {
   Write-Output "repair ngx-laghu 0.1.0"
   Invoke-Installer $nginxInstallerPath $nginxRoot
   Require-Service $true
+  Require-FetchService $true
   Write-Output "upgrade ngx-laghu to 0.2.0"
   Invoke-Installer $nginxNewerInstallerPath $nginxRoot
   Write-Output "reject ngx-laghu downgrade"
@@ -105,6 +122,7 @@ try {
   Write-Output "upgrade mod-laghu to 0.1.0"
   Invoke-Installer $apacheInstallerPath $apacheRoot
   Require-Service $true
+  Require-FetchService $true
   Write-Output "validate installed Apache"
   & "$apacheRoot\server\bin\httpd.exe" -t -d "$apacheRoot\server"
   if ($LASTEXITCODE -ne 0) { throw "installed Apache validation failed" }
@@ -116,9 +134,11 @@ try {
   Write-Output "uninstall ngx-laghu while retaining shared service"
   Invoke-Uninstaller $nginxRoot
   Require-Service $true
+  Require-FetchService $true
   Write-Output "uninstall mod-laghu and remove shared service"
   Invoke-Uninstaller $apacheRoot
   Require-Service $false
+  Require-FetchService $false
 } finally {
   foreach ($root in @($nginxRoot, $apacheRoot)) {
     Get-ChildItem $root -Filter "unins*.exe" -ErrorAction SilentlyContinue |
@@ -136,6 +156,8 @@ try {
   }
   & sc.exe stop laghu-libvips 2>$null | Out-Null
   & sc.exe delete laghu-libvips 2>$null | Out-Null
+  & sc.exe stop laghu-resource-fetch 2>$null | Out-Null
+  & sc.exe delete laghu-resource-fetch 2>$null | Out-Null
 }
 
 Write-Output "Laghu Windows installer lifecycle passed"

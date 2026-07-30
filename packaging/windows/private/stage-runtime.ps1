@@ -17,10 +17,16 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
 $build = (Resolve-Path $BuildDirectory).Path
 $destination = [IO.Path]::GetFullPath((Join-Path $repo "$Output/$Architecture"))
 $binary = Join-Path $build "workers/laghu-libvips/$Configuration/laghu-libvips.exe"
+$fetchBinary = Join-Path $build "workers/laghu-resource-fetch/$Configuration/laghu-resource-fetch.exe"
 if (-not (Test-Path $binary)) { throw "laghu-libvips.exe was not built" }
+if (-not (Test-Path $fetchBinary)) { throw "laghu-resource-fetch.exe was not built" }
 Remove-Item -Recurse -Force $destination -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item $binary $destination
+Copy-Item $fetchBinary $destination
+Copy-Item (Join-Path $repo "packaging/font-providers.conf") $destination
+Get-ChildItem (Split-Path $binary) -Filter "*.dll" | Copy-Item -Destination $destination
+Get-ChildItem (Split-Path $fetchBinary) -Filter "*.dll" | Copy-Item -Destination $destination
 
 $triplet = if ($Architecture -eq "x64") { "x64-windows" } else { "arm64-windows" }
 $installedRoot = if ($env:VCPKG_ROOT -and
@@ -37,7 +43,7 @@ if (Test-Path "$installedRoot/bin") {
   $dumpbin = Get-ChildItem "$visualStudio/VC/Tools/MSVC/*/bin/Host*/x64/dumpbin.exe" `
     -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
   if (-not $dumpbin) { throw "dumpbin.exe is required to stage runtime dependencies" }
-  $searchDirectories = @((Split-Path $binary), "$installedRoot/bin")
+  $searchDirectories = @((Split-Path $binary), (Split-Path $fetchBinary), "$installedRoot/bin")
   $available = @{}
   foreach ($directory in $searchDirectories) {
     Get-ChildItem $directory -Filter "*.dll" | ForEach-Object {
@@ -46,6 +52,7 @@ if (Test-Path "$installedRoot/bin") {
   }
   $pending = [Collections.Generic.Queue[string]]::new()
   $pending.Enqueue($binary)
+  $pending.Enqueue($fetchBinary)
   $visited = @{}
   while ($pending.Count -gt 0) {
     $candidate = $pending.Dequeue()
@@ -103,6 +110,8 @@ $manifest = [ordered]@{
   architecture = $Architecture
   backend = $backend.Trim()
   worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-libvips.exe")).Hash.ToLowerInvariant()
+  fetch_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-resource-fetch.exe")).Hash.ToLowerInvariant()
+  providers_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "font-providers.conf")).Hash.ToLowerInvariant()
   dlls = [ordered]@{}
 }
 Get-ChildItem $destination -Filter "*.dll" | Sort-Object Name | ForEach-Object {

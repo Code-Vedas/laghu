@@ -31,7 +31,8 @@ Obsoletes: laghu-optimizer < %{version}-%{release}
 
 %description
 Consumes bounded Laghu image jobs outside web-server processes and atomically
-publishes validated, strictly smaller variants.
+publishes validated variants. It also runs the separately isolated,
+provider-allowlisted external font stylesheet fetch service.
 
 %package -n ngx-laghu
 Summary: Native Laghu HTTP optimization module for NGINX
@@ -67,6 +68,8 @@ APACHE_BUILD_DIR=%{_builddir}/laghu-apache-module scripts/build-apache-module
 %install
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-libvips/laghu-libvips \
   %{buildroot}%{_bindir}/laghu-libvips
+install -D -m 0755 %{__cmake_builddir}/workers/laghu-resource-fetch/laghu-resource-fetch \
+  %{buildroot}%{_bindir}/laghu-resource-fetch
 install -D -m 0755 %{_nginx_modbuilddir}/ngx_http_laghu_module.so \
   %{buildroot}%{nginx_moddir}/ngx_http_laghu_module.so
 install -D -m 0644 packaging/nginx/mod-http-laghu.conf \
@@ -83,6 +86,10 @@ install -D -m 0644 packaging/apache/laghu-rpm.conf \
   %{buildroot}%{_sysconfdir}/httpd/conf.d/laghu.conf
 install -D -m 0644 packaging/systemd/laghu-libvips.service \
   %{buildroot}%{_unitdir}/laghu-libvips.service
+install -D -m 0644 packaging/systemd/laghu-resource-fetch.service \
+  %{buildroot}%{_unitdir}/laghu-resource-fetch.service
+install -D -m 0644 packaging/font-providers.conf \
+  %{buildroot}%{_sysconfdir}/laghu/font-providers.conf
 install -D -m 0644 packaging/tmpfiles/laghu.conf \
   %{buildroot}%{_tmpfilesdir}/laghu.conf
 
@@ -93,6 +100,7 @@ getent passwd laghu >/dev/null || \
 
 %post
 %systemd_post laghu-libvips.service
+%systemd_post laghu-resource-fetch.service
 for account in nginx apache; do
   if getent passwd "$account" >/dev/null; then
     usermod -a -G laghu "$account"
@@ -102,9 +110,11 @@ systemd-tmpfiles --create laghu.conf >/dev/null 2>&1 || :
 
 %preun
 %systemd_preun laghu-libvips.service
+%systemd_preun laghu-resource-fetch.service
 
 %postun
 %systemd_postun_with_restart laghu-libvips.service
+%systemd_postun_with_restart laghu-resource-fetch.service
 
 %post -n ngx-laghu
 nginx -t
@@ -115,7 +125,10 @@ httpd -t
 %files
 %license LICENSE packaging/NOTICE-libvips.md
 %{_bindir}/laghu-libvips
+%{_bindir}/laghu-resource-fetch
 %{_unitdir}/laghu-libvips.service
+%{_unitdir}/laghu-resource-fetch.service
+%config(noreplace) %{_sysconfdir}/laghu/font-providers.conf
 %{_tmpfilesdir}/laghu.conf
 
 %files -n ngx-laghu
