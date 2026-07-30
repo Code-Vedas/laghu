@@ -429,6 +429,11 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       if (options->config.image_beacon == LAGHU_MODE_ON)
         return proxy_error(error, error_size, "duplicate --image-beacon");
       options->config.image_beacon = LAGHU_MODE_ON;
+    } else if (strcmp(name, "--critical-css-beacon") == 0) {
+      if (options->config.critical_css_beacon == LAGHU_MODE_ON)
+        return proxy_error(error, error_size,
+                           "duplicate --critical-css-beacon");
+      options->config.critical_css_beacon = LAGHU_MODE_ON;
     } else if (strcmp(name, "--image-quality") == 0) {
       NEED_VALUE();
       if (quality_seen ||
@@ -1820,6 +1825,62 @@ static void proxy_handle(const proxy_connection *connection,
                  !laghu_catalog_apply_beacon(
                      options->cache_path, policy_key,
                      worker->runtime_queue.capabilities, now,
+                     options->config.image_metadata_ttl, &beacon)) {
+        PROXY_FAIL(400U, "Bad Request", "worker");
+      } else {
+        static const char response_204[] =
+            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n";
+        (void)proxy_send_all(client, response_204, sizeof(response_204) - 1U);
+        access.status = 204U;
+      }
+      goto done;
+    }
+    if (!strcmp(request.target, "/.laghu/beacon/critical-css.js") &&
+        options->config.critical_css_beacon == LAGHU_MODE_ON &&
+        !strcmp(request.method, "GET")) {
+      const char *script = laghu_runtime_critical_css_beacon_script();
+      char head[256];
+      size_t script_length = strlen(script);
+      int n = snprintf(head, sizeof(head),
+                       "HTTP/1.1 200 OK\r\nContent-Type: "
+                       "application/javascript\r\nContent-Length: "
+                       "%zu\r\nConnection: close\r\n\r\n",
+                       script_length);
+      if (n > 0) {
+        (void)proxy_send_all(client, head, (size_t)n);
+        (void)proxy_send_all(client, script, script_length);
+      }
+      access.status = 200U;
+      access.output_bytes = script_length;
+      goto done;
+    }
+    if (!strcmp(request.target, "/.laghu/beacon/critical-css") &&
+        options->config.critical_css_beacon == LAGHU_MODE_ON &&
+        !strcmp(request.method, "POST")) {
+      proxy_header *type =
+          proxy_find(request.headers, request.header_count, "Content-Type");
+      proxy_header *site =
+          proxy_find(request.headers, request.header_count, "Sec-Fetch-Site");
+      laghu_critical_css_beacon beacon;
+      laghu_policy policy;
+      char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+      uint64_t now = (uint64_t)time(NULL);
+      if (type == NULL || strncmp(type->value, "application/json", 16U) != 0 ||
+          site == NULL || !proxy_name_equal(site->value, "same-origin") ||
+          request_body_length == 0U ||
+          request_body_length > LAGHU_PROXY_BEACON_BODY) {
+        PROXY_FAIL(400U, "Bad Request", "client_parse");
+      } else if (!proxy_beacon_allowed(worker->queue, now)) {
+        PROXY_FAIL(429U, "Too Many Requests", "request_limit");
+      } else if (!laghu_runtime_parse_critical_css_beacon(
+                     (laghu_buffer){request_body, request_body_length},
+                     &beacon) ||
+                 !laghu_resolve_config_policy(&options->config, &policy) ||
+                 !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy,
+                                    policy_key) ||
+                 !laghu_critical_css_apply_beacon(
+                     options->cache_path, policy_key, now,
                      options->config.image_metadata_ttl, &beacon)) {
         PROXY_FAIL(400U, "Bad Request", "worker");
       } else {

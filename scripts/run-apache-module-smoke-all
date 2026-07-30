@@ -126,6 +126,7 @@ load_first_mpm() {
   printf 'ErrorLog "%s/logs/error.log"\n' "${work}"
   printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
   printf 'Laghu ImageBeacon On\nLaghu ImageInlineLimit 2048\n'
+  printf 'Laghu CriticalCssBeacon On\n'
   printf 'Laghu CssInlineLimit 2048\nLaghu CssOutlineThreshold 8192\n'
   printf 'Laghu ImageMetadataLimit 10000\nLaghu ImageMetadataTtl 7d\n'
   printf '<Location "/site.css">\nLaghu RewriteLevel core\n</Location>\n'
@@ -508,6 +509,9 @@ if [ "${service_pid}" != "" ]; then
   curl --fail --silent \
     http://127.0.0.1:18081/.laghu/beacon/images.js | \
     grep 'getBoundingClientRect' >/dev/null
+  curl --fail --silent \
+    http://127.0.0.1:18081/.laghu/beacon/critical-css.js | \
+    grep 'data-laghu-critical' >/dev/null
   beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header 'Sec-Fetch-Site: same-origin' \

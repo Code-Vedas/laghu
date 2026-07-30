@@ -80,6 +80,7 @@ static int laghu_libvips_probe(void) {
   }
   printf("backend=%s available=%s capabilities=%08x\n", backend.backend_id,
          backend.available ? "yes" : "no", backend.capabilities);
+  fflush(stdout);
   return backend.available ? 0 : 3;
 }
 

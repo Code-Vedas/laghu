@@ -119,6 +119,7 @@ http {
     laghu preset balanced;
     laghu image_quality 82;
     laghu image_beacon on;
+    laghu critical_css_beacon on;
     laghu image_inline_limit 2048;
     laghu css_inline_limit 2048;
     laghu css_outline_threshold 8192;
@@ -586,6 +587,9 @@ if [ "${image_smoke}" -eq 1 ]; then
   curl --fail --silent --show-error \
     "http://127.0.0.1:${PORT}/.laghu/beacon/images.js" | \
     grep 'getBoundingClientRect' >/dev/null
+  curl --fail --silent --show-error \
+    "http://127.0.0.1:${PORT}/.laghu/beacon/critical-css.js" | \
+    grep 'data-laghu-critical' >/dev/null
   beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header 'Sec-Fetch-Site: same-origin' \

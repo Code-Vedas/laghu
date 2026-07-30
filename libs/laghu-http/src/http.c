@@ -935,6 +935,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
                                      laghu_http_transaction_result *result) {
   laghu_runtime_html_result rewritten;
   laghu_runtime_html_result font = {0};
+  laghu_runtime_html_result critical = {0};
   laghu_runtime_html_result hinted;
   laghu_runtime_html_result finalized;
   const laghu_http_header *csp = laghu_http_find_header(
@@ -952,6 +953,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   bool csp_data;
   bool csp_inline;
   bool csp_self;
+  bool csp_script_self;
   unsigned int index;
   if (!laghu_http_copy_header(csp, csp_value, sizeof(csp_value)) ||
       !laghu_http_join_response_headers(transaction->response,
@@ -965,6 +967,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   csp_inline =
       csp == NULL || laghu_http_header_contains(csp, "'unsafe-inline'");
   csp_self = laghu_runtime_csp_allows_self_styles(
+      csp == NULL ? NULL : csp_value, transaction->origin);
+  csp_script_self = laghu_runtime_csp_allows_self_scripts(
       csp == NULL ? NULL : csp_value, transaction->origin);
   if (!laghu_runtime_rewrite_html(
           transaction->environment.cache_path, body, transaction->path,
@@ -1031,6 +1035,36 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       memcpy(dependency, base_dependency, sizeof(dependency));
     }
   }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) != 0U) {
+    if (!laghu_runtime_prioritize_critical_css(
+            transaction->environment.cache_path,
+            (laghu_buffer){selected, selected_length}, transaction->path,
+            transaction->origin, transaction->policy_key,
+            transaction->capability_mask, transaction->environment.now,
+            transaction->environment.config.image_metadata_ttl,
+            transaction->environment.config.css_inline_limit,
+            transaction->environment.config.css_outline_threshold,
+            transaction->viewport_width,
+            transaction->environment.config.critical_css_beacon ==
+                LAGHU_MODE_ON,
+            csp_inline, csp_self, csp_script_self, &critical)) {
+      laghu_runtime_html_result_release(&font);
+      laghu_runtime_html_result_release(&rewritten);
+      return false;
+    }
+    if (critical.rewritten) {
+      char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
+      int length = snprintf(material, sizeof(material), "%s\n%s", dependency,
+                            critical.dependency_key);
+      selected = critical.data;
+      selected_length = critical.length;
+      base_rewritten = true;
+      if (length > 0 && (size_t)length < sizeof(material))
+        (void)laghu_sha256_hex(
+            (laghu_buffer){(const unsigned char *)material, (size_t)length},
+            dependency);
+    }
+  }
   if (!laghu_runtime_finalize_html_headers(
           transaction->environment.cache_path, body, transaction->path,
           transaction->origin, transaction->policy_key,
@@ -1050,6 +1084,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
           links, transaction->environment.config.css_inline_limit,
           transaction->environment.config.css_outline_threshold, base_rewritten,
           &finalized)) {
+    laghu_runtime_html_result_release(&critical);
     laghu_runtime_html_result_release(&rewritten);
     laghu_runtime_html_result_release(&font);
     return false;
@@ -1110,6 +1145,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   laghu_runtime_html_result_release(&finalized);
   laghu_runtime_html_result_release(&rewritten);
   laghu_runtime_html_result_release(&font);
+  laghu_runtime_html_result_release(&critical);
   if (!base_rewritten && !header_changed) {
     return true;
   }

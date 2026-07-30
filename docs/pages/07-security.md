@@ -19,6 +19,7 @@ Laghu treats response rewriting as a privileged parsing boundary.
 - performs no outbound resource fetches
 - converts only validated `Content-Language` metadata; CSP, refresh, cookies, content type, compatibility, and unknown HTTP-equivalent metadata remain untouched
 - derives preload and DNS-prefetch headers only from bounded document parsing; discovery performs no DNS resolution or outbound connection
+- accepts opt-in critical-CSS observations only from same-origin bounded JSON; stored learning contains opaque hashes, viewport buckets, counters, and rule indexes rather than page or selector content
 - never loads a generic ImageMagick fallback for untrusted image bytes
 - accepts image type from decoded magic and an explicit loader, not the declared response content type
 - caps input at 10 MiB, dimensions at 8192, decoded area at 64 megapixels, animation at 300 frames, and isolated work at 30 seconds

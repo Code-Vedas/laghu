@@ -101,6 +101,7 @@ typedef struct {
   laghu_rewrite_level rewrite_level;
   laghu_mode allow_api;
   laghu_mode image_beacon;
+  laghu_mode critical_css_beacon;
   unsigned int image_quality;
   unsigned int image_inline_limit;
   unsigned int image_metadata_limit;

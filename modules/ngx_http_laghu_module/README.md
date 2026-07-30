@@ -5,7 +5,7 @@ This directory contains the thin NGINX integration layer. It normalizes native H
 It:
 
 - builds as a static or dynamic HTTP auxiliary filter module
-- accepts `laghu on|off`, `laghu preset <name>`, `laghu rewrite_level <name>`, `laghu allow_api on|off`, `laghu image_quality 1..100`, `laghu image_beacon on|off`, `laghu image_inline_limit 0..16384`, `laghu image_metadata_limit 1..100000`, `laghu image_metadata_ttl 1h..30d`, `laghu css_inline_limit 0..65536`, `laghu css_outline_threshold 1024..1048576`, `laghu worker_queue <path>`, and `laghu image_cache <path>` at `http`, `server`, and `location` scope
+- accepts `laghu on|off`, policy selectors, image settings, `laghu image_beacon on|off`, `laghu critical_css_beacon on|off`, CSS limits, worker queues, provider configuration, and the image cache at `http`, `server`, and `location` scope
 - inherits configuration through NGINX's normal location hierarchy
 - delegates response eligibility, policy and backend resolution, cache lookup, transformation orchestration, body selection, and header planning to `laghu-http`
 - serves an already-published image variant on a strong-validator cache hit

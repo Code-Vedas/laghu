@@ -491,6 +491,9 @@ def main():
                 str(root / "cache"),
                 "--worker-queue",
                 str(root / "missing.queue"),
+                "--rewrite-level",
+                "all",
+                "--critical-css-beacon",
                 "--io-timeout",
                 "1",
                 "--workers",
@@ -512,6 +515,11 @@ def main():
                 raise AssertionError("proxy did not start")
             assert first_body == BODY, (first_head, first_body)
             assert b"x-laghu: pass" in first_head, first_head
+            critical_head, critical_body = request(
+                proxy_port, "/.laghu/beacon/critical-css.js"
+            )
+            assert b" 200 " in critical_head.split(b"\r\n", 1)[0]
+            assert b"data-laghu-critical" in critical_body
             health_head, health_body = request(proxy_port, "/.laghu/health")
             assert b" 200 " in health_head.split(b"\r\n", 1)[0]
             assert health_body == b'{"status":"ok","state":"running"}'

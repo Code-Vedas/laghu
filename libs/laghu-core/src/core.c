@@ -341,6 +341,7 @@ void laghu_config_init(laghu_config *config) {
   config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   config->allow_api = LAGHU_MODE_UNSET;
   config->image_beacon = LAGHU_MODE_UNSET;
+  config->critical_css_beacon = LAGHU_MODE_UNSET;
   config->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   config->image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_UNSET;
   config->image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_UNSET;
@@ -356,6 +357,7 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   laghu_rewrite_level parent_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   laghu_mode parent_allow_api = LAGHU_MODE_OFF;
   laghu_mode parent_image_beacon = LAGHU_MODE_OFF;
+  laghu_mode parent_critical_css_beacon = LAGHU_MODE_OFF;
   unsigned int parent_image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   unsigned int parent_image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_DEFAULT;
   unsigned int parent_image_metadata_limit = LAGHU_IMAGE_METADATA_LIMIT_DEFAULT;
@@ -384,6 +386,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     }
     if (parent->image_beacon != LAGHU_MODE_UNSET) {
       parent_image_beacon = parent->image_beacon;
+    }
+    if (parent->critical_css_beacon != LAGHU_MODE_UNSET) {
+      parent_critical_css_beacon = parent->critical_css_beacon;
     }
     if (parent->image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET) {
       parent_image_inline_limit = parent->image_inline_limit;
@@ -422,6 +427,10 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       child != NULL && child->image_beacon != LAGHU_MODE_UNSET
           ? child->image_beacon
           : parent_image_beacon;
+  result->critical_css_beacon =
+      child != NULL && child->critical_css_beacon != LAGHU_MODE_UNSET
+          ? child->critical_css_beacon
+          : parent_critical_css_beacon;
   result->image_inline_limit =
       child != NULL &&
               child->image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET

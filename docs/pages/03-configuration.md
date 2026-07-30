@@ -16,6 +16,7 @@ Both modules expose the same configuration semantics. NGINX uses the lowercase `
 | `laghu allow_api off;` | `Laghu AllowApi Off` |
 | `laghu image_quality 82;` | `Laghu ImageQuality 82` |
 | `laghu image_beacon off;` | `Laghu ImageBeacon Off` |
+| `laghu critical_css_beacon off;` | `Laghu CriticalCssBeacon Off` |
 | `laghu image_inline_limit 2048;` | `Laghu ImageInlineLimit 2048` |
 | `laghu image_metadata_limit 10000;` | `Laghu ImageMetadataLimit 10000` |
 | `laghu image_metadata_ttl 7d;` | `Laghu ImageMetadataTtl 7d` |
@@ -87,6 +88,7 @@ laghu rewrite_level core;
 ```nginx
 laghu image_quality 82;
 laghu image_beacon off;
+laghu critical_css_beacon off;
 laghu image_inline_limit 2048;
 laghu image_metadata_limit 10000;
 laghu image_metadata_ttl 7d;
@@ -108,7 +110,7 @@ The line-oriented provider format starts a definition with `provider ID`, ends i
 
 Eligible links remain unchanged on a cold miss or any queue, worker, network, TLS, parser, CSP, or cache failure. Ready CSS is inlined only when its media and supported attributes can be preserved and the resulting HTML is no larger. The fixed WOFF2-oriented fetch profile does not forward browser headers, cookies, credentials, client addresses, or proxy headers, and referenced font binaries remain external.
 
-Beaconing is inherited and disabled by default. Inline payloads default to a 2 KiB maximum and may be configured from `0..16384`. Image metadata defaults to 10,000 entries with a seven-day TTL; accepted TTLs range from `1h..30d`. The same settings are exposed by Apache as `Laghu ImageBeacon`, `Laghu ImageInlineLimit`, `Laghu ImageMetadataLimit`, and `Laghu ImageMetadataTtl`.
+Beaconing is inherited and disabled by default. `critical_css_beacon` is independent from image beaconing and is exposed as `Laghu CriticalCssBeacon` or standalone `--critical-css-beacon`. Inline payloads default to a 2 KiB maximum. Image metadata and learned critical-CSS observations use the configured seven-day metadata TTL.
 
 Stylesheet inlining defaults to 2 KiB and accepts `0..65536`; zero disables it. Outlining considers complete inline style blocks from 8 KiB by default and accepts `1024..1048576`. Inlining requires a ready same-origin stylesheet, inline-style CSP permission, and the strict integrity/nonce/media/import/font eligibility checks. Outlining requires structural-rewrite permission. Both preserve the first HTML response and apply only after their catalog dependency is ready and the combined HTML/CSS transfer is smaller.
 
@@ -123,6 +125,8 @@ Lexical output must be strictly smaller and is reparsed before publication. The 
 Outlined assets are exposed only through the validated `/.laghu/css/<sha256>` route with `text/css`, a strong ETag, and one-year immutable caching. Laghu never fetches a stylesheet from an origin.
 
 Cold HTML is preserved while Laghu discovers image dependencies. Warm HTML is rewritten only after every dependency is ready or terminally excluded. When enabled, `image_beacon` serves a fixed same-origin script and accepts bounded same-origin JSON observations at `/.laghu/beacon/images`; it does not store cookies, IP addresses, client identifiers, or page content. The reserved `/.laghu/image/<hash>` route serves only validated content-addressed variants.
+
+Critical-CSS beaconing serves a fixed script at `/.laghu/beacon/critical-css.js` and accepts same-origin observations at `/.laghu/beacon/critical-css`. Reports contain only an opaque template key, a mobile/desktop bucket, and bounded rule indexes. Three observations are required before Laghu may inline matching rules. Learning is monotonic and invalidated by template, stylesheet, policy, or parser changes. Eligible pages have one final ordinary same-origin stylesheet and no inline author style block. Laghu places learned critical rules at the original link position and the complete derived stylesheet immediately before `</body>`, preserving the final cascade without depending on JavaScript. The existing `css_inline_limit` bounds the temporary duplicated bytes.
 
 ## `laghu allow_api on|off`
 

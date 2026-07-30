@@ -257,6 +257,14 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     }
     return NULL;
   }
+  if (ap_cstr_casecmp(name, "CriticalCssBeacon") == 0) {
+    if (config->core.critical_css_beacon != LAGHU_MODE_UNSET ||
+        !laghu_apache_on_off(parameter, &config->core.critical_css_beacon)) {
+      return "Laghu CriticalCssBeacon expects On or Off exactly once in this "
+             "scope";
+    }
+    return NULL;
+  }
   if (ap_cstr_casecmp(name, "ImageInlineLimit") == 0) {
     quality = strtoul(parameter, &end, 10);
     if (config->core.image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET ||
@@ -933,6 +941,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
               context->config->core.css_outline_threshold,
               laghu_apache_viewport_header(request),
               laghu_apache_dpr_header(request), &rewritten)) {
+        laghu_runtime_html_result critical = {0};
         bool base_rewritten = rewritten.rewritten;
         char base_dependency[LAGHU_RUNTIME_KEY_SIZE];
         laghu_runtime_html_result finalized;
@@ -948,6 +957,41 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
             selected_length = rewritten.length;
           }
         }
+        if ((context->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) !=
+                0U &&
+            laghu_runtime_prioritize_critical_css(
+                context->config->image_cache != NULL
+                    ? context->config->image_cache
+                    : LAGHU_DEFAULT_CACHE,
+                (laghu_buffer){selected, selected_length}, request->uri, origin,
+                context->policy_key, context->config->queue.capabilities,
+                (uint64_t)apr_time_sec(apr_time_now()),
+                context->config->core.image_metadata_ttl,
+                context->config->core.css_inline_limit,
+                context->config->core.css_outline_threshold,
+                laghu_apache_viewport_header(request),
+                context->config->core.critical_css_beacon == LAGHU_MODE_ON,
+                csp_allows_inline, csp_allows_self,
+                laghu_runtime_csp_allows_self_scripts(csp, origin),
+                &critical) &&
+            critical.rewritten) {
+          selected = apr_pmemdup(request->pool, critical.data, critical.length);
+          if (selected != NULL) {
+            selected_length = critical.length;
+            base_rewritten = true;
+            {
+              char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
+              int length = snprintf(material, sizeof(material), "%s\n%s",
+                                    base_dependency, critical.dependency_key);
+              if (length > 0 && (size_t)length < sizeof(material))
+                (void)laghu_sha256_hex(
+                    (laghu_buffer){(const unsigned char *)material,
+                                   (size_t)length},
+                    base_dependency);
+            }
+          }
+        }
+        laghu_runtime_html_result_release(&critical);
         laghu_runtime_html_result_release(&rewritten);
         hinted_ok = laghu_runtime_finalize_html_headers(
             context->config->image_cache != NULL ? context->config->image_cache
@@ -1289,6 +1333,8 @@ static int laghu_apache_variant_handler(request_rec *request) {
   static const char css_prefix[] = "/.laghu/css/";
   static const char script_path[] = "/.laghu/beacon/images.js";
   static const char post_path[] = "/.laghu/beacon/images";
+  static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
+  static const char critical_post_path[] = "/.laghu/beacon/critical-css";
   static const char script[] =
       "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
       "forEach"
@@ -1387,6 +1433,69 @@ static int laghu_apache_variant_handler(request_rec *request) {
             config->core.image_metadata_ttl, &beacon)) {
       return HTTP_BAD_REQUEST;
     }
+    request->status = HTTP_NO_CONTENT;
+    return OK;
+  }
+  if (strcmp(request->uri, critical_script_path) == 0) {
+    const char *critical_script = laghu_runtime_critical_css_beacon_script();
+    size_t length = strlen(critical_script);
+    if (config->core.critical_css_beacon != LAGHU_MODE_ON ||
+        request->method_number != M_GET)
+      return HTTP_NOT_FOUND;
+    ap_set_content_type(request, "application/javascript");
+    ap_set_content_length(request, (apr_off_t)length);
+    return request->header_only ||
+                   ap_rwrite(critical_script, length, request) >= 0
+               ? OK
+               : HTTP_INTERNAL_SERVER_ERROR;
+  }
+  if (strcmp(request->uri, critical_post_path) == 0) {
+    const char *type = apr_table_get(request->headers_in, "Content-Type");
+    const char *site = apr_table_get(request->headers_in, "Sec-Fetch-Site");
+    const char *content_length =
+        apr_table_get(request->headers_in, "Content-Length");
+    char body_buffer[16385U];
+    long length;
+    long total = 0;
+    char *content_length_end = NULL;
+    unsigned long declared_length =
+        content_length != NULL
+            ? strtoul(content_length, &content_length_end, 10)
+            : 0U;
+    laghu_critical_css_beacon critical;
+    laghu_policy policy;
+    char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+    uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
+    if (config->core.critical_css_beacon != LAGHU_MODE_ON ||
+        request->method_number != M_POST || type == NULL ||
+        ap_cstr_casecmpn(type, "application/json", 16U) != 0 || site == NULL ||
+        ap_cstr_casecmp(site, "same-origin") != 0 || content_length == NULL ||
+        content_length_end == content_length || *content_length_end != '\0' ||
+        declared_length == 0U || declared_length > 16384U ||
+        ap_setup_client_block(request, REQUEST_CHUNKED_ERROR) != OK ||
+        !ap_should_client_block(request))
+      return HTTP_BAD_REQUEST;
+    if (laghu_apache_beacon_window != (apr_time_t)now) {
+      laghu_apache_beacon_window = (apr_time_t)now;
+      laghu_apache_beacon_count = 0U;
+    }
+    if (++laghu_apache_beacon_count > 32U) return HTTP_TOO_MANY_REQUESTS;
+    while ((length = ap_get_client_block(request, body_buffer + total,
+                                         16384U - (size_t)total)) > 0) {
+      total += length;
+      if (total > 16384) return HTTP_REQUEST_ENTITY_TOO_LARGE;
+    }
+    if (length < 0 ||
+        !laghu_runtime_parse_critical_css_beacon(
+            (laghu_buffer){(const unsigned char *)body_buffer, (size_t)total},
+            &critical) ||
+        !laghu_resolve_config_policy(&config->core, &policy) ||
+        !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) ||
+        !laghu_critical_css_apply_beacon(
+            config->image_cache != NULL ? config->image_cache
+                                        : LAGHU_DEFAULT_CACHE,
+            policy_key, now, config->core.image_metadata_ttl, &critical))
+      return HTTP_BAD_REQUEST;
     request->status = HTTP_NO_CONTENT;
     return OK;
   }

@@ -26,13 +26,6 @@ if(LAGHU_BUILD_TESTS AND LAGHU_HAVE_VIPS)
             $<TARGET_FILE:laghu-libvips> ${LAGHU_VIPS_EXECUTABLE}
             $<TARGET_FILE:laghu_runtime_cache_fixture>
   )
-  if(WIN32)
-    set_tests_properties(
-      laghu_libvips_integration_test
-      PROPERTIES ENVIRONMENT_MODIFICATION
-        "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
-    )
-  endif()
 endif()
 if(LAGHU_BUILD_TESTS AND WIN32)
   add_test(NAME laghu_libvips_windows_probe

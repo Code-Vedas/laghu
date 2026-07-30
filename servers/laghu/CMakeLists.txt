@@ -41,4 +41,11 @@ if(LAGHU_BUILD_TESTS)
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/proxy_smoke.py
                    $<TARGET_FILE:laghu>
                    $<TARGET_FILE:laghu_runtime_cache_fixture>)
+  if(WIN32)
+    set_tests_properties(
+      laghu_proxy_smoke
+      PROPERTIES ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/openssl"
+    )
+  endif()
 endif()

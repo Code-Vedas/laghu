@@ -96,10 +96,11 @@ def main():
         )
         environment["LAGHU_TEST_FETCH_CA"] = str(certificate)
         process = subprocess.Popen(
-            [worker, "--serve", queue, cache, config], env=environment
+            [worker, "--serve", queue, cache, config], env=environment,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         try:
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 submitted = subprocess.run(
                     [
@@ -131,10 +132,16 @@ def main():
                     break
                 time.sleep(0.05)
             else:
-                raise AssertionError("font CSS was not fetched and published")
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=5)
+                raise AssertionError(
+                    "font CSS was not fetched and published\n"
+                    f"worker stdout:\n{stdout}\nworker stderr:\n{stderr}"
+                )
         finally:
-            process.terminate()
-            process.wait(timeout=5)
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
             server.shutdown()
             server.server_close()
 

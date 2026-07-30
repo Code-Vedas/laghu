@@ -625,6 +625,32 @@ static bool ngx_http_laghu_csp_allows_self_style(ngx_http_request_t *request,
   }
 }
 
+static bool ngx_http_laghu_csp_allows_self_script(ngx_http_request_t *request,
+                                                  const char *page_origin) {
+  ngx_list_part_t *part = &request->headers_out.headers.part;
+  ngx_table_elt_t *headers = part->elts;
+  ngx_uint_t index;
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) return true;
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash != 0U &&
+        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
+        ngx_strncasecmp(headers[index].key.data,
+                        (u_char *)"Content-Security-Policy",
+                        sizeof("Content-Security-Policy") - 1U) == 0) {
+      char *value = ngx_pnalloc(request->pool, headers[index].value.len + 1U);
+      if (value == NULL) return false;
+      ngx_memcpy(value, headers[index].value.data, headers[index].value.len);
+      value[headers[index].value.len] = '\0';
+      return laghu_runtime_csp_allows_self_scripts(value, page_origin);
+    }
+  }
+}
+
 static bool ngx_http_laghu_same_origin(ngx_http_request_t *request) {
   ngx_list_part_t *part = &request->headers_in.headers.part;
   ngx_table_elt_t *headers = part->elts;
@@ -1618,6 +1644,7 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               conf->core.css_outline_threshold,
               ngx_http_laghu_viewport_header(request),
               ngx_http_laghu_dpr_header(request), &rewritten)) {
+        laghu_runtime_html_result critical = {0};
         bool base_rewritten = rewritten.rewritten;
         char base_dependency[LAGHU_RUNTIME_KEY_SIZE];
         laghu_runtime_html_result finalized;
@@ -1633,6 +1660,41 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
             selected_length = rewritten.length;
           }
         }
+        if ((context->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) !=
+                0U &&
+            laghu_runtime_prioritize_critical_css(
+                (const char *)conf->image_cache.data,
+                (laghu_buffer){selected, selected_length}, page_path,
+                origin_value, context->policy_key,
+                conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
+                conf->core.image_metadata_ttl, conf->core.css_inline_limit,
+                conf->core.css_outline_threshold,
+                ngx_http_laghu_viewport_header(request),
+                conf->core.critical_css_beacon == LAGHU_MODE_ON,
+                ngx_http_laghu_csp_allows_inline_style(request),
+                ngx_http_laghu_csp_allows_self_style(request, origin_value),
+                ngx_http_laghu_csp_allows_self_script(request, origin_value),
+                &critical) &&
+            critical.rewritten) {
+          unsigned char *copy = ngx_pnalloc(request->pool, critical.length);
+          if (copy != NULL) {
+            ngx_memcpy(copy, critical.data, critical.length);
+            selected = copy;
+            selected_length = critical.length;
+            base_rewritten = true;
+            {
+              char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
+              int length = snprintf(material, sizeof(material), "%s\n%s",
+                                    base_dependency, critical.dependency_key);
+              if (length > 0 && (size_t)length < sizeof(material))
+                (void)laghu_sha256_hex(
+                    (laghu_buffer){(const unsigned char *)material,
+                                   (size_t)length},
+                    base_dependency);
+            }
+          }
+        }
+        laghu_runtime_html_result_release(&critical);
         laghu_runtime_html_result_release(&rewritten);
         hinted_ok = laghu_runtime_finalize_html_headers(
             (const char *)conf->image_cache.data,
@@ -2031,6 +2093,8 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char css_prefix[] = "/.laghu/css/";
   static const char beacon_script_path[] = "/.laghu/beacon/images.js";
   static const char beacon_post_path[] = "/.laghu/beacon/images";
+  static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
+  static const char critical_post_path[] = "/.laghu/beacon/critical-css";
   static const unsigned char beacon_script[] =
       "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
       "forEach"
@@ -2109,6 +2173,57 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
             request, ngx_http_laghu_beacon_body) >= NGX_HTTP_SPECIAL_RESPONSE) {
       return NGX_HTTP_BAD_REQUEST;
     }
+    return NGX_DONE;
+  }
+  if (request->uri.len == sizeof(critical_script_path) - 1U &&
+      ngx_strncmp(request->uri.data, critical_script_path,
+                  sizeof(critical_script_path) - 1U) == 0) {
+    const char *script = laghu_runtime_critical_css_beacon_script();
+    size_t script_length = strlen(script);
+    if (conf->core.mode != LAGHU_MODE_ON ||
+        conf->core.critical_css_beacon != LAGHU_MODE_ON ||
+        request->method != NGX_HTTP_GET)
+      return NGX_HTTP_NOT_FOUND;
+    request->headers_out.status = NGX_HTTP_OK;
+    ngx_str_set(&request->headers_out.content_type, "application/javascript");
+    request->headers_out.content_length_n = (off_t)script_length;
+    if (ngx_http_send_header(request) == NGX_ERROR) return NGX_OK;
+    buffer = ngx_calloc_buf(request->pool);
+    if (buffer == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    buffer->pos = (u_char *)script;
+    buffer->last = (u_char *)script + script_length;
+    buffer->memory = 1U;
+    buffer->last_buf = 1U;
+    output.buf = buffer;
+    output.next = NULL;
+    return ngx_http_output_filter(request, &output);
+  }
+  if (request->uri.len == sizeof(critical_post_path) - 1U &&
+      ngx_strncmp(request->uri.data, critical_post_path,
+                  sizeof(critical_post_path) - 1U) == 0) {
+    time_t now = ngx_time();
+    if (conf->core.mode != LAGHU_MODE_ON ||
+        conf->core.critical_css_beacon != LAGHU_MODE_ON)
+      return NGX_HTTP_NOT_FOUND;
+    if (request->method != NGX_HTTP_POST ||
+        request->headers_in.content_type == NULL ||
+        request->headers_in.content_type->value.len <
+            sizeof("application/json") - 1U ||
+        ngx_strncasecmp(request->headers_in.content_type->value.data,
+                        (u_char *)"application/json",
+                        sizeof("application/json") - 1U) != 0 ||
+        request->headers_in.content_length_n <= 0 ||
+        request->headers_in.content_length_n > 16384 ||
+        !ngx_http_laghu_same_origin(request))
+      return NGX_HTTP_BAD_REQUEST;
+    if (ngx_http_laghu_beacon_window != now) {
+      ngx_http_laghu_beacon_window = now;
+      ngx_http_laghu_beacon_count = 0U;
+    }
+    if (++ngx_http_laghu_beacon_count > 32U) return NGX_HTTP_TOO_MANY_REQUESTS;
+    if (ngx_http_read_client_request_body(
+            request, ngx_http_laghu_beacon_body) >= NGX_HTTP_SPECIAL_RESPONSE)
+      return NGX_HTTP_BAD_REQUEST;
     return NGX_DONE;
   }
   css_asset =
@@ -2228,6 +2343,7 @@ static void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
   ngx_http_laghu_loc_conf_t *conf =
       ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
   laghu_image_beacon_record beacon;
+  laghu_critical_css_beacon critical;
   laghu_policy policy;
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   unsigned char *body;
@@ -2248,15 +2364,23 @@ static void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
       offset += part;
     }
     valid = offset == length &&
-            laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
-                                             &beacon) &&
             laghu_resolve_config_policy(&conf->core, &policy) &&
-            laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
-            ngx_http_laghu_queue_refresh(conf) &&
-            laghu_catalog_apply_beacon(
-                (const char *)conf->image_cache.data, policy_key,
-                conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
-                conf->core.image_metadata_ttl, &beacon);
+            laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key);
+    if (valid && request->uri.len == sizeof("/.laghu/beacon/critical-css") - 1U)
+      valid =
+          laghu_runtime_parse_critical_css_beacon((laghu_buffer){body, length},
+                                                  &critical) &&
+          laghu_critical_css_apply_beacon(
+              (const char *)conf->image_cache.data, policy_key,
+              (uint64_t)ngx_time(), conf->core.image_metadata_ttl, &critical);
+    else if (valid)
+      valid = laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
+                                               &beacon) &&
+              ngx_http_laghu_queue_refresh(conf) &&
+              laghu_catalog_apply_beacon(
+                  (const char *)conf->image_cache.data, policy_key,
+                  conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
+                  conf->core.image_metadata_ttl, &beacon);
   }
   request->headers_out.status =
       valid ? NGX_HTTP_NO_CONTENT : NGX_HTTP_BAD_REQUEST;
@@ -2439,6 +2563,17 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return NGX_CONF_OK;
     }
     return "laghu image_beacon expects 'on' or 'off'";
+  }
+  if (ngx_strcmp(values[1].data, "critical_css_beacon") == 0) {
+    if (location->core.critical_css_beacon != LAGHU_MODE_UNSET)
+      return "duplicate laghu critical_css_beacon";
+    if (ngx_strcmp(values[2].data, "on") == 0)
+      location->core.critical_css_beacon = LAGHU_MODE_ON;
+    else if (ngx_strcmp(values[2].data, "off") == 0)
+      location->core.critical_css_beacon = LAGHU_MODE_OFF;
+    else
+      return "laghu critical_css_beacon expects 'on' or 'off'";
+    return NGX_CONF_OK;
   }
 
   if (ngx_strcmp(values[1].data, "image_inline_limit") == 0) {

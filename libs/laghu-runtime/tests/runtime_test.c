@@ -333,10 +333,12 @@ int main(void) {
 #ifdef _WIN32
   {
     char base[LAGHU_RUNTIME_PATH_SIZE];
+    char unique[LAGHU_RUNTIME_PATH_SIZE];
     assert(GetTempPathA(sizeof(base), base) > 0U);
-    assert(snprintf(temporary, sizeof(temporary), "%slaghu-runtime-%lu", base,
-                    (unsigned long)GetCurrentProcessId()) > 0);
-    assert(_mkdir(temporary) == 0 || errno == EEXIST);
+    assert(GetTempFileNameA(base, "lgr", 0U, unique) != 0U);
+    assert(DeleteFileA(unique));
+    assert(snprintf(temporary, sizeof(temporary), "%s", unique) > 0);
+    assert(_mkdir(temporary) == 0);
   }
 #else
   strcpy(temporary, "/tmp/laghu-runtime-XXXXXX");
@@ -883,6 +885,12 @@ int main(void) {
           "style-src-elem 'none'; style-src 'self'", "https://example.test"));
       assert(!laghu_runtime_csp_allows_self_styles("default-src 'none'",
                                                    "https://example.test"));
+      assert(laghu_runtime_csp_allows_self_scripts(
+          "default-src 'none'; script-src 'self'; style-src 'none'",
+          "https://example.test"));
+      assert(!laghu_runtime_csp_allows_self_scripts(
+          "default-src 'self'; script-src 'none'; style-src 'self'",
+          "https://example.test"));
     }
   }
   {
@@ -1053,6 +1061,86 @@ int main(void) {
   assert(!laghu_runtime_cache_publish(
       NULL, index_key, policy_key, "etag", "image/png", "test-backend",
       (laghu_buffer){payload, sizeof(payload) - 1U}, &entry));
+  {
+    static const unsigned char css[] =
+        ".hero{color:red}.footer{color:blue}@font-face{font-family:x;src:url(x."
+        "woff2)}";
+    static const unsigned char critical_html[] =
+        "<html><head><link rel=\"stylesheet\" href=\"/critical.css\"></head>"
+        "<body><div class=hero>hero</div></body></html>";
+    laghu_stylesheet_record stylesheet = {0};
+    laghu_runtime_cache_entry css_entry;
+    laghu_runtime_html_result critical_page;
+    laghu_critical_css_beacon observation = {0};
+    const char *marker;
+    char css_key[LAGHU_RUNTIME_KEY_SIZE];
+    unsigned int observation_index;
+    assert(laghu_sha256_hex((laghu_buffer){css, sizeof(css) - 1U}, css_key));
+    assert(laghu_runtime_cache_publish(
+        temporary, css_key, css_key, css_key, "text/css", "critical-test",
+        (laghu_buffer){css, sizeof(css) - 1U}, &css_entry));
+    stylesheet.version = LAGHU_STYLESHEET_CATALOG_VERSION;
+    strcpy(stylesheet.normalized_url, "/critical.css");
+    strcpy(stylesheet.source_hash, css_key);
+    strcpy(stylesheet.source_key, css_key);
+    strcpy(stylesheet.derived_key, css_key);
+    strcpy(stylesheet.dependency_key, css_key);
+    strcpy(stylesheet.policy_key, policy_key);
+    stylesheet.capability_mask = 0x55aaU;
+    stylesheet.parser_version = LAGHU_CSS_DERIVATION_VERSION;
+    stylesheet.inline_limit = 2048U;
+    stylesheet.outline_threshold = 8192U;
+    stylesheet.source_length = sizeof(css) - 1U;
+    stylesheet.derived_length = sizeof(css) - 1U;
+    stylesheet.updated_at = 2000U;
+    stylesheet.ready = true;
+    assert(laghu_stylesheet_publish(temporary, &stylesheet));
+    assert(laghu_runtime_prioritize_critical_css(
+        temporary, (laghu_buffer){critical_html, sizeof(critical_html) - 1U},
+        "/critical", "https://example.test", policy_key, 0x55aaU, 2001U,
+        604800U, 2048U, 8192U, 1024U, true, true, true, true, &critical_page));
+    assert(!critical_page.rewritten);
+    laghu_runtime_html_result_release(&critical_page);
+    assert(laghu_runtime_prioritize_critical_css(
+        temporary, (laghu_buffer){critical_html, sizeof(critical_html) - 1U},
+        "/critical", "https://example.test", policy_key, 0x55aaU, 2001U,
+        604800U, 2048U, 8192U, 1024U, true, true, true, true, &critical_page));
+    assert(critical_page.rewritten);
+    marker = strstr((const char *)critical_page.data, "data-laghu-critical=\"");
+    assert(marker != NULL);
+    marker += sizeof("data-laghu-critical=\"") - 1U;
+    memcpy(observation.template_key, marker, LAGHU_SHA256_HEX_LENGTH);
+    observation.template_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+    observation.viewport_bucket = 1U;
+    observation.rule_count = 1U;
+    observation.rules[0] = 0U;
+    laghu_runtime_html_result_release(&critical_page);
+    for (observation_index = 0U; observation_index < 3U; ++observation_index)
+      assert(laghu_critical_css_apply_beacon(temporary, policy_key,
+                                             2002U + observation_index, 604800U,
+                                             &observation));
+    assert(laghu_runtime_prioritize_critical_css(
+        temporary, (laghu_buffer){critical_html, sizeof(critical_html) - 1U},
+        "/critical", "https://example.test", policy_key, 0x55aaU, 2005U,
+        604800U, 2048U, 8192U, 1024U, true, true, true, true, &critical_page));
+    assert(critical_page.rewritten);
+    assert(strstr((const char *)critical_page.data,
+                  "<style>.hero{color:red}@font-face") != NULL);
+    assert(strstr((const char *)critical_page.data, "</style></head><body>") !=
+           NULL);
+    assert(strstr((const char *)critical_page.data, "/.laghu/css/") != NULL);
+    laghu_runtime_html_result_release(&critical_page);
+    {
+      static const unsigned char json[] =
+          "{\"template\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "aaaaaaaaaaaaaaaa\",\"bucket\":0,\"rules\":[0,7]}";
+      laghu_critical_css_beacon parsed;
+      assert(laghu_runtime_parse_critical_css_beacon(
+          (laghu_buffer){json, sizeof(json) - 1U}, &parsed));
+      assert(parsed.viewport_bucket == 0U && parsed.rule_count == 2U &&
+             parsed.rules[1] == 7U);
+    }
+  }
   assert(!laghu_runtime_cache_lookup(temporary, index_key, NULL, &entry));
   assert(laghu_runtime_cache_lookup(temporary, index_key, "etag", &entry));
   assert(laghu_runtime_cache_lookup_variant(temporary, policy_key, &entry));

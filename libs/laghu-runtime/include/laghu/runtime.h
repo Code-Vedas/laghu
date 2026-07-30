@@ -34,6 +34,9 @@ extern "C" {
 #define LAGHU_STYLESHEET_CATALOG_VERSION 2U
 #define LAGHU_CSS_IMPORT_MAX_DEPTH 8U
 #define LAGHU_HTML_PLANNER_VERSION 3U
+#define LAGHU_CRITICAL_CSS_VERSION 1U
+#define LAGHU_CRITICAL_CSS_MAX_RULES 512U
+#define LAGHU_CRITICAL_CSS_QUORUM 3U
 #define LAGHU_HTML_MAX_TOKENS 4096U
 #define LAGHU_HTML_MAX_HEADS 16U
 #define LAGHU_HTML_MAX_PRELOADS 4U
@@ -273,6 +276,25 @@ typedef struct {
   bool terminally_excluded;
 } laghu_stylesheet_record;
 
+typedef struct {
+  uint32_t version;
+  char template_key[LAGHU_RUNTIME_KEY_SIZE];
+  char stylesheet_url[LAGHU_RUNTIME_PATH_SIZE];
+  char stylesheet_key[LAGHU_RUNTIME_KEY_SIZE];
+  char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  uint64_t updated_at;
+  uint32_t generation;
+  uint16_t observation_count[2];
+  unsigned char critical_rules[2][LAGHU_CRITICAL_CSS_MAX_RULES / 8U];
+} laghu_critical_css_record;
+
+typedef struct {
+  char template_key[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int viewport_bucket;
+  unsigned int rule_count;
+  uint16_t rules[LAGHU_CRITICAL_CSS_MAX_RULES];
+} laghu_critical_css_beacon;
+
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
                                 unsigned int slot_count,
@@ -388,6 +410,8 @@ void laghu_runtime_css_combine_result_release(
     laghu_runtime_css_combine_result *result);
 bool laghu_runtime_csp_allows_self_styles(const char *csp,
                                           const char *page_origin);
+bool laghu_runtime_csp_allows_self_scripts(const char *csp,
+                                           const char *page_origin);
 bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
                                const char *cache_path, laghu_buffer css,
                                const char *stylesheet_path,
@@ -421,6 +445,21 @@ bool laghu_catalog_apply_beacon(const char *cache_path, const char *policy_key,
                                 const laghu_image_beacon_record *beacon);
 bool laghu_catalog_prune(const char *cache_path, uint64_t now,
                          unsigned int metadata_limit, unsigned int ttl_seconds);
+bool laghu_runtime_prioritize_critical_css(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
+    unsigned int outline_threshold, unsigned int viewport_width,
+    bool beacon_enabled, bool csp_allows_inline_styles,
+    bool csp_allows_self_styles, bool csp_allows_self_scripts,
+    laghu_runtime_html_result *result);
+bool laghu_runtime_parse_critical_css_beacon(laghu_buffer json,
+                                             laghu_critical_css_beacon *record);
+bool laghu_critical_css_apply_beacon(const char *cache_path,
+                                     const char *policy_key, uint64_t now,
+                                     unsigned int ttl_seconds,
+                                     const laghu_critical_css_beacon *beacon);
+const char *laghu_runtime_critical_css_beacon_script(void);
 
 #ifdef __cplusplus
 }

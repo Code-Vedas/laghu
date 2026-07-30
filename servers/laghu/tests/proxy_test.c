@@ -29,6 +29,7 @@ int main(void) {
                    "--worker-queue",
                    "/tmp/jobs",
                    "--allow-api",
+                   "--critical-css-beacon",
                    "--drain-timeout",
                    "45"};
   char *conflict[] = {"laghu",
@@ -87,11 +88,12 @@ int main(void) {
   unsigned char decoded[16];
   size_t decoded_length = 0U;
   laghu_proxy_options_init(&options);
-  CHECK(laghu_proxy_parse_options(12, valid, &options, error, sizeof(error)) ==
+  CHECK(laghu_proxy_parse_options(13, valid, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.origin_host, "127.0.0.1"));
   CHECK(!strcmp(options.origin_port, "8000"));
   CHECK(options.config.allow_api == LAGHU_MODE_ON);
+  CHECK(options.config.critical_css_beacon == LAGHU_MODE_ON);
   CHECK(options.drain_timeout == 45U);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, secure, &options, error, sizeof(error)) ==
