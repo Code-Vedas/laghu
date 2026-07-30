@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_QUEUE_VERSION 6U
+#define LAGHU_QUEUE_VERSION 7U
 #define LAGHU_QUEUE_DEFAULT_SLOTS 4U
 #define LAGHU_RUNTIME_KEY_SIZE LAGHU_SHA256_HEX_SIZE
 #define LAGHU_RUNTIME_PATH_SIZE 1024U
@@ -51,6 +51,10 @@ extern "C" {
 #define LAGHU_FONT_PROVIDER_PREFIX_SIZE 512U
 #define LAGHU_FONT_CSS_MAX_BYTES 262144U
 #define LAGHU_FONT_FETCH_PROFILE_VERSION 1U
+#define LAGHU_JAVASCRIPT_MAX_BYTES 2097152U
+#define LAGHU_JAVASCRIPT_TARGET_SIZE 512U
+#define LAGHU_JAVASCRIPT_MAX_SCRIPTS 64U
+#define LAGHU_JAVASCRIPT_DERIVATION_VERSION 1U
 
 typedef uint32_t laghu_html_planner_mask;
 
@@ -70,7 +74,8 @@ typedef uint32_t laghu_html_planner_mask;
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
   LAGHU_RUNTIME_JOB_SPRITE = 1,
-  LAGHU_RUNTIME_JOB_FONT_CSS = 2
+  LAGHU_RUNTIME_JOB_FONT_CSS = 2,
+  LAGHU_RUNTIME_JOB_JAVASCRIPT = 3
 } laghu_runtime_job_kind;
 
 typedef struct {
@@ -82,6 +87,7 @@ typedef struct {
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   char provider_id[LAGHU_FONT_PROVIDER_ID_SIZE];
   char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
+  char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   uint64_t filters;
   unsigned int quality;
   unsigned int metadata_limit;
@@ -158,6 +164,14 @@ typedef struct {
   char variant_path[LAGHU_RUNTIME_PATH_SIZE];
   size_t length;
 } laghu_runtime_cache_entry;
+
+typedef struct {
+  unsigned char *data;
+  size_t length;
+  char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  bool rewritten;
+  bool published;
+} laghu_runtime_javascript_result;
 
 typedef struct {
   unsigned int width;
@@ -350,6 +364,19 @@ bool laghu_runtime_cache_lookup_variant(const char *cache_path,
                                         laghu_runtime_cache_entry *entry);
 bool laghu_runtime_cache_read(const laghu_runtime_cache_entry *entry,
                               unsigned char *output, size_t output_capacity);
+bool laghu_javascript_target_normalize(
+    const char *target, char output[LAGHU_JAVASCRIPT_TARGET_SIZE]);
+bool laghu_runtime_rewrite_javascript(
+    laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source,
+    const char *normalized_path, const char *policy_key, const char *target,
+    bool module, laghu_runtime_javascript_result *result);
+bool laghu_runtime_rewrite_javascript_html(
+    laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html,
+    const char *page_path, const char *policy_key, const char *target,
+    const char *content_security_policy, uint64_t now, unsigned int ttl_seconds,
+    laghu_runtime_html_result *result);
+void laghu_runtime_javascript_result_release(
+    laghu_runtime_javascript_result *result);
 bool laghu_catalog_key(const char *normalized_url, const char *source_hash,
                        const char *policy_key, uint32_t capability_mask,
                        char output[LAGHU_RUNTIME_KEY_SIZE]);

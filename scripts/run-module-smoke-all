@@ -17,6 +17,7 @@ MODULE="${BUILD_DIR}/ngx_http_laghu_module.so"
 PORT="${LAGHU_SMOKE_PORT:-18080}"
 ORIGIN_PORT=$((PORT + 1))
 OPTIMIZER_BIN="${LAGHU_OPTIMIZER_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips}"
+JAVASCRIPT_BIN="${LAGHU_JAVASCRIPT_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize}"
 nginx_user_directive=
 if [ "$(id -u)" -eq 0 ]; then
   nginx_user_directive="user root;"
@@ -33,6 +34,7 @@ printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
 
 image_smoke=0
 optimizer_pid=""
+javascript_pid=""
 printf '%s\n' '/*! keep */ .card { color: red; margin: 0  0; } /* remove */' \
   >"${SMOKE_DIR}/html/site.css"
 printf '%s\n' '.inline { color: blue; margin: 0  0; } /* remove */' \
@@ -70,6 +72,12 @@ printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one 
   >"${SMOKE_DIR}/html/minify-page.html"
 printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
   >"${SMOKE_DIR}/html/hints-page.html"
+printf '%s\n' 'function publicName(longLocal) { return longLocal + 1; }' \
+  >"${SMOKE_DIR}/html/app.js"
+printf '%s\n' '<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>' \
+  >"${SMOKE_DIR}/html/javascript-inline.html"
+printf '%s\n' '<html><body><script src="/app.js"></script><script>function externalPageHelper(veryLongLocalArgument) { return veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument; }</script></body></html>' \
+  >"${SMOKE_DIR}/html/javascript-external.html"
 if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${SMOKE_DIR}/image.v" 512 512 --bands 3
   vips pngsave "${SMOKE_DIR}/image.v" "${SMOKE_DIR}/html/image.png" \
@@ -80,6 +88,10 @@ if [ -x "${OPTIMIZER_BIN}" ] && command -v vips >/dev/null 2>&1; then
   "${OPTIMIZER_BIN}" --init "${SMOKE_DIR}/jobs.queue" \
     "${SMOKE_DIR}/cache"
   image_smoke=1
+fi
+if [ -x "${JAVASCRIPT_BIN}" ]; then
+  "${JAVASCRIPT_BIN}" --init "${SMOKE_DIR}/javascript.queue" \
+    "${SMOKE_DIR}/cache"
 fi
 
 cat >"${SMOKE_DIR}/nginx.conf" <<EOF
@@ -126,11 +138,31 @@ http {
     laghu image_metadata_limit 10000;
     laghu image_metadata_ttl 7d;
     laghu worker_queue ${SMOKE_DIR}/jobs.queue;
+    laghu javascript_queue ${SMOKE_DIR}/javascript.queue;
+    laghu javascript_target "last 2 chrome versions";
     laghu image_cache ${SMOKE_DIR}/cache;
 
     location = /site.css {
       default_type text/css;
       try_files /site.css =404;
+    }
+
+    location = /app.js {
+      laghu rewrite_level all;
+      default_type application/javascript;
+      try_files /app.js =404;
+    }
+
+    location = /javascript-inline.html {
+      laghu rewrite_level all;
+      default_type text/html;
+      try_files /javascript-inline.html =404;
+    }
+
+    location = /javascript-external.html {
+      laghu rewrite_level all;
+      default_type text/html;
+      try_files /javascript-external.html =404;
     }
 
     location = /inline.css {
@@ -446,6 +478,9 @@ cleanup() {
   if [ "${optimizer_pid}" != "" ]; then
     kill "${optimizer_pid}" 2>/dev/null || true
   fi
+  if [ "${javascript_pid}" != "" ]; then
+    kill "${javascript_pid}" 2>/dev/null || true
+  fi
   if [ -f "${SMOKE_DIR}/nginx.pid" ]; then
     kill "$(cat "${SMOKE_DIR}/nginx.pid")" 2>/dev/null || true
   fi
@@ -456,6 +491,11 @@ if [ "${image_smoke}" -eq 1 ]; then
   "${OPTIMIZER_BIN}" --serve "${SMOKE_DIR}/jobs.queue" \
     "${SMOKE_DIR}/cache" &
   optimizer_pid=$!
+fi
+if [ -x "${JAVASCRIPT_BIN}" ]; then
+  "${JAVASCRIPT_BIN}" --serve "${SMOKE_DIR}/javascript.queue" \
+    "${SMOKE_DIR}/cache" &
+  javascript_pid=$!
 fi
 
 "${NGINX_BIN}" -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/nginx.conf" &
@@ -979,12 +1019,76 @@ curl --fail --silent --dump-header "${SMOKE_DIR}/missing-head-warm.headers" \
 grep '<head><style>' "${SMOKE_DIR}/missing-head-warm" >/dev/null
 grep -i '^ETag: "laghu-html-' "${SMOKE_DIR}/missing-head-warm.headers" >/dev/null
 
+curl --fail --silent --output "${SMOKE_DIR}/javascript-cold" \
+  "http://127.0.0.1:${PORT}/app.js"
+cmp "${SMOKE_DIR}/html/app.js" "${SMOKE_DIR}/javascript-cold"
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  curl --fail --silent --dump-header "${SMOKE_DIR}/javascript-warm.headers" \
+    --output "${SMOKE_DIR}/javascript-warm" \
+    "http://127.0.0.1:${PORT}/app.js"
+  if grep -i '^ETag: "laghu-js-' "${SMOKE_DIR}/javascript-warm.headers" >/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+test "${attempt}" -lt 50
+test "$(wc -c <"${SMOKE_DIR}/javascript-warm")" -lt \
+  "$(wc -c <"${SMOKE_DIR}/html/app.js")"
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  curl --fail --silent --output "${SMOKE_DIR}/javascript-external-warm" \
+    "http://127.0.0.1:${PORT}/javascript-external.html"
+  if grep -o '/\.laghu/js/[0-9a-f]\{64\}' \
+      "${SMOKE_DIR}/javascript-external-warm" >/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+test "${attempt}" -lt 50
+javascript_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}' \
+  "${SMOKE_DIR}/javascript-external-warm")
+test "${javascript_route}" != ""
+curl --fail --silent --dump-header "${SMOKE_DIR}/javascript-immutable.headers" \
+  --output "${SMOKE_DIR}/javascript-immutable" \
+  "http://127.0.0.1:${PORT}${javascript_route}"
+cmp "${SMOKE_DIR}/javascript-warm" "${SMOKE_DIR}/javascript-immutable"
+grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+  "${SMOKE_DIR}/javascript-immutable.headers" >/dev/null
+curl --fail --silent --output "${SMOKE_DIR}/javascript-inline-cold" \
+  "http://127.0.0.1:${PORT}/javascript-inline.html"
+cmp "${SMOKE_DIR}/html/javascript-inline.html" \
+  "${SMOKE_DIR}/javascript-inline-cold"
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  curl --fail --silent --dump-header \
+    "${SMOKE_DIR}/javascript-inline-warm.headers" \
+    --output "${SMOKE_DIR}/javascript-inline-warm" \
+    "http://127.0.0.1:${PORT}/javascript-inline.html"
+  if grep -i '^ETag: "laghu-html-' \
+      "${SMOKE_DIR}/javascript-inline-warm.headers" >/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+test "${attempt}" -lt 50
+grep 'function inlinePublic(n){return n+1;}' \
+  "${SMOKE_DIR}/javascript-inline-warm" >/dev/null
+
 kill "${nginx_pid}"
 wait "${nginx_pid}"
 if [ "${optimizer_pid}" != "" ]; then
   kill "${optimizer_pid}"
   wait "${optimizer_pid}" || true
   optimizer_pid=""
+fi
+if [ "${javascript_pid}" != "" ]; then
+  kill "${javascript_pid}"
+  wait "${javascript_pid}" || true
+  javascript_pid=""
 fi
 rm -f "${SMOKE_DIR}/nginx.pid"
 trap - EXIT INT TERM

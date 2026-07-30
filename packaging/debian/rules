@@ -48,10 +48,15 @@ override_dh_auto_install:
 	install -D -m 0755 \
 		debian/build/workers/laghu-resource-fetch/laghu-resource-fetch \
 		debian/laghu-libvips/usr/bin/laghu-resource-fetch
+	install -D -m 0755 \
+		debian/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize \
+		debian/laghu-libvips/usr/bin/laghu-js-optimize
 	install -D -m 0644 packaging/systemd/laghu-libvips.service \
 		debian/laghu-libvips/lib/systemd/system/laghu-libvips.service
 	install -D -m 0644 packaging/systemd/laghu-resource-fetch.service \
 		debian/laghu-libvips/lib/systemd/system/laghu-resource-fetch.service
+	install -D -m 0644 packaging/systemd/laghu-js-optimize.service \
+		debian/laghu-libvips/lib/systemd/system/laghu-js-optimize.service
 	install -D -m 0644 packaging/font-providers.conf \
 		debian/laghu-libvips/etc/laghu/font-providers.conf
 	install -D -m 0644 packaging/tmpfiles/laghu.conf \

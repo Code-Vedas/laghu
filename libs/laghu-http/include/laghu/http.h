@@ -72,6 +72,9 @@ typedef struct {
   laghu_runtime_queue *queue;
   const char *font_fetch_queue_path;
   laghu_runtime_queue *font_fetch_queue;
+  const char *javascript_queue_path;
+  laghu_runtime_queue *javascript_queue;
+  const char *javascript_target;
   const laghu_font_provider_set *font_providers;
   uint64_t now;
 } laghu_http_environment;
@@ -92,6 +95,7 @@ typedef enum {
   LAGHU_HTTP_ACTION_BYPASS = 0,
   LAGHU_HTTP_ACTION_CAPTURE_HTML,
   LAGHU_HTTP_ACTION_CAPTURE_CSS,
+  LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT,
   LAGHU_HTTP_ACTION_CAPTURE_IMAGE,
   LAGHU_HTTP_ACTION_SERVE_CACHED
 } laghu_http_action;

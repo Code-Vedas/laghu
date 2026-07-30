@@ -18,12 +18,20 @@ $build = (Resolve-Path $BuildDirectory).Path
 $destination = [IO.Path]::GetFullPath((Join-Path $repo "$Output/$Architecture"))
 $binary = Join-Path $build "workers/laghu-libvips/$Configuration/laghu-libvips.exe"
 $fetchBinary = Join-Path $build "workers/laghu-resource-fetch/$Configuration/laghu-resource-fetch.exe"
+$javascriptTarget = if ($Architecture -eq "arm64") {
+  "cargo/aarch64-pc-windows-msvc/release/laghu-js-optimize.exe"
+} else {
+  "cargo/release/laghu-js-optimize.exe"
+}
+$javascriptBinary = Join-Path $build "workers/laghu-js-optimize/$javascriptTarget"
 if (-not (Test-Path $binary)) { throw "laghu-libvips.exe was not built" }
 if (-not (Test-Path $fetchBinary)) { throw "laghu-resource-fetch.exe was not built" }
+if (-not (Test-Path $javascriptBinary)) { throw "laghu-js-optimize.exe was not built" }
 Remove-Item -Recurse -Force $destination -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item $binary $destination
 Copy-Item $fetchBinary $destination
+Copy-Item $javascriptBinary $destination
 Copy-Item (Join-Path $repo "packaging/font-providers.conf") $destination
 Get-ChildItem (Split-Path $binary) -Filter "*.dll" | Copy-Item -Destination $destination
 Get-ChildItem (Split-Path $fetchBinary) -Filter "*.dll" | Copy-Item -Destination $destination
@@ -102,6 +110,10 @@ try {
   if ($LASTEXITCODE -ne 0 -or $backend -notmatch 'available=yes') {
     throw "staged runtime has no usable codec backend"
   }
+  $javascriptBackend = & (Join-Path $destination "laghu-js-optimize.exe") --probe
+  if ($LASTEXITCODE -ne 0 -or $javascriptBackend -notmatch 'available=yes') {
+    throw "staged runtime has no usable JavaScript backend"
+  }
 } finally {
   $env:Path = $stagedPath
 }
@@ -111,6 +123,7 @@ $manifest = [ordered]@{
   backend = $backend.Trim()
   worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-libvips.exe")).Hash.ToLowerInvariant()
   fetch_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-resource-fetch.exe")).Hash.ToLowerInvariant()
+  javascript_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-js-optimize.exe")).Hash.ToLowerInvariant()
   providers_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "font-providers.conf")).Hash.ToLowerInvariant()
   dlls = [ordered]@{}
 }

@@ -7,6 +7,7 @@ import http.server
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import ssl
@@ -65,6 +66,20 @@ class Origin(http.server.BaseHTTPRequestHandler):
         elif self.path == "/site.css":
             body = b"body { color: red; }"
             content_type = "text/css"
+        elif self.path == "/app.js":
+            body = b"function publicName(longLocal) { return longLocal + 1; }"
+            content_type = "application/javascript"
+        elif self.path == "/javascript-inline.html":
+            body = b"<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>"
+            content_type = "text/html"
+        elif self.path == "/javascript-external.html":
+            body = (
+                b'<html><body><script src="/app.js"></script><script>'
+                b"function externalPageHelper(veryLongLocalArgument) { return "
+                + b" + ".join([b"veryLongLocalArgument"] * 16)
+                + b"; }</script></body></html>"
+            )
+            content_type = "text/html"
         elif self.path == "/private":
             body = BODY
             content_type = "text/html"
@@ -317,6 +332,7 @@ def read_open_socket(sock):
 def main():
     executable = pathlib.Path(sys.argv[1]).resolve()
     cache_fixture = pathlib.Path(sys.argv[2]).resolve()
+    javascript_worker = pathlib.Path(sys.argv[3]).resolve()
     origin_port = free_port()
     proxy_port = free_port()
     origin = QuietThreadingHTTPServer(("127.0.0.1", origin_port), Origin)
@@ -325,6 +341,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="laghu-proxy-") as directory:
         root = pathlib.Path(directory)
         (root / "cache").mkdir()
+        subprocess.run(
+            [str(javascript_worker), "--init", str(root / "javascript.queue"),
+             str(root / "cache")], check=True
+        )
+        javascript_process = start_process(
+            [str(javascript_worker), "--serve", str(root / "javascript.queue"),
+             str(root / "cache")], stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
         asset_key = "a" * 64
         subprocess.run(
             [str(cache_fixture), str(root / "cache"), asset_key], check=True
@@ -491,6 +516,10 @@ def main():
                 str(root / "cache"),
                 "--worker-queue",
                 str(root / "missing.queue"),
+                "--javascript-queue",
+                str(root / "javascript.queue"),
+                "--javascript-target",
+                "last 2 chrome versions",
                 "--rewrite-level",
                 "all",
                 "--critical-css-beacon",
@@ -515,6 +544,41 @@ def main():
                 raise AssertionError("proxy did not start")
             assert first_body == BODY, (first_head, first_body)
             assert b"x-laghu: pass" in first_head, first_head
+            javascript_head, javascript_cold = request(proxy_port, "/app.js")
+            assert javascript_cold == b"function publicName(longLocal) { return longLocal + 1; }"
+            for _ in range(50):
+                javascript_head, javascript_warm = request(proxy_port, "/app.js")
+                if b'etag: "laghu-js-' in javascript_head:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("standalone JavaScript did not become warm")
+            assert len(javascript_warm) < len(javascript_cold)
+            for _ in range(50):
+                _, external_warm = request(proxy_port, "/javascript-external.html")
+                match = re.search(
+                    rb'src="(/\.laghu/js/[0-9a-f]{64})"', external_warm
+                )
+                if match:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("standalone external JavaScript did not become warm")
+            immutable_head, immutable_body = request(
+                proxy_port, match.group(1).decode()
+            )
+            assert immutable_body == javascript_warm
+            assert b"cache-control: public, max-age=31536000, immutable" in immutable_head
+            _, inline_cold = request(proxy_port, "/javascript-inline.html")
+            assert b"inlinePublic(longLocal)" in inline_cold
+            for _ in range(50):
+                inline_head, inline_warm = request(proxy_port, "/javascript-inline.html")
+                if b'etag: "laghu-html-' in inline_head:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("standalone inline JavaScript did not become warm")
+            assert b"inlinePublic(n){return n+1;}" in inline_warm
             critical_head, critical_body = request(
                 proxy_port, "/.laghu/beacon/critical-css.js"
             )
@@ -844,6 +908,9 @@ def main():
             if not main_log.closed:
                 main_log.close()
             origin.shutdown()
+            request_shutdown(javascript_process)
+            javascript_process.wait(timeout=5)
+            javascript_process.stderr.close()
     print("laghu proxy smoke passed")
 
 

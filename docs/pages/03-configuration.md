@@ -97,6 +97,8 @@ laghu css_outline_threshold 8192;
 laghu worker_queue /run/laghu/jobs.queue;
 laghu font_fetch_queue /run/laghu/fonts.queue;
 laghu font_provider_config /etc/laghu/font-providers.conf;
+laghu javascript_queue /run/laghu/javascript.queue;
+laghu javascript_target "defaults and supports es6-module and not dead";
 laghu image_cache /var/cache/laghu/images;
 ```
 
@@ -105,6 +107,8 @@ All image runtime directives inherit through `http`, `server`, and `location`. Q
 The queue and cache paths default to the values above. `laghu-libvips` must have write access; the selected server needs queue access and read access to published cache entries.
 
 External font CSS uses the separate bounded `font_fetch_queue` and `laghu-resource-fetch` service. `font_provider_config` names the administrator-owned provider file loaded by both the adapter and worker; invalid files fail configuration loading. Apache exposes the same settings as `Laghu FontFetchQueue` and `Laghu FontProviderConfig`. The standalone proxy uses `--font-fetch-queue` and `--font-provider-config`.
+
+JavaScript rewriting uses the separate bounded `javascript_queue` and native `laghu-js-optimize` Rust service. The inherited `javascript_target` is a bounded Browserslist query and defaults to `defaults and supports es6-module and not dead`; file-loading, environment-expanding, `extends`, empty, and malformed queries are rejected. Apache exposes `Laghu JavaScriptQueue` and `Laghu JavaScriptTarget`, while standalone uses `--javascript-queue` and `--javascript-target`. Laghu observes same-origin external scripts only through ordinary responses and never fetches JavaScript. Inline and external classic/module scripts remain byte-identical until a strictly smaller SWC result is ready. Import maps, data scripts, speculation rules, integrity-protected external scripts, source-map directives, and CSP-hash-sensitive inline scripts without an accepted nonce remain unchanged.
 
 The line-oriented provider format starts a definition with `provider ID`, ends it with `end`, and accepts `stylesheet HOST PATH_PREFIX`, `redirect HOST PATH_PREFIX`, `asset HOST PATH_PREFIX`, `max_css_bytes BYTES`, and `ttl_seconds SECONDS`. Hosts and prefixes are exact and do not accept wildcards, credentials, IP literals, regexes, or HTTP. The installed file enables Google Fonts and Fontsource CDN; adding another provider requires only a normal configuration reload.
 

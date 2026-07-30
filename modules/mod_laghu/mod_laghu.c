@@ -28,10 +28,12 @@
 #define LAGHU_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
 #define LAGHU_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
 #define LAGHU_DEFAULT_FONT_QUEUE "C:/ProgramData/Laghu/fonts.queue"
+#define LAGHU_DEFAULT_JAVASCRIPT_QUEUE "C:/ProgramData/Laghu/javascript.queue"
 #else
 #define LAGHU_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_DEFAULT_CACHE "/var/cache/laghu/images"
 #define LAGHU_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
+#define LAGHU_DEFAULT_JAVASCRIPT_QUEUE "/run/laghu/javascript.queue"
 #endif
 
 typedef struct {
@@ -39,9 +41,12 @@ typedef struct {
   const char *worker_queue;
   const char *font_fetch_queue;
   const char *font_provider_config;
+  const char *javascript_queue;
+  const char *javascript_target;
   const char *image_cache;
   laghu_runtime_queue queue;
   laghu_runtime_queue font_queue;
+  laghu_runtime_queue javascript_runtime_queue;
   laghu_font_provider_set font_providers;
   bool font_providers_loaded;
 } laghu_apache_config;
@@ -122,6 +127,7 @@ static apr_status_t laghu_apache_queue_cleanup(void *data) {
   laghu_apache_config *config = data;
   laghu_runtime_queue_close(&config->queue);
   laghu_runtime_queue_close(&config->font_queue);
+  laghu_runtime_queue_close(&config->javascript_runtime_queue);
   return APR_SUCCESS;
 }
 
@@ -132,6 +138,7 @@ static void *laghu_apache_create_config(apr_pool_t *pool, char *path) {
     laghu_config_init(&config->core);
     laghu_runtime_queue_init(&config->queue);
     laghu_runtime_queue_init(&config->font_queue);
+    laghu_runtime_queue_init(&config->javascript_runtime_queue);
     apr_pool_cleanup_register(pool, config, laghu_apache_queue_cleanup,
                               apr_pool_cleanup_null);
   }
@@ -163,6 +170,12 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   merged->font_provider_config = child->font_provider_config != NULL
                                      ? child->font_provider_config
                                      : parent->font_provider_config;
+  merged->javascript_queue = child->javascript_queue != NULL
+                                 ? child->javascript_queue
+                                 : parent->javascript_queue;
+  merged->javascript_target = child->javascript_target != NULL
+                                  ? child->javascript_target
+                                  : parent->javascript_target;
   if (child->font_providers_loaded) {
     merged->font_providers = child->font_providers;
     merged->font_providers_loaded = true;
@@ -172,6 +185,7 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   }
   laghu_runtime_queue_init(&merged->queue);
   laghu_runtime_queue_init(&merged->font_queue);
+  laghu_runtime_queue_init(&merged->javascript_runtime_queue);
   apr_pool_cleanup_register(pool, merged, laghu_apache_queue_cleanup,
                             apr_pool_cleanup_null);
   return merged;
@@ -347,6 +361,20 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     }
     config->font_provider_config = apr_pstrdup(command->pool, parameter);
     config->font_providers_loaded = true;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "JavaScriptQueue") == 0) {
+    if (config->javascript_queue != NULL)
+      return "Laghu JavaScriptQueue may appear only once in this scope";
+    config->javascript_queue = apr_pstrdup(command->pool, parameter);
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "JavaScriptTarget") == 0) {
+    char normalized[LAGHU_JAVASCRIPT_TARGET_SIZE];
+    if (config->javascript_target != NULL ||
+        !laghu_javascript_target_normalize(parameter, normalized))
+      return "Laghu JavaScriptTarget expects a bounded Browserslist query";
+    config->javascript_target = apr_pstrdup(command->pool, normalized);
     return NULL;
   }
   if (ap_cstr_casecmp(name, "ImageCache") == 0) {
@@ -689,6 +717,22 @@ static bool laghu_apache_normalize(request_rec *request,
     context->environment.font_fetch_queue = &context->config->font_queue;
     context->environment.font_providers = &context->config->font_providers;
   }
+  context->environment.javascript_queue_path =
+      context->config->javascript_queue != NULL
+          ? context->config->javascript_queue
+          : LAGHU_DEFAULT_JAVASCRIPT_QUEUE;
+  if ((context->config->javascript_runtime_queue.mapping != NULL &&
+       laghu_runtime_queue_refresh(
+           &context->config->javascript_runtime_queue)) ||
+      (context->config->javascript_runtime_queue.mapping == NULL &&
+       laghu_runtime_queue_open(&context->config->javascript_runtime_queue,
+                                context->environment.javascript_queue_path)))
+    context->environment.javascript_queue =
+        &context->config->javascript_runtime_queue;
+  context->environment.javascript_target =
+      context->config->javascript_target != NULL
+          ? context->config->javascript_target
+          : "defaults and supports es6-module and not dead";
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;
 }
@@ -1254,7 +1298,8 @@ static apr_status_t laghu_apache_transaction_filter(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
     if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
-        context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS) {
+        context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
+        context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
       apr_bucket_brigade *replacement;
       unsigned char *selected = apr_pmemdup(request->pool, result.selected.data,
                                             result.selected.length);
@@ -1285,7 +1330,8 @@ static apr_status_t laghu_apache_transaction_filter(
     context->capture_enabled = false;
   }
   if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
-      context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS) {
+      context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
+      context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
     apr_bucket_brigade *metadata =
         apr_brigade_create(request->pool, request->connection->bucket_alloc);
     for (bucket = APR_BRIGADE_FIRST(brigade);
@@ -1331,6 +1377,7 @@ static void laghu_apache_insert_filter(request_rec *request) {
 static int laghu_apache_variant_handler(request_rec *request) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
+  static const char javascript_prefix[] = "/.laghu/js/";
   static const char script_path[] = "/.laghu/beacon/images.js";
   static const char post_path[] = "/.laghu/beacon/images";
   static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
@@ -1353,6 +1400,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
   unsigned char *body;
   const char *key;
   bool css_asset;
+  bool javascript_asset;
   if (request->uri == NULL ||
       strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0) {
     return DECLINED;
@@ -1502,7 +1550,11 @@ static int laghu_apache_variant_handler(request_rec *request) {
   css_asset = strlen(request->uri) ==
                   sizeof(css_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH &&
               strncmp(request->uri, css_prefix, sizeof(css_prefix) - 1U) == 0;
-  if (!css_asset &&
+  javascript_asset = strlen(request->uri) == sizeof(javascript_prefix) - 1U +
+                                                 LAGHU_SHA256_HEX_LENGTH &&
+                     strncmp(request->uri, javascript_prefix,
+                             sizeof(javascript_prefix) - 1U) == 0;
+  if (!css_asset && !javascript_asset &&
       (strlen(request->uri) != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
        strncmp(request->uri, prefix, sizeof(prefix) - 1U) != 0)) {
     return HTTP_NOT_FOUND;
@@ -1510,8 +1562,9 @@ static int laghu_apache_variant_handler(request_rec *request) {
   if (request->method_number != M_GET) {
     return HTTP_METHOD_NOT_ALLOWED;
   }
-  key = request->uri +
-        (css_asset ? sizeof(css_prefix) - 1U : sizeof(prefix) - 1U);
+  key = request->uri + (css_asset          ? sizeof(css_prefix) - 1U
+                        : javascript_asset ? sizeof(javascript_prefix) - 1U
+                                           : sizeof(prefix) - 1U);
   {
     size_t offset;
     for (offset = 0U; offset < LAGHU_SHA256_HEX_LENGTH; ++offset) {

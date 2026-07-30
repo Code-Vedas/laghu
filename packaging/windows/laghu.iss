@@ -65,6 +65,7 @@ Root: HKLM; Subkey: "Software\Codevedas\Laghu\Offerings\{#OFFERING}"; ValueType:
 const
   SharedRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-libvips.exe';
   FetchRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-resource-fetch.exe';
+  JavaScriptRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-js-optimize.exe';
 
 procedure ExitProcess(ExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -74,6 +75,8 @@ var
   ServiceWasPresent: Boolean;
   FetchServiceCreatedBySetup: Boolean;
   FetchServiceWasPresent: Boolean;
+  JavaScriptServiceCreatedBySetup: Boolean;
+  JavaScriptServiceWasPresent: Boolean;
   InstallSucceeded: Boolean;
 
 function VersionWeight(const Value: String): Integer;
@@ -140,6 +143,15 @@ begin
   Result := ResultCode = 0;
 end;
 
+function JavaScriptServiceExists(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'query laghu-js-optimize', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  Result := ResultCode = 0;
+end;
+
 function StopSharedService(): Boolean;
 var
   PowerShell, Command: String;
@@ -176,15 +188,36 @@ begin
                  ResultCode) and (ResultCode = 0);
 end;
 
+function StopJavaScriptService(): Boolean;
+var
+  PowerShell, Command: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  if not JavaScriptServiceExists() then exit;
+  PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Command := '-NoProfile -NonInteractive -Command "' +
+    '$service = Get-Service laghu-js-optimize -ErrorAction Stop; ' +
+    'if ($service.Status -ne ''Stopped'') { ' +
+    '$null = & sc.exe stop laghu-js-optimize; ' +
+    '$service.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(30)) }"';
+  Result := Exec(PowerShell, Command, '', SW_HIDE, ewWaitUntilTerminated,
+                 ResultCode) and (ResultCode = 0);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   ServiceWasPresent := ServiceExists();
   FetchServiceWasPresent := FetchServiceExists();
+  JavaScriptServiceWasPresent := JavaScriptServiceExists();
   if ServiceWasPresent and not StopSharedService() then
     Result := 'Unable to stop the existing laghu-libvips service.';
   if (Result = '') and FetchServiceWasPresent and not StopFetchService() then
     Result := 'Unable to stop the existing laghu-resource-fetch service.';
+  if (Result = '') and JavaScriptServiceWasPresent and
+     not StopJavaScriptService() then
+    Result := 'Unable to stop the existing laghu-js-optimize service.';
 end;
 
 procedure ConfigureFetchService();
@@ -250,6 +283,31 @@ begin
     'Unable to start laghu-libvips service');
 end;
 
+procedure ConfigureJavaScriptService();
+var
+  BinaryPath, QueuePath, CachePath: String;
+begin
+  QueuePath := ExpandConstant('{commonappdata}\Laghu\javascript.queue');
+  CachePath := ExpandConstant('{commonappdata}\Laghu\images');
+  if not FileExists(QueuePath) then
+    RunAndRequire(ExpandConstant(JavaScriptRuntime),
+      '--init "' + QueuePath + '" "' + CachePath + '"',
+      'Unable to initialize the Laghu JavaScript queue');
+  BinaryPath := GetShortName(ExpandConstant(JavaScriptRuntime)) +
+    ' --service ' + GetShortName(QueuePath) + ' ' + GetShortName(CachePath);
+  if not JavaScriptServiceExists() then begin
+    RunAndRequire(ExpandConstant('{sys}\sc.exe'),
+      'create laghu-js-optimize start= auto binPath= "' + BinaryPath + '"',
+      'Unable to create laghu-js-optimize service');
+    JavaScriptServiceCreatedBySetup := True;
+  end else
+    RunAndRequire(ExpandConstant('{sys}\sc.exe'),
+      'config laghu-js-optimize start= auto binPath= "' + BinaryPath + '"',
+      'Unable to update laghu-js-optimize service');
+  RunAndRequire(ExpandConstant('{sys}\sc.exe'), 'start laghu-js-optimize',
+    'Unable to start laghu-js-optimize service');
+end;
+
 function LastRuntimeReference(): Boolean;
 begin
 #if OFFERING == "ngx-laghu"
@@ -282,6 +340,14 @@ begin
   end else if FetchServiceWasPresent then
     Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-resource-fetch', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
+  if JavaScriptServiceCreatedBySetup then begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end else if JavaScriptServiceWasPresent then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
   RegDeleteKeyIncludingSubkeys(HKLM,
     'Software\Codevedas\Laghu\Offerings\{#OFFERING}');
   RegDeleteKeyIncludingSubkeys(HKLM,
@@ -302,6 +368,7 @@ begin
         'Matched server configuration validation failed');
       ConfigureSharedService();
       ConfigureFetchService();
+      ConfigureJavaScriptService();
     except
       RollBackFailedInstall();
       ExitProcess(7);
@@ -332,6 +399,14 @@ begin
   end else if not InstallSucceeded and FetchServiceWasPresent then
     Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-resource-fetch', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
+  if not InstallSucceeded and JavaScriptServiceCreatedBySetup then begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end else if not InstallSucceeded and JavaScriptServiceWasPresent then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -344,6 +419,10 @@ begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-libvips', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-resource-fetch', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-js-optimize', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     DelTree(ExpandConstant('{commonpf}\Codevedas\Laghu'), True, True, True);
     DelTree(ExpandConstant('{commonappdata}\Laghu'), True, True, True);

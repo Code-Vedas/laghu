@@ -1,0 +1,25 @@
+[package]
+name = "laghu-js-optimize"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1.0.100"
+browserslist-rs = "0.19.0"
+fs2 = "0.4.3"
+memmap2 = "0.9.9"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+swc_core = { version = "=75.0.0", features = ["common", "ecma_ast", "ecma_codegen", "ecma_minifier", "ecma_parser", "ecma_preset_env", "ecma_transforms", "ecma_visit"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true

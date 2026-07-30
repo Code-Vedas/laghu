@@ -124,6 +124,7 @@ typedef struct proxy_worker {
   proxy_queue *queue;
   laghu_runtime_queue runtime_queue;
   laghu_runtime_queue font_fetch_queue;
+  laghu_runtime_queue javascript_queue;
   laghu_socket active_client;
   laghu_socket active_origin;
 } proxy_worker;
@@ -326,6 +327,9 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->connect_timeout = LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT;
   options->io_timeout = LAGHU_PROXY_DEFAULT_IO_TIMEOUT;
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
+  (void)proxy_copy(options->javascript_target,
+                   sizeof(options->javascript_target),
+                   "defaults and supports es6-module and not dead");
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity,
@@ -341,6 +345,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool listen_seen = false, origin_seen = false, cache_seen = false;
   bool queue_seen = false, selector_seen = false;
   bool font_queue_seen = false, font_config_seen = false;
+  bool javascript_queue_seen = false, javascript_target_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
@@ -403,6 +408,25 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                            "invalid or duplicate --font-provider-config");
       options->font_providers_loaded = true;
       font_config_seen = true;
+    } else if (strcmp(name, "--javascript-queue") == 0) {
+      NEED_VALUE();
+      if (javascript_queue_seen ||
+          !proxy_copy(options->javascript_queue_path,
+                      sizeof(options->javascript_queue_path), value))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --javascript-queue");
+      options->javascript_queue_enabled = true;
+      javascript_queue_seen = true;
+    } else if (strcmp(name, "--javascript-target") == 0) {
+      char normalized[LAGHU_JAVASCRIPT_TARGET_SIZE];
+      NEED_VALUE();
+      if (javascript_target_seen ||
+          !laghu_javascript_target_normalize(value, normalized) ||
+          !proxy_copy(options->javascript_target,
+                      sizeof(options->javascript_target), normalized))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --javascript-target");
+      javascript_target_seen = true;
     } else if (strcmp(name, "--preset") == 0) {
       laghu_preset preset;
       NEED_VALUE();
@@ -1941,6 +1965,13 @@ static void proxy_handle(const proxy_connection *connection,
             options->font_providers_loaded ? &worker->font_fetch_queue : NULL,
         .font_providers =
             options->font_providers_loaded ? &options->font_providers : NULL,
+        .javascript_queue_path = options->javascript_queue_enabled
+                                     ? options->javascript_queue_path
+                                     : NULL,
+        .javascript_queue = options->javascript_queue_enabled
+                                ? &worker->javascript_queue
+                                : NULL,
+        .javascript_target = options->javascript_target,
         .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request,
@@ -2082,6 +2113,12 @@ static void proxy_handle(const proxy_connection *connection,
           options->font_providers_loaded ? &worker->font_fetch_queue : NULL,
       .font_providers =
           options->font_providers_loaded ? &options->font_providers : NULL,
+      .javascript_queue_path = options->javascript_queue_enabled
+                                   ? options->javascript_queue_path
+                                   : NULL,
+      .javascript_queue =
+          options->javascript_queue_enabled ? &worker->javascript_queue : NULL,
+      .javascript_target = options->javascript_target,
       .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless = !strcmp(request.method, "HEAD") ||
@@ -2295,10 +2332,15 @@ static void *proxy_worker_main(void *argument)
   proxy_connection connection;
   laghu_runtime_queue_init(&worker->runtime_queue);
   laghu_runtime_queue_init(&worker->font_fetch_queue);
+  laghu_runtime_queue_init(&worker->javascript_queue);
   if (worker->queue->options->font_providers_loaded)
     (void)laghu_runtime_queue_open(
         &worker->font_fetch_queue,
         worker->queue->options->font_fetch_queue_path);
+  if (worker->queue->options->javascript_queue_enabled)
+    (void)laghu_runtime_queue_open(
+        &worker->javascript_queue,
+        worker->queue->options->javascript_queue_path);
   while (queue_pop(worker->queue, &connection)) {
     proxy_worker_begin(worker, connection.socket);
     proxy_handle(&connection, worker);
@@ -2306,6 +2348,7 @@ static void *proxy_worker_main(void *argument)
   }
   laghu_runtime_queue_close(&worker->runtime_queue);
   laghu_runtime_queue_close(&worker->font_fetch_queue);
+  laghu_runtime_queue_close(&worker->javascript_queue);
 #ifdef _WIN32
   return 0U;
 #else
@@ -2573,7 +2616,9 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   if (!proxy_cache_probe(options->cache_path) ||
       !proxy_queue_path_valid(options->worker_queue_path) ||
       (options->font_providers_loaded &&
-       !proxy_queue_path_valid(options->font_fetch_queue_path))) {
+       !proxy_queue_path_valid(options->font_fetch_queue_path)) ||
+      (options->javascript_queue_enabled &&
+       !proxy_queue_path_valid(options->javascript_queue_path))) {
     proxy_log_event(&queue, "startup_failure", "stopped");
     goto cleanup;
   }

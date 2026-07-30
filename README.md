@@ -6,13 +6,14 @@ The image path uses an out-of-process libvips worker: a cold request serves the 
 
 ## Product Shape
 
-Laghu keeps nine deliberate ownership boundaries:
+Laghu keeps ten deliberate ownership boundaries:
 
 - `laghu-core` owns server-independent configuration and optimization policy.
 - `laghu-image` owns explicit-codec image transforms and markup primitives.
 - `laghu-runtime` owns the bounded queue and atomic disk publication protocol.
 - `laghu-http` owns the bounded, server-neutral HTTP transaction contract and executable response orchestration.
 - `laghu-libvips` owns isolated libvips execution and deadline enforcement.
+- `laghu-js-optimize` owns isolated SWC parsing, target lowering, compression, and local mangling.
 - `ngx_http_laghu_module` owns NGINX configuration, filter integration, and fail-open request handling.
 - `mod_laghu` owns Apache configuration, bucket-brigade integration, and fail-open request handling.
 - `laghu` owns bounded HTTP/1.1 framing, origin forwarding, cancellation, and transport backpressure for origins without a native adapter.
@@ -25,6 +26,7 @@ Laghu keeps nine deliberate ownership boundaries:
 - `libs/laghu-runtime/`: shared queue and content-addressed cache protocol
 - `libs/laghu-http/`: shared HTTP transaction engine and conformance tests
 - `workers/laghu-libvips/`: asynchronous libvips worker
+- `workers/laghu-js-optimize/`: native Rust SWC queue worker
 - `modules/ngx_http_laghu_module/`: NGINX dynamic module integration
 - `modules/mod_laghu/`: Apache HTTP Server output-filter integration
 - `servers/laghu/`: portable standalone HTTP/1.1 reverse proxy

@@ -325,6 +325,7 @@ int main(void) {
   laghu_catalog_record loaded;
   char catalog_key[LAGHU_RUNTIME_KEY_SIZE];
   char providers_path[LAGHU_RUNTIME_PATH_SIZE];
+  char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
 
   laghu_runtime_queue_init(&producer);
   laghu_runtime_queue_init(&consumer);
@@ -517,6 +518,61 @@ int main(void) {
   submitted.sprite_count = 2U;
   strcpy(submitted.sprite_variant_keys[1], "not-a-content-key");
   assert(!laghu_runtime_queue_try_publish(&producer, &submitted));
+  assert(laghu_javascript_target_normalize(
+      "  Defaults   AND supports ES6-module and not dead  ",
+      javascript_target));
+  assert(strcmp(javascript_target,
+                "defaults and supports es6-module and not dead") == 0);
+  assert(!laghu_javascript_target_normalize("extends ../browser",
+                                            javascript_target));
+  {
+    laghu_runtime_javascript_result javascript;
+    assert(laghu_runtime_rewrite_javascript(
+        &producer, temporary, (laghu_buffer){payload, sizeof(payload) - 1U},
+        "/application.js", policy_key, "last 2 chrome versions", false,
+        &javascript));
+    assert(!javascript.rewritten && javascript.published);
+    assert(laghu_runtime_queue_try_take(&consumer, &taken, received,
+                                        sizeof(received)));
+    assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT);
+    assert(strcmp(taken.javascript_target, "last 2 chrome versions") == 0);
+    assert(taken.payload.length == sizeof(payload) - 1U);
+    laghu_runtime_javascript_result_release(&javascript);
+  }
+  {
+    static const unsigned char html[] =
+        "<html><body><script>function publicName(longLocal) { return "
+        "longLocal + 1; }</script></body></html>";
+    static const unsigned char optimized[] =
+        "function publicName(n){return n+1}";
+    laghu_runtime_html_result javascript_page;
+    laghu_runtime_cache_entry javascript_entry;
+    char variant[LAGHU_RUNTIME_KEY_SIZE];
+    assert(laghu_runtime_rewrite_javascript_html(
+        &producer, temporary, (laghu_buffer){html, sizeof(html) - 1U},
+        "/inline", policy_key, "last 2 chrome versions", NULL, 100U, 60U,
+        &javascript_page));
+    assert(!javascript_page.rewritten && javascript_page.dependencies_pending);
+    laghu_runtime_html_result_release(&javascript_page);
+    assert(laghu_runtime_queue_try_take(&consumer, &taken, received,
+                                        sizeof(received)));
+    assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT);
+    assert(laghu_sha256_hex((laghu_buffer){optimized, sizeof(optimized) - 1U},
+                            variant));
+    assert(laghu_runtime_cache_publish(
+        temporary, taken.index_key, variant, taken.validator,
+        "application/javascript", "swc-test",
+        (laghu_buffer){optimized, sizeof(optimized) - 1U}, &javascript_entry));
+    assert(laghu_runtime_rewrite_javascript_html(
+        &producer, temporary, (laghu_buffer){html, sizeof(html) - 1U},
+        "/inline", policy_key, "last 2 chrome versions", NULL, 101U, 60U,
+        &javascript_page));
+    assert(javascript_page.rewritten &&
+           javascript_page.length < sizeof(html) - 1U);
+    assert(strstr((const char *)javascript_page.data,
+                  "function publicName(n){return n+1}") != NULL);
+    laghu_runtime_html_result_release(&javascript_page);
+  }
   assert(laghu_catalog_key("/image.png", index_key, policy_key, 0x55aaU,
                            catalog_key));
   catalog.version = LAGHU_CATALOG_VERSION;

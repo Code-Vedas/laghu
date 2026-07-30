@@ -40,7 +40,8 @@ if(LAGHU_BUILD_TESTS)
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/proxy_smoke.py
                    $<TARGET_FILE:laghu>
-                   $<TARGET_FILE:laghu_runtime_cache_fixture>)
+                   $<TARGET_FILE:laghu_runtime_cache_fixture>
+                   ${LAGHU_JS_BINARY})
   if(WIN32)
     set_tests_properties(
       laghu_proxy_smoke

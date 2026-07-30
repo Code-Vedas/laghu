@@ -8,7 +8,8 @@ Section: httpd
 Priority: optional
 Maintainer: Codevedas Inc. <opensource@codevedas.com>
 Build-Depends: debhelper-compat (= 13), apache2-dev, cmake,
- dh-sequence-apache2, dh-sequence-nginx, pkgconf, libvips-dev (>= 8.15)
+ dh-sequence-apache2, dh-sequence-nginx, pkgconf, libvips-dev (>= 8.15),
+ cargo, rustc (>= 1.86)
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://laghu.codevedas.com
@@ -32,8 +33,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
 Replaces: laghu-optimizer (<< ${binary:Version})
 Breaks: laghu-optimizer (<< ${binary:Version})
 Description: shared asynchronous libvips service for Laghu
- Converts Laghu image jobs and fetches explicitly configured external font
- stylesheets outside request-serving processes.
+ Converts Laghu image and JavaScript jobs and fetches explicitly configured
+ external font stylesheets outside request-serving processes.
  The official Ubuntu 24.04 build requires the distribution libvips runtime and
  its JPEG, PNG, GIF, and WebP codec dependencies.
 

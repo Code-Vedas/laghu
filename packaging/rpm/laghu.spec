@@ -21,6 +21,8 @@ BuildRequires: httpd-devel
 BuildRequires: make
 BuildRequires: nginx-mod-devel
 BuildRequires: pkgconfig(vips) >= 8.15
+BuildRequires: cargo
+BuildRequires: rust >= 1.86
 Requires: vips >= 8.15
 Requires(pre): shadow-utils
 Requires(post): shadow-utils
@@ -33,6 +35,7 @@ Obsoletes: laghu-optimizer < %{version}-%{release}
 Consumes bounded Laghu image jobs outside web-server processes and atomically
 publishes validated variants. It also runs the separately isolated,
 provider-allowlisted external font stylesheet fetch service.
+It also runs the locked native SWC JavaScript optimization worker.
 
 %package -n ngx-laghu
 Summary: Native Laghu HTTP optimization module for NGINX
@@ -70,6 +73,8 @@ install -D -m 0755 %{__cmake_builddir}/workers/laghu-libvips/laghu-libvips \
   %{buildroot}%{_bindir}/laghu-libvips
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-resource-fetch/laghu-resource-fetch \
   %{buildroot}%{_bindir}/laghu-resource-fetch
+install -D -m 0755 %{__cmake_builddir}/workers/laghu-js-optimize/cargo/release/laghu-js-optimize \
+  %{buildroot}%{_bindir}/laghu-js-optimize
 install -D -m 0755 %{_nginx_modbuilddir}/ngx_http_laghu_module.so \
   %{buildroot}%{nginx_moddir}/ngx_http_laghu_module.so
 install -D -m 0644 packaging/nginx/mod-http-laghu.conf \
@@ -88,6 +93,8 @@ install -D -m 0644 packaging/systemd/laghu-libvips.service \
   %{buildroot}%{_unitdir}/laghu-libvips.service
 install -D -m 0644 packaging/systemd/laghu-resource-fetch.service \
   %{buildroot}%{_unitdir}/laghu-resource-fetch.service
+install -D -m 0644 packaging/systemd/laghu-js-optimize.service \
+  %{buildroot}%{_unitdir}/laghu-js-optimize.service
 install -D -m 0644 packaging/font-providers.conf \
   %{buildroot}%{_sysconfdir}/laghu/font-providers.conf
 install -D -m 0644 packaging/tmpfiles/laghu.conf \
@@ -101,6 +108,7 @@ getent passwd laghu >/dev/null || \
 %post
 %systemd_post laghu-libvips.service
 %systemd_post laghu-resource-fetch.service
+%systemd_post laghu-js-optimize.service
 for account in nginx apache; do
   if getent passwd "$account" >/dev/null; then
     usermod -a -G laghu "$account"
@@ -111,10 +119,12 @@ systemd-tmpfiles --create laghu.conf >/dev/null 2>&1 || :
 %preun
 %systemd_preun laghu-libvips.service
 %systemd_preun laghu-resource-fetch.service
+%systemd_preun laghu-js-optimize.service
 
 %postun
 %systemd_postun_with_restart laghu-libvips.service
 %systemd_postun_with_restart laghu-resource-fetch.service
+%systemd_postun_with_restart laghu-js-optimize.service
 
 %post -n ngx-laghu
 nginx -t
@@ -126,8 +136,10 @@ httpd -t
 %license LICENSE packaging/NOTICE-libvips.md
 %{_bindir}/laghu-libvips
 %{_bindir}/laghu-resource-fetch
+%{_bindir}/laghu-js-optimize
 %{_unitdir}/laghu-libvips.service
 %{_unitdir}/laghu-resource-fetch.service
+%{_unitdir}/laghu-js-optimize.service
 %config(noreplace) %{_sysconfdir}/laghu/font-providers.conf
 %{_tmpfilesdir}/laghu.conf
 

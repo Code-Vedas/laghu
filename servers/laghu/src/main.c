@@ -21,6 +21,8 @@ static void usage(FILE *stream) {
       "  --origin-ca-file PATH\n"
       "  --font-fetch-queue PATH\n"
       "  --font-provider-config PATH\n"
+      "  --javascript-queue PATH\n"
+      "  --javascript-target QUERY\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
       stream);

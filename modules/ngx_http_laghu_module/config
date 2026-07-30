@@ -20,7 +20,7 @@ case "${NGX_PLATFORM:-}" in
         ;;
 esac
 
-LAGHU_MODULE_SRCS="$ngx_addon_dir/ngx_http_laghu_module.c $LAGHU_HTTP_DIR/src/http.c $LAGHU_CORE_DIR/src/core.c $LAGHU_IMAGE_DIR/src/image.c $LAGHU_IMAGE_DIR/src/markup.c $LAGHU_IMAGE_DIR/src/css.c $LAGHU_RUNTIME_PLATFORM $LAGHU_RUNTIME_DIR/src/catalog.c $LAGHU_RUNTIME_DIR/src/html.c $LAGHU_RUNTIME_DIR/src/html_head.c $LAGHU_RUNTIME_DIR/src/html_hints.c $LAGHU_RUNTIME_DIR/src/css_runtime.c $LAGHU_RUNTIME_DIR/src/css_catalog.c $LAGHU_RUNTIME_DIR/src/css_combine.c $LAGHU_RUNTIME_DIR/src/css_imports.c $LAGHU_RUNTIME_DIR/src/css_markup.c $LAGHU_RUNTIME_DIR/src/critical_css.c $LAGHU_RUNTIME_DIR/src/font_provider.c $LAGHU_RUNTIME_DIR/src/beacon.c"
+LAGHU_MODULE_SRCS="$ngx_addon_dir/ngx_http_laghu_module.c $LAGHU_HTTP_DIR/src/http.c $LAGHU_CORE_DIR/src/core.c $LAGHU_IMAGE_DIR/src/image.c $LAGHU_IMAGE_DIR/src/markup.c $LAGHU_IMAGE_DIR/src/css.c $LAGHU_RUNTIME_PLATFORM $LAGHU_RUNTIME_DIR/src/catalog.c $LAGHU_RUNTIME_DIR/src/html.c $LAGHU_RUNTIME_DIR/src/html_head.c $LAGHU_RUNTIME_DIR/src/html_hints.c $LAGHU_RUNTIME_DIR/src/css_runtime.c $LAGHU_RUNTIME_DIR/src/css_catalog.c $LAGHU_RUNTIME_DIR/src/css_combine.c $LAGHU_RUNTIME_DIR/src/css_imports.c $LAGHU_RUNTIME_DIR/src/css_markup.c $LAGHU_RUNTIME_DIR/src/critical_css.c $LAGHU_RUNTIME_DIR/src/font_provider.c $LAGHU_RUNTIME_DIR/src/javascript.c $LAGHU_RUNTIME_DIR/src/beacon.c"
 
 if test -n "$ngx_module_link"; then
     ngx_module_type=HTTP_AUX_FILTER

@@ -16,6 +16,7 @@ class ModLaghu < Formula
   depends_on "httpd"
   depends_on "laghu-libvips"
   depends_on "laghu-resource-fetch"
+  depends_on "laghu-js-optimize"
 
   def install
     ENV["APXS"] = formula_opt_bin("httpd")/"apxs"

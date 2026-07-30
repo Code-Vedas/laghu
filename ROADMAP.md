@@ -125,14 +125,16 @@ External-font evidence: adapters and the dedicated `laghu-resource-fetch` worker
 
 ### 3.4 JavaScript Filters
 
-- [ ] `rewrite_javascript`: master JavaScript minifier.
-- [ ] `rewrite_javascript_external`: minify external JavaScript.
-- [ ] `rewrite_javascript_inline`: minify inline JavaScript.
+- [x] `rewrite_javascript`: master JavaScript minifier.
+- [x] `rewrite_javascript_external`: minify external JavaScript.
+- [x] `rewrite_javascript_inline`: minify inline JavaScript.
 - [ ] `combine_javascript`: combine compatible JavaScript resources.
 - [ ] `inline_javascript`: inline eligible small external scripts.
 - [ ] `outline_javascript`: externalize eligible large inline scripts.
 - [ ] `defer_javascript`: safely defer non-critical execution.
 - [ ] `include_js_source_maps`: preserve or emit source-map references.
+
+JavaScript rewrite evidence: the native `laghu-js-optimize` Rust worker builds pinned SWC crates from `Cargo.lock` and consumes a dedicated bounded queue without Node, network fetching, or C/Rust FFI. It parses classic scripts and modules separately, resolves bounded Browserslist targets, lowers syntax without module conversion or polyfills, disables property and top-level mangling, retains directives and legal comments, and accepts only valid output that is strictly smaller than the 2 MiB source. The shared C runtime owns eligibility, observed same-origin catalogs, immutable routes, CSP nonce/hash protection, dependency ETags, queue deduplication, cache validation, the 64-script document bound, and page-level fail-open size selection. Rust and C tests cover target rejection, queue serialization, resolved-matrix records, classic/module behavior, local-only mangling, catalog checksums, cold publication, warm selection, and inline preservation. NGINX stable, Apache, and standalone smoke lanes exercise real cold/queue/warm cycles for direct and inline JavaScript. Windows AMD64 validation covers the locked Rust graph, strict Clippy, the integrated MSVC build and CTest suite, standalone cold/warm delivery, and SCM create/start/stop/delete lifecycle.
 
 ### 3.5 HTML Filters
 

@@ -28,7 +28,9 @@ work=${APACHE_SMOKE_DIR:-"${REPO_ROOT}/tmp/apache-smoke"}
 module="${REPO_ROOT}/tmp/apache-module/.libs/mod_laghu.so"
 modules=$(${APXS} -q LIBEXECDIR)
 service=${LAGHU_SERVICE:-"${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips"}
+javascript_service=${LAGHU_JAVASCRIPT_BIN:-"${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize"}
 service_pid=
+javascript_pid=
 origin_pid=
 rm -rf "${work}"
 mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache"
@@ -69,6 +71,12 @@ printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one 
   >"${work}/htdocs/minify-page.html"
 printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
   >"${work}/htdocs/hints-page.html"
+printf '%s\n' 'function publicName(longLocal) { return longLocal + 1; }' \
+  >"${work}/htdocs/app.js"
+printf '%s\n' '<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>' \
+  >"${work}/htdocs/javascript-inline.html"
+printf '%s\n' '<html><body><script src="/app.js"></script><script>function externalPageHelper(veryLongLocalArgument) { return veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument; }</script></body></html>' \
+  >"${work}/htdocs/javascript-external.html"
 
 load_if_present() {
   name=$1
@@ -141,7 +149,14 @@ load_first_mpm() {
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
   printf '<Location "/minify-page.html">\nLaghu RewriteLevel bandwidth\n</Location>\n'
   printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\n</Location>\n'
+  printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
+  printf '<Location "/javascript-external.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
+  if [ -x "${javascript_service}" ]; then
+    printf 'Laghu JavaScriptQueue "%s/javascript.queue"\n' "${work}"
+    printf 'Laghu JavaScriptTarget "last 2 chrome versions"\n'
+  fi
   printf '<Location "/.laghu/">\nLaghu RewriteLevel core\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
   if [ -f "${modules}/mod_http2.so" ]; then
@@ -196,6 +211,11 @@ if [ -x "${service}" ] && command -v vips >/dev/null 2>&1; then
   "${service}" --init-and-serve "${work}/jobs.queue" "${work}/cache" &
   service_pid=$!
 fi
+if [ -x "${javascript_service}" ]; then
+  "${javascript_service}" --init-and-serve "${work}/javascript.queue" \
+    "${work}/cache" &
+  javascript_pid=$!
+fi
 
 "${HTTPD}" -t -f "${work}/httpd.conf"
 cp "${work}/httpd.conf" "${work}/duplicate.conf"
@@ -225,7 +245,7 @@ else
   "${HTTPD}" -f "${work}/httpd.conf" -DFOREGROUND &
 fi
 pid=$!
-trap 'kill "${pid}" ${service_pid:-} ${origin_pid:-} 2>/dev/null || true; wait "${pid}" ${service_pid:-} ${origin_pid:-} 2>/dev/null || true' EXIT
+trap 'kill "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} 2>/dev/null || true; wait "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} 2>/dev/null || true' EXIT
 
 attempt=0
 while [ "${attempt}" -lt 50 ]; do
@@ -245,6 +265,63 @@ done
 }
 cmp "${work}/htdocs/index.html" "${work}/body"
 grep -i '^X-Laghu: bypass-passthrough' "${work}/headers"
+
+if [ -x "${javascript_service}" ]; then
+  curl --fail --silent http://127.0.0.1:18081/app.js >"${work}/javascript-cold"
+  cmp "${work}/htdocs/app.js" "${work}/javascript-cold"
+  attempt=0
+  while [ "${attempt}" -lt 50 ]; do
+    curl --fail --silent --dump-header "${work}/javascript-warm.headers" \
+      http://127.0.0.1:18081/app.js >"${work}/javascript-warm"
+    if grep -i '^ETag: "laghu-js-' "${work}/javascript-warm.headers" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 50 ]
+  attempt=0
+  while [ "${attempt}" -lt 50 ]; do
+    curl --fail --silent http://127.0.0.1:18081/javascript-external.html \
+      >"${work}/javascript-external-warm"
+    if grep -o '/\.laghu/js/[0-9a-f]\{64\}' \
+        "${work}/javascript-external-warm" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 50 ]
+  javascript_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}' \
+    "${work}/javascript-external-warm")
+  [ "${javascript_route}" != "" ]
+  curl --fail --silent --dump-header "${work}/javascript-immutable.headers" \
+    "http://127.0.0.1:18081${javascript_route}" \
+    >"${work}/javascript-immutable"
+  cmp "${work}/javascript-warm" "${work}/javascript-immutable"
+  grep -i '^Cache-Control: public, max-age=31536000, immutable' \
+    "${work}/javascript-immutable.headers" >/dev/null
+  curl --fail --silent http://127.0.0.1:18081/javascript-inline.html \
+    >"${work}/javascript-inline-cold"
+  cmp "${work}/htdocs/javascript-inline.html" \
+    "${work}/javascript-inline-cold"
+  attempt=0
+  while [ "${attempt}" -lt 50 ]; do
+    curl --fail --silent --dump-header \
+      "${work}/javascript-inline-warm.headers" \
+      http://127.0.0.1:18081/javascript-inline.html \
+      >"${work}/javascript-inline-warm"
+    if grep -i '^ETag: "laghu-html-' \
+        "${work}/javascript-inline-warm.headers" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 50 ]
+  grep 'function inlinePublic(n){return n+1;}' \
+    "${work}/javascript-inline-warm" >/dev/null
+fi
 
 curl --fail --silent --dump-header "${work}/css-cold.headers" \
   http://127.0.0.1:18081/site.css >"${work}/css-cold"
@@ -527,6 +604,9 @@ if [ "${service_pid}" != "" ]; then
   cmp "${variant_file}" "${work}/hashed-variant.bin"
   grep -i '^Cache-Control: public, max-age=31536000, immutable' \
     "${work}/hashed-variant.headers"
+fi
+if [ "${javascript_pid}" != "" ]; then
+  kill "${javascript_pid}" 2>/dev/null || true
 fi
 
 trap - EXIT

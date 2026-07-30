@@ -16,9 +16,12 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
+COPY --from=rust:1.95-bookworm /usr/local/cargo /usr/local/cargo
+COPY --from=rust:1.95-bookworm /usr/local/rustup /usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:${PATH} RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 RUN cmake -S . -B build -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
       -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build --target laghu-libvips laghu-resource-fetch --parallel
+    cmake --build build --target laghu-libvips laghu-resource-fetch laghu-js-optimize --parallel
 
 RUN curl --fail --location --retry 3 \
       --output /tmp/nginx.tar.gz \
@@ -83,6 +86,8 @@ COPY --from=build /src/build/workers/laghu-libvips/laghu-libvips \
   /usr/bin/laghu-libvips
 COPY --from=build /src/build/workers/laghu-resource-fetch/laghu-resource-fetch \
   /usr/bin/laghu-resource-fetch
+COPY --from=build /src/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize \
+  /usr/bin/laghu-js-optimize
 COPY LICENSE packaging/NOTICE-libvips.md /usr/share/licenses/laghu/
 COPY packaging/font-providers.conf /etc/laghu/font-providers.conf
 COPY packaging/container/nginx.conf /etc/nginx/nginx.conf

@@ -16,20 +16,26 @@
 #define LAGHU_NGINX_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
 #define LAGHU_NGINX_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
 #define LAGHU_NGINX_DEFAULT_FONT_QUEUE "C:/ProgramData/Laghu/fonts.queue"
+#define LAGHU_NGINX_DEFAULT_JAVASCRIPT_QUEUE \
+  "C:/ProgramData/Laghu/javascript.queue"
 #else
 #define LAGHU_NGINX_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_NGINX_DEFAULT_CACHE "/var/cache/laghu/images"
 #define LAGHU_NGINX_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
+#define LAGHU_NGINX_DEFAULT_JAVASCRIPT_QUEUE "/run/laghu/javascript.queue"
 #endif
 
 typedef struct {
   laghu_config core;
   laghu_runtime_queue runtime_queue;
   laghu_runtime_queue font_fetch_runtime_queue;
+  laghu_runtime_queue javascript_runtime_queue;
   laghu_font_provider_set font_providers;
   ngx_str_t worker_queue;
   ngx_str_t font_fetch_queue;
   ngx_str_t font_provider_config;
+  ngx_str_t javascript_queue;
+  ngx_str_t javascript_target;
   ngx_str_t image_cache;
   bool font_providers_loaded;
 } ngx_http_laghu_loc_conf_t;
@@ -94,6 +100,17 @@ static bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   if (queue->mapping == NULL &&
       !laghu_runtime_queue_open(queue,
                                 (const char *)conf->font_fetch_queue.data))
+    return false;
+  return laghu_runtime_queue_refresh(queue);
+}
+
+static bool ngx_http_laghu_javascript_queue_refresh(
+    ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue *queue = &conf->javascript_runtime_queue;
+  if (conf->javascript_queue.len == 0U) return false;
+  if (queue->mapping == NULL &&
+      !laghu_runtime_queue_open(queue,
+                                (const char *)conf->javascript_queue.data))
     return false;
   return laghu_runtime_queue_refresh(queue);
 }
@@ -1173,6 +1190,14 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
                                               : NULL;
   context->environment.font_providers =
       conf->font_providers_loaded ? &conf->font_providers : NULL;
+  context->environment.javascript_queue_path =
+      (const char *)conf->javascript_queue.data;
+  context->environment.javascript_queue =
+      ngx_http_laghu_javascript_queue_refresh(conf)
+          ? &conf->javascript_runtime_queue
+          : NULL;
+  context->environment.javascript_target =
+      (const char *)conf->javascript_target.data;
   context->environment.now = (uint64_t)ngx_time();
   return true;
 }
@@ -1949,7 +1974,9 @@ static ngx_int_t ngx_http_laghu_transaction_header_filter(
   context->capture_enabled = true;
   context->html_capture = result.action == LAGHU_HTTP_ACTION_CAPTURE_HTML;
   context->css_capture = result.action == LAGHU_HTTP_ACTION_CAPTURE_CSS;
-  context->header_deferred = context->html_capture || context->css_capture;
+  context->header_deferred =
+      context->html_capture || context->css_capture ||
+      result.action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT;
   request->filter_need_in_memory = 1U;
   ngx_http_set_ctx(request, context, ngx_http_laghu_module);
   laghu_http_transaction_result_release(&result);
@@ -2091,6 +2118,7 @@ static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {
 static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
+  static const char javascript_prefix[] = "/.laghu/js/";
   static const char beacon_script_path[] = "/.laghu/beacon/images.js";
   static const char beacon_post_path[] = "/.laghu/beacon/images";
   static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
@@ -2114,6 +2142,7 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   unsigned char *body;
   char key[LAGHU_RUNTIME_KEY_SIZE];
   bool css_asset = false;
+  bool javascript_asset = false;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
   if (request->uri.len == sizeof(beacon_script_path) - 1U &&
@@ -2229,7 +2258,11 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   css_asset =
       request->uri.len == sizeof(css_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH &&
       ngx_strncmp(request->uri.data, css_prefix, sizeof(css_prefix) - 1U) == 0;
-  if (!css_asset &&
+  javascript_asset = request->uri.len == sizeof(javascript_prefix) - 1U +
+                                             LAGHU_SHA256_HEX_LENGTH &&
+                     ngx_strncmp(request->uri.data, javascript_prefix,
+                                 sizeof(javascript_prefix) - 1U) == 0;
+  if (!css_asset && !javascript_asset &&
       (request->uri.len != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
        ngx_strncmp(request->uri.data, prefix, sizeof(prefix) - 1U) != 0)) {
     return NGX_DECLINED;
@@ -2240,10 +2273,12 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   if (conf->core.mode != LAGHU_MODE_ON) {
     return NGX_HTTP_NOT_FOUND;
   }
-  ngx_memcpy(key,
-             request->uri.data +
-                 (css_asset ? sizeof(css_prefix) - 1U : sizeof(prefix) - 1U),
-             LAGHU_SHA256_HEX_LENGTH);
+  ngx_memcpy(
+      key,
+      request->uri.data + (css_asset          ? sizeof(css_prefix) - 1U
+                           : javascript_asset ? sizeof(javascript_prefix) - 1U
+                                              : sizeof(prefix) - 1U),
+      LAGHU_SHA256_HEX_LENGTH);
   key[LAGHU_SHA256_HEX_LENGTH] = '\0';
   {
     size_t offset;
@@ -2400,6 +2435,7 @@ static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   laghu_config_init(&conf->core);
   laghu_runtime_queue_init(&conf->runtime_queue);
   laghu_runtime_queue_init(&conf->font_fetch_runtime_queue);
+  laghu_runtime_queue_init(&conf->javascript_runtime_queue);
   cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
   if (cleanup == NULL) {
     return NULL;
@@ -2412,6 +2448,10 @@ static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   }
   cleanup->handler = ngx_http_laghu_queue_cleanup;
   cleanup->data = &conf->font_fetch_runtime_queue;
+  cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
+  if (cleanup == NULL) return NULL;
+  cleanup->handler = ngx_http_laghu_queue_cleanup;
+  cleanup->data = &conf->javascript_runtime_queue;
   return conf;
 }
 
@@ -2432,6 +2472,12 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
                            LAGHU_NGINX_DEFAULT_FONT_QUEUE);
   ngx_conf_merge_str_value(child_conf->font_provider_config,
                            parent_conf->font_provider_config, "");
+  ngx_conf_merge_str_value(child_conf->javascript_queue,
+                           parent_conf->javascript_queue,
+                           LAGHU_NGINX_DEFAULT_JAVASCRIPT_QUEUE);
+  ngx_conf_merge_str_value(child_conf->javascript_target,
+                           parent_conf->javascript_target,
+                           "defaults and supports es6-module and not dead");
   if (!child_conf->font_providers_loaded &&
       parent_conf->font_providers_loaded) {
     child_conf->font_providers = parent_conf->font_providers;
@@ -2669,6 +2715,22 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     }
     location->font_provider_config = values[2];
     location->font_providers_loaded = true;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "javascript_queue") == 0) {
+    if (location->javascript_queue.len != 0U) return "is duplicate";
+    location->javascript_queue = values[2];
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "javascript_target") == 0) {
+    char normalized[LAGHU_JAVASCRIPT_TARGET_SIZE];
+    if (location->javascript_target.len != 0U ||
+        !laghu_javascript_target_normalize((const char *)values[2].data,
+                                           normalized))
+      return "laghu javascript_target expects a bounded Browserslist query";
+    location->javascript_target = values[2];
     return NGX_CONF_OK;
   }
 

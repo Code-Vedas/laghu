@@ -18,6 +18,7 @@ class NgxLaghu < Formula
 
   depends_on "laghu-libvips"
   depends_on "laghu-resource-fetch"
+  depends_on "laghu-js-optimize"
   depends_on "nginx"
 
   resource "nginx" do
@@ -46,6 +47,7 @@ class NgxLaghu < Formula
       laghu worker_queue #{var}/run/laghu/jobs.queue;
       laghu font_fetch_queue #{var}/run/laghu/fonts.queue;
       laghu font_provider_config #{etc}/laghu/font-providers.conf;
+      laghu javascript_queue #{var}/run/laghu/javascript.queue;
       laghu image_cache #{var}/cache/laghu/images;
     EOS
   end

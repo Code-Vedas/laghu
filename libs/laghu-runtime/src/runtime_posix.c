@@ -46,6 +46,7 @@ typedef struct {
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   char provider_id[LAGHU_FONT_PROVIDER_ID_SIZE];
   char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
+  char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   uint64_t filters;
   uint32_t quality;
   uint32_t metadata_limit;
@@ -75,6 +76,13 @@ typedef struct {
   char content_type[LAGHU_RUNTIME_TYPE_SIZE];
   char backend_id[LAGHU_RUNTIME_BACKEND_SIZE];
 } laghu_cache_metadata;
+
+_Static_assert(sizeof(laghu_queue_header) == 176U,
+               "queue header wire layout changed");
+_Static_assert(sizeof(laghu_queue_slot) == 4544U,
+               "queue slot wire layout changed");
+_Static_assert(sizeof(laghu_cache_metadata) == 608U,
+               "cache metadata wire layout changed");
 
 #define LAGHU_CACHE_MAGIC UINT64_C(0x4c41474855434143)
 #define LAGHU_CACHE_VERSION 2U
@@ -118,6 +126,16 @@ static bool laghu_font_job_valid(const laghu_runtime_job *job) {
          job->provider_id[0] != '\0' &&
          memchr(job->provider_id, '\0', sizeof(job->provider_id)) != NULL &&
          laghu_hash_valid(job->provider_digest);
+}
+
+static bool laghu_javascript_job_valid(const laghu_runtime_job *job) {
+  if (job->kind != LAGHU_RUNTIME_JOB_JAVASCRIPT)
+    return job->javascript_target[0] == '\0';
+  return job->payload.length > 0U &&
+         job->payload.length <= LAGHU_JAVASCRIPT_MAX_BYTES &&
+         job->javascript_target[0] != '\0' &&
+         memchr(job->javascript_target, '\0', sizeof(job->javascript_target)) !=
+             NULL;
 }
 
 static size_t laghu_queue_slot_size(size_t payload_size) {
@@ -412,6 +430,7 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
       job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
       !laghu_hash_valid(job->index_key) || !laghu_hash_valid(job->policy_key) ||
       !laghu_sprite_job_valid(job) || !laghu_font_job_valid(job) ||
+      !laghu_javascript_job_valid(job) ||
       job->payload.length > queue->slot_payload_size ||
       (job->payload.data == NULL && job->payload.length != 0U) ||
       !laghu_lock(queue->platform_file, F_WRLCK)) {
@@ -433,7 +452,10 @@ bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
       laghu_string_copy(slot->provider_id, sizeof(slot->provider_id),
                         job->provider_id) &&
       laghu_string_copy(slot->provider_digest, sizeof(slot->provider_digest),
-                        job->provider_digest)) {
+                        job->provider_digest) &&
+      laghu_string_copy(slot->javascript_target,
+                        sizeof(slot->javascript_target),
+                        job->javascript_target)) {
     slot->payload_length = job->payload.length;
     slot->kind = (uint32_t)job->kind;
     slot->filters = job->filters;
@@ -492,6 +514,8 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
       memchr(slot->policy_key, '\0', sizeof(slot->policy_key)) != NULL &&
       memchr(slot->provider_id, '\0', sizeof(slot->provider_id)) != NULL &&
       memchr(slot->provider_digest, '\0', sizeof(slot->provider_digest)) !=
+          NULL &&
+      memchr(slot->javascript_target, '\0', sizeof(slot->javascript_target)) !=
           NULL) {
     memset(job, 0, sizeof(*job));
     job->kind = (laghu_runtime_job_kind)slot->kind;
@@ -503,6 +527,8 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
     memcpy(job->provider_id, slot->provider_id, sizeof(job->provider_id));
     memcpy(job->provider_digest, slot->provider_digest,
            sizeof(job->provider_digest));
+    memcpy(job->javascript_target, slot->javascript_target,
+           sizeof(job->javascript_target));
     job->filters = slot->filters;
     job->quality = slot->quality;
     job->metadata_limit = slot->metadata_limit;

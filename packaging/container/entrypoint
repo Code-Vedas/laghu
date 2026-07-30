@@ -27,6 +27,8 @@ laghu-libvips --serve "${QUEUE_PATH}" "${CACHE_PATH}" &
 OPTIMIZER_PID=$!
 laghu-resource-fetch --init "${FONT_QUEUE_PATH}" "${FONT_CACHE_PATH}" "${FONT_PROVIDER_CONFIG}"
 laghu-resource-fetch --serve "${FONT_QUEUE_PATH}" "${FONT_CACHE_PATH}" "${FONT_PROVIDER_CONFIG}" &
+laghu-js-optimize --init /run/laghu/javascript.queue "${CACHE_PATH}"
+laghu-js-optimize --serve /run/laghu/javascript.queue "${CACHE_PATH}" &
 FONT_FETCH_PID=$!
 nginx -g 'daemon off;' &
 NGINX_PID=$!
