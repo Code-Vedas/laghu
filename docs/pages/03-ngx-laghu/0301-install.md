@@ -12,8 +12,17 @@ Load it only into the NGINX build used to compile or package it.
 
 ## Distribution Packages
 
-The repository contains Debian and RPM packaging for `ngx-laghu`, the three worker executables, service units, provider files, runtime directories, and disabled-by-default server configuration.
-These definitions are build inputs; consult a release before assuming a package has been published for a distribution.
+After configuring the Codevedas package repository for the distribution, install the adapter and shared runtime:
+
+```bash
+# Debian or Ubuntu
+sudo apt install ngx-laghu laghu-libvips
+
+# Fedora, RHEL, Rocky, or AlmaLinux
+sudo dnf install ngx-laghu laghu-libvips
+```
+
+Packages install the matched module, three worker executables, services, provider files, runtime directories, and disabled-by-default NGINX configuration.
 
 After installation, validate before reload:
 
@@ -24,23 +33,28 @@ systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize
 
 ## Homebrew
 
-The Homebrew formula builds a module against the exact pinned Homebrew NGINX version and refuses a mismatch.
-It installs a disabled configuration under the Homebrew prefix and validates `nginx -t`.
+```bash
+brew install Code-Vedas/tap/ngx-laghu
+```
+
+The formula builds against the supported Homebrew NGINX, installs a disabled configuration, starts worker services, and validates `nginx -t`.
 
 ## Container
 
-`packaging/container/Dockerfile` builds an NGINX image containing the module, workers, provider configuration, entrypoint, and persistent cache/RUM directories.
-Build it from the repository root:
+The production image contains matched NGINX, the adapter, workers, providers, entrypoint, health probes, and persistent cache/RUM mount points.
 
 ```bash
-docker build -f packaging/container/Dockerfile -t ngx-laghu .
-docker run --rm ngx-laghu nginx -t
+docker pull ghcr.io/code-vedas/ngx-laghu:latest
+docker run --rm ghcr.io/code-vedas/ngx-laghu:latest nginx -t
 ```
 
 ## Windows
 
-The Windows installer contains a matched NGINX build because an arbitrary prebuilt `nginx.exe` cannot safely load the adapter.
-Installer construction validates the server machine type, build manifest, revision, and module hashes.
+```powershell
+winget install CodeVedas.NgxLaghu
+```
+
+The installer includes matched NGINX and native workers, configures their services and ACLs, and validates the signed build manifest.
 
 ## Source Build
 

@@ -7,6 +7,9 @@ permalink: /developer-guide/optimizations/
 
 # Optimization Pipelines
 
+This page orients contributors to the implementation path for optimization work.
+It is not an application-integration guide.
+
 ## Common Lifecycle
 
 1. An adapter normalizes an eligible response into the bounded HTTP contract.
@@ -15,6 +18,9 @@ permalink: /developer-guide/optimizations/
 4. A worker parses and derives a candidate outside the request-serving process.
 5. Only valid, non-identical, strictly smaller output is atomically published, except for explicitly bounded instrumentation or critical-CSS HTML growth.
 6. A later request may serve the ready variant with dependency-derived validators.
+
+The implementation spans `laghu-core` policy, `laghu-http` transaction orchestration, `laghu-runtime` catalogs/planners, surface adapters, worker protocols, and cross-surface smoke fixtures.
+A change is incomplete until those owners agree on versioning, bounds, fail-open behavior, and validation.
 
 ## Images
 

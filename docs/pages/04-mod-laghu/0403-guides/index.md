@@ -6,7 +6,10 @@ has_children: true
 permalink: /mod-laghu/guides/
 ---
 
-# mod-laghu Guides
+# mod-laghu Integration Guides
 
-Start with the [production recommendations](/mod-laghu/guides/production/).
-Shared pipeline behavior is documented in the [developer optimization guide](/developer-guide/optimizations/).
+These guides are for application and platform developers integrating Laghu into Apache HTTP Server.
+
+- [Production configuration](/mod-laghu/guides/production/)
+- [Virtual hosts and rollout](/mod-laghu/guides/deployment/)
+- [RUM, Redis, and observability](/mod-laghu/guides/rum-and-observability/)

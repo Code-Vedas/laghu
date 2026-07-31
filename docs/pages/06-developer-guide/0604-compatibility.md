@@ -23,4 +23,4 @@ Apache modules remain bound to their server/APR environment.
 Cross-architecture Buildx/QEMU runs provide developer feedback but do not replace native release evidence.
 
 Before publishing a release, verify the current matrices in CI and packaging rather than copying an older version list into documentation.
-Unvalidated roadmap targets must remain explicitly pending.
+Every advertised package, architecture, server, container, and lifecycle must retain current automated evidence.

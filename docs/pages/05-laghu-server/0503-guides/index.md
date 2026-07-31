@@ -6,7 +6,10 @@ has_children: true
 permalink: /laghu-server/guides/
 ---
 
-# Laghu Server Guides
+# Laghu Server Integration Guides
 
-Start with the [production recommendations](/laghu-server/guides/production/).
-See [Optimization Pipelines](/developer-guide/optimizations/) for shared transformation behavior.
+These guides are for application and platform developers deploying the standalone optimization proxy.
+
+- [Production configuration](/laghu-server/guides/production/)
+- [Ingress, origin, and rollout](/laghu-server/guides/deployment/)
+- [RUM, Redis, and observability](/laghu-server/guides/rum-and-observability/)

@@ -8,6 +8,30 @@ permalink: /ngx-laghu/troubleshooting/runtime/
 
 # ngx-laghu Startup and Runtime
 
+## Module Does Not Load
+
+Run `nginx -V` and confirm the module was built for the same NGINX version, architecture, compatibility signature, compiler ABI, and enabled module set.
+Confirm `load_module` appears at main scope before `events` and `http`.
+An `Exec format error`, undefined symbol, or module incompatibility message requires the matched package; configuration changes cannot repair an ABI mismatch.
+
+## Configuration Reload Fails
+
+Run `nginx -t` as the same user and environment used by the service manager.
+Check directive scope, duplicate settings, mutually exclusive policy selectors, numeric bounds, readable provider files, and environment-expanded Redis values.
+The running workers retain the previous valid configuration when a reload is rejected.
+
+## Requests Pass Through
+
+Use `laghu explain <url>` and inspect `X-Laghu` plus the response cache/CSP headers.
+Authorization, `private`, `no-store`, unsupported status/content type, excluded API paths, malformed bodies, size limits, unready dependencies, and never-larger rejection are expected passthrough reasons.
+Do not enable `allow_api` globally merely to hide an exclusion.
+
+## NGINX Becomes Unhealthy
+
+Laghu worker loss should not block the NGINX event loop.
+If latency rises, check body-capture limits, disk latency, cache contention, configuration loops, and unrelated upstream behavior, then compare a canary location with `laghu off;`.
+Capture `nginx -T`, `laghu status`, metrics, and a representative `laghu explain` result before escalation.
+
 | Symptom | Check | Expected recovery |
 | --- | --- | --- |
 | `unknown directive "laghu"` | Confirm `load_module` points to the matched module and inspect `nginx -V`. | Install/rebuild for that NGINX ABI, then run `nginx -t`. |

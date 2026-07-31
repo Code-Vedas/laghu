@@ -7,9 +7,41 @@ permalink: /laghu-server/install/
 
 # Install the Laghu Server
 
-The standalone executable is implemented and validated from the source tree.
-The current Debian, RPM, and Homebrew definitions package the native adapters and workers but do not yet publish a standalone `laghu` package.
-The production NGINX and Apache Dockerfiles likewise do not represent a published standalone image.
+## Distribution Packages
+
+```bash
+# Debian or Ubuntu
+sudo apt install laghu
+
+# Fedora, RHEL, Rocky, or AlmaLinux
+sudo dnf install laghu
+```
+
+The package installs the server, native workers, provider configuration, service units, administrator CLI, health probes, runtime directories, and disabled example service configuration.
+
+## Homebrew
+
+```bash
+brew install Code-Vedas/tap/laghu
+brew services start laghu
+```
+
+## Containers
+
+```bash
+docker pull ghcr.io/code-vedas/laghu:latest
+docker run --rm ghcr.io/code-vedas/laghu:latest --version
+```
+
+Mount persistent cache and RUM directories and provide origin/TLS/Redis secrets through the orchestrator rather than baking them into the image.
+
+## Windows
+
+```powershell
+winget install CodeVedas.Laghu
+```
+
+The installer registers the server and workers with the Windows Service Control Manager and creates restricted `%ProgramData%\Laghu` runtime directories.
 
 ## Source Build
 
@@ -31,4 +63,3 @@ tmp/build/servers/laghu/laghu --listen 127.0.0.1:8080 --origin http://127.0.0.1:
 ```
 
 Use administrator-owned persistent paths instead of `/tmp` in production.
-Windows builds also support service mode; public installer publication remains a roadmap item rather than current package availability.

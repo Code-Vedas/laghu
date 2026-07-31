@@ -8,6 +8,26 @@ permalink: /mod-laghu/troubleshooting/runtime/
 
 # mod-laghu Startup and Runtime
 
+## Module Loading
+
+Confirm `LoadModule laghu_module` references the packaged module for the running Apache, APR, architecture, and MPM environment.
+An undefined symbol or module-magic-number error requires a matched package or rebuild.
+
+## Configuration and Inheritance
+
+Use `apache2ctl -S` to inspect virtual-host selection and the configuration test to catch invalid scope, ranges, duplicate policy selectors, provider files, or process-wide RUM settings placed in a virtual host.
+Directory and location policy can override inherited optimization settings, while backend settings remain main-server-only.
+
+## Output Filter Is Not Applied
+
+Confirm the request reaches the intended virtual host, `Laghu On` is effective, and another module has not already consumed or replaced the response unexpectedly.
+Authorization, private caching, API exclusions, unsupported responses, malformed input, and never-larger rejection remain deliberate passthrough.
+
+## Latency or Child Instability
+
+Compare one narrow scope with `Laghu Off`, inspect MPM saturation, bucket sizes, cache storage latency, and upstream timing.
+Codec, SWC, provider, and Redis work must remain outside Apache children; a dependency failure should appear as degraded optimization rather than blocked request threads.
+
 | Symptom | Check | Expected recovery |
 | --- | --- | --- |
 | `Invalid command 'Laghu'` | Confirm `LoadModule` path and server ABI. | Install/rebuild the matched module and rerun the configuration test. |

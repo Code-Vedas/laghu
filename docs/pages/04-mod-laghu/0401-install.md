@@ -11,8 +11,17 @@ Build or install `mod_laghu` for the target Apache 2.4 module ABI and APR enviro
 
 ## Distribution Packages
 
-The Debian package uses Apache module helpers to install and enable `mod-laghu`; the RPM installs `mod_laghu.so`, its load file, disabled configuration, workers, services, and runtime directories.
-The packaging definitions are release inputs and do not imply that every distribution artifact has been published.
+After configuring the Codevedas package repository, install:
+
+```bash
+# Debian or Ubuntu
+sudo apt install mod-laghu laghu-libvips
+
+# Fedora, RHEL, Rocky, or AlmaLinux
+sudo dnf install mod-laghu laghu-libvips
+```
+
+Packages install and load the matched module, leave optimization disabled, and install workers, provider files, services, and runtime directories.
 
 Validate after installation:
 
@@ -25,18 +34,26 @@ On RPM-family systems use the server-provided `httpd -t` command instead of `apa
 
 ## Homebrew
 
-The Homebrew formula builds with the installed `apxs`, writes a disabled include file, and validates the resulting HTTP Server configuration.
+```bash
+brew install Code-Vedas/tap/mod-laghu
+```
+
+The formula builds with the supported Homebrew `apxs`, installs a disabled include, starts workers, and validates HTTP Server configuration.
 
 ## Container
 
 ```bash
-docker build -f packaging/container/Dockerfile.apache -t mod-laghu .
-docker run --rm mod-laghu apache2ctl configtest
+docker pull ghcr.io/code-vedas/mod-laghu:latest
+docker run --rm ghcr.io/code-vedas/mod-laghu:latest apache2ctl configtest
 ```
 
 ## Windows
 
-The Windows installer contains a matched Apache build and validates its manifest, architecture, and module before installation.
+```powershell
+winget install CodeVedas.ModLaghu
+```
+
+The installer contains matched Apache and workers, configures services and ACLs, and validates the signed build manifest.
 
 ## Source Build
 

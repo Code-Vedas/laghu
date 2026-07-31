@@ -8,6 +8,26 @@ permalink: /laghu-server/troubleshooting/runtime/
 
 # Laghu Server Startup and Runtime
 
+## Startup Refuses Configuration
+
+Run `laghu doctor` with the same environment and identity as the service.
+Check required listener/origin/cache/queue settings, duplicate options, cross-option requirements, provider files, CA paths, trusted-proxy CIDRs, Redis URI expansion, and filesystem access.
+
+## Listener Is Unreachable
+
+Confirm the bound address/port, downstream TLS certificate and key, firewall, load-balancer target, HTTP protocol negotiation, and readiness result.
+Distinguish a process that never bound from a healthy process removed by ingress health checks.
+
+## Origin Returns 502 or 504
+
+Inspect DNS, routing, connection-pool saturation, connect/I/O deadlines, TLS chain and hostname, SNI, origin protocol, response framing, and upstream health.
+An unavailable origin cannot fail open because the proxy has no origin response to preserve.
+
+## Graceful Shutdown Stalls
+
+Use status metrics to identify active downstream/origin streams and compare elapsed drain time with configuration.
+After the bounded deadline, the supervisor may terminate the old process; size rollout surge so replacement capacity is already ready.
+
 | Symptom | Check | Expected recovery |
 | --- | --- | --- |
 | Startup exits with usage | Confirm all four required options, unique options, ranges, and cross-option requirements. | Correct arguments; invalid configuration never opens the listener. |

@@ -8,4 +8,9 @@ permalink: /laghu-server/troubleshooting/
 
 # Troubleshoot the Laghu Server
 
-Start the executable with `--help`, then follow [startup and runtime diagnosis](/laghu-server/troubleshooting/runtime/).
+Preserve the failing transaction identifier, structured log interval, health output, and `laghu explain` result, then select a runbook.
+
+- [Startup, listeners, and origins](/laghu-server/troubleshooting/runtime/)
+- [Workers, queues, and cache](/laghu-server/troubleshooting/workers-and-cache/)
+- [RUM, Redis, and instrumentation](/laghu-server/troubleshooting/rum-and-redis/)
+- [HTTP, transformations, and CSP](/laghu-server/troubleshooting/transformations/)

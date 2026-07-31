@@ -6,7 +6,11 @@ has_children: true
 permalink: /ngx-laghu/guides/
 ---
 
-# ngx-laghu Guides
+# ngx-laghu Integration Guides
 
-Start with the [production recommendations](/ngx-laghu/guides/production/).
-Implementation details for image, CSS, JavaScript, instrumentation, cache, and RUM pipelines live in the [optimization guide](/developer-guide/optimizations/).
+These guides are for application, platform, and infrastructure developers integrating Laghu with NGINX.
+They cover deployable configuration and operational behavior rather than monorepo implementation.
+
+- [Production configuration](/ngx-laghu/guides/production/)
+- [Deployment topology and rollout](/ngx-laghu/guides/deployment/)
+- [RUM, Redis, and observability](/ngx-laghu/guides/rum-and-observability/)
