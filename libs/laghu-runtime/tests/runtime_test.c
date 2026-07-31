@@ -472,6 +472,10 @@ static void test_rum_redis(void) {
   laghu_rum_image_record first = {0}, second = {0}, aggregate = {0};
   laghu_rum_instrumentation_record rum_first = {0}, rum_second = {0},
                                    rum_aggregate = {0};
+  laghu_critical_css_record css_first = {0}, css_second = {0},
+                            css_aggregate = {0};
+  static const unsigned char decision[] = "ready-v1";
+  unsigned char decision_result[sizeof(decision)] = {0};
   laghu_rum_value value;
   if (uri == NULL || *uri == '\0') return;
   laghu_rum_options_init(&options);
@@ -503,11 +507,35 @@ static void test_rum_redis(void) {
   strcpy(rum_second.policy_key, key);
   rum_first.updated_at = 100U;
   rum_second.updated_at = 101U;
-  rum_first.observations[1] = rum_second.observations[1] = 1U;
+  rum_first.observations[1] = UINT64_MAX - 1U;
+  rum_second.observations[1] = 5U;
   assert(laghu_rum_engine_publish(one, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
                                   100U, &rum_first, sizeof(rum_first), NULL));
   assert(laghu_rum_engine_publish(two, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
                                   101U, &rum_second, sizeof(rum_second), NULL));
+  css_first.version = css_second.version = LAGHU_CRITICAL_CSS_VERSION;
+  strcpy(css_first.template_key, key);
+  strcpy(css_second.template_key, key);
+  strcpy(css_first.stylesheet_url, "/assets/main.css");
+  strcpy(css_second.stylesheet_url, "/assets/main.css");
+  strcpy(css_first.stylesheet_key, key);
+  strcpy(css_second.stylesheet_key, key);
+  strcpy(css_first.policy_key, key);
+  strcpy(css_second.policy_key, key);
+  css_first.updated_at = 100U;
+  css_second.updated_at = 101U;
+  css_first.generation = UINT32_MAX - 1U;
+  css_second.generation = 3U;
+  css_first.observation_count[0] = UINT16_MAX - 1U;
+  css_second.observation_count[0] = 2U;
+  css_first.critical_rules[0][0] = 0x01U;
+  css_second.critical_rules[0][0] = 0x80U;
+  assert(laghu_rum_engine_publish(one, LAGHU_RUM_RECORD_CRITICAL_CSS, key, 100U,
+                                  &css_first, sizeof(css_first), NULL));
+  assert(laghu_rum_engine_publish(two, LAGHU_RUM_RECORD_CRITICAL_CSS, key, 101U,
+                                  &css_second, sizeof(css_second), NULL));
+  assert(laghu_rum_engine_publish(one, LAGHU_RUM_RECORD_DECISION, key, 100U,
+                                  decision, sizeof(decision), NULL));
   laghu_rum_engine_destroy(one);
   laghu_rum_engine_destroy(two);
   reader = laghu_rum_engine_create(&options, NULL, 0U);
@@ -519,7 +547,16 @@ static void test_rum_redis(void) {
   assert(laghu_rum_engine_read(reader, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
                                102U, &rum_aggregate, sizeof(rum_aggregate),
                                &value));
-  assert(rum_aggregate.observations[1] == 2U);
+  assert(rum_aggregate.observations[1] == UINT64_MAX);
+  assert(laghu_rum_engine_read(reader, LAGHU_RUM_RECORD_CRITICAL_CSS, key, 102U,
+                               &css_aggregate, sizeof(css_aggregate), &value));
+  assert(css_aggregate.generation == UINT32_MAX &&
+         css_aggregate.observation_count[0] == UINT16_MAX &&
+         css_aggregate.critical_rules[0][0] == 0x81U);
+  assert(laghu_rum_engine_read(reader, LAGHU_RUM_RECORD_DECISION, key, 102U,
+                               decision_result, sizeof(decision_result),
+                               &value));
+  assert(memcmp(decision_result, decision, sizeof(decision)) == 0);
   laghu_rum_engine_destroy(reader);
 }
 

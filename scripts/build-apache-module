@@ -39,6 +39,8 @@ cp "${REPO_ROOT}/libs/laghu-runtime/src/css_markup.c" "${build_dir}/laghu_css_ma
 cp "${REPO_ROOT}/libs/laghu-runtime/src/critical_css.c" "${build_dir}/laghu_critical_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/instrumentation.c" "${build_dir}/laghu_instrumentation.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/rum.c" "${build_dir}/laghu_rum.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/rum_redis_merge.h" \
+  "${build_dir}/rum_redis_merge.h"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/font_provider.c" "${build_dir}/laghu_font_provider.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/javascript.c" "${build_dir}/laghu_javascript.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/beacon.c" "${build_dir}/laghu_beacon.c"

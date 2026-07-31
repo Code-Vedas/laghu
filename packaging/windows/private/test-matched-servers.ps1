@@ -136,13 +136,13 @@ pid logs/nginx.pid;
 events { worker_connections 128; }
 http {
   include mime.types;
+  laghu rum_store local:;
+  laghu rum_store_local_snapshot $nginxCache/rum.snapshot;
   server {
     listen 127.0.0.1:$nginxPort;
     root $nginxWeb;
     laghu on;
     laghu preset balanced;
-    laghu rum_store local:;
-    laghu rum_store_local_snapshot $nginxCache/rum.snapshot;
     laghu worker_queue $nginxQueue;
     laghu image_cache $nginxCache;
   }
@@ -173,6 +173,10 @@ http {
       "Listen 127.0.0.1:$apachePort"
     } elseif ($_ -match '(?i)^Laghu\s+Off\s*$') {
       "Laghu On"
+    } elseif ($_ -match '(?i)^Laghu\s+RumStore\s+') {
+      "Laghu RumStore local:"
+    } elseif ($_ -match '(?i)^Laghu\s+RumStoreLocalSnapshot\s+') {
+      "Laghu RumStoreLocalSnapshot `"$apacheCache/rum.snapshot`""
     } else {
       $_
     }
@@ -186,8 +190,6 @@ DocumentRoot "$apacheWeb"
   Require all granted
 </Directory>
 Laghu Preset balanced
-Laghu RumStore local:
-Laghu RumStoreLocalSnapshot "$apacheCache/rum.snapshot"
 Laghu WorkerQueue "$apacheQueue"
 Laghu ImageCache "$apacheCache"
 "@

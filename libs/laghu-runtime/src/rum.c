@@ -35,7 +35,15 @@ static void laghu_rum_mutex_destroy(laghu_rum_mutex *mutex) {
   DeleteCriticalSection(mutex);
 }
 static void laghu_rum_pause(void) { Sleep(100U); }
-static uint64_t laghu_rum_monotonic_ms(void) { return GetTickCount64(); }
+static uint64_t laghu_rum_monotonic_ms(void) {
+  LARGE_INTEGER counter, frequency;
+  if (!QueryPerformanceCounter(&counter) ||
+      !QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
+    return 0U;
+  return (uint64_t)(counter.QuadPart / frequency.QuadPart) * 1000U +
+         (uint64_t)(counter.QuadPart % frequency.QuadPart) * 1000U /
+             (uint64_t)frequency.QuadPart;
+}
 #define laghu_rum_replace(from, to)                                      \
   (MoveFileExA((from), (to),                                             \
                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
@@ -107,6 +115,7 @@ static void laghu_rum_backend_lock_release(laghu_rum_backend_lock lock) {
 #endif
 
 #include "laghu/runtime.h"
+#include "rum_redis_merge.h"
 
 #define LAGHU_REDIS_REPLY_STRING 1
 #define LAGHU_REDIS_REPLY_ARRAY 2
@@ -182,6 +191,8 @@ struct laghu_rum_engine {
   int (*redis_set_timeout)(laghu_redis_context *, struct timeval);
   void (*redis_free)(laghu_redis_context *);
   void *(*redis_command)(laghu_redis_context *, const char *, ...);
+  void *(*redis_command_argv)(laghu_redis_context *, int, const char **,
+                              const size_t *);
   void (*redis_reply_free)(void *);
   int (*redis_init_openssl)(void);
   laghu_redis_ssl_context *(*redis_ssl_create)(const char *, const char *,
@@ -192,6 +203,7 @@ struct laghu_rum_engine {
   void *retry_entries;
   size_t retry_count;
   char retry_batch[LAGHU_RUNTIME_KEY_SIZE];
+  char redis_script_sha[41U];
   char instance_id[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t batch_sequence;
   uint64_t clock_now;
@@ -738,6 +750,8 @@ static bool laghu_rum_redis_load(laghu_rum_engine *engine,
   LOAD(engine->redis_set_timeout, engine->redis_library, "redisSetTimeout");
   LOAD(engine->redis_free, engine->redis_library, "redisFree");
   LOAD(engine->redis_command, engine->redis_library, "redisCommand");
+  LOAD(engine->redis_command_argv, engine->redis_library,
+       "redisCommandArgv");
   LOAD(engine->redis_reply_free, engine->redis_library, "freeReplyObject");
   if (engine->redis_tls) {
     if (configured != NULL && configured[0] != '\0') {
@@ -1265,21 +1279,6 @@ static bool laghu_rum_redis_status(laghu_rum_engine *engine,
   return valid;
 }
 
-static bool laghu_rum_redis_exec(laghu_rum_engine *engine,
-                                 laghu_redis_reply *reply) {
-  size_t index;
-  bool valid = reply != NULL && reply->type == LAGHU_REDIS_REPLY_ARRAY;
-  if (valid)
-    for (index = 0U; index < reply->elements; ++index)
-      if (reply->element[index] == NULL ||
-          reply->element[index]->type == LAGHU_REDIS_REPLY_ERROR) {
-        valid = false;
-        break;
-      }
-  if (reply != NULL) engine->redis_reply_free(reply);
-  return valid;
-}
-
 static bool laghu_rum_rotate_retry(laghu_rum_engine *engine) {
   laghu_rum_snapshot_entry *entries;
   size_t count = 0U, index, bytes = 0U;
@@ -1292,6 +1291,7 @@ static bool laghu_rum_rotate_retry(laghu_rum_engine *engine) {
   for (index = 0U; index < engine->slot_count; ++index) {
     laghu_rum_slot *slot = &engine->slots[index];
     if (!slot->used || slot->pending == NULL) continue;
+    if (count == LAGHU_RUM_REDIS_BATCH_RECORDS) break;
     if (slot->pending_length > engine->pending_limit - bytes) break;
     entries[count].data = slot->pending;
     entries[count].length = slot->pending_length;
@@ -1306,7 +1306,8 @@ static bool laghu_rum_rotate_retry(laghu_rum_engine *engine) {
   }
   engine->retry_entries = entries;
   engine->retry_count = count;
-  length = snprintf(material, sizeof(material), "%s\n%llu", engine->instance_id,
+  length = snprintf(material, sizeof(material), "%u\n%s\n%llu",
+                    LAGHU_RUM_REDIS_MERGE_VERSION, engine->instance_id,
                     (unsigned long long)++engine->batch_sequence);
   if (length <= 0 || (size_t)length >= sizeof(material) ||
       !laghu_sha256_hex(
@@ -1458,120 +1459,161 @@ static laghu_rum_snapshot_entry *laghu_rum_redis_pull(
   return entries;
 }
 
+static bool laghu_rum_redis_script_load(laghu_rum_engine *engine,
+                                        laghu_redis_context *context) {
+  const size_t one = sizeof(laghu_rum_redis_merge_script_one) - 1U;
+  const size_t two = sizeof(laghu_rum_redis_merge_script_two) - 1U;
+  char *script = malloc(one + two);
+  laghu_redis_reply *reply;
+  size_t index;
+  if (script == NULL) return false;
+  memcpy(script, laghu_rum_redis_merge_script_one, one);
+  memcpy(script + one, laghu_rum_redis_merge_script_two, two);
+  reply = engine->redis_command(context, "SCRIPT LOAD %b", script, one + two);
+  free(script);
+  if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_STRING ||
+      reply->len != 40U) {
+    if (reply != NULL) engine->redis_reply_free(reply);
+    return false;
+  }
+  for (index = 0U; index < reply->len; ++index)
+    if (!laghu_rum_hex((unsigned char)reply->str[index])) {
+      engine->redis_reply_free(reply);
+      return false;
+    }
+  memcpy(engine->redis_script_sha, reply->str, reply->len);
+  engine->redis_script_sha[reply->len] = '\0';
+  engine->redis_reply_free(reply);
+  return true;
+}
+
+static laghu_redis_reply *laghu_rum_redis_merge_eval(
+    laghu_rum_engine *engine, laghu_redis_context *context,
+    const laghu_rum_snapshot_entry *deltas, size_t count,
+    const char *batch_key, const char *index_key, bool allow_reload) {
+  const size_t maximum = 9U + 4U * LAGHU_RUM_REDIS_BATCH_RECORDS;
+  const char *arguments[9U + 4U * LAGHU_RUM_REDIS_BATCH_RECORDS];
+  size_t lengths[9U + 4U * LAGHU_RUM_REDIS_BATCH_RECORDS];
+  char record_keys[LAGHU_RUM_REDIS_BATCH_RECORDS][512U];
+  char members[LAGHU_RUM_REDIS_BATCH_RECORDS][96U];
+  char types[LAGHU_RUM_REDIS_BATCH_RECORDS][16U];
+  char number_keys[24U], version[16U], ttl[24U], now[32U], records[16U];
+  unsigned char *encoded = NULL;
+  size_t encoded_lengths[LAGHU_RUM_REDIS_BATCH_RECORDS];
+  size_t argc = 0U, index;
+  laghu_redis_reply *reply = NULL;
+#define ARG(value_, length_) do { arguments[argc] = (value_); lengths[argc++] = (length_); } while (0)
+  if (count > LAGHU_RUM_REDIS_BATCH_RECORDS ||
+      (engine->redis_script_sha[0] == '\0' &&
+       !laghu_rum_redis_script_load(engine, context))) return NULL;
+  encoded = malloc((count == 0U ? 1U : count) * LAGHU_RUM_MAX_RECORD_BYTES);
+  if (encoded == NULL) return NULL;
+  (void)snprintf(number_keys, sizeof(number_keys), "%zu", count + 2U);
+  (void)snprintf(version, sizeof(version), "%u",
+                 LAGHU_RUM_REDIS_MERGE_VERSION);
+  (void)snprintf(ttl, sizeof(ttl), "%u", engine->ttl_seconds);
+  (void)snprintf(now, sizeof(now), "%llu",
+                 (unsigned long long)time(NULL));
+  (void)snprintf(records, sizeof(records), "%zu", count);
+  ARG("EVALSHA", 7U);
+  ARG(engine->redis_script_sha, strlen(engine->redis_script_sha));
+  ARG(number_keys, strlen(number_keys));
+  ARG(batch_key, strlen(batch_key));
+  ARG(index_key, strlen(index_key));
+  for (index = 0U; index < count; ++index) {
+    int member_length = snprintf(members[index], sizeof(members[index]),
+                                 "%u:%s", (unsigned int)deltas[index].type,
+                                 deltas[index].key);
+    int key_length = member_length <= 0 ? -1 : snprintf(
+        record_keys[index], sizeof(record_keys[index]), "%srum:v2:record:%s",
+        engine->redis_prefix, members[index]);
+    if (member_length <= 0 || (size_t)member_length >= sizeof(members[index]) ||
+        key_length <= 0 || (size_t)key_length >= sizeof(record_keys[index]) ||
+        !laghu_rum_encode(
+            deltas[index].type, deltas[index].data, deltas[index].length,
+            encoded + index * LAGHU_RUM_MAX_RECORD_BYTES,
+            LAGHU_RUM_MAX_RECORD_BYTES, &encoded_lengths[index])) goto done;
+    ARG(record_keys[index], (size_t)key_length);
+  }
+  ARG(version, strlen(version));
+  ARG(ttl, strlen(ttl));
+  ARG(now, strlen(now));
+  ARG(records, strlen(records));
+  for (index = 0U; index < count; ++index) {
+    (void)snprintf(types[index], sizeof(types[index]), "%u",
+                   (unsigned int)deltas[index].type);
+    ARG(types[index], strlen(types[index]));
+    ARG(members[index], strlen(members[index]));
+    ARG((const char *)(encoded + index * LAGHU_RUM_MAX_RECORD_BYTES),
+        encoded_lengths[index]);
+  }
+  if (argc > maximum) goto done;
+  reply = engine->redis_command_argv(context, (int)argc, arguments, lengths);
+  if (allow_reload && reply != NULL && reply->type == LAGHU_REDIS_REPLY_ERROR &&
+      reply->str != NULL && strncmp(reply->str, "NOSCRIPT", 8U) == 0) {
+    engine->redis_reply_free(reply);
+    reply = NULL;
+    engine->redis_script_sha[0] = '\0';
+    if (laghu_rum_redis_script_load(engine, context))
+      reply = laghu_rum_redis_merge_eval(engine, context, deltas, count,
+                                         batch_key, index_key, false);
+  }
+done:
+  free(encoded);
+#undef ARG
+  return reply;
+}
+
 static bool laghu_rum_redis_sync(laghu_rum_engine *engine,
                                  uint64_t deadline) {
   laghu_redis_context *context = NULL;
   laghu_rum_snapshot_entry *deltas, *aggregates = NULL, *pulled = NULL;
-  laghu_redis_reply *reply;
-  char lock_key[512U], batch_key[512U], index_key[512U];
+  laghu_redis_reply *reply = NULL;
+  char batch_key[512U], index_key[512U];
   size_t delta_count, aggregate_count = 0U, pulled_count = 0U, index;
-  bool locked = false, applied = false, success = false, snapshot_ok = true;
-  unsigned int lock_ms = engine->timeout_ms * (engine->retry_limit + 10U);
+  bool success = false, snapshot_ok = true;
   if (!laghu_rum_rotate_retry(engine)) return false;
   deltas = engine->retry_entries;
   delta_count = engine->retry_count;
   context = laghu_rum_redis_connect(engine);
   if (context == NULL ||
-      !laghu_rum_redis_key(lock_key, sizeof(lock_key), engine, "lock", NULL) ||
       !laghu_rum_redis_key(batch_key, sizeof(batch_key), engine, "batch",
                            engine->retry_batch) ||
       !laghu_rum_redis_key(index_key, sizeof(index_key), engine, "records",
-                           NULL)) goto done;
-  if (lock_ms < 1000U) lock_ms = 1000U;
-  reply = engine->redis_command(context, "SET %s %s NX PX %u", lock_key,
-                                engine->retry_batch, lock_ms);
-  if (reply == NULL || reply->type == LAGHU_REDIS_REPLY_NIL) {
-    if (reply != NULL) engine->redis_reply_free(reply);
-    goto done;
-  }
-  locked = laghu_rum_redis_status(engine, reply);
-  if (!locked) goto done;
-  reply = engine->redis_command(context, "EXISTS %s", batch_key);
-  if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_INTEGER) {
-    if (reply != NULL) engine->redis_reply_free(reply);
-    goto done;
-  }
-  applied = reply->integer == 1;
-  engine->redis_reply_free(reply);
-  if (!applied && delta_count != 0U) {
+                           NULL) ||
+      laghu_rum_monotonic_ms() > deadline) goto done;
+  if (delta_count != 0U) {
+    reply = laghu_rum_redis_merge_eval(engine, context, deltas, delta_count,
+                                       batch_key, index_key, true);
+    if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_ARRAY ||
+        reply->elements != delta_count + 1U || reply->element[0] == NULL ||
+        reply->element[0]->type != LAGHU_REDIS_REPLY_INTEGER ||
+        (reply->element[0]->integer != 0 && reply->element[0]->integer != 1))
+      goto done;
     aggregates = calloc(delta_count, sizeof(*aggregates));
     if (aggregates == NULL) goto done;
     for (index = 0U; index < delta_count; ++index) {
-      char member[96U], record_key[512U];
-      int member_length;
-      if (laghu_rum_monotonic_ms() > deadline) goto done;
-      member_length = snprintf(member, sizeof(member), "%u:%s",
-                                   (unsigned int)deltas[index].type,
-                                   deltas[index].key);
-      if (member_length <= 0 || (size_t)member_length >= sizeof(member) ||
-          snprintf(record_key, sizeof(record_key), "%srum:v2:record:%s",
-                   engine->redis_prefix, member) <= 0) goto done;
-      reply = engine->redis_command(context, "GET %s", record_key);
-      aggregates[index].length = deltas[index].length;
+      laghu_redis_reply *item = reply->element[index + 1U];
+      if (item == NULL || item->type != LAGHU_REDIS_REPLY_STRING ||
+          item->len > LAGHU_RUM_MAX_RECORD_BYTES) goto done;
       aggregates[index].data = malloc(deltas[index].length);
-      if (aggregates[index].data == NULL) {
-        if (reply != NULL) engine->redis_reply_free(reply);
+      if (aggregates[index].data == NULL ||
+          !laghu_rum_decode(deltas[index].type,
+                            (const unsigned char *)item->str, item->len,
+                            aggregates[index].data, deltas[index].length) ||
+          !laghu_rum_same_identity(deltas[index].type, aggregates[index].data,
+                                   deltas[index].data, deltas[index].length))
         goto done;
-      }
-      memcpy(aggregates[index].data, deltas[index].data, deltas[index].length);
+      aggregates[index].length = deltas[index].length;
       aggregates[index].type = deltas[index].type;
+      aggregates[index].updated_at = laghu_rum_record_updated_at(
+          deltas[index].type, aggregates[index].data, engine->clock_now);
       strcpy(aggregates[index].key, deltas[index].key);
-      aggregates[index].updated_at = deltas[index].updated_at;
       ++aggregate_count;
-      if (reply != NULL && reply->type == LAGHU_REDIS_REPLY_STRING) {
-        void *remote = malloc(deltas[index].length);
-        if (remote == NULL ||
-            !laghu_rum_decode(deltas[index].type,
-                              (const unsigned char *)reply->str, reply->len,
-                              remote, deltas[index].length) ||
-            !laghu_rum_record_merge(deltas[index].type, remote,
-                                    deltas[index].data,
-                                    deltas[index].length)) {
-          free(remote);
-          engine->redis_reply_free(reply);
-          goto done;
-        }
-        free(aggregates[index].data);
-        aggregates[index].data = remote;
-      } else if (reply != NULL && reply->type != LAGHU_REDIS_REPLY_NIL) {
-        engine->redis_reply_free(reply);
-        goto done;
-      }
-      if (reply != NULL) engine->redis_reply_free(reply);
     }
-    if (!laghu_rum_redis_status(
-            engine, engine->redis_command(context, "MULTI"))) goto done;
-    for (index = 0U; index < aggregate_count; ++index) {
-      unsigned char encoded[LAGHU_RUM_MAX_RECORD_BYTES];
-      size_t encoded_length;
-      char member[96U], record_key[512U];
-      if (laghu_rum_monotonic_ms() > deadline) goto done;
-      (void)snprintf(member, sizeof(member), "%u:%s",
-                     (unsigned int)aggregates[index].type,
-                     aggregates[index].key);
-      (void)snprintf(record_key, sizeof(record_key), "%srum:v2:record:%s",
-                     engine->redis_prefix, member);
-      if (!laghu_rum_encode(aggregates[index].type, aggregates[index].data,
-                            aggregates[index].length, encoded,
-                            sizeof(encoded), &encoded_length) ||
-          !laghu_rum_redis_status(
-              engine, engine->redis_command(context, "SET %s %b EX %u",
-                                             record_key, encoded,
-                                             encoded_length,
-                                             engine->ttl_seconds)) ||
-          !laghu_rum_redis_status(engine,
-              engine->redis_command(context, "ZADD %s %llu %s", index_key,
-                  (unsigned long long)time(NULL) + engine->ttl_seconds,
-                  member))) goto done;
-    }
-    if (!laghu_rum_redis_status(
-            engine, engine->redis_command(context, "SET %s 1 EX %u",
-                                           batch_key, engine->ttl_seconds)) ||
-        !laghu_rum_redis_status(
-            engine, engine->redis_command(context, "EXPIRE %s %u", index_key,
-                                           engine->ttl_seconds)) ||
-        !laghu_rum_redis_exec(
-            engine, engine->redis_command(context, "EXEC"))) goto done;
+    engine->redis_reply_free(reply);
+    reply = NULL;
+    laghu_rum_reconcile(engine, aggregates, aggregate_count);
   }
   pulled = laghu_rum_redis_pull(engine, context, &pulled_count, deadline);
   if (pulled == NULL) goto done;
@@ -1579,15 +1621,7 @@ static bool laghu_rum_redis_sync(laghu_rum_engine *engine,
   success = true;
   snapshot_ok = laghu_rum_snapshot_cache(engine);
 done:
-  if (locked && context != NULL) {
-    static const char release_script[] =
-        "if redis.call('get',KEYS[1])==ARGV[1] then return "
-        "redis.call('del',KEYS[1]) else return 0 end";
-    reply = engine->redis_command(context, "EVAL %s 1 %s %s",
-                                  release_script, lock_key,
-                                  engine->retry_batch);
-    if (reply != NULL) engine->redis_reply_free(reply);
-  }
+  if (reply != NULL) engine->redis_reply_free(reply);
   if (context != NULL) engine->redis_free(context);
   laghu_rum_entries_free(aggregates, aggregate_count);
   laghu_rum_entries_free(pulled, pulled_count);
