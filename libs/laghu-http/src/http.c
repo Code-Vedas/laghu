@@ -995,8 +995,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   csp_script_self = laghu_runtime_csp_allows_self_scripts(
       csp == NULL ? NULL : csp_value, transaction->origin);
   if (!laghu_runtime_rewrite_html(
-          transaction->environment.cache_path, body, transaction->path,
-          transaction->origin, transaction->policy_key,
+          transaction->environment.rum, transaction->environment.cache_path,
+          body, transaction->path, transaction->origin, transaction->policy_key,
           transaction->capability_mask, transaction->environment.now,
           transaction->environment.config.image_metadata_ttl,
           transaction->image_filters,
@@ -1061,7 +1061,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   }
   if ((transaction->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) != 0U) {
     if (!laghu_runtime_prioritize_critical_css(
-            transaction->environment.cache_path,
+            transaction->environment.rum, transaction->environment.cache_path,
             (laghu_buffer){selected, selected_length}, transaction->path,
             transaction->origin, transaction->policy_key,
             transaction->capability_mask, transaction->environment.now,
@@ -1198,7 +1198,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
     int material_length;
     if (!laghu_runtime_add_instrumentation(
-            transaction->environment.cache_path,
+            transaction->environment.rum, transaction->environment.cache_path,
             transaction->environment.javascript_observations,
             (laghu_buffer){selected, selected_length}, transaction->path,
             transaction->origin, transaction->policy_key,

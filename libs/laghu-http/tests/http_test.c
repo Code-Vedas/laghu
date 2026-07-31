@@ -30,6 +30,7 @@
 
 static char test_cache_path[LAGHU_RUNTIME_PATH_SIZE];
 static char test_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+static laghu_rum_engine *test_rum;
 
 static void initialize_test_paths(void) {
   unsigned long process_id;
@@ -104,6 +105,7 @@ static laghu_http_environment test_environment(const char *cache_path,
   environment.struct_size = sizeof(environment);
   test_config(&environment.config);
   environment.cache_path = cache_path;
+  environment.rum = test_rum;
   environment.worker_queue_path = queue == NULL ? NULL : test_queue_path;
   environment.queue = queue;
   environment.now = 1784851200U;
@@ -571,7 +573,11 @@ static void test_validator_hints_and_worker_liveness(void) {
 }
 
 int main(void) {
+  laghu_rum_options rum_options;
   initialize_test_paths();
+  laghu_rum_options_init(&rum_options);
+  test_rum = laghu_rum_engine_create(&rum_options, NULL, 0U);
+  CHECK(test_rum != NULL);
   test_decision_table();
   test_bounds_and_incomplete_body();
   test_transport_exclusions();
@@ -580,6 +586,7 @@ int main(void) {
   test_javascript_cold_publication();
   test_html_cold_warm_headers();
   test_validator_hints_and_worker_liveness();
+  laghu_rum_engine_destroy(test_rum);
   puts("laghu-http tests passed");
   return 0;
 }

@@ -533,6 +533,8 @@ def main():
                 f"http://127.0.0.1:{origin_port}",
                 "--cache",
                 str(root / "cache"),
+                "--rum-store",
+                "memory:",
                 "--worker-queue",
                 str(root / "missing.queue"),
                 "--javascript-queue",

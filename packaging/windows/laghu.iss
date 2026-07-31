@@ -51,6 +51,7 @@ VersionInfoVersion={#VERSION}
 [Dirs]
 Name: "{commonappdata}\Laghu"
 Name: "{commonappdata}\Laghu\images"
+Name: "{commonappdata}\Laghu\rum"; Permissions: users-modify
 
 [Files]
 Source: "{#SERVER_ROOT}\*"; DestDir: "{app}\server"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -359,10 +360,32 @@ begin
   end;
 end;
 
+procedure ConfigureRumSnapshot();
+var
+  ConfigPath, ConfigText, SnapshotPath: String;
+  ConfigBytes: AnsiString;
+begin
+#if OFFERING == "ngx-laghu"
+  ConfigPath := ExpandConstant('{app}\server\conf\nginx.conf');
+#else
+  ConfigPath := ExpandConstant('{app}\server\conf\httpd.conf');
+#endif
+  SnapshotPath := ExpandConstant('{commonappdata}\Laghu\rum\rum.snapshot');
+  StringChangeEx(SnapshotPath, '\', '/', True);
+  if not LoadStringFromFile(ConfigPath, ConfigBytes) then
+    RaiseException('Unable to read the matched server configuration');
+  ConfigText := String(ConfigBytes);
+  if StringChangeEx(ConfigText, '@LAGHU_RUM_SNAPSHOT@', SnapshotPath, True) = 0 then
+    RaiseException('Matched server configuration has no RUM snapshot placeholder');
+  if not SaveStringToFile(ConfigPath, AnsiString(ConfigText), False) then
+    RaiseException('Unable to write the matched server configuration');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
     try
+      ConfigureRumSnapshot();
       RunAndRequire(ExpandConstant('{#ConfigExe}'),
         ExpandConstant('{#ConfigParams}'),
         'Matched server configuration validation failed');

@@ -58,6 +58,73 @@ extern "C" {
 #define LAGHU_INSTRUMENTATION_VERSION 1U
 #define LAGHU_INSTRUMENTATION_MAX_PROVIDERS 32U
 #define LAGHU_INSTRUMENTATION_MAX_SCRIPTS 64U
+#define LAGHU_RUM_MAX_RECORDS 4096U
+#define LAGHU_RUM_MAX_RECORD_BYTES 16384U
+#define LAGHU_RUM_DEFAULT_MEMORY_BYTES (64U * 1024U * 1024U)
+#define LAGHU_RUM_DEFAULT_PENDING_BYTES (16U * 1024U * 1024U)
+#define LAGHU_RUM_DEFAULT_SYNC_SECONDS 5U
+#define LAGHU_RUM_DEFAULT_TIMEOUT_MS 100U
+#define LAGHU_RUM_DEFAULT_RETRY_LIMIT 3U
+#define LAGHU_RUM_HISTOGRAMS 3U
+#define LAGHU_RUM_BUCKETS 8U
+
+typedef enum {
+  LAGHU_RUM_RECORD_INSTRUMENTATION = 1,
+  LAGHU_RUM_RECORD_CRITICAL_CSS = 2,
+  LAGHU_RUM_RECORD_IMAGE = 3,
+  LAGHU_RUM_RECORD_DECISION = 4
+} laghu_rum_record_type;
+
+typedef enum {
+  LAGHU_RUM_HEALTH_READY = 0,
+  LAGHU_RUM_HEALTH_DEGRADED,
+  LAGHU_RUM_HEALTH_UNAVAILABLE
+} laghu_rum_health;
+
+typedef struct laghu_rum_engine laghu_rum_engine;
+
+typedef struct {
+  const char *store_uri;
+  const char *snapshot_path;
+  const char *client_library;
+  size_t memory_limit;
+  size_t pending_limit;
+  unsigned int ttl_seconds;
+  unsigned int sync_interval_seconds;
+  unsigned int timeout_ms;
+  unsigned int retry_limit;
+  bool required;
+} laghu_rum_options;
+
+typedef struct {
+  uint64_t generation;
+  uint64_t updated_at;
+  size_t length;
+  laghu_rum_record_type type;
+} laghu_rum_value;
+
+typedef bool (*laghu_rum_mutator)(void *data, size_t length, void *context);
+
+void laghu_rum_options_init(laghu_rum_options *options);
+bool laghu_rum_store_validate(const char *uri, char *error, size_t error_size);
+laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
+                                          char *error, size_t error_size);
+void laghu_rum_engine_destroy(laghu_rum_engine *engine);
+bool laghu_rum_engine_read(laghu_rum_engine *engine, laghu_rum_record_type type,
+                           const char *key, uint64_t now, void *data,
+                           size_t capacity, laghu_rum_value *value);
+bool laghu_rum_engine_publish(laghu_rum_engine *engine,
+                              laghu_rum_record_type type, const char *key,
+                              uint64_t updated_at, const void *data,
+                              size_t length, uint64_t *generation);
+bool laghu_rum_engine_update(laghu_rum_engine *engine,
+                             laghu_rum_record_type type, const char *key,
+                             uint64_t updated_at, laghu_rum_mutator mutator,
+                             void *context, uint64_t *generation);
+laghu_rum_health laghu_rum_engine_health(laghu_rum_engine *engine);
+size_t laghu_rum_engine_memory_used(laghu_rum_engine *engine);
+bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
+                            const void *delta, size_t length);
 
 typedef uint32_t laghu_html_planner_mask;
 
@@ -220,6 +287,38 @@ typedef struct {
   bool above_fold;
   bool mobile;
 } laghu_image_beacon_record;
+
+typedef struct {
+  uint32_t version;
+  char identity[LAGHU_RUNTIME_KEY_SIZE];
+  uint64_t updated_at;
+  unsigned int width;
+  unsigned int height;
+  unsigned int mobile_width;
+  unsigned int mobile_height;
+  unsigned int viewport_width;
+  unsigned int dpr_hundredths;
+  bool above_fold;
+} laghu_rum_image_record;
+
+typedef struct {
+  uint32_t version;
+  char template_key[LAGHU_RUNTIME_KEY_SIZE];
+  char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
+  char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+  uint64_t updated_at;
+  unsigned int script_count;
+  char script_keys[LAGHU_INSTRUMENTATION_MAX_SCRIPTS][LAGHU_RUNTIME_KEY_SIZE];
+  uint64_t observations[2];
+  uint64_t metric_sums[2][5];
+  unsigned int metric_maxima[2][5];
+  uint64_t histograms[2][LAGHU_RUM_HISTOGRAMS][LAGHU_RUM_BUCKETS];
+  uint64_t errors[2];
+  uint64_t rejections[2];
+  uint64_t script_observations[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
+  uint64_t script_before_dcl[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
+  uint64_t script_long_tasks[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
+} laghu_rum_instrumentation_record;
 
 typedef struct {
   unsigned char *data;
@@ -428,17 +527,21 @@ bool laghu_catalog_lookup_url(const char *cache_path,
                               laghu_catalog_record *record);
 bool laghu_catalog_publish_url(const char *cache_path,
                                const laghu_catalog_record *record);
+bool laghu_catalog_url_identity(const char *normalized_url,
+                                const char *policy_key,
+                                uint32_t capability_mask,
+                                char output[LAGHU_RUNTIME_KEY_SIZE]);
 bool laghu_runtime_rewrite_html(
-    const char *cache_path, laghu_buffer html, const char *page_path,
-    const char *page_origin, const char *policy_key, uint32_t capability_mask,
-    uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
-    bool allow_inline, bool allow_css_inline, bool allow_css_outline,
-    bool allow_css_combine, laghu_html_planner_mask html_plan,
-    bool csp_allows_data, bool csp_allows_inline_styles,
-    bool csp_allows_self_styles, bool beacon_enabled, size_t inline_limit,
-    unsigned int css_inline_limit, unsigned int css_outline_threshold,
-    unsigned int viewport_width, unsigned int dpr_hundredths,
-    laghu_runtime_html_result *result);
+    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+    laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline,
+    bool allow_css_outline, bool allow_css_combine,
+    laghu_html_planner_mask html_plan, bool csp_allows_data,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
+    unsigned int css_outline_threshold, unsigned int viewport_width,
+    unsigned int dpr_hundredths, laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
 bool laghu_runtime_finalize_html_headers(
     const char *cache_path, laghu_buffer html, const char *page_path,
@@ -502,23 +605,25 @@ bool laghu_stylesheet_lookup(const char *cache_path, const char *normalized_url,
                              laghu_stylesheet_record *record);
 bool laghu_runtime_parse_image_beacon(laghu_buffer json,
                                       laghu_image_beacon_record *record);
-bool laghu_catalog_apply_beacon(const char *cache_path, const char *policy_key,
+bool laghu_catalog_apply_beacon(laghu_rum_engine *rum, const char *cache_path,
+                                const char *policy_key,
                                 uint32_t capability_mask, uint64_t now,
                                 unsigned int ttl_seconds,
                                 const laghu_image_beacon_record *beacon);
 bool laghu_catalog_prune(const char *cache_path, uint64_t now,
                          unsigned int metadata_limit, unsigned int ttl_seconds);
 bool laghu_runtime_prioritize_critical_css(
-    const char *cache_path, laghu_buffer html, const char *page_path,
-    const char *page_origin, const char *policy_key, uint32_t capability_mask,
-    uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
-    unsigned int outline_threshold, unsigned int viewport_width,
-    bool beacon_enabled, bool csp_allows_inline_styles,
-    bool csp_allows_self_styles, bool csp_allows_self_scripts,
-    laghu_runtime_html_result *result);
+    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+    unsigned int inline_limit, unsigned int outline_threshold,
+    unsigned int viewport_width, bool beacon_enabled,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    bool csp_allows_self_scripts, laghu_runtime_html_result *result);
 bool laghu_runtime_parse_critical_css_beacon(laghu_buffer json,
                                              laghu_critical_css_beacon *record);
-bool laghu_critical_css_apply_beacon(const char *cache_path,
+bool laghu_critical_css_apply_beacon(laghu_rum_engine *rum,
+                                     const char *cache_path,
                                      const char *policy_key, uint64_t now,
                                      unsigned int ttl_seconds,
                                      const laghu_critical_css_beacon *beacon);
@@ -527,17 +632,17 @@ bool laghu_javascript_observations_load(const char *path,
                                         laghu_javascript_observation_set *set,
                                         char *error, size_t error_size);
 bool laghu_runtime_add_instrumentation(
-    const char *cache_path, const laghu_javascript_observation_set *providers,
-    laghu_buffer html, const char *page_path, const char *page_origin,
-    const char *policy_key, uint64_t now, unsigned int ttl_seconds,
-    unsigned int sample_rate, bool csp_allows_self_scripts,
-    laghu_runtime_html_result *result);
+    laghu_rum_engine *rum, const char *cache_path,
+    const laghu_javascript_observation_set *providers, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
+    bool csp_allows_self_scripts, laghu_runtime_html_result *result);
 const char *laghu_runtime_instrumentation_script(void);
 bool laghu_runtime_parse_instrumentation_beacon(
     laghu_buffer json, laghu_instrumentation_beacon *record);
 bool laghu_instrumentation_apply_beacon(
-    const char *cache_path, uint64_t now, unsigned int ttl_seconds,
-    const laghu_instrumentation_beacon *beacon);
+    laghu_rum_engine *rum, const char *cache_path, uint64_t now,
+    unsigned int ttl_seconds, const laghu_instrumentation_beacon *beacon);
 
 #ifdef __cplusplus
 }

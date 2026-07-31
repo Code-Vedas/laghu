@@ -118,6 +118,14 @@ static bool laghu_catalog_url_key(const char *normalized_url,
              output);
 }
 
+bool laghu_catalog_url_identity(const char *normalized_url,
+                                const char *policy_key,
+                                uint32_t capability_mask,
+                                char output[LAGHU_RUNTIME_KEY_SIZE]) {
+  return output != NULL && laghu_catalog_url_key(normalized_url, policy_key,
+                                                 capability_mask, output);
+}
+
 bool laghu_catalog_key(const char *normalized_url, const char *source_hash,
                        const char *policy_key, uint32_t capability_mask,
                        char output[LAGHU_RUNTIME_KEY_SIZE]) {

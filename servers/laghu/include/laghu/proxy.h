@@ -52,6 +52,9 @@ typedef struct {
   char javascript_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   char javascript_observation_config_path[LAGHU_RUNTIME_PATH_SIZE];
+  char rum_store[LAGHU_RUNTIME_PATH_SIZE];
+  char rum_snapshot_path[LAGHU_RUNTIME_PATH_SIZE];
+  char rum_client_library[LAGHU_RUNTIME_PATH_SIZE];
   laghu_font_provider_set font_providers;
   laghu_javascript_observation_set javascript_observations;
   laghu_config config;
@@ -60,6 +63,12 @@ typedef struct {
   unsigned int connect_timeout;
   unsigned int io_timeout;
   unsigned int drain_timeout;
+  unsigned int rum_timeout_ms;
+  unsigned int rum_ttl;
+  unsigned int rum_retry_limit;
+  unsigned int rum_sync_interval;
+  size_t rum_memory_limit;
+  size_t rum_pending_limit;
   laghu_proxy_forwarded_mode forwarded_mode;
   laghu_proxy_cidr trusted_proxies[LAGHU_PROXY_MAX_TRUSTED_PROXIES];
   size_t trusted_proxy_count;
@@ -68,6 +77,7 @@ typedef struct {
   bool javascript_queue_enabled;
   bool javascript_observations_loaded;
   bool service_mode;
+  bool rum_store_required;
 } laghu_proxy_options;
 
 typedef enum {

@@ -27,6 +27,12 @@ static void usage(FILE *stream) {
       "  --javascript-inline-limit 0..65536\n"
       "  --javascript-outline-threshold 1024..1048576\n"
       "  --instrumentation-sample-rate 0..100\n"
+      "  --rum-store URI [--rum-store-required]\n"
+      "  --rum-store-local-snapshot PATH\n"
+      "  --rum-store-client-library PATH\n"
+      "  --rum-store-timeout MILLISECONDS --rum-store-ttl SECONDS\n"
+      "  --rum-store-retry-limit N --rum-store-sync-interval SECONDS\n"
+      "  --rum-store-memory-limit BYTES --rum-store-pending-limit BYTES\n"
       "  --javascript-observation-config PATH\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n",

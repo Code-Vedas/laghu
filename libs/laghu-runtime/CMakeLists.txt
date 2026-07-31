@@ -9,7 +9,7 @@ else()
   set(LAGHU_RUNTIME_SOURCE src/runtime_posix.c)
 endif()
 
-add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/catalog.c src/html.c src/html_head.c src/html_hints.c src/css_runtime.c src/css_catalog.c src/css_combine.c src/css_imports.c src/css_markup.c src/critical_css.c src/font_provider.c src/javascript.c src/instrumentation.c src/beacon.c)
+add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/rum.c src/catalog.c src/html.c src/html_head.c src/html_hints.c src/css_runtime.c src/css_catalog.c src/css_combine.c src/css_imports.c src/css_markup.c src/critical_css.c src/font_provider.c src/javascript.c src/instrumentation.c src/beacon.c)
 add_library(Laghu::Runtime ALIAS laghu_runtime)
 
 target_include_directories(laghu_runtime
@@ -18,7 +18,7 @@ target_include_directories(laghu_runtime
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(laghu_runtime PUBLIC c_std_11)
-target_link_libraries(laghu_runtime PUBLIC Laghu::Core Laghu::Image)
+target_link_libraries(laghu_runtime PUBLIC Laghu::Core Laghu::Image ${CMAKE_DL_LIBS})
 set_target_properties(laghu_runtime PROPERTIES C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)

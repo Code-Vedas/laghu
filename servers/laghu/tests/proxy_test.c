@@ -91,6 +91,43 @@ int main(void) {
                       "/tmp/jobs",
                       "--trusted-proxy",
                       "127.0.0.1/8"};
+  char *bad_rum[] = {"laghu",
+                     "--listen",
+                     "127.0.0.1:8080",
+                     "--origin",
+                     "http://127.0.0.1:8000",
+                     "--cache",
+                     "/tmp/cache",
+                     "--worker-queue",
+                     "/tmp/jobs",
+                     "--rum-store",
+                     "redis://example.test:6379/0"};
+  char *rum[] = {"laghu",
+                 "--listen",
+                 "127.0.0.1:8080",
+                 "--origin",
+                 "http://127.0.0.1:8000",
+                 "--cache",
+                 "/tmp/cache",
+                 "--worker-queue",
+                 "/tmp/jobs",
+                 "--rum-store",
+                 "local:/tmp/rum",
+                 "--rum-store-local-snapshot",
+                 "/tmp/rum.snapshot",
+                 "--rum-store-timeout",
+                 "75",
+                 "--rum-store-ttl",
+                 "604800",
+                 "--rum-store-retry-limit",
+                 "2",
+                 "--rum-store-sync-interval",
+                 "5",
+                 "--rum-store-memory-limit",
+                 "8m",
+                 "--rum-store-pending-limit",
+                 "1m",
+                 "--rum-store-required"};
   static const unsigned char chunked[] = "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
   unsigned char decoded[16];
   size_t decoded_length = 0U;
@@ -113,7 +150,20 @@ int main(void) {
   CHECK(options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
   CHECK(options.trusted_proxy_count == 2U);
   laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(26, rum, &options, error, sizeof(error)) ==
+        LAGHU_PROXY_PARSE_OK);
+  CHECK(!strcmp(options.rum_store, "local:/tmp/rum"));
+  CHECK(!strcmp(options.rum_snapshot_path, "/tmp/rum.snapshot"));
+  CHECK(options.rum_timeout_ms == 75U && options.rum_ttl == 604800U);
+  CHECK(options.rum_retry_limit == 2U && options.rum_sync_interval == 5U);
+  CHECK(options.rum_memory_limit == 8U * 1024U * 1024U);
+  CHECK(options.rum_pending_limit == 1024U * 1024U &&
+        options.rum_store_required);
+  laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(11, bad_cidr, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, bad_rum, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
 #ifndef _WIN32
   {

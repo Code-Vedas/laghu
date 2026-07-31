@@ -120,28 +120,70 @@ bool laghu_runtime_parse_image_beacon(laghu_buffer json,
   return true;
 }
 
-bool laghu_catalog_apply_beacon(const char *cache_path, const char *policy_key,
+typedef struct {
+  const laghu_image_beacon_record *beacon;
+  uint64_t now;
+} laghu_image_merge_context;
+
+static bool laghu_image_merge(void *data, size_t length, void *opaque) {
+  laghu_rum_image_record *record = data;
+  laghu_image_merge_context *context = opaque;
+  const laghu_image_beacon_record *beacon = context->beacon;
+  if (length != sizeof(*record) || record->version != 1U) return false;
+  if (beacon->mobile) {
+    if (beacon->width > record->mobile_width)
+      record->mobile_width = beacon->width;
+    if (beacon->height > record->mobile_height)
+      record->mobile_height = beacon->height;
+  } else {
+    if (beacon->width > record->width) record->width = beacon->width;
+    if (beacon->height > record->height) record->height = beacon->height;
+  }
+  if (beacon->viewport_width > record->viewport_width)
+    record->viewport_width = beacon->viewport_width;
+  if (beacon->dpr_hundredths > record->dpr_hundredths)
+    record->dpr_hundredths = beacon->dpr_hundredths;
+  record->above_fold = record->above_fold || beacon->above_fold;
+  record->updated_at = context->now;
+  return true;
+}
+
+bool laghu_catalog_apply_beacon(laghu_rum_engine *rum, const char *cache_path,
+                                const char *policy_key,
                                 uint32_t capability_mask, uint64_t now,
                                 unsigned int ttl_seconds,
                                 const laghu_image_beacon_record *beacon) {
   laghu_catalog_record catalog;
-  if (beacon == NULL ||
+  laghu_rum_image_record learning = {0};
+  laghu_rum_value value;
+  laghu_image_merge_context context;
+  char identity[LAGHU_RUNTIME_KEY_SIZE];
+  if (rum == NULL || beacon == NULL ||
       !laghu_catalog_lookup_url(cache_path, beacon->normalized_url, policy_key,
-                                capability_mask, now, ttl_seconds, &catalog)) {
+                                capability_mask, now, ttl_seconds, &catalog) ||
+      !laghu_catalog_url_identity(beacon->normalized_url, policy_key,
+                                  capability_mask, identity)) {
     return false;
   }
-  if (beacon->mobile) {
-    catalog.learned_mobile_width = beacon->width;
-    catalog.learned_mobile_height = beacon->height;
-  } else {
-    catalog.learned_width = beacon->width;
-    catalog.learned_height = beacon->height;
+  if (!laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_IMAGE, identity, now,
+                             &learning, sizeof(learning), &value)) {
+    learning.version = 1U;
+    strcpy(learning.identity, identity);
+    learning.updated_at = catalog.learned_at != 0U ? catalog.learned_at : now;
+    learning.width = catalog.learned_width;
+    learning.height = catalog.learned_height;
+    learning.mobile_width = catalog.learned_mobile_width;
+    learning.mobile_height = catalog.learned_mobile_height;
+    learning.viewport_width = catalog.learned_viewport_width;
+    learning.dpr_hundredths = catalog.learned_dpr_hundredths;
+    learning.above_fold = catalog.learned_above_fold;
+    if (!laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_IMAGE, identity,
+                                  learning.updated_at, &learning,
+                                  sizeof(learning), NULL))
+      return false;
   }
-  catalog.learned_viewport_width = beacon->viewport_width;
-  catalog.learned_dpr_hundredths = beacon->dpr_hundredths;
-  catalog.learned_above_fold = beacon->above_fold;
-  catalog.learned_at = now;
-  catalog.updated_at = now;
-  catalog.last_accessed_at = now;
-  return laghu_catalog_publish_url(cache_path, &catalog);
+  context.beacon = beacon;
+  context.now = now;
+  return laghu_rum_engine_update(rum, LAGHU_RUM_RECORD_IMAGE, identity, now,
+                                 laghu_image_merge, &context, NULL);
 }

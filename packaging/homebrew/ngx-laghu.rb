@@ -51,10 +51,21 @@ class NgxLaghu < Formula
       laghu javascript_queue #{var}/run/laghu/javascript.queue;
       laghu javascript_observation_config #{etc}/laghu/javascript-observation.conf;
       laghu image_cache #{var}/cache/laghu/images;
+      laghu rum_store local:;
+      laghu rum_store_local_snapshot #{var}/lib/laghu/rum/rum.snapshot;
+      # For Redis, set rum_store_client_library to the installed hiredis 1.x library.
+      laghu rum_store_timeout 100;
+      laghu rum_store_ttl 604800;
+      laghu rum_store_retry_limit 3;
+      laghu rum_store_sync_interval 5;
+      laghu rum_store_memory_limit 8m;
+      laghu rum_store_pending_limit 1m;
+      laghu rum_store_required off;
     EOS
   end
 
   def post_install
+    (var/"lib/laghu/rum").mkpath
     observation_config = etc/"laghu/javascript-observation.conf"
     observation_config.dirname.mkpath
     observation_config.write((share/"laghu/javascript-observation.conf").read) unless observation_config.exist?

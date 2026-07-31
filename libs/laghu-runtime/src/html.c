@@ -68,16 +68,16 @@ static bool laghu_runtime_inline(const char *cache_path,
 }
 
 bool laghu_runtime_rewrite_html(
-    const char *cache_path, laghu_buffer html, const char *page_path,
-    const char *page_origin, const char *policy_key, uint32_t capability_mask,
-    uint64_t now, unsigned int ttl_seconds, laghu_image_filter_mask filters,
-    bool allow_inline, bool allow_css_inline, bool allow_css_outline,
-    bool allow_css_combine, laghu_html_planner_mask html_plan,
-    bool csp_allows_data, bool csp_allows_inline_styles,
-    bool csp_allows_self_styles, bool beacon_enabled, size_t inline_limit,
-    unsigned int css_inline_limit, unsigned int css_outline_threshold,
-    unsigned int viewport_width, unsigned int dpr_hundredths,
-    laghu_runtime_html_result *result) {
+    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+    laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline,
+    bool allow_css_outline, bool allow_css_combine,
+    laghu_html_planner_mask html_plan, bool csp_allows_data,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
+    unsigned int css_outline_threshold, unsigned int viewport_width,
+    unsigned int dpr_hundredths, laghu_runtime_html_result *result) {
   laghu_image_discovery_result *discovery = NULL;
   laghu_image_resource *resources = NULL;
   laghu_runtime_resource_storage *storage = NULL;
@@ -86,8 +86,8 @@ bool laghu_runtime_rewrite_html(
   size_t index;
   bool pending = false;
   bool success = false;
-  if (result == NULL || cache_path == NULL || policy_key == NULL ||
-      ttl_seconds == 0U) {
+  if (result == NULL || rum == NULL || cache_path == NULL ||
+      policy_key == NULL || ttl_seconds == 0U) {
     return false;
   }
   memset(result, 0, sizeof(*result));
@@ -140,6 +140,7 @@ bool laghu_runtime_rewrite_html(
   }
   for (index = 0U; index < discovery->resource_count; ++index) {
     laghu_catalog_record catalog;
+    laghu_rum_image_record learning = {0};
     laghu_image_geometry_input geometry = {0};
     laghu_image_geometry_plan plan;
     laghu_catalog_variant *one;
@@ -155,6 +156,25 @@ bool laghu_runtime_rewrite_html(
             capability_mask, now, ttl_seconds, &catalog)) {
       pending = true;
       continue;
+    }
+    {
+      char identity[LAGHU_RUNTIME_KEY_SIZE];
+      laghu_rum_value value;
+      if (laghu_catalog_url_identity(discovery->resources[index].source_url,
+                                     policy_key, capability_mask, identity) &&
+          laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_IMAGE, identity, now,
+                                &learning, sizeof(learning), &value) &&
+          value.length == sizeof(learning) && learning.version == 1U &&
+          strcmp(learning.identity, identity) == 0) {
+        catalog.learned_width = learning.width;
+        catalog.learned_height = learning.height;
+        catalog.learned_mobile_width = learning.mobile_width;
+        catalog.learned_mobile_height = learning.mobile_height;
+        catalog.learned_viewport_width = learning.viewport_width;
+        catalog.learned_dpr_hundredths = learning.dpr_hundredths;
+        catalog.learned_above_fold = learning.above_fold;
+        catalog.learned_at = learning.updated_at;
+      }
     }
     memcpy(storage[index].source_hash, catalog.source_hash,
            sizeof(storage[index].source_hash));

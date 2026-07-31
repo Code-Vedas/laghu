@@ -7,43 +7,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-typedef HANDLE laghu_rum_lock;
-#define LAGHU_RUM_LOCK_INVALID INVALID_HANDLE_VALUE
-#else
-#include <fcntl.h>
-#include <unistd.h>
-typedef int laghu_rum_lock;
-#define LAGHU_RUM_LOCK_INVALID (-1)
-#endif
 
 #include "laghu/runtime.h"
 
 #define LAGHU_RUM_MAX_HTML (10U * 1024U * 1024U)
 #define LAGHU_RUM_MAX_JSON 16384U
-#define LAGHU_RUM_HISTOGRAMS 3U
-#define LAGHU_RUM_BUCKETS 8U
-
-typedef struct {
-  uint32_t version;
-  char template_key[LAGHU_RUNTIME_KEY_SIZE];
-  char provider_digest[LAGHU_RUNTIME_KEY_SIZE];
-  char policy_key[LAGHU_RUNTIME_KEY_SIZE];
-  uint64_t updated_at;
-  unsigned int script_count;
-  char script_keys[LAGHU_INSTRUMENTATION_MAX_SCRIPTS][LAGHU_RUNTIME_KEY_SIZE];
-  uint64_t observations[2];
-  uint64_t metric_sums[2][5];
-  unsigned int metric_maxima[2][5];
-  uint64_t histograms[2][LAGHU_RUM_HISTOGRAMS][LAGHU_RUM_BUCKETS];
-  uint64_t errors[2];
-  uint64_t rejections[2];
-  uint64_t script_observations[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
-  uint64_t script_before_dcl[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
-  uint64_t script_long_tasks[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
-} laghu_rum_record;
+typedef laghu_rum_instrumentation_record laghu_rum_record;
 
 static const char laghu_rum_script[] =
     "(()=>{const s=document.currentScript;if(!s||Math.random()*100>=+s.dataset."
@@ -239,67 +208,42 @@ static bool laghu_rum_external_allowed(
   return false;
 }
 
-static bool laghu_rum_read(const char *cache_path, const char *key,
+static bool laghu_rum_read(laghu_rum_engine *rum, const char *key, uint64_t now,
                            laghu_rum_record *record) {
-  laghu_runtime_cache_entry entry;
-  return laghu_runtime_cache_lookup_variant(cache_path, key, &entry) &&
-         entry.length == sizeof(*record) &&
-         laghu_runtime_cache_read(&entry, (unsigned char *)record,
-                                  sizeof(*record)) &&
-         record->version == LAGHU_INSTRUMENTATION_VERSION &&
-         strcmp(record->template_key, key) == 0;
+  laghu_rum_value value;
+  if (rum != NULL &&
+      laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_INSTRUMENTATION, key, now,
+                            record, sizeof(*record), &value) &&
+      value.length == sizeof(*record) &&
+      record->version == LAGHU_INSTRUMENTATION_VERSION &&
+      strcmp(record->template_key, key) == 0)
+    return true;
+  return false;
 }
 
-static bool laghu_rum_write(const char *cache_path, laghu_rum_record *record) {
-  laghu_runtime_cache_entry entry;
-  char validator[LAGHU_RUNTIME_KEY_SIZE];
-  if (!laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)record, sizeof(*record)},
-          validator))
-    return false;
-  return laghu_runtime_cache_publish(
-      cache_path, record->template_key, record->template_key, validator,
-      "application/x-laghu-rum", "laghu-rum-v1",
-      (laghu_buffer){(const unsigned char *)record, sizeof(*record)}, &entry);
-}
-
-static laghu_rum_lock laghu_rum_lock_record(const char *cache_path,
-                                            const char *key, char *path,
-                                            size_t path_size) {
-  int length = snprintf(path, path_size, "%s/%s.rum.lock", cache_path, key);
-  if (length <= 0 || (size_t)length >= path_size) return LAGHU_RUM_LOCK_INVALID;
-#ifdef _WIN32
-  return CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                     FILE_ATTRIBUTE_TEMPORARY, NULL);
-#else
-  return open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
-#endif
-}
-
-static void laghu_rum_unlock_record(laghu_rum_lock lock, const char *path) {
-#ifdef _WIN32
-  (void)CloseHandle(lock);
-#else
-  (void)close(lock);
-#endif
-  (void)remove(path);
+static bool laghu_rum_write(laghu_rum_engine *rum, laghu_rum_record *record) {
+  return rum != NULL &&
+         laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                  record->template_key, record->updated_at,
+                                  record, sizeof(*record), NULL);
 }
 
 bool laghu_runtime_add_instrumentation(
-    const char *cache_path, const laghu_javascript_observation_set *providers,
-    laghu_buffer html, const char *page_path, const char *page_origin,
-    const char *policy_key, uint64_t now, unsigned int ttl_seconds,
-    unsigned int sample_rate, bool csp_allows_self_scripts,
-    laghu_runtime_html_result *result) {
+    laghu_rum_engine *rum, const char *cache_path,
+    const laghu_javascript_observation_set *providers, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
+    bool csp_allows_self_scripts, laghu_runtime_html_result *result) {
   laghu_rum_record record;
   const unsigned char *body, *scan;
   char material[16384U], key[LAGHU_RUNTIME_KEY_SIZE];
   size_t used, at, output_length;
   unsigned char *output;
   const char *digest = providers == NULL ? "none" : providers->digest;
-  if (result == NULL || cache_path == NULL || page_path == NULL ||
-      page_origin == NULL || policy_key == NULL || html.data == NULL ||
-      html.length > LAGHU_RUM_MAX_HTML || sample_rate > 100U)
+  if (result == NULL || rum == NULL || cache_path == NULL ||
+      page_path == NULL || page_origin == NULL || policy_key == NULL ||
+      html.data == NULL || html.length > LAGHU_RUM_MAX_HTML ||
+      sample_rate > 100U)
     return false;
   memset(result, 0, sizeof(*result));
   if (!csp_allows_self_scripts || sample_rate == 0U ||
@@ -392,14 +336,14 @@ bool laghu_runtime_add_instrumentation(
     return false;
   {
     laghu_rum_record existing;
-    if (!(laghu_rum_read(cache_path, key, &existing) &&
+    if (!(laghu_rum_read(rum, key, now, &existing) &&
           now >= existing.updated_at &&
           now - existing.updated_at <= ttl_seconds)) {
       strcpy(record.template_key, key);
       strcpy(record.provider_digest, digest);
       strcpy(record.policy_key, policy_key);
       record.updated_at = now;
-      if (!laghu_rum_write(cache_path, &record)) return true;
+      if (!laghu_rum_write(rum, &record)) return true;
     }
   }
   {
@@ -529,64 +473,82 @@ static unsigned int laghu_rum_histogram(unsigned int value,
   return 7U;
 }
 
-bool laghu_instrumentation_apply_beacon(
-    const char *cache_path, uint64_t now, unsigned int ttl_seconds,
-    const laghu_instrumentation_beacon *beacon) {
+typedef struct {
+  const laghu_instrumentation_beacon *beacon;
+  uint64_t now;
+  unsigned int ttl_seconds;
+} laghu_rum_merge_context;
+
+static bool laghu_rum_merge(void *data, size_t length, void *opaque) {
   static const unsigned int lcp_limits[7] = {1000,  2500,  4000, 8000,
                                              15000, 30000, 60000};
   static const unsigned int inp_limits[7] = {100,  200,  500,  1000,
                                              2000, 5000, 10000};
   static const unsigned int cls_limits[7] = {50,   100,  250, 500,
                                              1000, 2500, 5000};
-  laghu_rum_record record;
-  char lock_path[LAGHU_RUNTIME_PATH_SIZE];
-  laghu_rum_lock lock;
+  laghu_rum_merge_context *context = opaque;
+  const laghu_instrumentation_beacon *beacon = context->beacon;
+  laghu_rum_record *record = data;
   unsigned int b, i, metrics[5];
-  if (beacon == NULL || cache_path == NULL) return false;
-  lock = laghu_rum_lock_record(cache_path, beacon->template_key, lock_path,
-                               sizeof(lock_path));
-  if (lock == LAGHU_RUM_LOCK_INVALID) return false;
-  if (!laghu_rum_read(cache_path, beacon->template_key, &record) ||
-      now < record.updated_at || now - record.updated_at > ttl_seconds) {
-    laghu_rum_unlock_record(lock, lock_path);
+  if (length != sizeof(*record) ||
+      record->version != LAGHU_INSTRUMENTATION_VERSION ||
+      strcmp(record->template_key, beacon->template_key) != 0 ||
+      context->now < record->updated_at ||
+      context->now - record->updated_at > context->ttl_seconds)
     return false;
+  for (i = 0U; i < beacon->candidate_count; ++i) {
+    unsigned int j;
+    for (j = 0U; j < record->script_count; ++j)
+      if (strcmp(beacon->candidates[i].key, record->script_keys[j]) == 0) break;
+    if (j == record->script_count) return false;
   }
   b = beacon->bucket;
-  ++record.observations[b];
+  ++record->observations[b];
   metrics[0] = beacon->lcp_ms;
   metrics[1] = beacon->inp_ms;
   metrics[2] = beacon->cls_milli;
   metrics[3] = beacon->dcl_ms;
   metrics[4] = beacon->load_ms;
   for (i = 0U; i < 5U; ++i) {
-    record.metric_sums[b][i] += metrics[i];
-    if (metrics[i] > record.metric_maxima[b][i])
-      record.metric_maxima[b][i] = metrics[i];
+    record->metric_sums[b][i] += metrics[i];
+    if (metrics[i] > record->metric_maxima[b][i])
+      record->metric_maxima[b][i] = metrics[i];
   }
-  ++record.histograms[b][0][laghu_rum_histogram(beacon->lcp_ms, lcp_limits)];
-  ++record.histograms[b][1][laghu_rum_histogram(beacon->inp_ms, inp_limits)];
-  ++record.histograms[b][2][laghu_rum_histogram(beacon->cls_milli, cls_limits)];
-  record.errors[b] += beacon->errors;
-  record.rejections[b] += beacon->rejections;
+  ++record->histograms[b][0][laghu_rum_histogram(beacon->lcp_ms, lcp_limits)];
+  ++record->histograms[b][1][laghu_rum_histogram(beacon->inp_ms, inp_limits)];
+  ++record
+        ->histograms[b][2][laghu_rum_histogram(beacon->cls_milli, cls_limits)];
+  record->errors[b] += beacon->errors;
+  record->rejections[b] += beacon->rejections;
   for (i = 0U; i < beacon->candidate_count; ++i) {
     unsigned int j;
-    bool found = false;
-    for (j = 0U; j < record.script_count; ++j)
-      if (strcmp(beacon->candidates[i].key, record.script_keys[j]) == 0) {
-        ++record.script_observations[b][j];
-        record.script_before_dcl[b][j] += beacon->candidates[i].before_dcl;
-        record.script_long_tasks[b][j] += beacon->candidates[i].long_tasks;
-        found = true;
+    for (j = 0U; j < record->script_count; ++j)
+      if (strcmp(beacon->candidates[i].key, record->script_keys[j]) == 0) {
+        ++record->script_observations[b][j];
+        record->script_before_dcl[b][j] += beacon->candidates[i].before_dcl;
+        record->script_long_tasks[b][j] += beacon->candidates[i].long_tasks;
         break;
       }
-    /* Browsers cannot see the administrator-owned provider rules. Ignore a
-       bounded hash that is not in the server catalog; never aggregate it. */
-    (void)found;
   }
-  record.updated_at = now;
-  {
-    bool written = laghu_rum_write(cache_path, &record);
-    laghu_rum_unlock_record(lock, lock_path);
-    return written;
+  record->updated_at = context->now;
+  return true;
+}
+
+bool laghu_instrumentation_apply_beacon(
+    laghu_rum_engine *rum, const char *cache_path, uint64_t now,
+    unsigned int ttl_seconds, const laghu_instrumentation_beacon *beacon) {
+  laghu_rum_record record;
+  laghu_rum_merge_context context;
+  if (beacon == NULL || rum == NULL || cache_path == NULL) return false;
+  /* Import a valid legacy record into memory before the atomic update. */
+  if (!laghu_rum_read(rum, beacon->template_key, now, &record) ||
+      now < record.updated_at || now - record.updated_at > ttl_seconds) {
+    return false;
   }
+  context.beacon = beacon;
+  context.now = now;
+  context.ttl_seconds = ttl_seconds;
+  return laghu_rum_engine_update(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                 beacon->template_key, now, laghu_rum_merge,
+                                 &context, NULL);
 }

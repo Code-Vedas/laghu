@@ -76,7 +76,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       /run/laghu /var/cache/laghu/images /var/cache/nginx/client_temp \
       /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp \
       /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp \
-      /usr/share/nginx/html
+      /usr/share/nginx/html && \
+    install -d -o laghu -g laghu -m 0770 /var/lib/laghu/rum
 COPY --from=build /out/usr/sbin/nginx /usr/sbin/nginx
 COPY --from=build /out/usr/lib/nginx/modules/ngx_http_laghu_module.so \
   /usr/lib/nginx/modules/ngx_http_laghu_module.so

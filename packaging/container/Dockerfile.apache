@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-      apache2-dev build-essential cmake libvips-dev pkgconf \
+      apache2-dev build-essential ca-certificates cmake libvips-dev pkgconf \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -41,8 +41,9 @@ RUN apt-get update \
     && groupadd --system laghu \
     && useradd --system --gid laghu --home-dir /nonexistent --shell /usr/sbin/nologin laghu \
     && usermod -a -G laghu www-data \
-    && mkdir -p /run/laghu /var/cache/laghu/images \
-    && chown -R laghu:laghu /run/laghu /var/cache/laghu
+    && mkdir -p /run/laghu /var/cache/laghu/images /var/lib/laghu/rum \
+    && chown -R laghu:laghu /run/laghu /var/cache/laghu /var/lib/laghu \
+    && chmod 0770 /var/lib/laghu/rum
 
 COPY --from=build /src/build/workers/laghu-libvips/laghu-libvips /usr/bin/laghu-libvips
 COPY --from=build /src/build/workers/laghu-resource-fetch/laghu-resource-fetch /usr/bin/laghu-resource-fetch

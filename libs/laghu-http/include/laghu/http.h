@@ -68,6 +68,7 @@ typedef struct {
   size_t struct_size;
   laghu_config config;
   const char *cache_path;
+  laghu_rum_engine *rum;
   const char *worker_queue_path;
   laghu_runtime_queue *queue;
   const char *font_fetch_queue_path;

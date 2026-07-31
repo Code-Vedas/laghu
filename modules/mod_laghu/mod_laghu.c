@@ -3,7 +3,9 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <errno.h>
 #include <httpd.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 /* Apache requires httpd.h to define its public record types first. */
@@ -45,6 +47,17 @@ typedef struct {
   const char *javascript_target;
   const char *javascript_observation_config;
   const char *image_cache;
+  const char *rum_store;
+  const char *rum_snapshot;
+  const char *rum_client_library;
+  size_t rum_memory_limit;
+  size_t rum_pending_limit;
+  unsigned int rum_ttl;
+  unsigned int rum_sync_interval;
+  unsigned int rum_timeout_ms;
+  unsigned int rum_retry_limit;
+  bool rum_required;
+  uint32_t rum_set_mask;
   laghu_runtime_queue queue;
   laghu_runtime_queue font_queue;
   laghu_runtime_queue javascript_runtime_queue;
@@ -90,6 +103,58 @@ typedef struct {
 module AP_MODULE_DECLARE_DATA laghu_module;
 static apr_time_t laghu_apache_beacon_window;
 static unsigned int laghu_apache_beacon_count;
+static laghu_rum_engine *laghu_apache_rum;
+
+static apr_status_t laghu_apache_rum_cleanup(void *data) {
+  (void)data;
+  laghu_rum_engine_destroy(laghu_apache_rum);
+  laghu_apache_rum = NULL;
+  return APR_SUCCESS;
+}
+
+static void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
+  laghu_apache_config *config =
+      ap_get_module_config(server->module_config, &laghu_module);
+  laghu_rum_options options;
+  char snapshot[LAGHU_RUNTIME_PATH_SIZE];
+  char error[160U];
+  int length;
+  laghu_rum_options_init(&options);
+  length =
+      config != NULL && config->rum_snapshot != NULL
+          ? snprintf(snapshot, sizeof(snapshot), "%s", config->rum_snapshot)
+          : snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
+                     LAGHU_DEFAULT_CACHE);
+  if (length <= 0 || (size_t)length >= sizeof(snapshot)) return;
+  options.snapshot_path = snapshot;
+  if (config != NULL) {
+    options.store_uri = config->rum_store;
+    options.client_library = config->rum_client_library;
+    options.memory_limit = config->rum_memory_limit;
+    options.pending_limit = config->rum_pending_limit;
+    options.ttl_seconds = config->rum_ttl;
+    options.sync_interval_seconds = config->rum_sync_interval;
+    options.timeout_ms = config->rum_timeout_ms;
+    options.retry_limit = config->rum_retry_limit;
+    options.required = config->rum_required;
+  }
+  laghu_apache_rum = laghu_rum_engine_create(&options, error, sizeof(error));
+  if (laghu_apache_rum == NULL) {
+    ap_log_error(APLOG_MARK, options.required ? APLOG_CRIT : APLOG_WARNING, 0,
+                 server, "Laghu RUM engine unavailable: %s", error);
+    if (options.required) exit(APEXIT_CHILDFATAL);
+    options.store_uri = "local:";
+    options.client_library = NULL;
+    options.required = false;
+    laghu_apache_rum = laghu_rum_engine_create(&options, error, sizeof(error));
+    if (laghu_apache_rum == NULL)
+      ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server,
+                   "Laghu local RUM fallback unavailable: %s", error);
+  }
+  if (laghu_apache_rum != NULL)
+    apr_pool_cleanup_register(pool, NULL, laghu_apache_rum_cleanup,
+                              apr_pool_cleanup_null);
+}
 
 static unsigned int laghu_apache_unsigned_header(request_rec *request,
                                                  const char *name,
@@ -142,6 +207,13 @@ static void *laghu_apache_create_config(apr_pool_t *pool, char *path) {
     laghu_runtime_queue_init(&config->queue);
     laghu_runtime_queue_init(&config->font_queue);
     laghu_runtime_queue_init(&config->javascript_runtime_queue);
+    config->rum_store = "local:";
+    config->rum_memory_limit = LAGHU_RUM_DEFAULT_MEMORY_BYTES;
+    config->rum_pending_limit = LAGHU_RUM_DEFAULT_PENDING_BYTES;
+    config->rum_ttl = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
+    config->rum_sync_interval = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
+    config->rum_timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
+    config->rum_retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
     apr_pool_cleanup_register(pool, config, laghu_apache_queue_cleanup,
                               apr_pool_cleanup_null);
   }
@@ -217,6 +289,30 @@ static bool laghu_apache_on_off(const char *value, laghu_mode *mode) {
   return false;
 }
 
+static bool laghu_apache_size(const char *value, size_t minimum,
+                              size_t *output) {
+  unsigned long long parsed, multiplier = 1U;
+  char *end = NULL;
+  if (value == NULL || *value == '\0') return false;
+  errno = 0;
+  parsed = strtoull(value, &end, 10);
+  if (errno != 0 || end == value) return false;
+  if (*end != '\0') {
+    if (end[1] != '\0') return false;
+    if (*end == 'k' || *end == 'K')
+      multiplier = 1024U;
+    else if (*end == 'm' || *end == 'M')
+      multiplier = 1024U * 1024U;
+    else
+      return false;
+  }
+  if (parsed > SIZE_MAX / multiplier) return false;
+  parsed *= multiplier;
+  if (parsed < minimum) return false;
+  *output = (size_t)parsed;
+  return true;
+}
+
 static const char *laghu_apache_command(cmd_parms *command, void *value,
                                         const char *arguments) {
   laghu_apache_config *config = value;
@@ -231,6 +327,86 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
 
   if (name[0] == '\0' || extra[0] != '\0') {
     return "Laghu expects one setting and, where required, one value";
+  }
+  if (ap_cstr_casecmp(name, "RumStore") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreLocalSnapshot") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreClientLibrary") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreRequired") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreTimeout") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreTtl") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreRetryLimit") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreSyncInterval") == 0 ||
+      ap_cstr_casecmp(name, "RumStoreMemoryLimit") == 0 ||
+      ap_cstr_casecmp(name, "RumStorePendingLimit") == 0) {
+    uint32_t setting_bit;
+    if (command->path != NULL || command->server->is_virtual)
+      return "Laghu RUM store settings are allowed only in the main server "
+             "context";
+    if (ap_cstr_casecmp(name, "RumStore") == 0)
+      setting_bit = 1U << 0;
+    else if (ap_cstr_casecmp(name, "RumStoreLocalSnapshot") == 0)
+      setting_bit = 1U << 1;
+    else if (ap_cstr_casecmp(name, "RumStoreClientLibrary") == 0)
+      setting_bit = 1U << 2;
+    else if (ap_cstr_casecmp(name, "RumStoreRequired") == 0)
+      setting_bit = 1U << 3;
+    else if (ap_cstr_casecmp(name, "RumStoreTimeout") == 0)
+      setting_bit = 1U << 4;
+    else if (ap_cstr_casecmp(name, "RumStoreTtl") == 0)
+      setting_bit = 1U << 5;
+    else if (ap_cstr_casecmp(name, "RumStoreRetryLimit") == 0)
+      setting_bit = 1U << 6;
+    else if (ap_cstr_casecmp(name, "RumStoreSyncInterval") == 0)
+      setting_bit = 1U << 7;
+    else if (ap_cstr_casecmp(name, "RumStoreMemoryLimit") == 0)
+      setting_bit = 1U << 8;
+    else
+      setting_bit = 1U << 9;
+    if ((config->rum_set_mask & setting_bit) != 0U)
+      return "Laghu RUM store setting is duplicated";
+    config->rum_set_mask |= setting_bit;
+    if (ap_cstr_casecmp(name, "RumStore") == 0) {
+      if (!laghu_rum_store_validate(parameter, NULL, 0U))
+        return "Laghu RumStore URI is invalid or unsupported";
+      config->rum_store = parameter;
+    } else if (ap_cstr_casecmp(name, "RumStoreLocalSnapshot") == 0)
+      config->rum_snapshot = parameter;
+    else if (ap_cstr_casecmp(name, "RumStoreClientLibrary") == 0)
+      config->rum_client_library = parameter;
+    else if (ap_cstr_casecmp(name, "RumStoreRequired") == 0) {
+      laghu_mode mode;
+      if (!laghu_apache_on_off(parameter, &mode))
+        return "Laghu RumStoreRequired expects On or Off";
+      config->rum_required = mode == LAGHU_MODE_ON;
+    } else if (ap_cstr_casecmp(name, "RumStoreMemoryLimit") == 0 ||
+               ap_cstr_casecmp(name, "RumStorePendingLimit") == 0) {
+      size_t parsed;
+      if (!laghu_apache_size(parameter, LAGHU_RUM_MAX_RECORD_BYTES, &parsed))
+        return "Laghu RUM store size setting is out of range";
+      if (ap_cstr_casecmp(name, "RumStoreMemoryLimit") == 0)
+        config->rum_memory_limit = parsed;
+      else
+        config->rum_pending_limit = parsed;
+    } else {
+      quality = strtoul(parameter, &end, 10);
+      if (end == parameter || *end != '\0')
+        return "Laghu RUM store numeric setting is invalid";
+      if (ap_cstr_casecmp(name, "RumStoreTimeout") == 0 && quality >= 10U &&
+          quality <= 10000U)
+        config->rum_timeout_ms = (unsigned int)quality;
+      else if (ap_cstr_casecmp(name, "RumStoreTtl") == 0 && quality >= 3600U &&
+               quality <= 2592000U)
+        config->rum_ttl = (unsigned int)quality;
+      else if (ap_cstr_casecmp(name, "RumStoreRetryLimit") == 0 &&
+               quality <= 10U)
+        config->rum_retry_limit = (unsigned int)quality;
+      else if (ap_cstr_casecmp(name, "RumStoreSyncInterval") == 0 &&
+               quality >= 1U && quality <= 300U)
+        config->rum_sync_interval = (unsigned int)quality;
+      else
+        return "Laghu RUM store numeric setting is out of range";
+    }
+    return NULL;
   }
   if (parameter[0] == '\0') {
     laghu_mode mode;
@@ -764,6 +940,7 @@ static bool laghu_apache_normalize(request_rec *request,
   context->environment.cache_path = context->config->image_cache != NULL
                                         ? context->config->image_cache
                                         : LAGHU_DEFAULT_CACHE;
+  context->environment.rum = laghu_apache_rum;
   context->environment.worker_queue_path = context->config->worker_queue != NULL
                                                ? context->config->worker_queue
                                                : LAGHU_DEFAULT_QUEUE;
@@ -1030,6 +1207,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
       size_t selected_length = context->capture_length;
       apr_bucket_brigade *replacement;
       if (laghu_runtime_rewrite_html(
+              laghu_apache_rum,
               context->config->image_cache != NULL
                   ? context->config->image_cache
                   : LAGHU_DEFAULT_CACHE,
@@ -1073,6 +1251,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
         if ((context->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) !=
                 0U &&
             laghu_runtime_prioritize_critical_css(
+                laghu_apache_rum,
                 context->config->image_cache != NULL
                     ? context->config->image_cache
                     : LAGHU_DEFAULT_CACHE,
@@ -1548,6 +1727,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
         !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) ||
         !laghu_apache_backend_available(config) ||
         !laghu_catalog_apply_beacon(
+            laghu_apache_rum,
             config->image_cache != NULL ? config->image_cache
                                         : LAGHU_DEFAULT_CACHE,
             policy_key, config->queue.capabilities, (uint64_t)now,
@@ -1613,6 +1793,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
         !laghu_resolve_config_policy(&config->core, &policy) ||
         !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) ||
         !laghu_critical_css_apply_beacon(
+            laghu_apache_rum,
             config->image_cache != NULL ? config->image_cache
                                         : LAGHU_DEFAULT_CACHE,
             policy_key, now, config->core.image_metadata_ttl, &critical))
@@ -1670,6 +1851,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
             (laghu_buffer){(const unsigned char *)body_buffer, (size_t)total},
             &rum) ||
         !laghu_instrumentation_apply_beacon(
+            laghu_apache_rum,
             config->image_cache != NULL ? config->image_cache
                                         : LAGHU_DEFAULT_CACHE,
             now, config->core.image_metadata_ttl, &rum))
@@ -1764,6 +1946,7 @@ static void laghu_apache_register(apr_pool_t *pool) {
   ap_hook_insert_filter(laghu_apache_insert_filter, NULL, NULL,
                         APR_HOOK_MIDDLE);
   ap_hook_handler(laghu_apache_variant_handler, NULL, NULL, APR_HOOK_MIDDLE);
+  ap_hook_child_init(laghu_apache_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 static const command_rec laghu_apache_commands[] = {

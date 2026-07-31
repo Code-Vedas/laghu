@@ -287,6 +287,15 @@ pid logs/nginx.pid;
 events { worker_connections 128; }
 http {
   include mime.types;
+  laghu rum_store local:;
+  laghu rum_store_local_snapshot @LAGHU_RUM_SNAPSHOT@;
+  laghu rum_store_timeout 100;
+  laghu rum_store_ttl 604800;
+  laghu rum_store_retry_limit 3;
+  laghu rum_store_sync_interval 5;
+  laghu rum_store_memory_limit 8m;
+  laghu rum_store_pending_limit 1m;
+  laghu rum_store_required off;
   server {
     listen 127.0.0.1:8080;
     location / { laghu off; return 200 "Laghu NGINX for Windows`n"; }
@@ -369,7 +378,20 @@ function Build-Apache {
   Copy-License "$aprUtilSource\LICENSE" $root "apr-util-LICENSE.txt"
   Copy-License "$aprUtilSource\NOTICE" $root "apr-util-NOTICE.txt"
   Copy-License "$vcpkgInstalled\share\pcre2\copyright" $root "pcre2-copyright.txt"
-  Add-Content -Encoding ASCII "$root\conf\httpd.conf" "`nLoadModule laghu_module modules/mod_laghu.so`nLaghu Off`n"
+  Add-Content -Encoding ASCII "$root\conf\httpd.conf" @"
+
+LoadModule laghu_module modules/mod_laghu.so
+Laghu Off
+Laghu RumStore local:
+Laghu RumStoreLocalSnapshot "@LAGHU_RUM_SNAPSHOT@"
+Laghu RumStoreTimeout 100
+Laghu RumStoreTtl 604800
+Laghu RumStoreRetryLimit 3
+Laghu RumStoreSyncInterval 5
+Laghu RumStoreMemoryLimit 8m
+Laghu RumStorePendingLimit 1m
+Laghu RumStoreRequired Off
+"@
   $requiredModules = @{}
   Get-Content "$root\conf\httpd.conf" | ForEach-Object {
     if ($_ -match '^\s*LoadModule\s+\S+\s+"?modules/([^"\s]+\.so)"?') {

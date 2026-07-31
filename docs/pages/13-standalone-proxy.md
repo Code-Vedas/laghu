@@ -38,6 +38,20 @@ The `/.laghu/image/<sha256>` and `/.laghu/css/<sha256>` routes are served locall
 
 The cache directory must exist and permit exclusive create, write, sync, and removal before the listener binds. A missing worker queue is accepted as degraded operation; an existing malformed or inaccessible queue prevents startup. Every mutable file remains beneath the configured cache or worker-queue paths.
 
+RUM learning is memory-native and defaults to an atomic local snapshot below the cache directory. A fleet can share aggregate learning through optional dynamically loaded hiredis:
+
+```sh
+laghu \
+  --listen 127.0.0.1:8080 \
+  --origin https://origin.example \
+  --cache /var/cache/laghu/images \
+  --worker-queue /run/laghu/jobs.queue \
+  --rum-store 'rediss://${RUM_USERNAME}:${RUM_PASSWORD}@persistent-redis.example.net:6380/0?prefix=laghu:' \
+  --rum-store-client-library /usr/lib/libhiredis.so
+```
+
+Backend traffic is performed only by the background synchronization thread. The example Redis endpoint represents a separately operated persistent service, not a process or container running beside Laghu. Without `--rum-store-required`, an unavailable optional backend falls back to the local snapshot and request handling remains fail-open. See [Configuration](/configuration/) for TLS, durability, bounds, retry, TTL, and memory settings.
+
 ## Operational Logs
 
 The proxy writes JSON Lines to standard error. Lifecycle, readiness, overload, and transaction records include bounded operational fields. Transaction paths omit query strings, and records never contain client addresses, authorities, authorization, cookies, bodies, beacon payloads, cache paths, or queue paths. Logs remain local; the proxy sends no telemetry.

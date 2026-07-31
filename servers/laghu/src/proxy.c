@@ -109,6 +109,7 @@ typedef struct {
   proxy_lifecycle_state state;
   bool stopping;
   SSL_CTX *tls_context;
+  laghu_rum_engine *rum;
 #ifdef _WIN32
   CRITICAL_SECTION lock;
   CONDITION_VARIABLE ready;
@@ -180,6 +181,30 @@ static bool proxy_uint(const char *value, unsigned int minimum,
   if (errno != 0 || end == value || *end != '\0' || parsed < minimum ||
       parsed > maximum)
     return false;
+  *output = (unsigned int)parsed;
+  return true;
+}
+
+static bool proxy_size(const char *value, unsigned int minimum,
+                       unsigned int maximum, unsigned int *output) {
+  unsigned long long parsed, multiplier = 1U;
+  char *end = NULL;
+  if (value == NULL || *value == '\0') return false;
+  errno = 0;
+  parsed = strtoull(value, &end, 10);
+  if (errno != 0 || end == value) return false;
+  if (*end != '\0') {
+    if (end[1] != '\0') return false;
+    if (*end == 'k' || *end == 'K')
+      multiplier = 1024U;
+    else if (*end == 'm' || *end == 'M')
+      multiplier = 1024U * 1024U;
+    else
+      return false;
+  }
+  if (parsed > maximum / multiplier) return false;
+  parsed *= multiplier;
+  if (parsed < minimum || parsed > maximum) return false;
   *output = (unsigned int)parsed;
   return true;
 }
@@ -330,6 +355,13 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   (void)proxy_copy(options->javascript_target,
                    sizeof(options->javascript_target),
                    "defaults and supports es6-module and not dead");
+  (void)proxy_copy(options->rum_store, sizeof(options->rum_store), "local:");
+  options->rum_timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
+  options->rum_ttl = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
+  options->rum_retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
+  options->rum_sync_interval = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
+  options->rum_memory_limit = LAGHU_RUM_DEFAULT_MEMORY_BYTES;
+  options->rum_pending_limit = LAGHU_RUM_DEFAULT_PENDING_BYTES;
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity,
@@ -354,6 +386,10 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
   bool ca_seen = false, forwarded_seen = false;
+  bool rum_store_seen = false, rum_snapshot_seen = false;
+  bool rum_library_seen = false, rum_timeout_seen = false, rum_ttl_seen = false;
+  bool rum_retry_seen = false, rum_sync_seen = false;
+  bool rum_memory_seen = false, rum_pending_seen = false;
   int index;
   if (options == NULL || argc < 1)
     return proxy_error(error, error_size, "invalid arguments");
@@ -393,6 +429,75 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --worker-queue");
       queue_seen = true;
+    } else if (strcmp(name, "--rum-store") == 0) {
+      NEED_VALUE();
+      if (rum_store_seen || !laghu_rum_store_validate(value, NULL, 0U) ||
+          !proxy_copy(options->rum_store, sizeof(options->rum_store), value))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --rum-store");
+      rum_store_seen = true;
+    } else if (strcmp(name, "--rum-store-local-snapshot") == 0) {
+      NEED_VALUE();
+      if (rum_snapshot_seen ||
+          !proxy_copy(options->rum_snapshot_path,
+                      sizeof(options->rum_snapshot_path), value))
+        return proxy_error(error, error_size,
+                           "invalid --rum-store-local-snapshot");
+      rum_snapshot_seen = true;
+    } else if (strcmp(name, "--rum-store-client-library") == 0) {
+      NEED_VALUE();
+      if (rum_library_seen ||
+          !proxy_copy(options->rum_client_library,
+                      sizeof(options->rum_client_library), value))
+        return proxy_error(error, error_size,
+                           "invalid --rum-store-client-library");
+      rum_library_seen = true;
+    } else if (strcmp(name, "--rum-store-required") == 0) {
+      if (options->rum_store_required)
+        return proxy_error(error, error_size, "duplicate --rum-store-required");
+      options->rum_store_required = true;
+    } else if (strcmp(name, "--rum-store-timeout") == 0) {
+      NEED_VALUE();
+      if (rum_timeout_seen ||
+          !proxy_uint(value, 10U, 10000U, &options->rum_timeout_ms))
+        return proxy_error(error, error_size, "invalid --rum-store-timeout");
+      rum_timeout_seen = true;
+    } else if (strcmp(name, "--rum-store-ttl") == 0) {
+      NEED_VALUE();
+      if (rum_ttl_seen ||
+          !proxy_uint(value, 3600U, 2592000U, &options->rum_ttl))
+        return proxy_error(error, error_size, "invalid --rum-store-ttl");
+      rum_ttl_seen = true;
+    } else if (strcmp(name, "--rum-store-retry-limit") == 0) {
+      NEED_VALUE();
+      if (rum_retry_seen ||
+          !proxy_uint(value, 0U, 10U, &options->rum_retry_limit))
+        return proxy_error(error, error_size,
+                           "invalid --rum-store-retry-limit");
+      rum_retry_seen = true;
+    } else if (strcmp(name, "--rum-store-sync-interval") == 0) {
+      NEED_VALUE();
+      if (rum_sync_seen ||
+          !proxy_uint(value, 1U, 300U, &options->rum_sync_interval))
+        return proxy_error(error, error_size,
+                           "invalid --rum-store-sync-interval");
+      rum_sync_seen = true;
+    } else if (strcmp(name, "--rum-store-memory-limit") == 0) {
+      unsigned int parsed;
+      NEED_VALUE();
+      if (rum_memory_seen || !proxy_size(value, 16384U, 1073741824U, &parsed))
+        return proxy_error(error, error_size,
+                           "invalid --rum-store-memory-limit");
+      options->rum_memory_limit = parsed;
+      rum_memory_seen = true;
+    } else if (strcmp(name, "--rum-store-pending-limit") == 0) {
+      unsigned int parsed;
+      NEED_VALUE();
+      if (rum_pending_seen || !proxy_size(value, 16384U, 1073741824U, &parsed))
+        return proxy_error(error, error_size,
+                           "invalid --rum-store-pending-limit");
+      options->rum_pending_limit = parsed;
+      rum_pending_seen = true;
     } else if (strcmp(name, "--font-fetch-queue") == 0) {
       NEED_VALUE();
       if (font_queue_seen ||
@@ -1900,7 +2005,7 @@ static void proxy_handle(const proxy_connection *connection,
                                             options->worker_queue_path)) ||
                  !laghu_runtime_queue_refresh(&worker->runtime_queue) ||
                  !laghu_catalog_apply_beacon(
-                     options->cache_path, policy_key,
+                     worker->queue->rum, options->cache_path, policy_key,
                      worker->runtime_queue.capabilities, now,
                      options->config.image_metadata_ttl, &beacon)) {
         PROXY_FAIL(400U, "Bad Request", "worker");
@@ -1957,7 +2062,7 @@ static void proxy_handle(const proxy_connection *connection,
                  !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy,
                                     policy_key) ||
                  !laghu_critical_css_apply_beacon(
-                     options->cache_path, policy_key, now,
+                     worker->queue->rum, options->cache_path, policy_key, now,
                      options->config.image_metadata_ttl, &beacon)) {
         PROXY_FAIL(400U, "Bad Request", "worker");
       } else {
@@ -2008,7 +2113,7 @@ static void proxy_handle(const proxy_connection *connection,
                      (laghu_buffer){request_body, request_body_length},
                      &beacon) ||
                  !laghu_instrumentation_apply_beacon(
-                     options->cache_path, now,
+                     worker->queue->rum, options->cache_path, now,
                      options->config.image_metadata_ttl, &beacon)) {
         PROXY_FAIL(400U, "Bad Request", "worker");
       } else {
@@ -2060,6 +2165,7 @@ static void proxy_handle(const proxy_connection *connection,
         .struct_size = sizeof(environment),
         .config = options->config,
         .cache_path = options->cache_path,
+        .rum = worker->queue->rum,
         .worker_queue_path = options->worker_queue_path,
         .queue = &worker->runtime_queue,
         .font_fetch_queue_path = options->font_providers_loaded
@@ -2211,6 +2317,7 @@ static void proxy_handle(const proxy_connection *connection,
       .struct_size = sizeof(environment),
       .config = options->config,
       .cache_path = options->cache_path,
+      .rum = worker->queue->rum,
       .worker_queue_path = options->worker_queue_path,
       .queue = &worker->runtime_queue,
       .font_fetch_queue_path = options->font_providers_loaded
@@ -2723,6 +2830,42 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   queue.cache_readiness = -1;
   queue.optimizer_readiness = -1;
   queue.request_prefix = proxy_monotonic_ms() << 16U;
+  {
+    laghu_rum_options rum_options;
+    char snapshot[LAGHU_RUNTIME_PATH_SIZE];
+    char rum_error[160U];
+    laghu_rum_options_init(&rum_options);
+    if (options->rum_snapshot_path[0] != '\0')
+      (void)snprintf(snapshot, sizeof(snapshot), "%s",
+                     options->rum_snapshot_path);
+    else if (snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
+                      options->cache_path) <= 0)
+      goto cleanup;
+    rum_options.store_uri = options->rum_store;
+    rum_options.snapshot_path = snapshot;
+    rum_options.client_library = options->rum_client_library[0] == '\0'
+                                     ? NULL
+                                     : options->rum_client_library;
+    rum_options.memory_limit = options->rum_memory_limit;
+    rum_options.pending_limit = options->rum_pending_limit;
+    rum_options.ttl_seconds = options->rum_ttl;
+    rum_options.sync_interval_seconds = options->rum_sync_interval;
+    rum_options.timeout_ms = options->rum_timeout_ms;
+    rum_options.retry_limit = options->rum_retry_limit;
+    rum_options.required = options->rum_store_required;
+    queue.rum =
+        laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
+    if (queue.rum == NULL && options->rum_store_required) goto cleanup;
+    if (queue.rum == NULL) {
+      proxy_log_event(&queue, "rum_store_fallback", "degraded");
+      rum_options.store_uri = "local:";
+      rum_options.client_library = NULL;
+      rum_options.required = false;
+      queue.rum =
+          laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
+    }
+    if (queue.rum == NULL) goto cleanup;
+  }
   if (!proxy_cache_probe(options->cache_path) ||
       !proxy_queue_path_valid(options->worker_queue_path) ||
       (options->font_providers_loaded &&
@@ -2819,6 +2962,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   proxy_log_event(&queue, "shutdown", "stopped");
   result = started == options->workers ? 0 : 1;
 cleanup:
+  laghu_rum_engine_destroy(queue.rum);
   if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);
   SSL_CTX_free(queue.tls_context);
 #ifdef _WIN32

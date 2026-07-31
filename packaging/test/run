@@ -108,3 +108,17 @@ case "${PACKAGE_FAMILY}" in
     fi
     ;;
 esac
+
+if [ "${SERVER}" = nginx ]; then
+  installed_config=/etc/nginx/conf.d/laghu.conf
+  grep -q '^laghu rum_store local:;' "${installed_config}"
+  grep -q '^laghu rum_store_local_snapshot /var/lib/laghu/rum/rum.snapshot;' \
+    "${installed_config}"
+else
+  installed_config=/etc/apache2/mods-available/laghu.conf
+  [ -f "${installed_config}" ] || installed_config=/etc/httpd/conf.d/laghu.conf
+  grep -q '^Laghu RumStore local:$' "${installed_config}"
+  grep -q '^Laghu RumStoreLocalSnapshot /var/lib/laghu/rum/rum.snapshot$' \
+    "${installed_config}"
+fi
+test -d /var/lib/laghu/rum

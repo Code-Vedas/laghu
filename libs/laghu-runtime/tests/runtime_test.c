@@ -327,6 +327,202 @@ static void test_head_planner_cache(const char *cache_path,
   laghu_runtime_html_result_release(&result);
 }
 
+static void test_rum_engine(const char *directory) {
+  static const char key[] =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  static const unsigned char payload[] = {0U, 1U, 2U, 0xfeU, 0xffU};
+  laghu_rum_options options;
+  laghu_rum_engine *engine;
+  laghu_rum_value value;
+  unsigned char restored[sizeof(payload)];
+  laghu_rum_image_record image = {0}, restored_image = {0};
+  char snapshot[LAGHU_RUNTIME_PATH_SIZE];
+  assert(snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot", directory) >
+         0);
+  laghu_rum_options_init(&options);
+  options.snapshot_path = snapshot;
+  options.sync_interval_seconds = 1U;
+  engine = laghu_rum_engine_create(&options, NULL, 0U);
+  assert(engine != NULL);
+  assert(laghu_rum_engine_publish(engine, LAGHU_RUM_RECORD_DECISION, key, 10U,
+                                  payload, sizeof(payload), NULL));
+  assert(laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_DECISION, key, 11U,
+                               restored, sizeof(restored), &value));
+  assert(value.length == sizeof(payload) &&
+         memcmp(restored, payload, sizeof(payload)) == 0);
+  assert(laghu_rum_engine_memory_used(engine) == sizeof(payload));
+  image.version = 1U;
+  strcpy(image.identity, key);
+  image.updated_at = 10U;
+  image.width = 321U;
+  image.above_fold = true;
+  assert(laghu_rum_engine_publish(engine, LAGHU_RUM_RECORD_IMAGE, key, 10U,
+                                  &image, sizeof(image), NULL));
+  laghu_rum_engine_destroy(engine);
+  engine = laghu_rum_engine_create(&options, NULL, 0U);
+  assert(engine != NULL);
+  memset(restored, 0, sizeof(restored));
+  assert(laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_DECISION, key, 12U,
+                               restored, sizeof(restored), &value));
+  assert(memcmp(restored, payload, sizeof(payload)) == 0);
+  assert(laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_IMAGE, key, 12U,
+                               &restored_image, sizeof(restored_image),
+                               &value));
+  assert(restored_image.width == 321U && restored_image.above_fold &&
+         !strcmp(restored_image.identity, key));
+  laghu_rum_engine_destroy(engine);
+  {
+    laghu_rum_engine *peer_one, *peer_two;
+    laghu_rum_image_record one = {0}, two = {0};
+    laghu_rum_instrumentation_record rum_one = {0}, rum_two = {0}, rum_total;
+    one.version = two.version = 1U;
+    strcpy(one.identity, key);
+    strcpy(two.identity, key);
+    one.updated_at = 20U;
+    two.updated_at = 21U;
+    one.width = 400U;
+    two.height = 300U;
+    two.above_fold = true;
+    peer_one = laghu_rum_engine_create(&options, NULL, 0U);
+    peer_two = laghu_rum_engine_create(&options, NULL, 0U);
+    assert(peer_one != NULL && peer_two != NULL);
+    assert(laghu_rum_engine_publish(peer_one, LAGHU_RUM_RECORD_IMAGE, key, 20U,
+                                    &one, sizeof(one), NULL));
+    assert(laghu_rum_engine_publish(peer_two, LAGHU_RUM_RECORD_IMAGE, key, 21U,
+                                    &two, sizeof(two), NULL));
+    rum_one.version = rum_two.version = LAGHU_INSTRUMENTATION_VERSION;
+    strcpy(rum_one.template_key, key);
+    strcpy(rum_two.template_key, key);
+    strcpy(rum_one.provider_digest, key);
+    strcpy(rum_two.provider_digest, key);
+    strcpy(rum_one.policy_key, key);
+    strcpy(rum_two.policy_key, key);
+    rum_one.updated_at = 20U;
+    rum_two.updated_at = 21U;
+    rum_one.observations[0] = 2U;
+    rum_two.observations[0] = 3U;
+    assert(laghu_rum_engine_publish(peer_one, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                    key, 20U, &rum_one, sizeof(rum_one), NULL));
+    assert(laghu_rum_engine_publish(peer_two, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                    key, 21U, &rum_two, sizeof(rum_two), NULL));
+    laghu_rum_engine_destroy(peer_one);
+    laghu_rum_engine_destroy(peer_two);
+    engine = laghu_rum_engine_create(&options, NULL, 0U);
+    assert(engine != NULL &&
+           laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_IMAGE, key, 22U,
+                                 &restored_image, sizeof(restored_image),
+                                 &value));
+    assert(restored_image.width == 400U && restored_image.height == 300U &&
+           restored_image.above_fold);
+    assert(laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
+                                 22U, &rum_total, sizeof(rum_total), &value));
+    assert(rum_total.observations[0] == 5U);
+    laghu_rum_engine_destroy(engine);
+    engine = laghu_rum_engine_create(&options, NULL, 0U);
+    assert(engine != NULL &&
+           laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
+                                 23U, &rum_total, sizeof(rum_total), &value));
+    assert(rum_total.observations[0] == 5U);
+    laghu_rum_engine_destroy(engine);
+  }
+  laghu_rum_options_init(&options);
+  options.store_uri = "memory:";
+  options.snapshot_path = NULL;
+  options.ttl_seconds = 1U;
+  engine = laghu_rum_engine_create(&options, NULL, 0U);
+  assert(engine != NULL);
+  assert(laghu_rum_engine_publish(engine, LAGHU_RUM_RECORD_DECISION, key, 20U,
+                                  payload, sizeof(payload), NULL));
+  assert(!laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_DECISION, key, 22U,
+                                restored, sizeof(restored), &value));
+  laghu_rum_engine_destroy(engine);
+  options.store_uri = "memcached://127.0.0.1:11211";
+  assert(laghu_rum_engine_create(&options, NULL, 0U) == NULL);
+  {
+    char rum_error[160U];
+    options.store_uri = "redis://secret@example.test:6379/0?prefix=laghu:";
+    assert(laghu_rum_engine_create(&options, rum_error, sizeof(rum_error)) ==
+           NULL);
+    assert(strstr(rum_error, "secret") == NULL);
+    options.store_uri = "rediss://example.test:6380/0?unknown=value";
+    assert(laghu_rum_engine_create(&options, rum_error, sizeof(rum_error)) ==
+           NULL);
+  }
+  {
+    laghu_rum_image_record aggregate = {0}, delta = {0};
+    aggregate.version = delta.version = 1U;
+    strcpy(aggregate.identity, key);
+    strcpy(delta.identity, key);
+    aggregate.width = 100U;
+    delta.width = 200U;
+    delta.above_fold = true;
+    assert(laghu_rum_record_merge(LAGHU_RUM_RECORD_IMAGE, &aggregate, &delta,
+                                  sizeof(aggregate)));
+    assert(aggregate.width == 200U && aggregate.above_fold);
+  }
+}
+
+static void test_rum_redis(void) {
+  static const char key[] =
+      "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  const char *uri = getenv("LAGHU_TEST_REDIS_URI");
+  const char *library = getenv("LAGHU_TEST_HIREDIS_LIBRARY");
+  laghu_rum_options options;
+  laghu_rum_engine *one, *two, *reader;
+  laghu_rum_image_record first = {0}, second = {0}, aggregate = {0};
+  laghu_rum_instrumentation_record rum_first = {0}, rum_second = {0},
+                                   rum_aggregate = {0};
+  laghu_rum_value value;
+  if (uri == NULL || *uri == '\0') return;
+  laghu_rum_options_init(&options);
+  options.store_uri = uri;
+  options.client_library = library;
+  options.required = true;
+  options.sync_interval_seconds = 1U;
+  one = laghu_rum_engine_create(&options, NULL, 0U);
+  two = laghu_rum_engine_create(&options, NULL, 0U);
+  assert(one != NULL && two != NULL);
+  first.version = second.version = 1U;
+  strcpy(first.identity, key);
+  strcpy(second.identity, key);
+  first.updated_at = 100U;
+  first.width = 640U;
+  second.updated_at = 101U;
+  second.height = 480U;
+  second.above_fold = true;
+  assert(laghu_rum_engine_publish(one, LAGHU_RUM_RECORD_IMAGE, key, 100U,
+                                  &first, sizeof(first), NULL));
+  assert(laghu_rum_engine_publish(two, LAGHU_RUM_RECORD_IMAGE, key, 101U,
+                                  &second, sizeof(second), NULL));
+  rum_first.version = rum_second.version = LAGHU_INSTRUMENTATION_VERSION;
+  strcpy(rum_first.template_key, key);
+  strcpy(rum_second.template_key, key);
+  strcpy(rum_first.provider_digest, key);
+  strcpy(rum_second.provider_digest, key);
+  strcpy(rum_first.policy_key, key);
+  strcpy(rum_second.policy_key, key);
+  rum_first.updated_at = 100U;
+  rum_second.updated_at = 101U;
+  rum_first.observations[1] = rum_second.observations[1] = 1U;
+  assert(laghu_rum_engine_publish(one, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
+                                  100U, &rum_first, sizeof(rum_first), NULL));
+  assert(laghu_rum_engine_publish(two, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
+                                  101U, &rum_second, sizeof(rum_second), NULL));
+  laghu_rum_engine_destroy(one);
+  laghu_rum_engine_destroy(two);
+  reader = laghu_rum_engine_create(&options, NULL, 0U);
+  assert(reader != NULL &&
+         laghu_rum_engine_read(reader, LAGHU_RUM_RECORD_IMAGE, key, 102U,
+                               &aggregate, sizeof(aggregate), &value));
+  assert(aggregate.width == 640U && aggregate.height == 480U &&
+         aggregate.above_fold);
+  assert(laghu_rum_engine_read(reader, LAGHU_RUM_RECORD_INSTRUMENTATION, key,
+                               102U, &rum_aggregate, sizeof(rum_aggregate),
+                               &value));
+  assert(rum_aggregate.observations[1] == 2U);
+  laghu_rum_engine_destroy(reader);
+}
+
 static void test_html_lexical_cache(const char *cache_path,
                                     const char *policy_key) {
   static const unsigned char html[] =
@@ -377,6 +573,7 @@ int main(void) {
   char catalog_key[LAGHU_RUNTIME_KEY_SIZE];
   char providers_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
+  laghu_rum_engine *rum_engine;
 
   laghu_runtime_queue_init(&producer);
   laghu_runtime_queue_init(&consumer);
@@ -396,6 +593,14 @@ int main(void) {
   strcpy(temporary, "/tmp/laghu-runtime-XXXXXX");
   assert(mkdtemp(temporary) != NULL);
 #endif
+  test_rum_engine(temporary);
+  test_rum_redis();
+  {
+    laghu_rum_options rum_options;
+    laghu_rum_options_init(&rum_options);
+    rum_engine = laghu_rum_engine_create(&rum_options, NULL, 0U);
+    assert(rum_engine != NULL);
+  }
   {
     static const char config[] =
         "provider google_fonts\n"
@@ -703,11 +908,21 @@ int main(void) {
     assert(laghu_runtime_parse_image_beacon(
         (laghu_buffer){json, sizeof(json) - 1U}, &beacon));
     assert(beacon.mobile && beacon.above_fold && beacon.width == 240U);
-    assert(laghu_catalog_apply_beacon(temporary, policy_key, 0x55aaU, 1002U,
-                                      604800U, &beacon));
+    assert(laghu_catalog_apply_beacon(rum_engine, temporary, policy_key,
+                                      0x55aaU, 1002U, 604800U, &beacon));
     assert(laghu_catalog_lookup_url(temporary, "/image.png", policy_key,
                                     0x55aaU, 1003U, 604800U, &loaded));
-    assert(loaded.learned_mobile_width == 240U && loaded.learned_above_fold);
+    {
+      char identity[LAGHU_RUNTIME_KEY_SIZE];
+      laghu_rum_image_record learning;
+      laghu_rum_value value;
+      assert(laghu_catalog_url_identity("/image.png", policy_key, 0x55aaU,
+                                        identity));
+      assert(laghu_rum_engine_read(rum_engine, LAGHU_RUM_RECORD_IMAGE, identity,
+                                   1003U, &learning, sizeof(learning), &value));
+      assert(value.length == sizeof(learning));
+      assert(learning.mobile_width == 240U && learning.above_fold);
+    }
     {
       static const unsigned char invalid[] = "{\"url\":\"https://x\"}";
       assert(!laghu_runtime_parse_image_beacon(
@@ -1187,8 +1402,9 @@ int main(void) {
       }
     }
     assert(laghu_runtime_rewrite_html(
-        temporary, (laghu_buffer){html, sizeof(html) - 1U}, "/index.html",
-        "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,
+        rum_engine, temporary, (laghu_buffer){html, sizeof(html) - 1U},
+        "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+        604800U,
         LAGHU_IMAGE_INSERT_DIMENSIONS | LAGHU_IMAGE_RESPONSIVE |
             LAGHU_IMAGE_RESPONSIVE_ZOOM | LAGHU_IMAGE_LAZYLOAD,
         false, false, false, false, 0U, false, false, true, false, 2048U, 2048U,
@@ -1199,21 +1415,23 @@ int main(void) {
     assert(strstr((const char *)page.data, " 640w") != NULL);
     laghu_runtime_html_result_release(&page);
     assert(laghu_runtime_rewrite_html(
-        temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
-        "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
-        604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
-        false, false, 0U, true, true, true, false, 2048U, 2048U, 8192U, 0U,
-        100U, &page));
+        rum_engine, temporary,
+        (laghu_buffer){inline_html, sizeof(inline_html) - 1U}, "/index.html",
+        "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,
+        LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false, false,
+        false, 0U, true, true, true, false, 2048U, 2048U, 8192U, 0U, 100U,
+        &page));
     assert(page.rewritten);
     assert(strstr((const char *)page.data, "data:image/png;base64,") != NULL);
     assert(strstr((const char *)page.data, "/.laghu/image/") != NULL);
     laghu_runtime_html_result_release(&page);
     assert(laghu_runtime_rewrite_html(
-        temporary, (laghu_buffer){inline_html, sizeof(inline_html) - 1U},
-        "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
-        604800U, LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false,
-        false, false, 0U, false, true, true, false, 2048U, 2048U, 8192U, 0U,
-        100U, &page));
+        rum_engine, temporary,
+        (laghu_buffer){inline_html, sizeof(inline_html) - 1U}, "/index.html",
+        "https://example.test", policy_key, 0x55aaU, 2001U, 604800U,
+        LAGHU_IMAGE_INLINE | LAGHU_IMAGE_DEDUP_INLINE, true, false, false,
+        false, 0U, false, true, true, false, 2048U, 2048U, 8192U, 0U, 100U,
+        &page));
     assert(page.rewritten);
     assert(strstr((const char *)page.data, "data:image/") == NULL);
     laghu_runtime_html_result_release(&page);
@@ -1256,15 +1474,17 @@ int main(void) {
     stylesheet.ready = true;
     assert(laghu_stylesheet_publish(temporary, &stylesheet));
     assert(laghu_runtime_prioritize_critical_css(
-        temporary, (laghu_buffer){critical_html, sizeof(critical_html) - 1U},
-        "/critical", "https://example.test", policy_key, 0x55aaU, 2001U,
-        604800U, 2048U, 8192U, 1024U, true, true, true, true, &critical_page));
+        rum_engine, temporary,
+        (laghu_buffer){critical_html, sizeof(critical_html) - 1U}, "/critical",
+        "https://example.test", policy_key, 0x55aaU, 2001U, 604800U, 2048U,
+        8192U, 1024U, true, true, true, true, &critical_page));
     assert(!critical_page.rewritten);
     laghu_runtime_html_result_release(&critical_page);
     assert(laghu_runtime_prioritize_critical_css(
-        temporary, (laghu_buffer){critical_html, sizeof(critical_html) - 1U},
-        "/critical", "https://example.test", policy_key, 0x55aaU, 2001U,
-        604800U, 2048U, 8192U, 1024U, true, true, true, true, &critical_page));
+        rum_engine, temporary,
+        (laghu_buffer){critical_html, sizeof(critical_html) - 1U}, "/critical",
+        "https://example.test", policy_key, 0x55aaU, 2001U, 604800U, 2048U,
+        8192U, 1024U, true, true, true, true, &critical_page));
     assert(critical_page.rewritten);
     marker = strstr((const char *)critical_page.data, "data-laghu-critical=\"");
     assert(marker != NULL);
@@ -1276,13 +1496,14 @@ int main(void) {
     observation.rules[0] = 0U;
     laghu_runtime_html_result_release(&critical_page);
     for (observation_index = 0U; observation_index < 3U; ++observation_index)
-      assert(laghu_critical_css_apply_beacon(temporary, policy_key,
+      assert(laghu_critical_css_apply_beacon(rum_engine, temporary, policy_key,
                                              2002U + observation_index, 604800U,
                                              &observation));
     assert(laghu_runtime_prioritize_critical_css(
-        temporary, (laghu_buffer){critical_html, sizeof(critical_html) - 1U},
-        "/critical", "https://example.test", policy_key, 0x55aaU, 2005U,
-        604800U, 2048U, 8192U, 1024U, true, true, true, true, &critical_page));
+        rum_engine, temporary,
+        (laghu_buffer){critical_html, sizeof(critical_html) - 1U}, "/critical",
+        "https://example.test", policy_key, 0x55aaU, 2005U, 604800U, 2048U,
+        8192U, 1024U, true, true, true, true, &critical_page));
     assert(critical_page.rewritten);
     assert(strstr((const char *)critical_page.data,
                   "<style>.hero{color:red}@font-face") != NULL);
@@ -1321,7 +1542,7 @@ int main(void) {
                                               NULL, 0U));
     assert(providers.count == 1U && providers.digest[0] != '\0');
     assert(laghu_runtime_add_instrumentation(
-        temporary, &providers,
+        rum_engine, temporary, &providers,
         (laghu_buffer){
             (const unsigned char
                  *)"<html><body><script src=\"/app.js\"></script>"
@@ -1354,7 +1575,8 @@ int main(void) {
     assert(laghu_runtime_parse_instrumentation_beacon(
         (laghu_buffer){(const unsigned char *)json, strlen(json)}, &rum));
     assert(rum.candidate_count == 1U && rum.lcp_ms == 2200U);
-    assert(laghu_instrumentation_apply_beacon(temporary, 3001U, 604800U, &rum));
+    assert(laghu_instrumentation_apply_beacon(rum_engine, temporary, 3001U,
+                                              604800U, &rum));
     assert(strstr(laghu_runtime_instrumentation_script(),
                   "largest-contentful-paint") != NULL);
     laghu_runtime_html_result_release(&rum_page);
@@ -1397,6 +1619,7 @@ int main(void) {
   assert(!laghu_runtime_cache_lookup(temporary, index_key, "etag", &entry));
   laghu_runtime_queue_close(&consumer);
   laghu_runtime_queue_close(&producer);
+  laghu_rum_engine_destroy(rum_engine);
   puts("laghu_runtime_test: all tests passed");
   return 0;
 }

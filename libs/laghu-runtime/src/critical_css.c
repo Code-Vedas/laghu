@@ -7,17 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-typedef HANDLE laghu_critical_lock;
-#define LAGHU_CRITICAL_LOCK_INVALID INVALID_HANDLE_VALUE
-#else
-#include <fcntl.h>
-#include <unistd.h>
-typedef int laghu_critical_lock;
-#define LAGHU_CRITICAL_LOCK_INVALID (-1)
-#endif
 
 #include "laghu/runtime.h"
 
@@ -56,55 +45,26 @@ static bool laghu_critical_hash(const char *value) {
   return true;
 }
 
-static bool laghu_critical_read_record(const char *cache_path, const char *key,
+static bool laghu_critical_read_record(laghu_rum_engine *rum, const char *key,
+                                       uint64_t now,
                                        laghu_critical_css_record *record) {
-  laghu_runtime_cache_entry entry;
-  return laghu_runtime_cache_lookup_variant(cache_path, key, &entry) &&
-         entry.length == sizeof(*record) &&
-         laghu_runtime_cache_read(&entry, (unsigned char *)record,
-                                  sizeof(*record)) &&
-         record->version == LAGHU_CRITICAL_CSS_VERSION &&
-         strcmp(record->template_key, key) == 0;
+  laghu_rum_value value;
+  if (rum != NULL &&
+      laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_CRITICAL_CSS, key, now,
+                            record, sizeof(*record), &value) &&
+      value.length == sizeof(*record) &&
+      record->version == LAGHU_CRITICAL_CSS_VERSION &&
+      strcmp(record->template_key, key) == 0)
+    return true;
+  return false;
 }
 
-static bool laghu_critical_write_record(const char *cache_path,
+static bool laghu_critical_write_record(laghu_rum_engine *rum,
                                         laghu_critical_css_record *record) {
-  laghu_runtime_cache_entry entry;
-  char validator[LAGHU_RUNTIME_KEY_SIZE];
-  if (!laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)record, sizeof(*record)},
-          validator))
-    return false;
-  return laghu_runtime_cache_publish(
-      cache_path, record->template_key, record->template_key, validator,
-      "application/x-laghu-critical-css", "laghu-critical-css-v1",
-      (laghu_buffer){(const unsigned char *)record, sizeof(*record)}, &entry);
-}
-
-static laghu_critical_lock laghu_critical_lock_record(const char *cache_path,
-                                                      const char *key,
-                                                      char *path,
-                                                      size_t path_size) {
-  int length =
-      snprintf(path, path_size, "%s/%s.critical.lock", cache_path, key);
-  if (length <= 0 || (size_t)length >= path_size)
-    return LAGHU_CRITICAL_LOCK_INVALID;
-#ifdef _WIN32
-  return CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                     FILE_ATTRIBUTE_TEMPORARY, NULL);
-#else
-  return open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
-#endif
-}
-
-static void laghu_critical_unlock_record(laghu_critical_lock lock,
-                                         const char *path) {
-#ifdef _WIN32
-  (void)CloseHandle(lock);
-#else
-  (void)close(lock);
-#endif
-  (void)remove(path);
+  return rum != NULL &&
+         laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_CRITICAL_CSS,
+                                  record->template_key, record->updated_at,
+                                  record, sizeof(*record), NULL);
 }
 
 static bool laghu_critical_json_uint(const char **cursor, unsigned int *value) {
@@ -172,42 +132,58 @@ bad:
   return false;
 }
 
-bool laghu_critical_css_apply_beacon(const char *cache_path,
+typedef struct {
+  const laghu_critical_css_beacon *beacon;
+  const char *policy_key;
+  uint64_t now;
+  unsigned int ttl_seconds;
+} laghu_critical_merge_context;
+
+static bool laghu_critical_merge(void *data, size_t length, void *opaque) {
+  laghu_critical_css_record *record = data;
+  laghu_critical_merge_context *context = opaque;
+  unsigned int index, bucket;
+  if (length != sizeof(*record) ||
+      record->version != LAGHU_CRITICAL_CSS_VERSION ||
+      strcmp(record->template_key, context->beacon->template_key) != 0 ||
+      strcmp(record->policy_key, context->policy_key) != 0 ||
+      context->now < record->updated_at ||
+      context->now - record->updated_at > context->ttl_seconds)
+    return false;
+  bucket = context->beacon->viewport_bucket;
+  for (index = 0U; index < context->beacon->rule_count; ++index) {
+    unsigned int rule = context->beacon->rules[index];
+    record->critical_rules[bucket][rule / 8U] |=
+        (unsigned char)(1U << (rule % 8U));
+  }
+  if (record->observation_count[bucket] < UINT16_MAX)
+    ++record->observation_count[bucket];
+  ++record->generation;
+  record->updated_at = context->now;
+  return true;
+}
+
+bool laghu_critical_css_apply_beacon(laghu_rum_engine *rum,
+                                     const char *cache_path,
                                      const char *policy_key, uint64_t now,
                                      unsigned int ttl_seconds,
                                      const laghu_critical_css_beacon *beacon) {
   laghu_critical_css_record record;
-  unsigned int index;
-  unsigned int bucket;
-  char lock_path[LAGHU_RUNTIME_PATH_SIZE];
-  laghu_critical_lock lock;
-  if (cache_path == NULL || !laghu_critical_hash(policy_key) ||
+  laghu_critical_merge_context context;
+  if (rum == NULL || cache_path == NULL || !laghu_critical_hash(policy_key) ||
       beacon == NULL || beacon->viewport_bucket > 1U || ttl_seconds == 0U)
     return false;
-  lock = laghu_critical_lock_record(cache_path, beacon->template_key, lock_path,
-                                    sizeof(lock_path));
-  if (lock == LAGHU_CRITICAL_LOCK_INVALID) return false;
-  if (!laghu_critical_read_record(cache_path, beacon->template_key, &record) ||
+  if (!laghu_critical_read_record(rum, beacon->template_key, now, &record) ||
       strcmp(record.policy_key, policy_key) != 0 || now < record.updated_at ||
-      now - record.updated_at > ttl_seconds) {
-    laghu_critical_unlock_record(lock, lock_path);
+      now - record.updated_at > ttl_seconds)
     return false;
-  }
-  bucket = beacon->viewport_bucket;
-  for (index = 0U; index < beacon->rule_count; ++index) {
-    unsigned int rule = beacon->rules[index];
-    record.critical_rules[bucket][rule / 8U] |=
-        (unsigned char)(1U << (rule % 8U));
-  }
-  if (record.observation_count[bucket] < UINT16_MAX)
-    ++record.observation_count[bucket];
-  ++record.generation;
-  record.updated_at = now;
-  {
-    bool success = laghu_critical_write_record(cache_path, &record);
-    laghu_critical_unlock_record(lock, lock_path);
-    return success;
-  }
+  context.beacon = beacon;
+  context.policy_key = policy_key;
+  context.now = now;
+  context.ttl_seconds = ttl_seconds;
+  return laghu_rum_engine_update(rum, LAGHU_RUM_RECORD_CRITICAL_CSS,
+                                 beacon->template_key, now,
+                                 laghu_critical_merge, &context, NULL);
 }
 
 static bool laghu_critical_equal(const unsigned char *data, size_t length,
@@ -383,13 +359,13 @@ static bool laghu_critical_template_key(laghu_buffer html,
 }
 
 bool laghu_runtime_prioritize_critical_css(
-    const char *cache_path, laghu_buffer html, const char *page_path,
-    const char *page_origin, const char *policy_key, uint32_t capability_mask,
-    uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
-    unsigned int outline_threshold, unsigned int viewport_width,
-    bool beacon_enabled, bool csp_allows_inline_styles,
-    bool csp_allows_self_styles, bool csp_allows_self_scripts,
-    laghu_runtime_html_result *result) {
+    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+    unsigned int inline_limit, unsigned int outline_threshold,
+    unsigned int viewport_width, bool beacon_enabled,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    bool csp_allows_self_scripts, laghu_runtime_html_result *result) {
   const unsigned char *link = NULL, *body = NULL, *scan;
   size_t link_start = 0U, link_end = 0U, href_length = 0U, rel_length = 0U;
   const unsigned char *href = NULL, *rel = NULL, *media = NULL;
@@ -407,8 +383,8 @@ bool laghu_runtime_prioritize_critical_css(
   bool ready = false;
   bool created = false;
   (void)page_origin;
-  if (result == NULL || cache_path == NULL || page_path == NULL ||
-      policy_key == NULL || inline_limit > 65536U)
+  if (result == NULL || rum == NULL || cache_path == NULL ||
+      page_path == NULL || policy_key == NULL || inline_limit > 65536U)
     return false;
   memset(result, 0, sizeof(*result));
   scan = html.data;
@@ -449,7 +425,7 @@ bool laghu_runtime_prioritize_critical_css(
                                    template_key))
     return true;
   memset(&learning, 0, sizeof(learning));
-  if (laghu_critical_read_record(cache_path, template_key, &learning) &&
+  if (laghu_critical_read_record(rum, template_key, now, &learning) &&
       strcmp(learning.stylesheet_key, sheet.dependency_key) == 0 &&
       strcmp(learning.policy_key, policy_key) == 0 &&
       now >= learning.updated_at && now - learning.updated_at <= ttl_seconds)
@@ -462,7 +438,7 @@ bool laghu_runtime_prioritize_critical_css(
            sizeof(learning.stylesheet_key));
     memcpy(learning.policy_key, policy_key, sizeof(learning.policy_key));
     learning.updated_at = now;
-    if (!laghu_critical_write_record(cache_path, &learning)) return true;
+    if (!laghu_critical_write_record(rum, &learning)) return true;
     created = true;
   }
   if (ready && csp_allows_inline_styles && csp_allows_self_styles &&

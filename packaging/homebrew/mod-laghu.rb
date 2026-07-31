@@ -33,10 +33,21 @@ class ModLaghu < Formula
       Laghu FontProviderConfig #{etc}/laghu/font-providers.conf
       Laghu JavaScriptObservationConfig #{etc}/laghu/javascript-observation.conf
       Laghu ImageCache #{var}/cache/laghu/images
+      Laghu RumStore local:
+      Laghu RumStoreLocalSnapshot #{var}/lib/laghu/rum/rum.snapshot
+      # For Redis, set RumStoreClientLibrary to the installed hiredis 1.x library.
+      Laghu RumStoreTimeout 100
+      Laghu RumStoreTtl 604800
+      Laghu RumStoreRetryLimit 3
+      Laghu RumStoreSyncInterval 5
+      Laghu RumStoreMemoryLimit 8m
+      Laghu RumStorePendingLimit 1m
+      Laghu RumStoreRequired Off
     EOS
   end
 
   def post_install
+    (var/"lib/laghu/rum").mkpath
     observation_config = etc/"laghu/javascript-observation.conf"
     observation_config.dirname.mkpath
     observation_config.write((share/"laghu/javascript-observation.conf").read) unless observation_config.exist?

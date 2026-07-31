@@ -27,6 +27,16 @@ Both modules expose the same configuration semantics. NGINX uses the lowercase `
 | `laghu css_outline_threshold 8192;` | `Laghu CssOutlineThreshold 8192` |
 | `laghu javascript_inline_limit 2048;` | `Laghu JavaScriptInlineLimit 2048` |
 | `laghu javascript_outline_threshold 8192;` | `Laghu JavaScriptOutlineThreshold 8192` |
+| `laghu rum_store local:;` | `Laghu RumStore local:` |
+| `laghu rum_store_local_snapshot /var/lib/laghu/rum/rum.snapshot;` | `Laghu RumStoreLocalSnapshot /var/lib/laghu/rum/rum.snapshot` |
+| `laghu rum_store_client_library /usr/lib/libhiredis.so;` | `Laghu RumStoreClientLibrary /usr/lib/libhiredis.so` |
+| `laghu rum_store_timeout 100;` | `Laghu RumStoreTimeout 100` |
+| `laghu rum_store_ttl 604800;` | `Laghu RumStoreTtl 604800` |
+| `laghu rum_store_retry_limit 3;` | `Laghu RumStoreRetryLimit 3` |
+| `laghu rum_store_sync_interval 5;` | `Laghu RumStoreSyncInterval 5` |
+| `laghu rum_store_memory_limit 8m;` | `Laghu RumStoreMemoryLimit 8m` |
+| `laghu rum_store_pending_limit 1m;` | `Laghu RumStorePendingLimit 1m` |
+| `laghu rum_store_required off;` | `Laghu RumStoreRequired Off` |
 
 ## `laghu on|off`
 
@@ -135,6 +145,40 @@ RUM instrumentation is independently opt-in through `instrumentation_beacon`, `L
 The administrator-owned JavaScript observation file uses one strict directive per line: `host exact.example /path/prefix/`. Prefixes must end in `/`. Wildcards, IP literals, credentials, URLs, overlapping entries, unsafe paths, and unknown fields fail configuration loading. Same-origin scripts are always cataloged; configured exact HTTPS host and path pairs add bounded third-party candidates. A normal server reload applies file changes.
 
 The fixed script is served at `/.laghu/beacon/instrumentation.js` and submits at most one bounded same-origin JSON report to `/.laghu/beacon/instrumentation` during `pagehide`. Reports contain an opaque template key, a mobile or desktop bucket, bounded Core Web Vitals and lifecycle values, error counters without messages or stacks, and opaque hashes for cataloged scripts. Laghu stores checksummed aggregate histograms and counters only; it never stores raw reports, complete URLs, queries, cookies, addresses, client identifiers, page text, selectors, error messages, or stacks. Unsupported browser timing APIs simply omit useful observations. Aggregate expiry uses `image_metadata_ttl`.
+
+RUM records are memory-native. Every native worker serves planners and beacon merges from a bounded in-process store while a background thread restores, merges, and publishes records. No request or optimization path performs file or Redis I/O. The default `local:` backend uses `<image-cache>/rum.snapshot`; `memory:` disables persistence; and Redis shares learning among replicas. NGINX accepts the following only in the `http` context, Apache only in the main server context, and standalone exposes the equivalent `--rum-store-*` options:
+
+```text
+laghu rum_store local:;
+laghu rum_store_local_snapshot /var/lib/laghu/rum/rum.snapshot;
+laghu rum_store_timeout 100;
+laghu rum_store_ttl 604800;
+laghu rum_store_retry_limit 3;
+laghu rum_store_sync_interval 5;
+laghu rum_store_memory_limit 8m;
+laghu rum_store_pending_limit 1m;
+laghu rum_store_required off;
+```
+
+The Apache setting names are `RumStore`, `RumStoreLocalSnapshot`, `RumStoreClientLibrary`, `RumStoreTimeout`, `RumStoreTtl`, `RumStoreRetryLimit`, `RumStoreSyncInterval`, `RumStoreMemoryLimit`, `RumStorePendingLimit`, and `RumStoreRequired` beneath the existing `Laghu` directive. These settings are process-wide: NGINX accepts them only in `http`, and Apache only in the main server configuration. Store failures are fail-open unless required mode is selected. Credentials must never be placed in the local snapshot path or diagnostic output.
+
+Debian, RPM, Homebrew, and container configurations explicitly select `local:` with a persistent snapshot under the platform data directory. Windows matched-server packages use `%ProgramData%\Laghu\rum\rum.snapshot`. The installers create the parent directory with access for the server worker. Redis remains an administrator-selected replacement because its library path, credentials, TLS trust, endpoint, and durability policy are deployment-specific.
+
+Redis is optional and loaded dynamically from administrator-installed hiredis 1.x; Laghu packages do not bundle or download it. The loader rejects pre-1.0 client ABIs before creating a connection. Use verified TLS for every non-loopback server:
+
+```text
+laghu rum_store "rediss://${RUM_USERNAME}:${RUM_PASSWORD}@persistent-redis.example.net:6380/0?prefix=laghu:&ca_file=/etc/ssl/certs/rum-ca.pem";
+laghu rum_store_client_library /usr/lib/libhiredis.so;
+laghu rum_store_required off;
+```
+
+`redis://` is accepted only for `localhost`, `127.0.0.1`, or `::1` development endpoints. `rediss://` enables peer verification and SNI through hiredis SSL; `ca_file` selects an administrator-owned CA bundle, while omission uses the platform trust configuration provided by hiredis. URI fields may use bounded `${NAME}` environment expansion and percent-encoded credentials. Laghu never includes credentials in policy keys, snapshots, browser output, or diagnostic messages.
+
+The Redis endpoint must be independent of disposable Laghu servers and containers if learning must survive their replacement. Use a managed Redis service, a dedicated persistent host, or a separately operated Redis deployment backed by durable storage. Redis running inside an ephemeral Laghu container does not provide persistence; Redis durability also depends on its own AOF, snapshot, and storage configuration.
+
+Redis synchronization uses a bounded distributed lock and an idempotent batch marker. A worker rotates pending deltas under its memory mutex, releases that mutex before network I/O, merges portable records under the backend lock, commits the records and batch marker atomically, then refreshes its in-memory view. A lost response is retried with the same batch ID and cannot double-count observations. The optional local snapshot remains a last-known-good startup view; Redis is still the shared source of convergence. When Redis is unavailable and required mode is off, startup warns and falls back to `local:`. Required mode refuses worker startup.
+
+Memcached is intentionally unsupported in this version because its eviction model cannot provide the durable idempotent batch contract. `memcached:` URIs fail configuration validation rather than silently weakening the merge semantics.
 
 Stylesheet inlining defaults to 2 KiB and accepts `0..65536`; zero disables it. Outlining considers complete inline style blocks from 8 KiB by default and accepts `1024..1048576`. Inlining requires a ready same-origin stylesheet, inline-style CSP permission, and the strict integrity/nonce/media/import/font eligibility checks. Outlining requires structural-rewrite permission. Both preserve the first HTML response and apply only after their catalog dependency is ready and the combined HTML/CSS transfer is smaller.
 

@@ -44,6 +44,20 @@ typedef struct {
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
+  ngx_str_t store_uri;
+  ngx_str_t snapshot_path;
+  ngx_str_t client_library;
+  size_t memory_limit;
+  size_t pending_limit;
+  ngx_uint_t ttl_seconds;
+  ngx_uint_t sync_interval_seconds;
+  ngx_uint_t timeout_ms;
+  ngx_uint_t retry_limit;
+  ngx_flag_t required;
+  uint32_t set_mask;
+} ngx_http_laghu_main_conf_t;
+
+typedef struct {
   laghu_http_request request;
   laghu_http_response response;
   laghu_http_environment environment;
@@ -79,14 +93,18 @@ static ngx_uint_t ngx_http_laghu_backend_warning_emitted;
 static time_t ngx_http_laghu_last_queue_warning;
 static time_t ngx_http_laghu_beacon_window;
 static ngx_uint_t ngx_http_laghu_beacon_count;
+static laghu_rum_engine *ngx_http_laghu_rum;
 
 ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request);
 ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                                      ngx_chain_t *chain);
 static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration);
+static ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle);
+static void ngx_http_laghu_exit_process(ngx_cycle_t *cycle);
 static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request);
 static void ngx_http_laghu_beacon_body(ngx_http_request_t *request);
 static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration);
+static void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration);
 static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
                                            void *parent, void *child);
 static char *ngx_http_laghu_command(ngx_conf_t *configuration,
@@ -128,7 +146,7 @@ static ngx_command_t ngx_http_laghu_commands[] = {
 static ngx_http_module_t ngx_http_laghu_module_context = {
     NULL,
     ngx_http_laghu_filter_init,
-    NULL,
+    ngx_http_laghu_create_main_conf,
     NULL,
     NULL,
     NULL,
@@ -141,12 +159,80 @@ ngx_module_t ngx_http_laghu_module = {NGX_MODULE_V1,
                                       NGX_HTTP_MODULE,
                                       NULL,
                                       NULL,
+                                      ngx_http_laghu_init_process,
                                       NULL,
                                       NULL,
-                                      NULL,
-                                      NULL,
+                                      ngx_http_laghu_exit_process,
                                       NULL,
                                       NGX_MODULE_V1_PADDING};
+
+static ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
+  ngx_http_laghu_main_conf_t *conf;
+  ngx_uint_t failure_level;
+  laghu_rum_options options;
+  char snapshot[LAGHU_RUNTIME_PATH_SIZE];
+  char error[160U];
+  int length;
+  laghu_rum_options_init(&options);
+  conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
+  length = conf != NULL && conf->snapshot_path.len != 0U
+               ? snprintf(snapshot, sizeof(snapshot), "%s",
+                          (const char *)conf->snapshot_path.data)
+               : snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
+                          LAGHU_NGINX_DEFAULT_CACHE);
+  if (length <= 0 || (size_t)length >= sizeof(snapshot)) return NGX_ERROR;
+  options.snapshot_path = snapshot;
+  if (conf != NULL) {
+    options.store_uri = (const char *)conf->store_uri.data;
+    options.client_library = conf->client_library.len == 0U
+                                 ? NULL
+                                 : (const char *)conf->client_library.data;
+    options.memory_limit = conf->memory_limit;
+    options.pending_limit = conf->pending_limit;
+    options.ttl_seconds = (unsigned int)conf->ttl_seconds;
+    options.sync_interval_seconds = (unsigned int)conf->sync_interval_seconds;
+    options.timeout_ms = (unsigned int)conf->timeout_ms;
+    options.retry_limit = (unsigned int)conf->retry_limit;
+    options.required = conf->required == 1;
+  }
+  ngx_http_laghu_rum = laghu_rum_engine_create(&options, error, sizeof(error));
+  if (ngx_http_laghu_rum == NULL) {
+    failure_level = options.required ? NGX_LOG_EMERG : NGX_LOG_WARN;
+    ngx_log_error(failure_level, cycle->log, 0,
+                  "laghu RUM engine unavailable: %s", error);
+    if (options.required) return NGX_ERROR;
+    options.store_uri = "local:";
+    options.client_library = NULL;
+    options.required = false;
+    ngx_http_laghu_rum =
+        laghu_rum_engine_create(&options, error, sizeof(error));
+    if (ngx_http_laghu_rum == NULL)
+      ngx_log_error(NGX_LOG_WARN, cycle->log, 0,
+                    "laghu local RUM fallback unavailable: %s", error);
+  }
+  return NGX_OK;
+}
+
+static void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration) {
+  ngx_http_laghu_main_conf_t *conf =
+      ngx_pcalloc(configuration->pool, sizeof(*conf));
+  if (conf == NULL) return NULL;
+  ngx_str_set(&conf->store_uri, "local:");
+  conf->memory_limit = LAGHU_RUM_DEFAULT_MEMORY_BYTES;
+  conf->pending_limit = LAGHU_RUM_DEFAULT_PENDING_BYTES;
+  conf->ttl_seconds = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
+  conf->sync_interval_seconds = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
+  conf->timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
+  conf->retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
+  conf->required = 0;
+  return conf;
+}
+
+static void ngx_http_laghu_exit_process(ngx_cycle_t *cycle) {
+  (void)cycle;
+  laghu_rum_engine_destroy(ngx_http_laghu_rum);
+  ngx_http_laghu_rum = NULL;
+}
 
 static char *ngx_http_laghu_copy_string(ngx_http_request_t *request,
                                         const ngx_str_t *value) {
@@ -1181,6 +1267,7 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->environment.struct_size = sizeof(context->environment);
   context->environment.config = conf->core;
   context->environment.cache_path = (const char *)conf->image_cache.data;
+  context->environment.rum = ngx_http_laghu_rum;
   context->environment.worker_queue_path =
       (const char *)conf->worker_queue.data;
   context->environment.queue = &conf->runtime_queue;
@@ -1653,7 +1740,7 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
       ngx_http_laghu_response_header_values(request, "Link", existing_links,
                                             sizeof(existing_links));
       if (laghu_runtime_rewrite_html(
-              (const char *)conf->image_cache.data,
+              ngx_http_laghu_rum, (const char *)conf->image_cache.data,
               (laghu_buffer){context->capture, context->capture_length},
               page_path, origin_value, context->policy_key,
               conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
@@ -1694,7 +1781,7 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
         if ((context->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) !=
                 0U &&
             laghu_runtime_prioritize_critical_css(
-                (const char *)conf->image_cache.data,
+                ngx_http_laghu_rum, (const char *)conf->image_cache.data,
                 (laghu_buffer){selected, selected_length}, page_path,
                 origin_value, context->policy_key,
                 conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
@@ -2468,24 +2555,25 @@ static void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
       valid = laghu_runtime_parse_instrumentation_beacon(
                   (laghu_buffer){body, length}, &instrumentation) &&
               laghu_instrumentation_apply_beacon(
-                  (const char *)conf->image_cache.data, (uint64_t)ngx_time(),
-                  conf->core.image_metadata_ttl, &instrumentation);
+                  ngx_http_laghu_rum, (const char *)conf->image_cache.data,
+                  (uint64_t)ngx_time(), conf->core.image_metadata_ttl,
+                  &instrumentation);
     else if (valid &&
              request->uri.len == sizeof("/.laghu/beacon/critical-css") - 1U)
-      valid =
-          laghu_runtime_parse_critical_css_beacon((laghu_buffer){body, length},
-                                                  &critical) &&
-          laghu_critical_css_apply_beacon(
-              (const char *)conf->image_cache.data, policy_key,
-              (uint64_t)ngx_time(), conf->core.image_metadata_ttl, &critical);
+      valid = laghu_runtime_parse_critical_css_beacon(
+                  (laghu_buffer){body, length}, &critical) &&
+              laghu_critical_css_apply_beacon(
+                  ngx_http_laghu_rum, (const char *)conf->image_cache.data,
+                  policy_key, (uint64_t)ngx_time(),
+                  conf->core.image_metadata_ttl, &critical);
     else if (valid)
       valid = laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
                                                &beacon) &&
               ngx_http_laghu_queue_refresh(conf) &&
               laghu_catalog_apply_beacon(
-                  (const char *)conf->image_cache.data, policy_key,
-                  conf->runtime_queue.capabilities, (uint64_t)ngx_time(),
-                  conf->core.image_metadata_ttl, &beacon);
+                  ngx_http_laghu_rum, (const char *)conf->image_cache.data,
+                  policy_key, conf->runtime_queue.capabilities,
+                  (uint64_t)ngx_time(), conf->core.image_metadata_ttl, &beacon);
   }
   request->headers_out.status =
       valid ? NGX_HTTP_NO_CONTENT : NGX_HTTP_BAD_REQUEST;
@@ -2568,9 +2656,94 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
 static char *ngx_http_laghu_command(ngx_conf_t *configuration,
                                     ngx_command_t *command, void *conf) {
   ngx_http_laghu_loc_conf_t *location = conf;
+  ngx_http_laghu_main_conf_t *main_conf =
+      ngx_http_conf_get_module_main_conf(configuration, ngx_http_laghu_module);
   ngx_str_t *values = configuration->args->elts;
 
   (void)command;
+
+  if (configuration->args->nelts == 3 && values[1].len >= 9U &&
+      ngx_strncmp(values[1].data, "rum_store", 9U) == 0) {
+    ngx_int_t parsed;
+    uint32_t setting_bit = 0U;
+    if (configuration->cmd_type != NGX_HTTP_MAIN_CONF)
+      return "laghu rum_store settings are allowed only in the http context";
+    if (ngx_strcmp(values[1].data, "rum_store") == 0)
+      setting_bit = 1U << 0;
+    else if (ngx_strcmp(values[1].data, "rum_store_local_snapshot") == 0)
+      setting_bit = 1U << 1;
+    else if (ngx_strcmp(values[1].data, "rum_store_client_library") == 0)
+      setting_bit = 1U << 2;
+    else if (ngx_strcmp(values[1].data, "rum_store_required") == 0)
+      setting_bit = 1U << 3;
+    else if (ngx_strcmp(values[1].data, "rum_store_timeout") == 0)
+      setting_bit = 1U << 4;
+    else if (ngx_strcmp(values[1].data, "rum_store_ttl") == 0)
+      setting_bit = 1U << 5;
+    else if (ngx_strcmp(values[1].data, "rum_store_retry_limit") == 0)
+      setting_bit = 1U << 6;
+    else if (ngx_strcmp(values[1].data, "rum_store_sync_interval") == 0)
+      setting_bit = 1U << 7;
+    else if (ngx_strcmp(values[1].data, "rum_store_memory_limit") == 0)
+      setting_bit = 1U << 8;
+    else if (ngx_strcmp(values[1].data, "rum_store_pending_limit") == 0)
+      setting_bit = 1U << 9;
+    if (setting_bit == 0U) return "unknown laghu rum_store setting";
+    if ((main_conf->set_mask & setting_bit) != 0U)
+      return "duplicate laghu rum_store setting";
+    main_conf->set_mask |= setting_bit;
+    if (ngx_strcmp(values[1].data, "rum_store") == 0) {
+      if (!laghu_rum_store_validate((const char *)values[2].data, NULL, 0U))
+        return "laghu rum_store URI is invalid or unsupported";
+      main_conf->store_uri = values[2];
+      return NGX_CONF_OK;
+    }
+    if (ngx_strcmp(values[1].data, "rum_store_local_snapshot") == 0) {
+      main_conf->snapshot_path = values[2];
+      return NGX_CONF_OK;
+    }
+    if (ngx_strcmp(values[1].data, "rum_store_client_library") == 0) {
+      main_conf->client_library = values[2];
+      return NGX_CONF_OK;
+    }
+    if (ngx_strcmp(values[1].data, "rum_store_required") == 0) {
+      if (ngx_strcmp(values[2].data, "on") == 0)
+        main_conf->required = 1;
+      else if (ngx_strcmp(values[2].data, "off") == 0)
+        main_conf->required = 0;
+      else
+        return "laghu rum_store_required expects on or off";
+      return NGX_CONF_OK;
+    }
+    if (ngx_strcmp(values[1].data, "rum_store_memory_limit") == 0 ||
+        ngx_strcmp(values[1].data, "rum_store_pending_limit") == 0) {
+      ssize_t size = ngx_parse_size(&values[2]);
+      if (size < (ssize_t)LAGHU_RUM_MAX_RECORD_BYTES)
+        return "laghu RUM size limit is too small or invalid";
+      if (ngx_strcmp(values[1].data, "rum_store_memory_limit") == 0)
+        main_conf->memory_limit = (size_t)size;
+      else
+        main_conf->pending_limit = (size_t)size;
+      return NGX_CONF_OK;
+    }
+    parsed = ngx_atoi(values[2].data, values[2].len);
+    if (parsed == NGX_ERROR) return "laghu RUM setting expects an integer";
+    if (ngx_strcmp(values[1].data, "rum_store_timeout") == 0 && parsed >= 10 &&
+        parsed <= 10000)
+      main_conf->timeout_ms = (ngx_uint_t)parsed;
+    else if (ngx_strcmp(values[1].data, "rum_store_ttl") == 0 &&
+             parsed >= 3600 && parsed <= 2592000)
+      main_conf->ttl_seconds = (ngx_uint_t)parsed;
+    else if (ngx_strcmp(values[1].data, "rum_store_retry_limit") == 0 &&
+             parsed >= 0 && parsed <= 10)
+      main_conf->retry_limit = (ngx_uint_t)parsed;
+    else if (ngx_strcmp(values[1].data, "rum_store_sync_interval") == 0 &&
+             parsed >= 1 && parsed <= 300)
+      main_conf->sync_interval_seconds = (ngx_uint_t)parsed;
+    else
+      return "unknown or out-of-range laghu rum_store setting";
+    return NGX_CONF_OK;
+  }
 
   if (configuration->args->nelts == 2) {
     if (location->core.mode != LAGHU_MODE_UNSET) {

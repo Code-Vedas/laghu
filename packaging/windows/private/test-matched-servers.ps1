@@ -141,6 +141,8 @@ http {
     root $nginxWeb;
     laghu on;
     laghu preset balanced;
+    laghu rum_store local:;
+    laghu rum_store_local_snapshot $nginxCache/rum.snapshot;
     laghu worker_queue $nginxQueue;
     laghu image_cache $nginxCache;
   }
@@ -184,6 +186,8 @@ DocumentRoot "$apacheWeb"
   Require all granted
 </Directory>
 Laghu Preset balanced
+Laghu RumStore local:
+Laghu RumStoreLocalSnapshot "$apacheCache/rum.snapshot"
 Laghu WorkerQueue "$apacheQueue"
 Laghu ImageCache "$apacheCache"
 "@

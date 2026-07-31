@@ -139,6 +139,10 @@ load_first_mpm() {
   printf '<Directory "%s/htdocs">\nRequire all granted\n</Directory>\n' "${work}"
   printf 'ErrorLog "%s/logs/error.log"\n' "${work}"
   printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
+  printf 'Laghu RumStore local:%s/rum.snapshot\n' "${work}"
+  printf 'Laghu RumStoreSyncInterval 1\n'
+  printf 'Laghu RumStoreMemoryLimit 8m\n'
+  printf 'Laghu RumStorePendingLimit 1m\n'
   printf 'Laghu ImageBeacon On\nLaghu ImageInlineLimit 2048\n'
   printf 'Laghu CriticalCssBeacon On\n'
   printf 'Laghu CssInlineLimit 2048\nLaghu CssOutlineThreshold 8192\n'
@@ -159,7 +163,8 @@ load_first_mpm() {
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-external.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/instrumentation.html">\nLaghu RewriteLevel core\nLaghu InstrumentationBeacon On\nLaghu InstrumentationSampleRate 100\n</Location>\n'
-  printf '<LocationMatch "^/\\.laghu/beacon/instrumentation(\\.js)?$">\nLaghu InstrumentationBeacon On\n</LocationMatch>\n'
+  printf '<Location "/.laghu/beacon/instrumentation.js">\nLaghu On\nLaghu InstrumentationBeacon On\n</Location>\n'
+  printf '<Location "/.laghu/beacon/instrumentation">\nLaghu On\nLaghu InstrumentationBeacon On\n</Location>\n'
   printf '<LocationMatch "^/(combine-(one|two)\\.js|javascript-(combine|outline)\\.html)$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf 'Laghu ImageCache "%s/cache"\n' "${work}"
   if [ -x "${javascript_service}" ]; then
@@ -624,17 +629,31 @@ if [ "${service_pid}" != "" ]; then
   curl --fail --silent http://127.0.0.1:18081/instrumentation.html \
     >"${work}/instrumentation.html"
   grep 'data-laghu-sample="100"' "${work}/instrumentation.html" >/dev/null
-  curl --fail --silent \
-    http://127.0.0.1:18081/.laghu/beacon/instrumentation.js | \
-    grep 'largest-contentful-paint' >/dev/null
+  instrumentation_script_status=$(curl --silent --output "${work}/instrumentation.js" \
+    --write-out '%{http_code}' \
+    http://127.0.0.1:18081/.laghu/beacon/instrumentation.js)
+  [ "${instrumentation_script_status}" = 200 ] || {
+    echo "Instrumentation script returned ${instrumentation_script_status}" >&2
+    exit 1
+  }
+  grep 'largest-contentful-paint' "${work}/instrumentation.js" >/dev/null
   instrumentation_key=$(sed -n 's/.*data-laghu-template="\([0-9a-f]\{64\}\)".*/\1/p' \
     "${work}/instrumentation.html")
-  instrumentation_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    --request POST --header 'Content-Type: application/json' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --data "{\"version\":1,\"template\":\"${instrumentation_key}\",\"bucket\":0,\"lcp_ms\":1200,\"inp_ms\":100,\"cls_milli\":50,\"dcl_ms\":500,\"load_ms\":700,\"errors\":0,\"rejections\":0,\"candidates\":[]}" \
-    http://127.0.0.1:18081/.laghu/beacon/instrumentation)
-  [ "${instrumentation_status}" = 204 ]
+  instrumentation_status=0
+  attempt=0
+  while [ "${instrumentation_status}" != 204 ] && [ "${attempt}" -lt 100 ]; do
+    instrumentation_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      --request POST --header 'Content-Type: application/json' \
+      --header 'Sec-Fetch-Site: same-origin' \
+      --data "{\"version\":1,\"template\":\"${instrumentation_key}\",\"bucket\":0,\"lcp_ms\":1200,\"inp_ms\":100,\"cls_milli\":50,\"dcl_ms\":500,\"load_ms\":700,\"errors\":0,\"rejections\":0,\"candidates\":[]}" \
+      http://127.0.0.1:18081/.laghu/beacon/instrumentation)
+    attempt=$((attempt + 1))
+    [ "${instrumentation_status}" = 204 ] || sleep 0.1
+  done
+  [ "${instrumentation_status}" = 204 ] || {
+    echo "Instrumentation beacon did not converge across Apache workers; last status: ${instrumentation_status}" >&2
+    exit 1
+  }
   beacon_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --request POST --header 'Content-Type: application/json' \
     --header 'Sec-Fetch-Site: same-origin' \
