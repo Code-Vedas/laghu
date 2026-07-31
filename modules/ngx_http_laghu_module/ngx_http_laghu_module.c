@@ -32,15 +32,18 @@ typedef struct {
   laghu_runtime_queue javascript_runtime_queue;
   laghu_font_provider_set font_providers;
   laghu_javascript_observation_set javascript_observations;
+  laghu_javascript_defer_set javascript_defer;
   ngx_str_t worker_queue;
   ngx_str_t font_fetch_queue;
   ngx_str_t font_provider_config;
   ngx_str_t javascript_queue;
   ngx_str_t javascript_target;
   ngx_str_t javascript_observation_config;
+  ngx_str_t javascript_defer_config;
   ngx_str_t image_cache;
   bool font_providers_loaded;
   bool javascript_observations_loaded;
+  bool javascript_defer_loaded;
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
@@ -91,9 +94,34 @@ static ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;
 static ngx_http_output_body_filter_pt ngx_http_laghu_next_body_filter;
 static ngx_uint_t ngx_http_laghu_backend_warning_emitted;
 static time_t ngx_http_laghu_last_queue_warning;
+static time_t ngx_http_laghu_last_defer_recommendation;
 static time_t ngx_http_laghu_beacon_window;
 static ngx_uint_t ngx_http_laghu_beacon_count;
 static laghu_rum_engine *ngx_http_laghu_rum;
+
+static void ngx_http_laghu_log_defer_recommendation(
+    ngx_http_request_t *request, const laghu_http_transaction_result *result) {
+  time_t now;
+  if (!result->javascript_defer_recommended &&
+      !result->javascript_defer_rollback_recommended)
+    return;
+  now = ngx_time();
+  if (ngx_http_laghu_last_defer_recommendation != 0 &&
+      now - ngx_http_laghu_last_defer_recommendation < 3600)
+    return;
+  ngx_http_laghu_last_defer_recommendation = now;
+  ngx_log_error(NGX_LOG_NOTICE, request->connection->log, 0,
+                "laghu event=%s path=\"%s\" "
+                "template=%s bucket=%ui observations=%uL approval=\"defer %s\"",
+                result->javascript_defer_rollback_recommended
+                    ? "javascript_defer_rollback_recommendation"
+                    : "javascript_defer_recommendation",
+                result->javascript_defer_path,
+                result->javascript_defer_template,
+                (ngx_uint_t)result->javascript_defer_bucket,
+                (uint64_t)result->javascript_defer_observations,
+                result->javascript_defer_path);
+}
 
 ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request);
 ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
@@ -1291,6 +1319,8 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->environment.javascript_observations =
       conf->javascript_observations_loaded ? &conf->javascript_observations
                                            : NULL;
+  context->environment.javascript_defer =
+      conf->javascript_defer_loaded ? &conf->javascript_defer : NULL;
   context->environment.now = (uint64_t)ngx_time();
   return true;
 }
@@ -2140,6 +2170,7 @@ static ngx_int_t ngx_http_laghu_transaction_body_filter(
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
+    ngx_http_laghu_log_defer_recommendation(request, &result);
     if (context->header_deferred) {
       const unsigned char *selected = result.selected.data;
       size_t selected_length = result.selected.length;
@@ -2240,6 +2271,7 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   char key[LAGHU_RUNTIME_KEY_SIZE];
   bool css_asset = false;
   bool javascript_asset = false;
+  bool javascript_map = false;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
   if (request->uri.len == sizeof(beacon_script_path) - 1U &&
@@ -2410,7 +2442,13 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
                                              LAGHU_SHA256_HEX_LENGTH &&
                      ngx_strncmp(request->uri.data, javascript_prefix,
                                  sizeof(javascript_prefix) - 1U) == 0;
-  if (!css_asset && !javascript_asset &&
+  javascript_map =
+      request->uri.len ==
+          sizeof(javascript_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH + 4U &&
+      ngx_strncmp(request->uri.data, javascript_prefix,
+                  sizeof(javascript_prefix) - 1U) == 0 &&
+      ngx_strncmp(request->uri.data + request->uri.len - 4U, ".map", 4U) == 0;
+  if (!css_asset && !javascript_asset && !javascript_map &&
       (request->uri.len != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
        ngx_strncmp(request->uri.data, prefix, sizeof(prefix) - 1U) != 0)) {
     return NGX_DECLINED;
@@ -2421,12 +2459,12 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   if (conf->core.mode != LAGHU_MODE_ON) {
     return NGX_HTTP_NOT_FOUND;
   }
-  ngx_memcpy(
-      key,
-      request->uri.data + (css_asset          ? sizeof(css_prefix) - 1U
-                           : javascript_asset ? sizeof(javascript_prefix) - 1U
-                                              : sizeof(prefix) - 1U),
-      LAGHU_SHA256_HEX_LENGTH);
+  ngx_memcpy(key,
+             request->uri.data + (css_asset ? sizeof(css_prefix) - 1U
+                                  : (javascript_asset || javascript_map)
+                                      ? sizeof(javascript_prefix) - 1U
+                                      : sizeof(prefix) - 1U),
+             LAGHU_SHA256_HEX_LENGTH);
   key[LAGHU_SHA256_HEX_LENGTH] = '\0';
   {
     size_t offset;
@@ -2480,7 +2518,9 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   request->headers_out.status = NGX_HTTP_OK;
   request->headers_out.content_length_n = (off_t)entry.length;
   request->headers_out.content_type.data =
-      (u_char *)(css_asset ? "text/css" : entry.content_type);
+      (u_char *)(css_asset        ? "text/css"
+                 : javascript_map ? "application/json"
+                                  : entry.content_type);
   request->headers_out.content_type.len =
       ngx_strlen(request->headers_out.content_type.data);
   header = ngx_list_push(&request->headers_out.headers);
@@ -2638,6 +2678,8 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
                            "defaults and supports es6-module and not dead");
   ngx_conf_merge_str_value(child_conf->javascript_observation_config,
                            parent_conf->javascript_observation_config, "");
+  ngx_conf_merge_str_value(child_conf->javascript_defer_config,
+                           parent_conf->javascript_defer_config, "");
   if (!child_conf->font_providers_loaded &&
       parent_conf->font_providers_loaded) {
     child_conf->font_providers = parent_conf->font_providers;
@@ -2647,6 +2689,11 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
       parent_conf->javascript_observations_loaded) {
     child_conf->javascript_observations = parent_conf->javascript_observations;
     child_conf->javascript_observations_loaded = true;
+  }
+  if (!child_conf->javascript_defer_loaded &&
+      parent_conf->javascript_defer_loaded) {
+    child_conf->javascript_defer = parent_conf->javascript_defer;
+    child_conf->javascript_defer_loaded = true;
   }
   ngx_conf_merge_str_value(child_conf->image_cache, parent_conf->image_cache,
                            LAGHU_NGINX_DEFAULT_CACHE);
@@ -2892,6 +2939,28 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     location->core.instrumentation_sample_rate = (unsigned int)rate;
     return NGX_CONF_OK;
   }
+  if (ngx_strcmp(values[1].data, "javascript_defer_suggestions") == 0) {
+    if (location->core.javascript_defer_suggestions != LAGHU_MODE_UNSET)
+      return "duplicate laghu javascript_defer_suggestions";
+    if (ngx_strcmp(values[2].data, "on") == 0)
+      location->core.javascript_defer_suggestions = LAGHU_MODE_ON;
+    else if (ngx_strcmp(values[2].data, "off") == 0)
+      location->core.javascript_defer_suggestions = LAGHU_MODE_OFF;
+    else
+      return "laghu javascript_defer_suggestions expects 'on' or 'off'";
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "include_js_source_maps") == 0) {
+    if (location->core.include_js_source_maps != LAGHU_MODE_UNSET)
+      return "duplicate laghu include_js_source_maps";
+    if (ngx_strcmp(values[2].data, "on") == 0)
+      location->core.include_js_source_maps = LAGHU_MODE_ON;
+    else if (ngx_strcmp(values[2].data, "off") == 0)
+      location->core.include_js_source_maps = LAGHU_MODE_OFF;
+    else
+      return "laghu include_js_source_maps expects 'on' or 'off'";
+    return NGX_CONF_OK;
+  }
 
   if (ngx_strcmp(values[1].data, "image_inline_limit") == 0) {
     ngx_int_t limit = ngx_atoi(values[2].data, values[2].len);
@@ -3044,6 +3113,20 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     }
     location->javascript_observation_config = values[2];
     location->javascript_observations_loaded = true;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "javascript_defer_config") == 0) {
+    char error[256U];
+    if (location->javascript_defer_config.len != 0U ||
+        !laghu_javascript_defer_load((const char *)values[2].data,
+                                     &location->javascript_defer, error,
+                                     sizeof(error))) {
+      ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                         "invalid laghu javascript_defer_config: %s", error);
+      return NGX_CONF_ERROR;
+    }
+    location->javascript_defer_config = values[2];
+    location->javascript_defer_loaded = true;
     return NGX_CONF_OK;
   }
 

@@ -36,6 +36,7 @@ add_library(mod_laghu MODULE
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/rum.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/font_provider.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/javascript.c"
+  "${LAGHU_SOURCE}/libs/laghu-runtime/src/javascript_defer.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/beacon.c"
 )
 target_compile_features(mod_laghu PRIVATE c_std_11)

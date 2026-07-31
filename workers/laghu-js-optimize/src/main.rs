@@ -18,7 +18,8 @@ use memmap2::{MmapMut, MmapOptions};
 use sha2::{Digest, Sha256};
 use swc_core::{
     common::{
-        FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
+        FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments,
+        source_map::DefaultSourceMapGenConfig, sync::Lrc,
     },
     ecma::{
         ast::{
@@ -46,25 +47,29 @@ use std::sync::{
 const MAX_INPUT: usize = 2 * 1024 * 1024;
 const DEFAULT_TARGET: &str = "defaults and supports es6-module and not dead";
 const QUEUE_MAGIC: u64 = 0x4c41_4748_5551_5545;
-const QUEUE_VERSION: u32 = 7;
+const QUEUE_VERSION: u32 = 8;
 const CACHE_MAGIC: u64 = 0x4c41_4748_5543_4143;
 const CACHE_VERSION: u32 = 2;
 const JOB_JAVASCRIPT: u32 = 3;
 const SLOT_READY: u32 = 1;
 const HEADER_SIZE: usize = 176;
 const SLOT_SIZE: usize = 4_544;
-const BACKEND: &str = "laghu-swc-75.0.0-js-v1";
+const BACKEND: &str = "laghu-swc-75.0.0-js-v2";
 const CATALOG_MAGIC: u64 = 0x4c41_4748_554a_5343;
 const CATALOG_SIZE: usize = 1_908;
 const FLAG_MODULE: u32 = 1;
 const FLAG_URL_INDEPENDENT: u32 = 2;
 const FLAG_CONCAT_SAFE: u32 = 4;
 const FLAG_TOP_LEVEL_DECLARATION_FREE: u32 = 8;
+const FLAG_DEFER_SAFE: u32 = 16;
+const FILTER_MODULE: u64 = 1;
+const FILTER_SOURCE_MAP: u64 = 2;
 
 #[derive(Default)]
 struct Eligibility {
     url_independent: bool,
     concat_safe: bool,
+    defer_safe: bool,
 }
 
 impl Visit for Eligibility {
@@ -72,6 +77,10 @@ impl Visit for Eligibility {
         if matches!(&*node.sym, "eval" | "Function" | "currentScript") {
             self.url_independent = false;
             self.concat_safe = false;
+            self.defer_safe = false;
+        }
+        if matches!(&*node.sym, "document" | "setTimeout" | "setInterval") {
+            self.defer_safe = false;
         }
     }
 
@@ -79,6 +88,15 @@ impl Visit for Eligibility {
         if node.prop.is_ident_with("currentScript") {
             self.url_independent = false;
             self.concat_safe = false;
+            self.defer_safe = false;
+        }
+        if node.obj.is_ident_ref_to("document")
+            && matches!(
+                node.prop.as_ident().map(|ident| &*ident.sym),
+                Some("write" | "writeln" | "open" | "close" | "currentScript")
+            )
+        {
+            self.defer_safe = false;
         }
         node.visit_children_with(self);
     }
@@ -87,6 +105,7 @@ impl Visit for Eligibility {
         if matches!(node.callee, Callee::Import(_)) {
             self.url_independent = false;
             self.concat_safe = false;
+            self.defer_safe = false;
         }
         node.visit_children_with(self);
     }
@@ -95,6 +114,7 @@ impl Visit for Eligibility {
         if node.kind == MetaPropKind::ImportMeta {
             self.url_independent = false;
             self.concat_safe = false;
+            self.defer_safe = false;
         }
     }
 
@@ -130,12 +150,14 @@ fn eligibility(program: &Program, module: bool) -> u32 {
     let mut result = Eligibility {
         url_independent: true,
         concat_safe: top_level_declaration_free,
+        defer_safe: !module,
     };
     program.visit_with(&mut result);
     (u32::from(module) * FLAG_MODULE)
         | (u32::from(result.url_independent) * FLAG_URL_INDEPENDENT)
         | (u32::from(result.concat_safe) * FLAG_CONCAT_SAFE)
         | (u32::from(top_level_declaration_free) * FLAG_TOP_LEVEL_DECLARATION_FREE)
+        | (u32::from(result.defer_safe) * FLAG_DEFER_SAFE)
 }
 
 fn c_string(bytes: &[u8]) -> Result<&str> {
@@ -196,13 +218,26 @@ fn resolved_target(target: &str) -> Result<String> {
         .join(","))
 }
 
-fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, String, u32)> {
+struct TransformResult {
+    output: Vec<u8>,
+    source_map: Vec<u8>,
+    matrix: String,
+    flags: u32,
+}
+
+fn transform_artifact(
+    source: &str,
+    source_name: &str,
+    module: bool,
+    target: &str,
+    emit_source_map: bool,
+) -> Result<TransformResult> {
     let matrix = resolved_target(target)?;
     GLOBALS.set(&Globals::new(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let comments = SingleThreadedComments::default();
         let file = cm.new_source_file(
-            FileName::Custom("input.js".into()).into(),
+            FileName::Custom(source_name.into()).into(),
             source.to_owned(),
         );
         let lexer = Lexer::new(
@@ -278,12 +313,18 @@ fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, Strin
         program.mutate(hygiene());
         program.mutate(fixer(None));
         let mut output = Vec::new();
+        let mut mappings = Vec::new();
         {
-            let writer = JsWriter::new(cm.clone(), "\n", &mut output, None);
+            let writer = JsWriter::new(
+                cm.clone(),
+                "\n",
+                &mut output,
+                emit_source_map.then_some(&mut mappings),
+            );
             let mut emitter = Emitter {
                 cfg: CodegenConfig::default().with_minify(true),
                 comments: Some(&comments),
-                cm,
+                cm: cm.clone(),
                 wr: Box::new(writer),
             };
             emitter.emit_program(&program)?;
@@ -291,8 +332,30 @@ fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, Strin
         if output.len() >= source.len() || output.len() > MAX_INPUT {
             bail!("javascript output is not smaller");
         }
-        Ok((output, matrix, flags))
+        let mut source_map = Vec::new();
+        if emit_source_map {
+            cm.build_source_map(&mappings, None, DefaultSourceMapGenConfig)
+                .to_writer(&mut source_map)?;
+            if source_map.len() > MAX_INPUT
+                || source_map
+                    .windows(b"\"sourcesContent\"".len())
+                    .any(|value| value == b"\"sourcesContent\"")
+            {
+                bail!("invalid generated source map");
+            }
+        }
+        Ok(TransformResult {
+            output,
+            source_map,
+            matrix,
+            flags,
+        })
     })
+}
+
+fn transform(source: &str, module: bool, target: &str) -> Result<(Vec<u8>, String, u32)> {
+    let result = transform_artifact(source, "input.js", module, target, false)?;
+    Ok((result.output, result.matrix, result.flags))
 }
 
 struct Queue {
@@ -309,6 +372,7 @@ struct Job {
     policy_key: String,
     target: String,
     module: bool,
+    source_map: bool,
     source: Vec<u8>,
 }
 
@@ -411,7 +475,8 @@ impl Queue {
                     validator: c_string(&self.map[base + 1105..base + 1361])?.to_owned(),
                     policy_key: c_string(&self.map[base + 1425..base + 1490])?.to_owned(),
                     target: c_string(&self.map[base + 1619..base + 2131])?.to_owned(),
-                    module: read_u64(&self.map, base + 2136) & 1 != 0,
+                    module: read_u64(&self.map, base + 2136) & FILTER_MODULE != 0,
+                    source_map: read_u64(&self.map, base + 2136) & FILTER_SOURCE_MAP != 0,
                     source: self.map[base + SLOT_SIZE..base + SLOT_SIZE + length].to_vec(),
                 })
             } else {
@@ -451,17 +516,45 @@ fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn publish(cache: &Path, job: &Job, output: &[u8]) -> Result<()> {
+fn publish(cache: &Path, job: &Job, output: &[u8], source_map: &[u8]) -> Result<Vec<u8>> {
     if job.index_key.len() != 64 || job.validator.len() != 64 {
         bail!("invalid javascript cache key");
     }
     fs::create_dir_all(cache)?;
-    let variant = sha256(output);
-    atomic_write(&cache.join(format!("variant-{variant}.bin")), output)?;
+    let mut published = output.to_vec();
+    if !source_map.is_empty() {
+        let map_variant = sha256(source_map);
+        let directive = format!("\n//# sourceMappingURL=/.laghu/js/{map_variant}.map");
+        if published.len() + directive.len() >= job.source.len()
+            || published.len() + directive.len() > MAX_INPUT
+        {
+            bail!("javascript with source map reference is not smaller");
+        }
+        atomic_write(
+            &cache.join(format!("variant-{map_variant}.bin")),
+            source_map,
+        )?;
+        let mut map_metadata = vec![0u8; 608];
+        write_u64(&mut map_metadata, 0, CACHE_MAGIC);
+        write_u32(&mut map_metadata, 8, CACHE_VERSION);
+        write_u64(&mut map_metadata, 16, source_map.len() as u64);
+        write_fixed(&mut map_metadata[24..89], &map_variant)?;
+        write_fixed(&mut map_metadata[89..154], &map_variant)?;
+        write_fixed(&mut map_metadata[154..410], &map_variant)?;
+        write_fixed(&mut map_metadata[410..474], "application/json")?;
+        write_fixed(&mut map_metadata[474..602], BACKEND)?;
+        atomic_write(
+            &cache.join(format!("index-{map_variant}.meta")),
+            &map_metadata,
+        )?;
+        published.extend_from_slice(directive.as_bytes());
+    }
+    let variant = sha256(&published);
+    atomic_write(&cache.join(format!("variant-{variant}.bin")), &published)?;
     let mut metadata = vec![0u8; 608];
     write_u64(&mut metadata, 0, CACHE_MAGIC);
     write_u32(&mut metadata, 8, CACHE_VERSION);
-    write_u64(&mut metadata, 16, output.len() as u64);
+    write_u64(&mut metadata, 16, published.len() as u64);
     write_fixed(&mut metadata[24..89], &variant)?;
     write_fixed(&mut metadata[89..154], &variant)?;
     write_fixed(&mut metadata[154..410], &job.validator)?;
@@ -472,7 +565,7 @@ fn publish(cache: &Path, job: &Job, output: &[u8]) -> Result<()> {
         &metadata,
     )?;
     atomic_write(&cache.join(format!("index-{variant}.meta")), &metadata)?;
-    Ok(())
+    Ok(published)
 }
 
 fn catalog_key(job: &Job) -> String {
@@ -500,7 +593,7 @@ fn publish_catalog(cache: &Path, job: &Job, output: &[u8], matrix: &str, flags: 
     )?;
     let mut catalog = vec![0u8; CATALOG_SIZE];
     write_u64(&mut catalog, 0, CATALOG_MAGIC);
-    write_u32(&mut catalog, 8, 2);
+    write_u32(&mut catalog, 8, 3);
     write_u32(&mut catalog, 12, u32::from(job.module));
     write_u64(
         &mut catalog,
@@ -530,9 +623,19 @@ fn process_one(queue: &mut Queue, cache: &Path) -> Result<bool> {
         return Ok(false);
     };
     let source = std::str::from_utf8(&job.source).context("javascript source is not UTF-8")?;
-    if let Ok((output, matrix, flags)) = transform(source, job.module, &job.target) {
-        publish(cache, &job, &output)?;
-        publish_catalog(cache, &job, &output, &matrix, flags)?;
+    if let Ok(result) = transform_artifact(
+        source,
+        &format!("laghu-{}.js", &job.validator[..16.min(job.validator.len())]),
+        job.module,
+        &job.target,
+        job.source_map,
+    ) {
+        let published = match publish(cache, &job, &result.output, &result.source_map) {
+            Ok(published) => published,
+            Err(_) if !result.source_map.is_empty() => publish(cache, &job, &result.output, &[])?,
+            Err(error) => return Err(error),
+        };
+        publish_catalog(cache, &job, &published, &result.matrix, result.flags)?;
     }
     Ok(true)
 }
@@ -782,6 +885,42 @@ mod tests {
     }
 
     #[test]
+    fn emits_external_map_without_source_content() {
+        let result = transform_artifact(
+            "function publicName(longLocal){return longLocal+1}",
+            "laghu-fixture.js",
+            false,
+            "last 2 chrome versions",
+            true,
+        )
+        .unwrap();
+        let map = String::from_utf8(result.source_map).unwrap();
+        assert!(map.contains("\"version\":3"));
+        assert!(map.contains("laghu-fixture.js"));
+        assert!(!map.contains("sourcesContent"));
+    }
+
+    #[test]
+    fn defer_certificate_rejects_parser_sensitive_programs() {
+        let safe = transform(
+            "function safeDeferredScript(veryLongArgumentName){const veryLongLocalName=veryLongArgumentName+veryLongArgumentName;return veryLongLocalName+veryLongLocalName;}console.log(safeDeferredScript(1));",
+            false,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(safe & FLAG_DEFER_SAFE, FLAG_DEFER_SAFE);
+        let writer = transform(
+            "document.write( '<p>parser sensitive</p>' ); function publicParserHelper(veryLongLocalName) { const anotherVeryLongLocalName = veryLongLocalName + 1; return anotherVeryLongLocalName + anotherVeryLongLocalName; } console.log(publicParserHelper(1));",
+            false,
+            "last 2 chrome versions",
+        )
+        .unwrap()
+        .2;
+        assert_eq!(writer & FLAG_DEFER_SAFE, 0);
+    }
+
+    #[test]
     fn consumes_queue_job_and_publishes_checksums() {
         let root = std::env::temp_dir().join(format!(
             "laghu-js-test-{}-{}",
@@ -795,13 +934,14 @@ mod tests {
         let cache = root.join("cache");
         fs::create_dir_all(&root).unwrap();
         let mut queue = Queue::create(&queue_path).unwrap();
-        let source = b"function publicName(longLocal){ return longLocal + 1; }";
+        let source = b"function publicName(longLocal){ const repeatedValue = longLocal + 1; console.log(repeatedValue, repeatedValue, repeatedValue, repeatedValue); return repeatedValue + repeatedValue + repeatedValue; }";
         let source_hash = sha256(source);
         let index_key = sha256(b"test-index");
         let base = HEADER_SIZE;
         write_u32(&mut queue.map, base, SLOT_READY);
         write_u32(&mut queue.map, base + 4, JOB_JAVASCRIPT);
         write_u64(&mut queue.map, base + 8, source.len() as u64);
+        write_u64(&mut queue.map, base + 2136, FILTER_SOURCE_MAP);
         write_fixed(&mut queue.map[base + 16..base + 81], &index_key).unwrap();
         write_fixed(&mut queue.map[base + 81..base + 1105], "/app.js").unwrap();
         write_fixed(&mut queue.map[base + 1105..base + 1361], &source_hash).unwrap();
@@ -815,6 +955,12 @@ mod tests {
         queue.map.flush().unwrap();
         assert!(process_one(&mut queue, &cache).unwrap());
         assert!(cache.join(format!("index-{index_key}.meta")).is_file());
+        assert!(fs::read_dir(&cache).unwrap().any(|entry| {
+            let path = entry.unwrap().path();
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("variant-"))
+                && fs::read(path).is_ok_and(|bytes| bytes.starts_with(b"{\"version\":3"))
+        }));
         assert!(fs::read_dir(&cache).unwrap().any(|entry| {
             entry
                 .unwrap()

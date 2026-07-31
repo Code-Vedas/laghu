@@ -61,6 +61,8 @@ override_dh_auto_install:
 		debian/laghu-libvips/etc/laghu/font-providers.conf
 	install -D -m 0644 packaging/javascript-observation.conf \
 		debian/laghu-libvips/etc/laghu/javascript-observation.conf
+	install -D -m 0644 packaging/javascript-defer.conf \
+		debian/laghu-libvips/etc/laghu/javascript-defer.conf
 	install -D -m 0644 packaging/tmpfiles/laghu.conf \
 		debian/laghu-libvips/usr/lib/tmpfiles.d/laghu.conf
 	install -D -m 0644 packaging/NOTICE-libvips.md \

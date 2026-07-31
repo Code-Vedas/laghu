@@ -43,6 +43,7 @@ cp "${REPO_ROOT}/libs/laghu-runtime/src/rum_redis_merge.h" \
   "${build_dir}/rum_redis_merge.h"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/font_provider.c" "${build_dir}/laghu_font_provider.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/javascript.c" "${build_dir}/laghu_javascript.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/javascript_defer.c" "${build_dir}/laghu_javascript_defer.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/beacon.c" "${build_dir}/laghu_beacon.c"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -83,6 +84,7 @@ cd "${build_dir}"
   laghu_rum.c \
   laghu_font_provider.c \
   laghu_javascript.c \
+  laghu_javascript_defer.c \
   laghu_beacon.c \
   laghu_runtime.c
 

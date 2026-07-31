@@ -98,6 +98,8 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.image_beacon == LAGHU_MODE_OFF);
   assert(result.critical_css_beacon == LAGHU_MODE_OFF);
   assert(result.instrumentation_beacon == LAGHU_MODE_OFF);
+  assert(result.javascript_defer_suggestions == LAGHU_MODE_ON);
+  assert(result.include_js_source_maps == LAGHU_MODE_OFF);
   assert(result.instrumentation_sample_rate ==
          LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT);
   assert(result.image_inline_limit == LAGHU_IMAGE_INLINE_LIMIT_DEFAULT);
@@ -117,6 +119,8 @@ static void test_config_defaults_and_inheritance(void) {
   parent.image_beacon = LAGHU_MODE_ON;
   parent.critical_css_beacon = LAGHU_MODE_ON;
   parent.instrumentation_beacon = LAGHU_MODE_ON;
+  parent.javascript_defer_suggestions = LAGHU_MODE_OFF;
+  parent.include_js_source_maps = LAGHU_MODE_ON;
   parent.instrumentation_sample_rate = 25U;
   parent.image_inline_limit = 4096U;
   parent.image_metadata_limit = 5000U;
@@ -135,6 +139,8 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.image_beacon == LAGHU_MODE_ON);
   assert(result.critical_css_beacon == LAGHU_MODE_ON);
   assert(result.instrumentation_beacon == LAGHU_MODE_ON);
+  assert(result.javascript_defer_suggestions == LAGHU_MODE_OFF);
+  assert(result.include_js_source_maps == LAGHU_MODE_ON);
   assert(result.instrumentation_sample_rate == 25U);
   assert(result.image_inline_limit == 4096U);
   assert(result.image_metadata_limit == 5000U);
@@ -528,8 +534,8 @@ static void test_hashing(void) {
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
   assert(strcmp(key,
-                "45470b0cb1b9412dcebb83da7ffc349d20b283263975677980f979622c194"
-                "e97") == 0);
+                "d2ff33be78aaed874171f5a5ee9a3183d02444c47b62535a4343f230dda6"
+                "a314") == 0);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,

@@ -99,6 +99,8 @@ install -D -m 0644 packaging/font-providers.conf \
   %{buildroot}%{_sysconfdir}/laghu/font-providers.conf
 install -D -m 0644 packaging/javascript-observation.conf \
   %{buildroot}%{_sysconfdir}/laghu/javascript-observation.conf
+install -D -m 0644 packaging/javascript-defer.conf \
+  %{buildroot}%{_sysconfdir}/laghu/javascript-defer.conf
 install -D -m 0644 packaging/tmpfiles/laghu.conf \
   %{buildroot}%{_tmpfilesdir}/laghu.conf
 
@@ -144,6 +146,7 @@ httpd -t
 %{_unitdir}/laghu-js-optimize.service
 %config(noreplace) %{_sysconfdir}/laghu/font-providers.conf
 %config(noreplace) %{_sysconfdir}/laghu/javascript-observation.conf
+%config(noreplace) %{_sysconfdir}/laghu/javascript-defer.conf
 %{_tmpfilesdir}/laghu.conf
 
 %files -n ngx-laghu

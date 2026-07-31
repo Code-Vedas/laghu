@@ -46,6 +46,7 @@ typedef struct {
   const char *javascript_queue;
   const char *javascript_target;
   const char *javascript_observation_config;
+  const char *javascript_defer_config;
   const char *image_cache;
   const char *rum_store;
   const char *rum_snapshot;
@@ -63,8 +64,10 @@ typedef struct {
   laghu_runtime_queue javascript_runtime_queue;
   laghu_font_provider_set font_providers;
   laghu_javascript_observation_set javascript_observations;
+  laghu_javascript_defer_set javascript_defer;
   bool font_providers_loaded;
   bool javascript_observations_loaded;
+  bool javascript_defer_loaded;
 } laghu_apache_config;
 
 typedef struct {
@@ -102,8 +105,33 @@ typedef struct {
 
 module AP_MODULE_DECLARE_DATA laghu_module;
 static apr_time_t laghu_apache_beacon_window;
+static apr_time_t laghu_apache_last_defer_recommendation;
 static unsigned int laghu_apache_beacon_count;
 static laghu_rum_engine *laghu_apache_rum;
+
+static void laghu_apache_log_defer_recommendation(
+    request_rec *request, const laghu_http_transaction_result *result) {
+  apr_time_t now;
+  if (!result->javascript_defer_recommended &&
+      !result->javascript_defer_rollback_recommended)
+    return;
+  now = apr_time_now();
+  if (laghu_apache_last_defer_recommendation != 0 &&
+      now - laghu_apache_last_defer_recommendation < apr_time_from_sec(3600))
+    return;
+  laghu_apache_last_defer_recommendation = now;
+  ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, request,
+                "Laghu event=%s path=\"%s\" "
+                "template=%s bucket=%u observations=%llu approval=\"defer %s\"",
+                result->javascript_defer_rollback_recommended
+                    ? "javascript_defer_rollback_recommendation"
+                    : "javascript_defer_recommendation",
+                result->javascript_defer_path,
+                result->javascript_defer_template,
+                result->javascript_defer_bucket,
+                (unsigned long long)result->javascript_defer_observations,
+                result->javascript_defer_path);
+}
 
 static apr_status_t laghu_apache_rum_cleanup(void *data) {
   (void)data;
@@ -255,6 +283,9 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
       child->javascript_observation_config != NULL
           ? child->javascript_observation_config
           : parent->javascript_observation_config;
+  merged->javascript_defer_config = child->javascript_defer_config != NULL
+                                        ? child->javascript_defer_config
+                                        : parent->javascript_defer_config;
   if (child->font_providers_loaded) {
     merged->font_providers = child->font_providers;
     merged->font_providers_loaded = true;
@@ -268,6 +299,13 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   } else if (parent->javascript_observations_loaded) {
     merged->javascript_observations = parent->javascript_observations;
     merged->javascript_observations_loaded = true;
+  }
+  if (child->javascript_defer_loaded) {
+    merged->javascript_defer = child->javascript_defer;
+    merged->javascript_defer_loaded = true;
+  } else if (parent->javascript_defer_loaded) {
+    merged->javascript_defer = parent->javascript_defer;
+    merged->javascript_defer_loaded = true;
   }
   laghu_runtime_queue_init(&merged->queue);
   laghu_runtime_queue_init(&merged->font_queue);
@@ -485,6 +523,19 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     config->core.instrumentation_sample_rate = (unsigned int)quality;
     return NULL;
   }
+  if (ap_cstr_casecmp(name, "JavaScriptDeferSuggestions") == 0) {
+    if (config->core.javascript_defer_suggestions != LAGHU_MODE_UNSET ||
+        !laghu_apache_on_off(parameter,
+                             &config->core.javascript_defer_suggestions))
+      return "Laghu JavaScriptDeferSuggestions expects On or Off exactly once";
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "IncludeJsSourceMaps") == 0) {
+    if (config->core.include_js_source_maps != LAGHU_MODE_UNSET ||
+        !laghu_apache_on_off(parameter, &config->core.include_js_source_maps))
+      return "Laghu IncludeJsSourceMaps expects On or Off exactly once";
+    return NULL;
+  }
   if (ap_cstr_casecmp(name, "ImageInlineLimit") == 0) {
     quality = strtoul(parameter, &end, 10);
     if (config->core.image_inline_limit != LAGHU_IMAGE_INLINE_LIMIT_UNSET ||
@@ -616,6 +667,17 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     config->javascript_observation_config =
         apr_pstrdup(command->pool, parameter);
     config->javascript_observations_loaded = true;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "JavaScriptDeferConfig") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (config->javascript_defer_config != NULL ||
+        !laghu_javascript_defer_load(parameter, &config->javascript_defer,
+                                     error, sizeof(error)))
+      return apr_psprintf(command->pool,
+                          "Laghu JavaScriptDeferConfig is invalid: %s", error);
+    config->javascript_defer_config = apr_pstrdup(command->pool, parameter);
+    config->javascript_defer_loaded = true;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "ImageCache") == 0) {
@@ -978,6 +1040,10 @@ static bool laghu_apache_normalize(request_rec *request,
   context->environment.javascript_observations =
       context->config->javascript_observations_loaded
           ? &context->config->javascript_observations
+          : NULL;
+  context->environment.javascript_defer =
+      context->config->javascript_defer_loaded
+          ? &context->config->javascript_defer
           : NULL;
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;
@@ -1545,6 +1611,7 @@ static apr_status_t laghu_apache_transaction_filter(
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
+    laghu_apache_log_defer_recommendation(request, &result);
     if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
         context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
         context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
@@ -1653,6 +1720,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
   const char *key;
   bool css_asset;
   bool javascript_asset;
+  bool javascript_map;
   if (request->uri == NULL ||
       strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0) {
     return DECLINED;
@@ -1866,7 +1934,13 @@ static int laghu_apache_variant_handler(request_rec *request) {
                                                  LAGHU_SHA256_HEX_LENGTH &&
                      strncmp(request->uri, javascript_prefix,
                              sizeof(javascript_prefix) - 1U) == 0;
-  if (!css_asset && !javascript_asset &&
+  javascript_map =
+      strlen(request->uri) ==
+          sizeof(javascript_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH + 4U &&
+      strncmp(request->uri, javascript_prefix,
+              sizeof(javascript_prefix) - 1U) == 0 &&
+      strcmp(request->uri + strlen(request->uri) - 4U, ".map") == 0;
+  if (!css_asset && !javascript_asset && !javascript_map &&
       (strlen(request->uri) != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
        strncmp(request->uri, prefix, sizeof(prefix) - 1U) != 0)) {
     return HTTP_NOT_FOUND;
@@ -1874,9 +1948,10 @@ static int laghu_apache_variant_handler(request_rec *request) {
   if (request->method_number != M_GET) {
     return HTTP_METHOD_NOT_ALLOWED;
   }
-  key = request->uri + (css_asset          ? sizeof(css_prefix) - 1U
-                        : javascript_asset ? sizeof(javascript_prefix) - 1U
-                                           : sizeof(prefix) - 1U);
+  key = request->uri + (css_asset ? sizeof(css_prefix) - 1U
+                        : (javascript_asset || javascript_map)
+                            ? sizeof(javascript_prefix) - 1U
+                            : sizeof(prefix) - 1U);
   {
     size_t offset;
     for (offset = 0U; offset < LAGHU_SHA256_HEX_LENGTH; ++offset) {
@@ -1925,7 +2000,9 @@ static int laghu_apache_variant_handler(request_rec *request) {
     }
     laghu_http_transaction_result_release(&result);
   }
-  ap_set_content_type(request, css_asset ? "text/css" : entry.content_type);
+  ap_set_content_type(request, css_asset        ? "text/css"
+                               : javascript_map ? "application/json"
+                                                : entry.content_type);
   ap_set_content_length(request, (apr_off_t)entry.length);
   apr_table_setn(request->headers_out, "Cache-Control",
                  "public, max-age=31536000, immutable");

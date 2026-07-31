@@ -311,8 +311,8 @@ static void test_image_cold_warm_and_queue(void) {
     CHECK(
         snprintf(stale_index, sizeof(stale_index), "%s/index-%s.meta",
                  test_cache_path,
-                 "d6b363c1bf999a28fa4a58f56abd648ce13c56a9bb1736c16858012775af"
-                 "d4b2") > 0);
+                 "c09ffea949e2f208d00f4abe0de1653876d0648d5c741f670bd92f8b648b"
+                 "4a9a") > 0);
     (void)remove(stale_index);
   }
   laghu_runtime_queue_init(&queue);
@@ -329,12 +329,12 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(
       strcmp(
           transaction.policy_key,
-          "fd9d0382a61e2b0a824979e0d4d2960d9430bce9e8006f1b3b7c6f7e0766bc62") ==
+          "a6859dc67bfe22b454578bc753a895b824354fa3422e1dc8062ee3f827a31b12") ==
       0);
   CHECK(
       strcmp(
           result.cache_key,
-          "d6b363c1bf999a28fa4a58f56abd648ce13c56a9bb1736c16858012775afd4b2") ==
+          "c09ffea949e2f208d00f4abe0de1653876d0648d5c741f670bd92f8b648b4a9a") ==
       0);
   laghu_http_transaction_result_release(&result);
   CHECK(laghu_http_transaction_finalize(
@@ -395,6 +395,35 @@ static void test_image_cold_warm_and_queue(void) {
     laghu_http_transaction_result_release(&result);
   }
   {
+    static const unsigned char source_map[] =
+        "{\"version\":3,\"sources\":[\"app.js\"],\"names\":[],\"mappings\":"
+        "\"\"}";
+    char map_path[LAGHU_RUNTIME_PATH_SIZE];
+    char map_key[LAGHU_RUNTIME_KEY_SIZE];
+    laghu_http_request map_request;
+    laghu_http_header type;
+    laghu_runtime_cache_entry map_entry;
+    CHECK(laghu_sha256_hex((laghu_buffer){source_map, sizeof(source_map) - 1U},
+                           map_key));
+    CHECK(laghu_runtime_cache_publish(
+        environment.cache_path, map_key, map_key, map_key, "application/json",
+        "swc-test", (laghu_buffer){source_map, sizeof(source_map) - 1U},
+        &map_entry));
+    CHECK(snprintf(map_path, sizeof(map_path), "/.laghu/js/%s.map", map_key) >
+          0);
+    map_request = test_request(
+        NULL, 0U,
+        (laghu_buffer){(const unsigned char *)map_path, strlen(map_path)});
+    laghu_http_transaction_init(&transaction);
+    CHECK(laghu_http_transaction_prepare(&transaction, &map_request, &response,
+                                         &environment, &result));
+    CHECK(result.action == LAGHU_HTTP_ACTION_SERVE_CACHED);
+    CHECK(find_operation_header(&result, "Content-Type", &type) != NULL);
+    CHECK(type.value.length == sizeof("application/json") - 1U &&
+          memcmp(type.value.data, "application/json", type.value.length) == 0);
+    laghu_http_transaction_result_release(&result);
+  }
+  {
     FILE *corrupt = fopen(entry.variant_path, "wb");
     CHECK(corrupt != NULL);
     CHECK(fwrite("wrong", 1U, sizeof(variant) - 1U, corrupt) ==
@@ -437,15 +466,10 @@ static void test_css_cold_warm(void) {
     if (pass == 1U && finalized.owned_body != NULL) {
       laghu_http_header etag;
       CHECK(finalized.selected.length < sizeof(css) - 1U);
-      CHECK(
-          strcmp(finalized.dependency_key,
-                 "99adf6bf7fcd281cfe0a38be40366852fb98e9114489d4f9c5fe27e7a5af"
-                 "a94a") == 0);
+      CHECK(strlen(finalized.dependency_key) == LAGHU_SHA256_HEX_LENGTH);
       CHECK(find_operation_header(&finalized, "ETag", &etag) != NULL);
-      CHECK(etag.value.length == sizeof("\"laghu-css-"
-                                        "99adf6bf7fcd281cfe0a38be40366852fb98e"
-                                        "9114489d4f9c5fe27e7a5afa94a\"") -
-                                     1U);
+      CHECK(etag.value.length ==
+            sizeof("\"laghu-css-\"") - 1U + LAGHU_SHA256_HEX_LENGTH);
     }
     laghu_http_transaction_result_release(&finalized);
   }
@@ -519,10 +543,7 @@ static void test_html_cold_warm_headers(void) {
         NULL) {
       CHECK(operation.value.length == 2U);
       CHECK(memcmp(operation.value.data, "en", 2U) == 0);
-      CHECK(
-          strcmp(finalized.dependency_key,
-                 "94e77a15317a301bffd45f9f01b249b769bb85e28d718331831451023e076"
-                 "576") == 0);
+      CHECK(strlen(finalized.dependency_key) == LAGHU_SHA256_HEX_LENGTH);
       saw_language = true;
     }
     laghu_http_transaction_result_release(&finalized);

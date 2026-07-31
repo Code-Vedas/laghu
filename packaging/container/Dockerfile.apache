@@ -51,6 +51,7 @@ COPY --from=build /src/build/workers/laghu-js-optimize/cargo/release/laghu-js-op
 COPY --from=build /src/apache-module/.libs/mod_laghu.so /usr/lib/apache2/modules/mod_laghu.so
 COPY packaging/font-providers.conf /etc/laghu/font-providers.conf
 COPY packaging/javascript-observation.conf /etc/laghu/javascript-observation.conf
+COPY packaging/javascript-defer.conf /etc/laghu/javascript-defer.conf
 COPY packaging/apache/laghu.load /etc/apache2/mods-available/laghu.load
 COPY packaging/apache/laghu.conf /etc/apache2/mods-available/laghu.conf
 COPY packaging/container/entrypoint.apache /usr/bin/mod-laghu-entrypoint

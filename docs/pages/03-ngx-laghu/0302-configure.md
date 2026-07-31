@@ -21,6 +21,8 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu critical_css_beacon on\|off;` | inherited | boolean | `off` | Enables critical-CSS learning. |
 | `laghu instrumentation_beacon on\|off;` | inherited | boolean | `off` | Injects bounded RUM instrumentation when CSP permits. |
 | `laghu instrumentation_sample_rate N;` | inherited | `0..100` | `10` | Sets browser-side percentage sampling. |
+| `laghu javascript_defer_suggestions on\|off;` | inherited | boolean | `on` | Enables bounded RUM deferral recommendations; it never applies them. |
+| `laghu include_js_source_maps on\|off;` | inherited | boolean | `off` | Emits immutable external SWC source maps without source content. |
 | `laghu image_inline_limit BYTES;` | inherited | `0..16384` | `2048` | Caps image data-URI inlining; zero disables it. |
 | `laghu image_metadata_limit N;` | inherited | `1..100000` | `10000` | Bounds learned image records. |
 | `laghu image_metadata_ttl DURATION;` | inherited | `1h..30d` | `7d` | Expires learned metadata. |
@@ -34,6 +36,7 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu javascript_queue PATH;` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
 | `laghu javascript_target QUERY;` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering without polyfills. |
 | `laghu javascript_observation_config PATH;` | inherited | valid observation file | unset | Adds exact third-party script candidates. |
+| `laghu javascript_defer_config PATH;` | inherited | valid approval file | unset | Approves exact same-origin scripts for evidence-gated deferral. |
 | `laghu image_cache PATH;` | inherited | bounded path | `/var/cache/laghu/images` | Selects catalogs and immutable assets. |
 | `laghu rum_store URI;` | `http` | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
 | `laghu rum_store_local_snapshot PATH;` | `http` | bounded path | `<image_cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
@@ -65,3 +68,14 @@ http {
   }
 }
 ```
+
+## JavaScript deferral approvals
+
+The approval file accepts exact, root-relative, query-free script paths, optionally scoped to one exact template:
+
+```text
+defer /assets/analytics.js
+defer /assets/checkout.js template=/checkout/
+```
+
+Instrumentation and the defer filter must both be enabled. Suggestions require 100 fresh bucket observations, at least 90 percent script coverage, current SWC safety metadata, and safe ordering. Reload NGINX after editing the file. Approval never bypasses current evidence; rollback notices require 50 post-enable observations, and removing the line plus reloading performs the rollback.

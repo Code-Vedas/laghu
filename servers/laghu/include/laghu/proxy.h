@@ -52,11 +52,13 @@ typedef struct {
   char javascript_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   char javascript_observation_config_path[LAGHU_RUNTIME_PATH_SIZE];
+  char javascript_defer_config_path[LAGHU_RUNTIME_PATH_SIZE];
   char rum_store[LAGHU_RUNTIME_PATH_SIZE];
   char rum_snapshot_path[LAGHU_RUNTIME_PATH_SIZE];
   char rum_client_library[LAGHU_RUNTIME_PATH_SIZE];
   laghu_font_provider_set font_providers;
   laghu_javascript_observation_set javascript_observations;
+  laghu_javascript_defer_set javascript_defer;
   laghu_config config;
   unsigned int workers;
   unsigned int connection_queue;
@@ -76,6 +78,7 @@ typedef struct {
   bool font_providers_loaded;
   bool javascript_queue_enabled;
   bool javascript_observations_loaded;
+  bool javascript_defer_loaded;
   bool service_mode;
   bool rum_store_required;
 } laghu_proxy_options;

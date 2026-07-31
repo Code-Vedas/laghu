@@ -79,8 +79,8 @@ printf '%s\n' '<html><body><script src="/app.js"></script><script>function exter
   >"${work}/htdocs/javascript-external.html"
 printf '%s\n' '<html><body>rum<script src="/app.js"></script></body></html>' \
   >"${work}/htdocs/instrumentation.html"
-printf '%s\n' "console.log('combine one value'); console.log('combine one value again');" >"${work}/htdocs/combine-one.js"
-printf '%s\n' "console.log('combine two value'); console.log('combine two value again');" >"${work}/htdocs/combine-two.js"
+printf '%s\n' "                                                                                                                                                                console.log('combine one value'); console.log('combine one value again');" >"${work}/htdocs/combine-one.js"
+printf '%s\n' "                                                                                                                                                                console.log('combine two value'); console.log('combine two value again');" >"${work}/htdocs/combine-two.js"
 printf '%s\n' '<html><body><script src="/combine-one.js" data-laghu-combine="application-main"></script><script src="/combine-two.js" data-laghu-combine="application-main"></script></body></html>' >"${work}/htdocs/javascript-combine.html"
 awk 'BEGIN { printf "<html><body><script>function outlinePublic(veryLongLocalArgument){return "; for (i=0;i<500;i++) printf "%sveryLongLocalArgument", i ? "+" : ""; print ";}</script></body></html>" }' >"${work}/htdocs/javascript-outline.html"
 
@@ -170,6 +170,7 @@ load_first_mpm() {
   if [ -x "${javascript_service}" ]; then
     printf 'Laghu JavaScriptQueue "%s/javascript.queue"\n' "${work}"
     printf 'Laghu JavaScriptTarget "last 2 chrome versions"\n'
+    printf 'Laghu IncludeJsSourceMaps On\n'
     printf 'Laghu JavaScriptInlineLimit 2048\n'
     printf 'Laghu JavaScriptOutlineThreshold 8192\n'
   fi
@@ -325,6 +326,16 @@ if [ -x "${javascript_service}" ]; then
     >"${work}/javascript-immutable"
   grep 'combine one value' "${work}/javascript-immutable" >/dev/null
   grep 'combine two value' "${work}/javascript-immutable" >/dev/null
+  javascript_map_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}\.map' \
+    "${work}/javascript-immutable")
+  [ "${javascript_map_route}" != "" ]
+  curl --fail --silent --dump-header "${work}/javascript-map.headers" \
+    "http://127.0.0.1:18081${javascript_map_route}" \
+    >"${work}/javascript-map"
+  grep '"version":3' "${work}/javascript-map" >/dev/null
+  grep '"sections":\[' "${work}/javascript-map" >/dev/null
+  grep -i '^Content-Type: application/json' \
+    "${work}/javascript-map.headers" >/dev/null
   grep -i '^Cache-Control: public, max-age=31536000, immutable' \
     "${work}/javascript-immutable.headers" >/dev/null
   curl --fail --silent http://127.0.0.1:18081/javascript-inline.html \

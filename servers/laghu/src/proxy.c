@@ -142,6 +142,12 @@ typedef struct {
   const char *cache_state;
   const char *failure;
   bool job_published;
+  bool javascript_defer_recommended;
+  bool javascript_defer_rollback_recommended;
+  char javascript_defer_path[LAGHU_RUNTIME_PATH_SIZE];
+  char javascript_defer_template[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int javascript_defer_bucket;
+  uint64_t javascript_defer_observations;
 } proxy_access_log;
 
 #ifdef _WIN32
@@ -381,7 +387,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool javascript_inline_limit_seen = false;
   bool javascript_outline_threshold_seen = false;
   bool instrumentation_sample_rate_seen = false;
+  bool javascript_defer_suggestions_seen = false;
   bool javascript_observation_config_seen = false;
+  bool javascript_defer_config_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
@@ -549,6 +557,17 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
             "invalid or duplicate --javascript-observation-config");
       options->javascript_observations_loaded = true;
       javascript_observation_config_seen = true;
+    } else if (strcmp(name, "--javascript-defer-config") == 0) {
+      NEED_VALUE();
+      if (javascript_defer_config_seen ||
+          !proxy_copy(options->javascript_defer_config_path,
+                      sizeof(options->javascript_defer_config_path), value) ||
+          !laghu_javascript_defer_load(value, &options->javascript_defer, error,
+                                       error_size))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --javascript-defer-config");
+      options->javascript_defer_loaded = true;
+      javascript_defer_config_seen = true;
     } else if (strcmp(name, "--javascript-inline-limit") == 0) {
       char *end = NULL;
       unsigned long limit;
@@ -616,6 +635,20 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid --instrumentation-sample-rate");
       instrumentation_sample_rate_seen = true;
+    } else if (strcmp(name, "--javascript-defer-suggestions") == 0) {
+      NEED_VALUE();
+      if (javascript_defer_suggestions_seen ||
+          (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
+        return proxy_error(error, error_size,
+                           "invalid --javascript-defer-suggestions");
+      options->config.javascript_defer_suggestions =
+          strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
+      javascript_defer_suggestions_seen = true;
+    } else if (strcmp(name, "--include-js-source-maps") == 0) {
+      if (options->config.include_js_source_maps == LAGHU_MODE_ON)
+        return proxy_error(error, error_size,
+                           "duplicate --include-js-source-maps");
+      options->config.include_js_source_maps = LAGHU_MODE_ON;
     } else if (strcmp(name, "--image-quality") == 0) {
       NEED_VALUE();
       if (quality_seen ||
@@ -1818,26 +1851,40 @@ static void proxy_access_init(proxy_access_log *access, proxy_queue *queue) {
 static void proxy_access_write(proxy_queue *queue,
                                const proxy_access_log *access) {
   char timestamp[32], method[64], path[LAGHU_RUNTIME_PATH_SIZE * 2U];
-  char line[LAGHU_RUNTIME_PATH_SIZE * 2U + 1024U];
+  char defer_path[LAGHU_RUNTIME_PATH_SIZE * 2U];
+  char line[LAGHU_RUNTIME_PATH_SIZE * 4U + 1400U];
   uint64_t elapsed = proxy_monotonic_ms() - access->started_ms;
   proxy_timestamp(timestamp);
   if (!proxy_json_escape(access->method[0] ? access->method : "unknown", method,
                          sizeof(method)) ||
       !proxy_json_escape(access->path[0] ? access->path : "/", path,
-                         sizeof(path)))
+                         sizeof(path)) ||
+      !proxy_json_escape(access->javascript_defer_path, defer_path,
+                         sizeof(defer_path)))
     return;
-  (void)snprintf(line, sizeof(line),
-                 "{\"timestamp\":\"%s\",\"event\":\"transaction\","
-                 "\"request_id\":\"%016llx\",\"method\":\"%s\","
-                 "\"path\":\"%s\",\"status\":%u,\"decision\":\"%s\","
-                 "\"input_bytes\":%zu,\"output_bytes\":%zu,"
-                 "\"duration_ms\":%llu,\"cache\":\"%s\","
-                 "\"job_published\":%s,\"failure\":\"%s\"}",
-                 timestamp, (unsigned long long)access->request_id, method,
-                 path, access->status, laghu_decision_name(access->decision),
-                 access->input_bytes, access->output_bytes,
-                 (unsigned long long)elapsed, access->cache_state,
-                 access->job_published ? "true" : "false", access->failure);
+  (void)snprintf(
+      line, sizeof(line),
+      "{\"timestamp\":\"%s\",\"event\":\"transaction\","
+      "\"request_id\":\"%016llx\",\"method\":\"%s\","
+      "\"path\":\"%s\",\"status\":%u,\"decision\":\"%s\","
+      "\"input_bytes\":%zu,\"output_bytes\":%zu,"
+      "\"duration_ms\":%llu,\"cache\":\"%s\","
+      "\"job_published\":%s,\"failure\":\"%s\","
+      "\"javascript_defer_recommended\":%s,"
+      "\"javascript_defer_rollback_recommended\":%s,"
+      "\"javascript_defer_path\":\"%s\","
+      "\"javascript_defer_template\":\"%s\","
+      "\"javascript_defer_bucket\":%u,"
+      "\"javascript_defer_observations\":%llu}",
+      timestamp, (unsigned long long)access->request_id, method, path,
+      access->status, laghu_decision_name(access->decision),
+      access->input_bytes, access->output_bytes, (unsigned long long)elapsed,
+      access->cache_state, access->job_published ? "true" : "false",
+      access->failure, access->javascript_defer_recommended ? "true" : "false",
+      access->javascript_defer_rollback_recommended ? "true" : "false",
+      defer_path, access->javascript_defer_template,
+      access->javascript_defer_bucket,
+      (unsigned long long)access->javascript_defer_observations);
   proxy_log_line(queue, line);
 }
 
@@ -2185,6 +2232,9 @@ static void proxy_handle(const proxy_connection *connection,
         .javascript_observations = options->javascript_observations_loaded
                                        ? &options->javascript_observations
                                        : NULL,
+        .javascript_defer = options->javascript_defer_loaded
+                                ? &options->javascript_defer
+                                : NULL,
         .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request,
@@ -2336,6 +2386,8 @@ static void proxy_handle(const proxy_connection *connection,
       .javascript_observations = options->javascript_observations_loaded
                                      ? &options->javascript_observations
                                      : NULL,
+      .javascript_defer =
+          options->javascript_defer_loaded ? &options->javascript_defer : NULL,
       .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless = !strcmp(request.method, "HEAD") ||
@@ -2440,6 +2492,19 @@ done:
     access.job_published = finalized.job_published;
     access.output_bytes = finalized.selected.length;
     access.cache_state = "cold";
+    access.javascript_defer_recommended =
+        finalized.javascript_defer_recommended;
+    access.javascript_defer_rollback_recommended =
+        finalized.javascript_defer_rollback_recommended;
+    (void)snprintf(access.javascript_defer_path,
+                   sizeof(access.javascript_defer_path), "%s",
+                   finalized.javascript_defer_path);
+    (void)snprintf(access.javascript_defer_template,
+                   sizeof(access.javascript_defer_template), "%s",
+                   finalized.javascript_defer_template);
+    access.javascript_defer_bucket = finalized.javascript_defer_bucket;
+    access.javascript_defer_observations =
+        finalized.javascript_defer_observations;
   } else if (prepared.version == LAGHU_HTTP_ABI_VERSION) {
     access.decision = prepared.decision;
     access.job_published = prepared.job_published;

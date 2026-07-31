@@ -538,10 +538,22 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   laghu_runtime_queue_init(&queue);
-  if (!laghu_runtime_queue_open(&queue, queue_path) ||
-      !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND)) {
+  if (!laghu_runtime_queue_open(&queue, queue_path)) {
     SSL_CTX_free(context);
     return 1;
+  }
+  {
+    unsigned int attempt;
+    for (attempt = 0U; attempt < 100U; ++attempt) {
+      if (laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND))
+        break;
+      laghu_sleep_ms(1U);
+    }
+    if (attempt == 100U) {
+      laghu_runtime_queue_close(&queue);
+      SSL_CTX_free(context);
+      return 1;
+    }
   }
 #ifndef _WIN32
   (void)signal(SIGINT, laghu_fetch_signal);

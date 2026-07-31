@@ -18,6 +18,7 @@
 #define LAGHU_JAVASCRIPT_FLAG_URL_INDEPENDENT UINT32_C(2)
 #define LAGHU_JAVASCRIPT_FLAG_CONCAT_SAFE UINT32_C(4)
 #define LAGHU_JAVASCRIPT_FLAG_TOP_LEVEL_DECLARATION_FREE UINT32_C(8)
+#define LAGHU_JAVASCRIPT_FLAG_DEFER_SAFE UINT32_C(16)
 #define LAGHU_JAVASCRIPT_COMBINE_MAX 16U
 #define LAGHU_JAVASCRIPT_COMBINE_GROUP_SIZE 65U
 
@@ -43,6 +44,8 @@ typedef struct {
   char nonce[129U];
   laghu_javascript_catalog_record record;
   unsigned char *body;
+  size_t body_length;
+  char map_variant[LAGHU_RUNTIME_KEY_SIZE];
 } laghu_javascript_combine_script;
 
 typedef struct {
@@ -91,17 +94,17 @@ bool laghu_javascript_target_normalize(
 
 static bool laghu_javascript_key(laghu_buffer source, const char *path,
                                  const char *policy, const char *target,
-                                 bool module,
+                                 bool module, bool include_source_map,
                                  char output[LAGHU_RUNTIME_KEY_SIZE],
                                  char source_hash[LAGHU_RUNTIME_KEY_SIZE]) {
   char canonical[LAGHU_RUNTIME_PATH_SIZE + LAGHU_RUNTIME_KEY_SIZE +
                  LAGHU_JAVASCRIPT_TARGET_SIZE + 96U];
   int length;
   if (!laghu_sha256_hex(source, source_hash)) return false;
-  length =
-      snprintf(canonical, sizeof(canonical), "laghu-js-v%u\n%s\n%s\n%s\n%s\n%c",
-               LAGHU_JAVASCRIPT_DERIVATION_VERSION, source_hash, path, policy,
-               target, module ? 'm' : 'c');
+  length = snprintf(
+      canonical, sizeof(canonical), "laghu-js-v%u\n%s\n%s\n%s\n%s\n%c\n%c",
+      LAGHU_JAVASCRIPT_DERIVATION_VERSION, source_hash, path, policy, target,
+      module ? 'm' : 'c', include_source_map ? 's' : '-');
   return length > 0 && (size_t)length < sizeof(canonical) &&
          laghu_sha256_hex(
              (laghu_buffer){(const unsigned char *)canonical, (size_t)length},
@@ -111,7 +114,8 @@ static bool laghu_javascript_key(laghu_buffer source, const char *path,
 bool laghu_runtime_rewrite_javascript(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source,
     const char *normalized_path, const char *policy_key, const char *target,
-    bool module, laghu_runtime_javascript_result *result) {
+    bool module, bool include_source_map,
+    laghu_runtime_javascript_result *result) {
   laghu_runtime_cache_entry entry;
   laghu_runtime_job job;
   char normalized_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
@@ -123,7 +127,8 @@ bool laghu_runtime_rewrite_javascript(
       normalized_path == NULL || policy_key == NULL ||
       !laghu_javascript_target_normalize(target, normalized_target) ||
       !laghu_javascript_key(source, normalized_path, policy_key,
-                            normalized_target, module, key, source_hash))
+                            normalized_target, module, include_source_map, key,
+                            source_hash))
     return false;
   if (laghu_runtime_cache_lookup(cache_path, key, source_hash, &entry) &&
       entry.length > 0U && entry.length < source.length &&
@@ -142,7 +147,8 @@ bool laghu_runtime_rewrite_javascript(
   }
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_JAVASCRIPT;
-  job.filters = module ? UINT64_C(1) : UINT64_C(0);
+  job.filters = (module ? UINT64_C(1) : UINT64_C(0)) |
+                (include_source_map ? UINT64_C(2) : UINT64_C(0));
   job.payload = source;
   if (!laghu_copy(job.index_key, sizeof(job.index_key), key) ||
       !laghu_copy(job.request_path, sizeof(job.request_path),
@@ -364,7 +370,7 @@ static bool laghu_javascript_external_lookup(
   memcpy(&variant_length, catalog + 32U, sizeof(variant_length));
   memcpy(&flags, catalog + 1836U, sizeof(flags));
   if (!laghu_sha256_hex((laghu_buffer){catalog, 1840U}, checksum) ||
-      magic != LAGHU_JAVASCRIPT_CATALOG_MAGIC || version != 2U ||
+      magic != LAGHU_JAVASCRIPT_CATALOG_MAGIC || version != 3U ||
       stored_module != (module ? 1U : 0U) || updated > now ||
       now - updated > ttl_seconds || source_length == 0U ||
       variant_length == 0U || variant_length >= source_length ||
@@ -379,7 +385,8 @@ static bool laghu_javascript_external_lookup(
       (flags &
        ~(LAGHU_JAVASCRIPT_FLAG_MODULE | LAGHU_JAVASCRIPT_FLAG_URL_INDEPENDENT |
          LAGHU_JAVASCRIPT_FLAG_CONCAT_SAFE |
-         LAGHU_JAVASCRIPT_FLAG_TOP_LEVEL_DECLARATION_FREE)) != 0U ||
+         LAGHU_JAVASCRIPT_FLAG_TOP_LEVEL_DECLARATION_FREE |
+         LAGHU_JAVASCRIPT_FLAG_DEFER_SAFE)) != 0U ||
       (((flags & LAGHU_JAVASCRIPT_FLAG_MODULE) != 0U) != module) ||
       (module && (flags & LAGHU_JAVASCRIPT_FLAG_CONCAT_SAFE) != 0U) ||
       memchr(catalog + 1706U, '\0', LAGHU_RUNTIME_KEY_SIZE) == NULL ||
@@ -393,6 +400,53 @@ static bool laghu_javascript_external_lookup(
   record->derived_length = variant_length;
   record->flags = flags;
   return true;
+}
+
+static bool laghu_javascript_rum_ready(
+    laghu_rum_engine *rum, const char *template_key, const char *page_origin,
+    const char *url, unsigned int bucket, uint64_t now,
+    char evidence_key[LAGHU_RUNTIME_KEY_SIZE]) {
+  laghu_rum_instrumentation_record record;
+  laghu_rum_value value;
+  char absolute[LAGHU_RUNTIME_PATH_SIZE * 2U];
+  char script_key[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int index;
+  int length;
+  if (rum == NULL || template_key == NULL || page_origin == NULL ||
+      url == NULL || bucket > 1U ||
+      !laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                             template_key, now, &record, sizeof(record),
+                             &value) ||
+      value.length != sizeof(record) ||
+      record.version != LAGHU_INSTRUMENTATION_VERSION ||
+      record.observations[bucket] < 100U)
+    return false;
+  length = snprintf(absolute, sizeof(absolute), "%s%s", page_origin, url);
+  if (length <= 0 || (size_t)length >= sizeof(absolute) ||
+      !laghu_sha256_hex(
+          (laghu_buffer){(const unsigned char *)absolute, (size_t)length},
+          script_key))
+    return false;
+  for (index = 0U; index < record.script_count; ++index)
+    if (strcmp(record.script_keys[index], script_key) == 0) {
+      char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 160U];
+      int material_length;
+      if (!laghu_javascript_defer_recommended(&record, bucket, index))
+        return false;
+      if (evidence_key == NULL) return true;
+      material_length = snprintf(
+          material, sizeof(material),
+          "rum-js-defer-evidence-v1\n%s\n%u\n%llu\n%llu\n%s\n%llu",
+          template_key, bucket, (unsigned long long)record.updated_at,
+          (unsigned long long)record.observations[bucket], script_key,
+          (unsigned long long)record.script_observations[bucket][index]);
+      return material_length > 0 &&
+             (size_t)material_length < sizeof(material) &&
+             laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
+                                             (size_t)material_length},
+                              evidence_key);
+    }
+  return false;
 }
 
 static bool laghu_javascript_append(laghu_javascript_builder *builder,
@@ -530,6 +584,7 @@ static bool laghu_javascript_combine_key(
 static bool laghu_javascript_combine(const char *cache_path, laghu_buffer html,
                                      const char *policy_key, const char *target,
                                      uint64_t now, unsigned int ttl_seconds,
+                                     bool include_source_maps,
                                      laghu_javascript_combine_result *result) {
   laghu_javascript_builder output = {0};
   size_t cursor = 0U;
@@ -545,7 +600,7 @@ static bool laghu_javascript_combine(const char *cache_path, laghu_buffer html,
     char key[LAGHU_RUNTIME_KEY_SIZE];
     char markup[512U];
     int markup_length = 0;
-    bool ready = true, overflow = false;
+    bool ready = true, overflow = false, indexed_map = include_source_maps;
     if (found == NULL) {
       ready = laghu_javascript_append(&output, html.data + cursor,
                                       html.length - cursor);
@@ -608,16 +663,94 @@ static bool laghu_javascript_combine(const char *cache_path, laghu_buffer html,
         break;
       }
       scripts[index].body = malloc(entry.length);
+      scripts[index].body_length = entry.length;
       if (scripts[index].body == NULL ||
           !laghu_runtime_cache_read(&entry, scripts[index].body,
-                                    entry.length) ||
-          (index != 0U && !laghu_javascript_append(&combined, ";\n", 2U)) ||
-          !laghu_javascript_append(&combined, scripts[index].body,
-                                   entry.length) ||
-          combined.length > LAGHU_JAVASCRIPT_MAX_BYTES) {
+                                    entry.length)) {
         ready = false;
         break;
       }
+      if (include_source_maps) {
+        static const char marker[] = "\n//# sourcemappingurl=/.laghu/js/";
+        const unsigned char *map = laghu_find_ascii(
+            scripts[index].body,
+            scripts[index].body + scripts[index].body_length, marker);
+        size_t remaining = map == NULL
+                               ? 0U
+                               : (size_t)(scripts[index].body +
+                                          scripts[index].body_length - map);
+        if (map == NULL ||
+            remaining != sizeof(marker) - 1U + LAGHU_SHA256_HEX_LENGTH + 4U ||
+            memcmp(map + remaining - 4U, ".map", 4U) != 0) {
+          indexed_map = false;
+        } else {
+          memcpy(scripts[index].map_variant, map + sizeof(marker) - 1U,
+                 LAGHU_SHA256_HEX_LENGTH);
+          scripts[index].map_variant[LAGHU_SHA256_HEX_LENGTH] = '\0';
+          scripts[index].body_length = (size_t)(map - scripts[index].body);
+        }
+      }
+    }
+    if (ready) {
+      laghu_javascript_builder indexed = {0};
+      size_t line = 0U;
+      if (indexed_map && !laghu_javascript_append(
+                             &indexed, "{\"version\":3,\"sections\":[",
+                             sizeof("{\"version\":3,\"sections\":[") - 1U))
+        ready = false;
+      for (index = 0U; ready && index < count; ++index) {
+        char section[256U];
+        int section_length = 0;
+        size_t byte;
+        if (index != 0U && !laghu_javascript_append(&combined, ";\n", 2U)) {
+          ready = false;
+          break;
+        }
+        if (indexed_map) {
+          section_length = snprintf(
+              section, sizeof(section),
+              "%s{\"offset\":{\"line\":%zu,\"column\":0},\"url\":"
+              "\"/.laghu/js/%s.map\"}",
+              index == 0U ? "" : ",", line, scripts[index].map_variant);
+          if (section_length <= 0 ||
+              (size_t)section_length >= sizeof(section) ||
+              !laghu_javascript_append(&indexed, section,
+                                       (size_t)section_length)) {
+            ready = false;
+            break;
+          }
+        }
+        if (!laghu_javascript_append(&combined, scripts[index].body,
+                                     scripts[index].body_length) ||
+            combined.length > LAGHU_JAVASCRIPT_MAX_BYTES) {
+          ready = false;
+          break;
+        }
+        for (byte = 0U; byte < scripts[index].body_length; ++byte)
+          if (scripts[index].body[byte] == '\n') ++line;
+        if (index + 1U < count) ++line;
+      }
+      if (ready && indexed_map) {
+        laghu_runtime_cache_entry map_entry;
+        char map_key[LAGHU_RUNTIME_KEY_SIZE];
+        char directive[LAGHU_RUNTIME_KEY_SIZE + 48U];
+        int directive_length;
+        if (!laghu_javascript_append(&indexed, "]}", 2U) ||
+            !laghu_sha256_hex((laghu_buffer){indexed.data, indexed.length},
+                              map_key) ||
+            !laghu_runtime_cache_publish(
+                cache_path, map_key, map_key, map_key, "application/json",
+                "laghu-js-indexed-map-v1",
+                (laghu_buffer){indexed.data, indexed.length}, &map_entry) ||
+            (directive_length = snprintf(
+                 directive, sizeof(directive),
+                 "\n//# sourceMappingURL=/.laghu/js/%s.map", map_key)) <= 0 ||
+            (size_t)directive_length >= sizeof(directive) ||
+            !laghu_javascript_append(&combined, directive,
+                                     (size_t)directive_length))
+          indexed_map = false;
+      }
+      free(indexed.data);
     }
     if (ready &&
         (!laghu_javascript_combine_key(scripts, count, policy_key, target,
@@ -687,11 +820,68 @@ failed:
   return false;
 }
 
+static bool laghu_javascript_defer_suffix_ready(
+    const char *cache_path, const char *policy_key, const char *target,
+    const char *page_path, const char *page_origin, const unsigned char *cursor,
+    const unsigned char *end, uint64_t now, unsigned int ttl_seconds,
+    laghu_rum_engine *rum, const char *template_key,
+    unsigned int viewport_bucket, const laghu_javascript_defer_set *defer_set) {
+  while ((cursor = laghu_find_ascii(cursor, end, "<script")) != NULL) {
+    const unsigned char *open_end = memchr(cursor, '>', (size_t)(end - cursor));
+    const unsigned char *close;
+    const unsigned char *source = NULL, *attribute = NULL;
+    size_t source_length = 0U, attribute_length = 0U;
+    laghu_javascript_catalog_record record;
+    char url[LAGHU_RUNTIME_PATH_SIZE];
+    if (open_end == NULL) return false;
+    close = laghu_find_ascii(open_end + 1U, end, "</script");
+    if (close == NULL ||
+        !laghu_tag_attribute(cursor + 7U, open_end, "src", &source,
+                             &source_length) ||
+        source == NULL || source_length == 0U || source_length >= sizeof(url) ||
+        source[0] != '/' ||
+        laghu_tag_attribute(cursor + 7U, open_end, "integrity", &attribute,
+                            &attribute_length) ||
+        laghu_tag_attribute(cursor + 7U, open_end, "async", &attribute,
+                            &attribute_length) ||
+        laghu_tag_attribute(cursor + 7U, open_end, "defer", &attribute,
+                            &attribute_length) ||
+        laghu_tag_attribute(cursor + 7U, open_end, "nomodule", &attribute,
+                            &attribute_length) ||
+        !laghu_tag_attributes_allowed(cursor + 7U, open_end, false))
+      return false;
+    if (laghu_tag_attribute(cursor + 7U, open_end, "type", &attribute,
+                            &attribute_length) &&
+        !((attribute_length == 15U &&
+           laghu_find_ascii(attribute, attribute + attribute_length,
+                            "text/javascript") == attribute) ||
+          (attribute_length == 22U &&
+           laghu_find_ascii(attribute, attribute + attribute_length,
+                            "application/javascript") == attribute)))
+      return false;
+    memcpy(url, source, source_length);
+    url[source_length] = '\0';
+    if (strchr(url, '?') != NULL || strchr(url, '#') != NULL ||
+        !laghu_javascript_external_lookup(cache_path, url, policy_key, target,
+                                          false, now, ttl_seconds, &record) ||
+        (record.flags & LAGHU_JAVASCRIPT_FLAG_DEFER_SAFE) == 0U ||
+        !laghu_javascript_rum_ready(rum, template_key, page_origin, url,
+                                    viewport_bucket, now, NULL) ||
+        !laghu_javascript_defer_approved(defer_set, url, page_path))
+      return false;
+    cursor = close + 8U;
+  }
+  return true;
+}
+
 bool laghu_runtime_rewrite_javascript_html(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html,
     const char *page_path, const char *policy_key, const char *target,
     const char *content_security_policy, uint64_t now, unsigned int ttl_seconds,
-    bool allow_combine, bool allow_inline, bool allow_outline,
+    laghu_rum_engine *rum, const char *template_key, const char *page_origin,
+    unsigned int viewport_bucket, const laghu_javascript_defer_set *defer_set,
+    bool allow_defer, bool allow_defer_suggestions, bool allow_combine,
+    bool allow_inline, bool allow_outline, bool include_source_maps,
     unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result) {
   const unsigned char *cursor, *end;
@@ -699,6 +889,7 @@ bool laghu_runtime_rewrite_javascript_html(
   size_t output_length = 0U, script_count = 0U;
   size_t original_bundle = html.length;
   size_t rewritten_external = 0U;
+  size_t defer_growth = 0U;
   char normalized_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   char dependencies[LAGHU_JAVASCRIPT_MAX_SCRIPTS][LAGHU_RUNTIME_KEY_SIZE];
   size_t dependency_count = 0U;
@@ -714,7 +905,7 @@ bool laghu_runtime_rewrite_javascript_html(
   if (allow_combine) {
     if (!laghu_javascript_combine(cache_path, html, policy_key,
                                   normalized_target, now, ttl_seconds,
-                                  &combined))
+                                  include_source_maps, &combined))
       return false;
     if (combined.rewritten) {
       output = combined.data;
@@ -780,6 +971,7 @@ bool laghu_runtime_rewrite_javascript_html(
         accepted = false;
       if (external) {
         char url[LAGHU_RUNTIME_PATH_SIZE];
+        char defer_evidence_key[LAGHU_RUNTIME_KEY_SIZE];
         laghu_javascript_catalog_record record;
         char route[LAGHU_RUNTIME_KEY_SIZE + 16U];
         int route_length;
@@ -791,7 +983,82 @@ bool laghu_runtime_rewrite_javascript_html(
                                                normalized_target, module, now,
                                                ttl_seconds, &record)) {
             laghu_runtime_cache_entry entry;
+            bool defer_ready =
+                allow_defer && !module && strchr(url, '?') == NULL &&
+                strchr(url, '#') == NULL &&
+                (record.flags & LAGHU_JAVASCRIPT_FLAG_DEFER_SAFE) != 0U &&
+                laghu_javascript_rum_ready(rum, template_key, page_origin, url,
+                                           viewport_bucket, now,
+                                           defer_evidence_key) &&
+                laghu_tag_attributes_allowed(cursor + 7U, open_end, false) &&
+                !laghu_tag_attribute(cursor + 7U, open_end, "async", &attribute,
+                                     &attribute_length) &&
+                !laghu_tag_attribute(cursor + 7U, open_end, "defer", &attribute,
+                                     &attribute_length) &&
+                !laghu_tag_attribute(cursor + 7U, open_end, "nomodule",
+                                     &attribute, &attribute_length) &&
+                laghu_javascript_defer_suffix_ready(
+                    cache_path, policy_key, normalized_target, page_path,
+                    page_origin, close + 8U, end, now, ttl_seconds, rum,
+                    template_key, viewport_bucket, defer_set);
             original_bundle += (size_t)record.derived_length;
+            if (defer_ready &&
+                !laghu_javascript_defer_approved(defer_set, url, page_path) &&
+                allow_defer_suggestions &&
+                !result->javascript_defer_recommended) {
+              result->javascript_defer_recommended = true;
+              (void)laghu_copy(result->javascript_defer_path,
+                               sizeof(result->javascript_defer_path), url);
+              (void)laghu_copy(result->javascript_defer_template,
+                               sizeof(result->javascript_defer_template),
+                               template_key);
+              result->javascript_defer_bucket = viewport_bucket;
+              {
+                laghu_rum_instrumentation_record evidence;
+                laghu_rum_value evidence_value;
+                if (laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                          template_key, now, &evidence,
+                                          sizeof(evidence), &evidence_value))
+                  result->javascript_defer_observations =
+                      evidence.observations[viewport_bucket];
+              }
+            }
+            if (defer_ready &&
+                laghu_javascript_defer_approved(defer_set, url, page_path)) {
+              size_t prefix = (size_t)(open_end - html.data);
+              size_t suffix = html.length - prefix;
+              unsigned char *next = malloc(html.length + 6U);
+              if (next == NULL) {
+                free(output);
+                return false;
+              }
+              memcpy(next, html.data, prefix);
+              memcpy(next + prefix, " defer", 6U);
+              memcpy(next + prefix + 6U, open_end, suffix);
+              free(output);
+              output = next;
+              output_length = html.length + 6U;
+              html = (laghu_buffer){output, output_length};
+              cursor = html.data + prefix + 6U;
+              end = html.data + html.length;
+              defer_growth += 6U;
+              {
+                char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
+                int material_length =
+                    snprintf(material, sizeof(material), "%s\n%s",
+                             defer_set->digest, defer_evidence_key);
+                if (material_length <= 0 ||
+                    (size_t)material_length >= sizeof(material) ||
+                    !laghu_sha256_hex(
+                        (laghu_buffer){(const unsigned char *)material,
+                                       (size_t)material_length},
+                        dependencies[dependency_count++])) {
+                  free(output);
+                  return false;
+                }
+              }
+              continue;
+            }
             if (allow_inline && inline_limit != 0U &&
                 record.derived_length <= inline_limit &&
                 laghu_tag_attributes_allowed(cursor + 7U, open_end, false) &&
@@ -881,7 +1148,8 @@ bool laghu_runtime_rewrite_javascript_html(
         laghu_runtime_rewrite_javascript(
             queue, cache_path,
             (laghu_buffer){open_end + 1U, (size_t)(close - open_end - 1U)},
-            location, policy_key, normalized_target, module, &javascript)) {
+            location, policy_key, normalized_target, module,
+            include_source_maps, &javascript)) {
       if (javascript.rewritten) {
         laghu_javascript_catalog_record inline_record;
         size_t source_length = (size_t)(close - open_end - 1U);
@@ -963,7 +1231,7 @@ bool laghu_runtime_rewrite_javascript_html(
     }
   }
   if (output != NULL) {
-    if (output_length + rewritten_external >= original_bundle) {
+    if (output_length - defer_growth + rewritten_external >= original_bundle) {
       free(output);
       return true;
     }

@@ -17,7 +17,7 @@ extern "C" {
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
-#define LAGHU_VARIANT_KEY_VERSION 6U
+#define LAGHU_VARIANT_KEY_VERSION 7U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -96,6 +96,7 @@ typedef struct {
   bool allow_resource_inlining;
   bool allow_script_reordering;
   bool allow_experimental;
+  bool include_js_source_maps;
   unsigned int image_quality;
   unsigned int css_inline_limit;
   unsigned int css_outline_threshold;
@@ -111,6 +112,8 @@ typedef struct {
   laghu_mode image_beacon;
   laghu_mode critical_css_beacon;
   laghu_mode instrumentation_beacon;
+  laghu_mode javascript_defer_suggestions;
+  laghu_mode include_js_source_maps;
   unsigned int instrumentation_sample_rate;
   unsigned int image_quality;
   unsigned int image_inline_limit;

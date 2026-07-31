@@ -21,6 +21,8 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu CriticalCssBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-CSS learning. |
 | `Laghu InstrumentationBeacon On\|Off` | inherited | boolean | `Off` | Injects bounded RUM instrumentation when CSP permits. |
 | `Laghu InstrumentationSampleRate N` | inherited | `0..100` | `10` | Sets browser-side percentage sampling. |
+| `Laghu JavaScriptDeferSuggestions On\|Off` | inherited | boolean | `On` | Enables bounded RUM deferral recommendations; it never applies them. |
+| `Laghu IncludeJsSourceMaps On\|Off` | inherited | boolean | `Off` | Emits immutable external SWC source maps without source content. |
 | `Laghu ImageInlineLimit BYTES` | inherited | `0..16384` | `2048` | Caps image inlining. |
 | `Laghu ImageMetadataLimit N` | inherited | `1..100000` | `10000` | Bounds learned image records. |
 | `Laghu ImageMetadataTtl DURATION` | inherited | `1h..30d` | `7d` | Expires learned metadata. |
@@ -34,6 +36,7 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu JavaScriptQueue PATH` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
 | `Laghu JavaScriptTarget QUERY` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering. |
 | `Laghu JavaScriptObservationConfig PATH` | inherited | valid observation file | unset | Adds exact third-party script candidates. |
+| `Laghu JavaScriptDeferConfig PATH` | inherited | valid approval file | unset | Approves exact same-origin scripts for evidence-gated deferral. |
 | `Laghu ImageCache PATH` | inherited | bounded path | `/var/cache/laghu/images` | Selects catalogs and immutable assets. |
 | `Laghu RumStore URI` | main server | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
 | `Laghu RumStoreLocalSnapshot PATH` | main server | bounded path | `<ImageCache>/rum.snapshot` | Selects last-known-good snapshot storage. |
@@ -59,3 +62,14 @@ Laghu RumStoreLocalSnapshot /var/lib/laghu/rum/rum.snapshot
   Laghu Preset balanced
 </VirtualHost>
 ```
+
+## JavaScript deferral approvals
+
+The approval file accepts exact, root-relative, query-free script paths, optionally scoped to one exact template:
+
+```text
+defer /assets/analytics.js
+defer /assets/checkout.js template=/checkout/
+```
+
+Instrumentation and the defer filter must both be enabled. Suggestions require 100 fresh bucket observations, at least 90 percent script coverage, current SWC safety metadata, and safe ordering. Run the Apache configuration test and reload after editing the file. Approval never bypasses current evidence; rollback notices require 50 post-enable observations, and removing the line plus reloading performs the rollback.

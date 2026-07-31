@@ -27,7 +27,7 @@ class NgxLaghu < Formula
   end
 
   def install
-    (share/"laghu").install "packaging/javascript-observation.conf"
+    (share/"laghu").install "packaging/javascript-observation.conf", "packaging/javascript-defer.conf"
     nginx_version = Formula["nginx"].version
     odie "ngx-laghu must be updated for nginx #{nginx_version}" if nginx_version != Version.new("1.31.3")
     _stdout, nginx_build, status = Open3.capture3(formula_opt_bin("nginx")/"nginx", "-V")
@@ -50,6 +50,7 @@ class NgxLaghu < Formula
       laghu font_provider_config #{etc}/laghu/font-providers.conf;
       laghu javascript_queue #{var}/run/laghu/javascript.queue;
       laghu javascript_observation_config #{etc}/laghu/javascript-observation.conf;
+      laghu javascript_defer_config #{etc}/laghu/javascript-defer.conf;
       laghu image_cache #{var}/cache/laghu/images;
       laghu rum_store local:;
       laghu rum_store_local_snapshot #{var}/lib/laghu/rum/rum.snapshot;
@@ -69,6 +70,8 @@ class NgxLaghu < Formula
     observation_config = etc/"laghu/javascript-observation.conf"
     observation_config.dirname.mkpath
     observation_config.write((share/"laghu/javascript-observation.conf").read) unless observation_config.exist?
+    defer_config = etc/"laghu/javascript-defer.conf"
+    defer_config.write((share/"laghu/javascript-defer.conf").read) unless defer_config.exist?
     config = etc/"nginx/nginx.conf"
     loader = "load_module #{opt_libexec}/ngx_http_laghu_module.so;"
     inreplace(config) { |s| s.sub!(/\A/, "#{loader}\n") } unless config.read.include?(loader)

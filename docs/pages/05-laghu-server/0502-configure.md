@@ -24,6 +24,8 @@ The standalone server accepts command-line options only.
 | `--critical-css-beacon` | flag | off | Enables critical-CSS learning. |
 | `--instrumentation-beacon` | flag | off | Enables RUM script injection when CSP permits. |
 | `--instrumentation-sample-rate N` | `0..100` | `10` | Sets browser-side percentage sampling. |
+| `--javascript-defer-suggestions on\|off` | boolean | `on` | Enables bounded RUM deferral recommendations; it never applies them. |
+| `--include-js-source-maps` | flag | off | Emits immutable external SWC source maps without source content. |
 | `--font-fetch-queue PATH` | bounded path | unset | Enables the font-fetch queue; requires provider config. |
 | `--font-provider-config PATH` | valid provider file | unset | Enables providers; requires font queue. |
 | `--javascript-queue PATH` | bounded path | unset | Enables the SWC queue. |
@@ -31,6 +33,7 @@ The standalone server accepts command-line options only.
 | `--javascript-inline-limit N` | `0..65536` | `2048` | Caps JavaScript inlining. |
 | `--javascript-outline-threshold N` | `1024..1048576` | `8192` | Selects inline scripts for outlining. |
 | `--javascript-observation-config PATH` | valid observation file | unset | Adds exact third-party script candidates. |
+| `--javascript-defer-config PATH` | valid approval file | unset | Approves exact same-origin scripts for evidence-gated deferral. |
 | `--workers N` | `1..256` | `4` | Sets request worker threads. |
 | `--connection-queue N` | `1..65536` | `64` | Bounds accepted connections waiting for workers. |
 | `--connect-timeout SECONDS` | `1..300` | `5` | Bounds origin connection establishment. |
@@ -55,3 +58,14 @@ The standalone server accepts command-line options only.
 
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
 Remote RUM synchronization requires verified `rediss://`; `redis://` is loopback-only and Memcached is unsupported.
+
+## JavaScript deferral approvals
+
+The approval file accepts exact, root-relative, query-free script paths, optionally scoped to one exact template:
+
+```text
+defer /assets/analytics.js
+defer /assets/checkout.js template=/checkout/
+```
+
+Instrumentation and the defer filter must both be enabled. Suggestions require 100 fresh bucket observations, at least 90 percent script coverage, current SWC safety metadata, and safe ordering. Reload the service after editing the file. Approval never bypasses current evidence; rollback notices require 50 post-enable observations, and removing the line plus reloading performs the rollback.

@@ -78,6 +78,7 @@ typedef struct {
   const char *javascript_target;
   const laghu_font_provider_set *font_providers;
   const laghu_javascript_observation_set *javascript_observations;
+  const laghu_javascript_defer_set *javascript_defer;
   uint64_t now;
 } laghu_http_environment;
 
@@ -117,6 +118,12 @@ typedef struct {
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
   char cache_key[LAGHU_RUNTIME_KEY_SIZE];
   bool job_published;
+  bool javascript_defer_recommended;
+  bool javascript_defer_rollback_recommended;
+  char javascript_defer_path[LAGHU_RUNTIME_PATH_SIZE];
+  char javascript_defer_template[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int javascript_defer_bucket;
+  uint64_t javascript_defer_observations;
 } laghu_http_transaction_result;
 
 typedef struct {

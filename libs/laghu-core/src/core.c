@@ -244,6 +244,7 @@ static void laghu_policy_init(laghu_policy *policy) {
   policy->allow_resource_inlining = false;
   policy->allow_script_reordering = false;
   policy->allow_experimental = false;
+  policy->include_js_source_maps = false;
   policy->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   policy->css_inline_limit = LAGHU_CSS_INLINE_LIMIT_DEFAULT;
   policy->css_outline_threshold = LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT;
@@ -346,6 +347,8 @@ void laghu_config_init(laghu_config *config) {
   config->image_beacon = LAGHU_MODE_UNSET;
   config->critical_css_beacon = LAGHU_MODE_UNSET;
   config->instrumentation_beacon = LAGHU_MODE_UNSET;
+  config->javascript_defer_suggestions = LAGHU_MODE_UNSET;
+  config->include_js_source_maps = LAGHU_MODE_UNSET;
   config->instrumentation_sample_rate = LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET;
   config->image_quality = LAGHU_IMAGE_QUALITY_UNSET;
   config->image_inline_limit = LAGHU_IMAGE_INLINE_LIMIT_UNSET;
@@ -367,6 +370,8 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   laghu_mode parent_image_beacon = LAGHU_MODE_OFF;
   laghu_mode parent_critical_css_beacon = LAGHU_MODE_OFF;
   laghu_mode parent_instrumentation_beacon = LAGHU_MODE_OFF;
+  laghu_mode parent_javascript_defer_suggestions = LAGHU_MODE_ON;
+  laghu_mode parent_include_js_source_maps = LAGHU_MODE_OFF;
   unsigned int parent_instrumentation_sample_rate =
       LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT;
   unsigned int parent_image_quality = LAGHU_IMAGE_QUALITY_UNSET;
@@ -407,6 +412,11 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
     }
     if (parent->instrumentation_beacon != LAGHU_MODE_UNSET)
       parent_instrumentation_beacon = parent->instrumentation_beacon;
+    if (parent->javascript_defer_suggestions != LAGHU_MODE_UNSET)
+      parent_javascript_defer_suggestions =
+          parent->javascript_defer_suggestions;
+    if (parent->include_js_source_maps != LAGHU_MODE_UNSET)
+      parent_include_js_source_maps = parent->include_js_source_maps;
     if (parent->instrumentation_sample_rate !=
         LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET)
       parent_instrumentation_sample_rate = parent->instrumentation_sample_rate;
@@ -464,6 +474,14 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       child != NULL && child->instrumentation_beacon != LAGHU_MODE_UNSET
           ? child->instrumentation_beacon
           : parent_instrumentation_beacon;
+  result->javascript_defer_suggestions =
+      child != NULL && child->javascript_defer_suggestions != LAGHU_MODE_UNSET
+          ? child->javascript_defer_suggestions
+          : parent_javascript_defer_suggestions;
+  result->include_js_source_maps =
+      child != NULL && child->include_js_source_maps != LAGHU_MODE_UNSET
+          ? child->include_js_source_maps
+          : parent_include_js_source_maps;
   result->instrumentation_sample_rate =
       child != NULL && child->instrumentation_sample_rate !=
                            LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET
@@ -736,6 +754,8 @@ bool laghu_resolve_config_policy(const laghu_config *config,
     }
   }
   if (resolved) {
+    policy->include_js_source_maps =
+        config->include_js_source_maps == LAGHU_MODE_ON;
     policy->css_inline_limit =
         config->css_inline_limit == LAGHU_CSS_INLINE_LIMIT_UNSET
             ? LAGHU_CSS_INLINE_LIMIT_DEFAULT
@@ -891,7 +911,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   static const unsigned char namespace_value[] = "laghu-variant";
   laghu_sha256_context context;
   unsigned char digest[LAGHU_SHA256_DIGEST_SIZE];
-  unsigned char fields[30];
+  unsigned char fields[31];
   bool has_preset;
   bool has_rewrite_level;
   bool preset_is_valid;
@@ -959,6 +979,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   fields[27] = (unsigned char)(policy->javascript_outline_threshold >> 16U);
   fields[28] = (unsigned char)(policy->javascript_outline_threshold >> 8U);
   fields[29] = (unsigned char)policy->javascript_outline_threshold;
+  fields[30] = policy->include_js_source_maps ? 1U : 0U;
 
   laghu_sha256_init(&context);
   laghu_sha256_update(&context, namespace_value, sizeof(namespace_value) - 1U);

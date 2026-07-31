@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_QUEUE_VERSION 7U
+#define LAGHU_QUEUE_VERSION 8U
 #define LAGHU_QUEUE_DEFAULT_SLOTS 4U
 #define LAGHU_RUNTIME_KEY_SIZE LAGHU_SHA256_HEX_SIZE
 #define LAGHU_RUNTIME_PATH_SIZE 1024U
@@ -54,10 +54,11 @@ extern "C" {
 #define LAGHU_JAVASCRIPT_MAX_BYTES 2097152U
 #define LAGHU_JAVASCRIPT_TARGET_SIZE 512U
 #define LAGHU_JAVASCRIPT_MAX_SCRIPTS 64U
-#define LAGHU_JAVASCRIPT_DERIVATION_VERSION 1U
+#define LAGHU_JAVASCRIPT_DERIVATION_VERSION 2U
 #define LAGHU_INSTRUMENTATION_VERSION 1U
 #define LAGHU_INSTRUMENTATION_MAX_PROVIDERS 32U
 #define LAGHU_INSTRUMENTATION_MAX_SCRIPTS 64U
+#define LAGHU_JAVASCRIPT_DEFER_MAX_RULES 64U
 #define LAGHU_RUM_MAX_RECORDS 4096U
 #define LAGHU_RUM_MAX_RECORD_BYTES 16384U
 #define LAGHU_RUM_DEFAULT_MEMORY_BYTES (64U * 1024U * 1024U)
@@ -331,6 +332,11 @@ typedef struct {
   bool invalid;
   bool rewritten;
   bool dependencies_pending;
+  bool javascript_defer_recommended;
+  char javascript_defer_path[LAGHU_RUNTIME_PATH_SIZE];
+  char javascript_defer_template[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int javascript_defer_bucket;
+  uint64_t javascript_defer_observations;
 } laghu_runtime_html_result;
 
 typedef struct {
@@ -423,6 +429,17 @@ typedef struct {
 } laghu_javascript_observation_set;
 
 typedef struct {
+  char script_path[LAGHU_RUNTIME_PATH_SIZE];
+  char template_path[LAGHU_RUNTIME_PATH_SIZE];
+} laghu_javascript_defer_rule;
+
+typedef struct {
+  laghu_javascript_defer_rule rules[LAGHU_JAVASCRIPT_DEFER_MAX_RULES];
+  unsigned int count;
+  char digest[LAGHU_RUNTIME_KEY_SIZE];
+} laghu_javascript_defer_set;
+
+typedef struct {
   char key[LAGHU_RUNTIME_KEY_SIZE];
   unsigned int before_dcl;
   unsigned int long_tasks;
@@ -502,12 +519,16 @@ bool laghu_javascript_target_normalize(
 bool laghu_runtime_rewrite_javascript(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source,
     const char *normalized_path, const char *policy_key, const char *target,
-    bool module, laghu_runtime_javascript_result *result);
+    bool module, bool include_source_map,
+    laghu_runtime_javascript_result *result);
 bool laghu_runtime_rewrite_javascript_html(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html,
     const char *page_path, const char *policy_key, const char *target,
     const char *content_security_policy, uint64_t now, unsigned int ttl_seconds,
-    bool allow_combine, bool allow_inline, bool allow_outline,
+    laghu_rum_engine *rum, const char *template_key, const char *page_origin,
+    unsigned int viewport_bucket, const laghu_javascript_defer_set *defer_set,
+    bool allow_defer, bool allow_defer_suggestions, bool allow_combine,
+    bool allow_inline, bool allow_outline, bool include_source_maps,
     unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result);
 void laghu_runtime_javascript_result_release(
@@ -631,12 +652,30 @@ const char *laghu_runtime_critical_css_beacon_script(void);
 bool laghu_javascript_observations_load(const char *path,
                                         laghu_javascript_observation_set *set,
                                         char *error, size_t error_size);
+bool laghu_javascript_defer_load(const char *path,
+                                 laghu_javascript_defer_set *set, char *error,
+                                 size_t error_size);
+bool laghu_javascript_defer_approved(const laghu_javascript_defer_set *set,
+                                     const char *script_path,
+                                     const char *template_path);
+bool laghu_javascript_defer_recommended(
+    const laghu_rum_instrumentation_record *record, unsigned int bucket,
+    unsigned int script_index);
+bool laghu_javascript_defer_rollback_recommended(
+    const laghu_rum_instrumentation_record *baseline,
+    const laghu_rum_instrumentation_record *current, unsigned int bucket);
 bool laghu_runtime_add_instrumentation(
     laghu_rum_engine *rum, const char *cache_path,
     const laghu_javascript_observation_set *providers, laghu_buffer html,
     const char *page_path, const char *page_origin, const char *policy_key,
     uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
     bool csp_allows_self_scripts, laghu_runtime_html_result *result);
+bool laghu_runtime_instrumentation_template_key(
+    laghu_rum_engine *rum, const char *cache_path,
+    const laghu_javascript_observation_set *providers, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *policy_key,
+    uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
+    char output[LAGHU_RUNTIME_KEY_SIZE]);
 const char *laghu_runtime_instrumentation_script(void);
 bool laghu_runtime_parse_instrumentation_beacon(
     laghu_buffer json, laghu_instrumentation_beacon *record);

@@ -9,6 +9,7 @@ param(
   [Parameter(Mandatory = $true)] [string] $BuildDirectory,
   [Parameter(Mandatory = $true)] [ValidateSet("x64", "arm64")] [string] $Architecture,
   [string] $Configuration = "Release",
+  [string] $JavascriptTargetDirectory,
   [string] $Output = "tmp/windows-runtime"
 )
 
@@ -23,7 +24,12 @@ $javascriptTarget = if ($Architecture -eq "arm64") {
 } else {
   "cargo/release/laghu-js-optimize.exe"
 }
-$javascriptBinary = Join-Path $build "workers/laghu-js-optimize/$javascriptTarget"
+$javascriptRoot = if ($JavascriptTargetDirectory) {
+  [IO.Path]::GetFullPath((Join-Path $repo $JavascriptTargetDirectory))
+} else {
+  Join-Path $build "workers/laghu-js-optimize/cargo"
+}
+$javascriptBinary = Join-Path $javascriptRoot ($javascriptTarget -replace '^cargo/', '')
 if (-not (Test-Path $binary)) { throw "laghu-libvips.exe was not built" }
 if (-not (Test-Path $fetchBinary)) { throw "laghu-resource-fetch.exe was not built" }
 if (-not (Test-Path $javascriptBinary)) { throw "laghu-js-optimize.exe was not built" }
@@ -34,6 +40,7 @@ Copy-Item $fetchBinary $destination
 Copy-Item $javascriptBinary $destination
 Copy-Item (Join-Path $repo "packaging/font-providers.conf") $destination
 Copy-Item (Join-Path $repo "packaging/javascript-observation.conf") $destination
+Copy-Item (Join-Path $repo "packaging/javascript-defer.conf") $destination
 Get-ChildItem (Split-Path $binary) -Filter "*.dll" | Copy-Item -Destination $destination
 Get-ChildItem (Split-Path $fetchBinary) -Filter "*.dll" | Copy-Item -Destination $destination
 
@@ -127,6 +134,7 @@ $manifest = [ordered]@{
   javascript_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-js-optimize.exe")).Hash.ToLowerInvariant()
   providers_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "font-providers.conf")).Hash.ToLowerInvariant()
   javascript_observations_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "javascript-observation.conf")).Hash.ToLowerInvariant()
+  javascript_defer_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "javascript-defer.conf")).Hash.ToLowerInvariant()
   dlls = [ordered]@{}
 }
 Get-ChildItem $destination -Filter "*.dll" | Sort-Object Name | ForEach-Object {

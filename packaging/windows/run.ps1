@@ -67,7 +67,8 @@ function Invoke-Build {
   if ($LASTEXITCODE -ne 0) { throw "Windows Release worker build failed" }
   & "$private/build-matched-servers.ps1" -Server all -Architecture $Architecture
   & "$private/stage-runtime.ps1" -BuildDirectory $BuildDirectory `
-    -Architecture $Architecture -Configuration Release
+    -Architecture $Architecture -Configuration Release `
+    -JavascriptTargetDirectory $cargoTarget
 }
 
 function Invoke-Test {

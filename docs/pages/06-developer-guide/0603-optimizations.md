@@ -41,6 +41,9 @@ The worker permits verified HTTPS GETs only, revalidates DNS and redirects, acce
 `laghu-js-optimize` builds pinned SWC crates from `Cargo.lock` without Node or network access.
 It parses classic and module programs separately, applies bounded Browserslist syntax lowering without polyfills/module conversion, compresses with unsafe transforms disabled, and preserves top-level bindings and property names.
 The runtime observes same-origin external scripts through ordinary traffic and applies ready rewrite, combine, inline, or outline variants only when SWC metadata and CSP rules prove eligibility.
+Deferral is stricter: RUM needs 100 fresh template-and-viewport observations with at least 90 percent candidate coverage, SWC must certify a classic program against parser-sensitive APIs, and an administrator must approve the exact query-free same-origin path. Approval never bypasses stale evidence, unsafe attributes, or ordering checks; removing an approval and reloading is the rollback path.
+The planner defers only a complete approved suffix of blocking classic scripts, so an inline, unapproved, module, or incompatible later script keeps the preceding segment unchanged. Baseline and post-enable template generations remain separate; after 50 post-enable observations the runtime emits a bounded rollback recommendation when error/rejection rates, Core Web Vitals histograms, or lifecycle averages cross conservative thresholds.
+When source maps are enabled, SWC publishes a version 3 map without `sourcesContent` and appends an immutable same-origin `sourceMappingURL` only while the resulting JavaScript remains strictly smaller. Map failure does not invalidate an otherwise safe optimized script.
 
 ## Instrumentation and Critical Learning
 
