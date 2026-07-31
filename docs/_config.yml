@@ -23,6 +23,8 @@ heading_anchors: true
 enable_copy_code_button: true
 nav_enabled: true
 search_enabled: true
+mermaid:
+  version: "10.9.1"
 search:
   heading_level: 3
 

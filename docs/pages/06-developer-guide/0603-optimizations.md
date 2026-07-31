@@ -1,0 +1,49 @@
+---
+title: Optimization Pipelines
+parent: Developer Guide
+nav_order: 3
+permalink: /developer-guide/optimizations/
+---
+
+# Optimization Pipelines
+
+## Common Lifecycle
+
+1. An adapter normalizes an eligible response into the bounded HTTP contract.
+2. The shared runtime consults checksummed catalogs and in-memory learning state.
+3. Cold content is delivered unchanged while one non-blocking job may be published.
+4. A worker parses and derives a candidate outside the request-serving process.
+5. Only valid, non-identical, strictly smaller output is atomically published, except for explicitly bounded instrumentation or critical-CSS HTML growth.
+6. A later request may serve the ready variant with dependency-derived validators.
+
+## Images
+
+`laghu-libvips` detects supported input by magic, uses explicit loaders, applies bounded resizing/quality/format policy, and validates output before publication.
+HTML discovery does not fetch images; normal image traffic populates catalogs.
+Critical-image learning uses opaque viewport-bucket observations and can inform dimensions, responsive variants, and inlining within configured bounds.
+
+## CSS and Fonts
+
+The dependency-free tokenizer bounds input, tokens, URLs, nesting, and sprite inputs while preserving strings, custom properties, calculation spacing, legal comments, and source directives.
+CSS transformation covers safe minification, image URL rewriting, combination, inline/outline behavior, import planning, style attributes, placement, and learned critical CSS.
+
+External font CSS uses a separate provider configuration and `laghu-resource-fetch` queue.
+The worker permits verified HTTPS GETs only, revalidates DNS and redirects, accepts font-only CSS, and never downloads or rewrites font binaries.
+
+## JavaScript
+
+`laghu-js-optimize` builds pinned SWC crates from `Cargo.lock` without Node or network access.
+It parses classic and module programs separately, applies bounded Browserslist syntax lowering without polyfills/module conversion, compresses with unsafe transforms disabled, and preserves top-level bindings and property names.
+The runtime observes same-origin external scripts through ordinary traffic and applies ready rewrite, combine, inline, or outline variants only when SWC metadata and CSP rules prove eligibility.
+
+## Instrumentation and Critical Learning
+
+Opt-in same-origin scripts submit bounded opaque reports for critical images, critical CSS, and aggregate Core Web Vitals.
+The server validates template and candidate keys against its own catalog and stores aggregate records only.
+Cold, expired, malformed, CSP-blocked, or insufficiently observed pages remain unchanged.
+
+## RUM State
+
+Each request worker reads and merges an in-process RUM engine only.
+A background synchronization thread rotates bounded pending deltas to a local snapshot or Redis/Valkey and reconciles returned aggregates into memory.
+Redis/Valkey uses one versioned atomic Lua merge contract with idempotent batch markers; backend failure retains pending deltas and the last in-memory view.

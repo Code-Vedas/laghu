@@ -95,10 +95,14 @@ Server modules are architecture- and ABI-specific. Build each module against the
 Start with:
 
 - [`docs/index.md`](docs/index.md)
-- [`docs/pages/02-installation.md`](docs/pages/02-installation.md)
-- [`docs/pages/03-configuration.md`](docs/pages/03-configuration.md)
-- [`docs/pages/04-architecture.md`](docs/pages/04-architecture.md)
-- [`docs/pages/05-development.md`](docs/pages/05-development.md)
+- [`Introduction`](docs/index.md)
+- [`Architecture`](docs/pages/02-architecture.md)
+- [`ngx-laghu`](docs/pages/03-ngx-laghu/index.md)
+- [`mod-laghu`](docs/pages/04-mod-laghu/index.md)
+- [`Laghu server`](docs/pages/05-laghu-server/index.md)
+- [`Developer guide`](docs/pages/06-developer-guide/index.md)
+- [`Security reporting`](docs/pages/07-security-reporting.md)
+- [`Professional support`](docs/pages/08-professional-support.md)
 
 ## Contributing
 
