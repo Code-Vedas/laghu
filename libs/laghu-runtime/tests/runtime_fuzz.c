@@ -17,8 +17,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (size > 1U && (data[1] & UINT8_C(1)) != 0U) {
     plan |= LAGHU_HTML_PLAN_CONVERT_META_TAGS | LAGHU_HTML_PLAN_RESOURCE_HINTS;
   }
-  if (laghu_runtime_plan_html_document((laghu_buffer){data, size}, plan,
-                                       &head)) {
+  if (size > 1U && (data[1] & UINT8_C(2)) != 0U)
+    plan |= LAGHU_HTML_PLAN_TRIM_URLS;
+  if (laghu_runtime_plan_html_document_at(
+          (laghu_buffer){data, size}, "/fuzz/page.html", "https://example.test",
+          plan, &head)) {
     laghu_runtime_head_result_release(&head);
   }
   if (laghu_runtime_rewrite_css_markup(

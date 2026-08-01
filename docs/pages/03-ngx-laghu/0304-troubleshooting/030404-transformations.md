@@ -11,6 +11,7 @@ permalink: /ngx-laghu/troubleshooting/transformations/
 Use `laghu explain <url>` to identify eligibility, policy, dependencies, learning state, CSP decision, size gate, and selected variant.
 
 If CSS, JavaScript, or HTML remains unchanged, check cold versus warm state, source validators, parser support, integrity/nonce attributes, relative imports, source directives, script kind, later cascade boundaries, and aggregate transfer size.
+Resource URLs remain unchanged when a `<base href>` is ambiguous, the URL is cross-origin or already shortest, the attribute is not resource-fetching, or the complete `srcset` cannot be validated.
 If an image format is absent, check `Accept`, client hints, source magic, dimensions, codec capability, animation, quality policy, and whether the candidate was actually smaller.
 
 For CSP failures, preserve the application policy and configure an accepted nonce or same-origin source rather than adding broad unsafe directives.

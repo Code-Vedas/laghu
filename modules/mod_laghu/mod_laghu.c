@@ -13,6 +13,7 @@
 #include <apr_strings.h>
 #include <apr_tables.h>
 #include <http_config.h>
+#include <http_core.h>
 #include <http_log.h>
 #include <http_protocol.h>
 #include <http_request.h>
@@ -108,6 +109,27 @@ static apr_time_t laghu_apache_beacon_window;
 static apr_time_t laghu_apache_last_defer_recommendation;
 static unsigned int laghu_apache_beacon_count;
 static laghu_rum_engine *laghu_apache_rum;
+
+static const char *laghu_apache_request_origin(request_rec *request) {
+  const char *scheme = ap_http_scheme(request);
+  const char *host_header = apr_table_get(request->headers_in, "Host");
+  const char *host = request->hostname != NULL
+                         ? request->hostname
+                         : request->server->server_hostname;
+  const char *url_host = strchr(host, ':') != NULL && host[0] != '['
+                             ? apr_psprintf(request->pool, "[%s]", host)
+                             : host;
+  apr_port_t port = ap_get_server_port(request);
+  bool default_port = (strcmp(scheme, "http") == 0 && port == 80U) ||
+                      (strcmp(scheme, "https") == 0 && port == 443U);
+  if (host_header != NULL && host_header[0] != '\0' &&
+      strpbrk(host_header, " /\\@\t\r\n") == NULL)
+    return apr_psprintf(request->pool, "%s://%s", scheme, host_header);
+  if (default_port)
+    return apr_psprintf(request->pool, "%s://%s", scheme, url_host);
+  return apr_psprintf(request->pool, "%s://%s:%u", scheme, url_host,
+                      (unsigned int)port);
+}
 
 static void laghu_apache_log_defer_recommendation(
     request_rec *request, const laghu_http_transaction_result *result) {
@@ -1196,11 +1218,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
     }
     if (context->capture_enabled) {
       laghu_runtime_css_result rewritten;
-      const char *host = request->hostname != NULL
-                             ? request->hostname
-                             : request->server->server_hostname;
-      const char *origin =
-          apr_psprintf(request->pool, "%s://%s", ap_http_scheme(request), host);
+      const char *origin = laghu_apache_request_origin(request);
       unsigned char *selected = context->capture;
       size_t selected_length = context->capture_length;
       apr_bucket_brigade *replacement;
@@ -1258,11 +1276,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
     }
     if (context->capture_enabled) {
       laghu_runtime_html_result rewritten;
-      const char *host = request->hostname != NULL
-                             ? request->hostname
-                             : request->server->server_hostname;
-      const char *origin =
-          apr_psprintf(request->pool, "%s://%s", ap_http_scheme(request), host);
+      const char *origin = laghu_apache_request_origin(request);
       const char *csp =
           apr_table_get(request->headers_out, "Content-Security-Policy");
       bool csp_allows_data = csp == NULL || ap_strcasestr(csp, "data:") != NULL;

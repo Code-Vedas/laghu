@@ -81,6 +81,100 @@ static void assert_html_plan(const char *input, laghu_html_planner_mask plan,
   laghu_runtime_head_result_release(&result);
 }
 
+static void assert_html_plan_at(const char *input, const char *page_path,
+                                const char *page_origin,
+                                laghu_html_planner_mask plan,
+                                const char *expected) {
+  laghu_runtime_head_result result;
+  assert(laghu_runtime_plan_html_document_at(
+      (laghu_buffer){(const unsigned char *)input, strlen(input)}, page_path,
+      page_origin, plan, &result));
+  if (expected == NULL) {
+    if (result.rewritten)
+      fprintf(stderr, "Unexpected HTML URL rewrite: %s\nactual: %.*s\n", input,
+              (int)result.length, result.data);
+    assert(!result.rewritten && result.data == NULL);
+  } else {
+    if (!result.rewritten || result.length != strlen(expected) ||
+        memcmp(result.data, expected,
+               result.length < strlen(expected) ? result.length
+                                                : strlen(expected)) != 0) {
+      fprintf(stderr, "HTML URL input: %s\nexpected: %s\nactual: %.*s\n", input,
+              expected, (int)result.length,
+              result.data == NULL ? (const unsigned char *)"" : result.data);
+    }
+    assert(result.rewritten && result.lexical_changed);
+    assert(result.length == strlen(expected));
+    assert(memcmp(result.data, expected, result.length) == 0);
+  }
+  laghu_runtime_head_result_release(&result);
+}
+
+static void test_html_trim_urls(void) {
+  const laghu_html_planner_mask trim = LAGHU_HTML_PLAN_TRIM_URLS;
+  assert_html_plan_at(
+      "<script src=\"https://example.com/shop/app.js?q=1#x\"></script>"
+      "<img src=/shop/images/a%20b.png>"
+      "<video poster=/shared/poster.jpg></video>",
+      "/shop/page.html", "https://example.com", trim,
+      "<script src=\"app.js?q=1#x\"></script>"
+      "<img src=images/a%20b.png>"
+      "<video poster=/shared/poster.jpg></video>");
+  assert_html_plan_at("<audio src=/shop/shared/a.mp3></audio>",
+                      "/shop/deep/page.html", "https://example.com", trim,
+                      "<audio src=../shared/a.mp3></audio>");
+  assert_html_plan_at(
+      "<img src=/assets/hero.png>"
+      "<base href=/assets/>",
+      "/shop/page.html", "https://example.com", trim,
+      "<img src=hero.png><base href=/assets/>");
+  assert_html_plan_at(
+      "<base href=https://cdn.example/assets/><img "
+      "src=https://example.com/assets/a.png>",
+      "/shop/page.html", "https://example.com", trim, NULL);
+  assert_html_plan_at(
+      "<link rel=\"alternate stylesheet\" href=/shop/a.css>"
+      "<link rel=canonical href=/shop/page.html>"
+      "<a href=/shop/next>next</a><form action=/submit></form>"
+      "<iframe src=/frame></iframe><object data=/object></object>",
+      "/shop/page.html", "https://example.com", trim,
+      "<link rel=\"alternate stylesheet\" href=a.css>"
+      "<link rel=canonical href=/shop/page.html>"
+      "<a href=/shop/next>next</a><form action=/submit></form>"
+      "<iframe src=/frame></iframe><object data=/object></object>");
+  assert_html_plan_at(
+      "<picture><source srcset=\"/shop/a.webp 1x, "
+      "https://example.com/shop/a@2.webp 2x\"><img "
+      "srcset=\"/shop/a.png 480w, /shared/a.png 960w\"></picture>",
+      "/shop/page.html", "https://example.com", trim,
+      "<picture><source srcset=\"a.webp 1x, a@2.webp 2x\"><img "
+      "srcset=\"a.png 480w, /shared/a.png 960w\"></picture>");
+  assert_html_plan_at(
+      "<img srcset=\"data:image/png;base64,aaaa 1x, /shop/a.png 2x\">"
+      "<script src=\"https://other.example/a.js\"></script>"
+      "<img src=\"/shop/a&amp;b.png\">",
+      "/shop/page.html", "https://example.com", trim, NULL);
+  assert_html_plan_at("<script src=https://example.com:443/a.js></script>",
+                      "/page.html", "https://example.com", trim,
+                      "<script src=a.js></script>");
+  assert_html_plan_at("<script src=https://example.com:8443/a.js></script>",
+                      "/page.html", "https://example.com:8443", trim,
+                      "<script src=a.js></script>");
+  assert_html_plan_at(
+      "<audio src=\"http://127.0.0.1:18081/asset.mp3?q=1#hero\"></audio>",
+      "/minify-page.html", "http://127.0.0.1:18081", trim,
+      "<audio src=\"asset.mp3?q=1#hero\"></audio>");
+  assert_html_plan_at("<img src=https://[2001:db8::1]:8443/a.png>",
+                      "/page.html", "https://[2001:db8::1]:8443", trim,
+                      "<img src=a.png>");
+  assert_html_plan_at(
+      "<template><img src=/shop/a.png></template>"
+      "<img src=/shop//a.png>",
+      "/shop/page.html", "https://example.com", trim, NULL);
+  assert_html_plan_at("<img src=/shop/a.png>", "/shop/page.html", NULL, trim,
+                      NULL);
+}
+
 static void test_html_lexical_planner(void) {
   const laghu_html_planner_mask lexical = LAGHU_HTML_PLAN_LEXICAL;
   laghu_runtime_head_result result;
@@ -616,6 +710,7 @@ int main(void) {
   laghu_runtime_queue_init(&consumer);
   test_head_planner();
   test_html_lexical_planner();
+  test_html_trim_urls();
 #ifdef _WIN32
   {
     char base[LAGHU_RUNTIME_PATH_SIZE];

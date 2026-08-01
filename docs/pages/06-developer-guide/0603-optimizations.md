@@ -36,6 +36,11 @@ CSS transformation covers safe minification, image URL rewriting, combination, i
 External font CSS uses a separate provider configuration and `laghu-resource-fetch` queue.
 The worker permits verified HTTPS GETs only, revalidates DNS and redirects, accepts font-only CSS, and never downloads or rewrites font binaries.
 
+## HTML
+
+HTML minification includes bounded resource URL trimming. The planner considers only same-origin script, stylesheet, preload, image, media, track, manifest, and icon attributes; navigation, forms, embedded documents, metadata redirects, and application URL schemes remain unchanged.
+It resolves the original and every shorter root-relative or document-relative candidate against the first effective `<base href>` and accepts a replacement only when both absolute results are identical. Queries, fragments, percent encoding, path case, ports, and trailing slashes are preserved, while malformed or ambiguous URL and `srcset` input fails open.
+
 ## JavaScript
 
 `laghu-js-optimize` builds pinned SWC crates from `Cargo.lock` without Node or network access.

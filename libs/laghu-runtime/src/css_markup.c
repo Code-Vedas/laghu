@@ -229,8 +229,8 @@ bool laghu_runtime_rewrite_css_markup(
     return false;
   }
   memset(result, 0, sizeof(*result));
-  if (html_plan != 0U &&
-      !laghu_runtime_plan_html_document(html, html_plan, &head)) {
+  if (html_plan != 0U && !laghu_runtime_plan_html_document_at(
+                             html, page_path, page_origin, html_plan, &head)) {
     return false;
   }
   if (head.rewritten) {
@@ -562,17 +562,20 @@ bool laghu_runtime_rewrite_css_markup(
   {
     char source_hash[LAGHU_RUNTIME_KEY_SIZE];
     char output_hash[LAGHU_RUNTIME_KEY_SIZE];
-    char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 128U];
+    char material[LAGHU_RUNTIME_KEY_SIZE * 3U + LAGHU_RUNTIME_PATH_SIZE * 2U +
+                  160U];
     int material_length;
     if (!laghu_sha256_hex(source_html, source_hash) ||
         !laghu_sha256_hex((laghu_buffer){builder.data, builder.length},
                           output_hash)) {
       goto failed;
     }
-    material_length = snprintf(
-        material, sizeof(material), "laghu-html-markup-v%u\n%s\n%s\n%s\n%08x",
-        LAGHU_HTML_PLANNER_VERSION, source_hash, output_hash, policy_key,
-        (unsigned int)html_plan);
+    material_length =
+        snprintf(material, sizeof(material),
+                 "laghu-html-markup-v%u\n%s\n%s\n%s\n%08x\n%s\n%s",
+                 LAGHU_HTML_PLANNER_VERSION, source_hash, output_hash,
+                 policy_key, (unsigned int)html_plan, page_path,
+                 page_origin == NULL ? "" : page_origin);
     if (material_length <= 0 || (size_t)material_length >= sizeof(material) ||
         !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
                                          (size_t)material_length},

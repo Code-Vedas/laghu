@@ -12,6 +12,7 @@ Use `laghu explain` to distinguish cold state, parser rejection, unsupported att
 
 Check filter ordering with compression, proxying, SSI, application filters, and content generators.
 Laghu must receive a bounded complete representation in an eligible encoding and must update entity headers atomically with the body.
+Resource URLs remain unchanged when a `<base href>` is ambiguous, the URL is cross-origin or already shortest, the attribute is not resource-fetching, or the complete `srcset` cannot be validated.
 
 Preserve strict CSP.
 Use application-owned nonces or permitted same-origin immutable routes instead of adding broad unsafe sources.

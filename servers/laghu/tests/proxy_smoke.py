@@ -70,10 +70,16 @@ class Origin(http.server.BaseHTTPRequestHandler):
             body = b"function publicName(longLocal) { return longLocal + 1; }"
             content_type = "application/javascript"
         elif self.path == "/combine-one.js":
-            body = b"console.log('combine one value'); console.log('combine one value again');"
+            body = (
+                b" " * 160
+                + b"console.log('combine one value'); console.log('combine one value again');"
+            )
             content_type = "application/javascript"
         elif self.path == "/combine-two.js":
-            body = b"console.log('combine two value'); console.log('combine two value again');"
+            body = (
+                b" " * 160
+                + b"console.log('combine two value'); console.log('combine two value again');"
+            )
             content_type = "application/javascript"
         elif self.path == "/javascript-inline.html":
             body = b"<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>"
@@ -97,6 +103,12 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 b"<html><body><script>function outlinePublic(veryLongLocalArgument) { return "
                 + b" + ".join([b"veryLongLocalArgument"] * 500)
                 + b"; }</script></body></html>"
+            )
+            content_type = "text/html"
+        elif self.path == "/trim-urls.html":
+            body = (
+                b'<html><body><audio src="http://example.test/asset.mp3?q=1#hero">'
+                b'</audio><a href="/next">next</a></body></html>'
             )
             content_type = "text/html"
         elif self.path == "/private":
@@ -149,7 +161,9 @@ class Origin(http.server.BaseHTTPRequestHandler):
         self.send_response(206 if self.path == "/partial" else 200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("ETag", '"origin-v1"')
+        self.send_header(
+            "ETag", '"trim-v1"' if self.path == "/trim-urls.html" else '"origin-v1"'
+        )
         self.send_header("Connection", "close")
         if self.path == "/private":
             self.send_header("Cache-Control", "private")
@@ -352,6 +366,7 @@ def main():
     executable = pathlib.Path(sys.argv[1]).resolve()
     cache_fixture = pathlib.Path(sys.argv[2]).resolve()
     javascript_worker = pathlib.Path(sys.argv[3]).resolve()
+    warm_attempts = 200 if os.name == "nt" else 50
     origin_port = free_port()
     proxy_port = free_port()
     origin = QuietThreadingHTTPServer(("127.0.0.1", origin_port), Origin)
@@ -393,7 +408,7 @@ def main():
             stderr=subprocess.PIPE,
         )
         try:
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 try:
                     tls_head, tls_body = request(tls_proxy_port, "/api/data")
                     break
@@ -420,7 +435,7 @@ def main():
             stderr=subprocess.PIPE,
         )
         try:
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 try:
                     unknown_head, unknown_body = request(
                         unknown_ca_port, "/api/data"
@@ -450,7 +465,7 @@ def main():
             stderr=subprocess.PIPE,
         )
         try:
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 try:
                     mismatch_head, mismatch_body = request(mismatch_port, "/api/data")
                     break
@@ -485,7 +500,7 @@ def main():
                 stderr=subprocess.PIPE,
             )
             try:
-                for _ in range(50):
+                for _ in range(warm_attempts):
                     try:
                         broken_head, broken_body = request(
                             broken_proxy_port, "/api/data"
@@ -562,7 +577,7 @@ def main():
             stderr=main_log,
         )
         try:
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 try:
                     first_head, first_body = request(proxy_port, "/index.html")
                     break
@@ -574,9 +589,23 @@ def main():
             assert b"/.laghu/beacon/instrumentation.js" in first_body
             assert b'data-laghu-sample="100"' in first_body
             assert b"x-laghu: pass" in first_head, first_head
+            for _ in range(warm_attempts):
+                trim_head, trim_body = request(proxy_port, "/trim-urls.html")
+                if (
+                    b"asset.mp3?q=1#hero" in trim_body
+                    and b"http://example.test/" not in trim_body
+                ):
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError(
+                    f"standalone resource URLs did not trim: {trim_body!r}"
+                )
+            assert b'href="/next"' in trim_body or b"href=/next" in trim_body
+            assert b'etag: "laghu-html-' in trim_head
             javascript_head, javascript_cold = request(proxy_port, "/app.js")
             assert javascript_cold == b"function publicName(longLocal) { return longLocal + 1; }"
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 javascript_head, javascript_warm = request(proxy_port, "/app.js")
                 if b'etag: "laghu-js-' in javascript_head:
                     break
@@ -584,7 +613,7 @@ def main():
             else:
                 raise AssertionError("standalone JavaScript did not become warm")
             assert len(javascript_warm) < len(javascript_cold)
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 _, external_warm = request(proxy_port, "/javascript-external.html")
                 if b'src="/app.js"' not in external_warm and b"publicName" in external_warm:
                     break
@@ -593,14 +622,14 @@ def main():
                 raise AssertionError("standalone external JavaScript did not become warm")
             assert b"publicName(n)" in external_warm
             for asset in ("/combine-one.js", "/combine-two.js"):
-                for _ in range(50):
+                for _ in range(warm_attempts):
                     asset_head, _ = request(proxy_port, asset)
                     if b'etag: "laghu-js-' in asset_head:
                         break
                     time.sleep(0.05)
                 else:
                     raise AssertionError(f"standalone dependency {asset} did not become warm")
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 _, combine_warm = request(proxy_port, "/javascript-combine.html")
                 combine_match = re.search(
                     rb'src="(/\.laghu/js/[0-9a-f]{64})"', combine_warm
@@ -618,7 +647,7 @@ def main():
             assert b"cache-control: public, max-age=31536000, immutable" in immutable_head
             _, inline_cold = request(proxy_port, "/javascript-inline.html")
             assert b"inlinePublic(longLocal)" in inline_cold
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 inline_head, inline_warm = request(proxy_port, "/javascript-inline.html")
                 if b"inlinePublic(n){return n+1;}" in inline_warm:
                     break
@@ -628,7 +657,7 @@ def main():
             assert b"inlinePublic(n){return n+1;}" in inline_warm
             _, outline_cold = request(proxy_port, "/javascript-outline.html")
             assert b"outlinePublic" in outline_cold
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 _, outline_warm = request(proxy_port, "/javascript-outline.html")
                 outline_match = re.search(
                     rb'src="(/\.laghu/js/[0-9a-f]{64})"', outline_warm
@@ -762,7 +791,13 @@ def main():
             truncated_head, truncated_body = request(proxy_port, "/truncated")
             assert b" 502 " in truncated_head.split(b"\r\n", 1)[0]
             assert truncated_body == b""
-            chunked_head, chunked_body = request(proxy_port, "/chunked")
+            for _ in range(warm_attempts):
+                chunked_head, chunked_body = request(proxy_port, "/chunked")
+                if b"<!-- remove -->" not in chunked_body:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("chunked HTML did not become warm")
             assert b"<!-- remove -->" not in chunked_body
             assert b"/.laghu/beacon/instrumentation.js" in chunked_body
             assert b"x-laghu: pass" in chunked_head
@@ -894,7 +929,7 @@ def main():
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
-            for _ in range(50):
+            for _ in range(warm_attempts):
                 try:
                     _, forwarded_body = request(
                         forwarded_port,
@@ -955,7 +990,7 @@ def main():
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                 )
-                for _ in range(50):
+                for _ in range(warm_attempts):
                     try:
                         forced = socket.create_connection(
                             ("127.0.0.1", force_port), timeout=5

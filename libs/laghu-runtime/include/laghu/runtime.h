@@ -33,7 +33,7 @@ extern "C" {
 #define LAGHU_CSS_DERIVATION_VERSION 2U
 #define LAGHU_STYLESHEET_CATALOG_VERSION 2U
 #define LAGHU_CSS_IMPORT_MAX_DEPTH 8U
-#define LAGHU_HTML_PLANNER_VERSION 3U
+#define LAGHU_HTML_PLANNER_VERSION 4U
 #define LAGHU_CRITICAL_CSS_VERSION 1U
 #define LAGHU_CRITICAL_CSS_MAX_RULES 512U
 #define LAGHU_CRITICAL_CSS_QUORUM 3U
@@ -138,9 +138,11 @@ typedef uint32_t laghu_html_planner_mask;
 #define LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES (UINT32_C(1) << 6)
 #define LAGHU_HTML_PLAN_CONVERT_META_TAGS (UINT32_C(1) << 7)
 #define LAGHU_HTML_PLAN_RESOURCE_HINTS (UINT32_C(1) << 8)
+#define LAGHU_HTML_PLAN_TRIM_URLS (UINT32_C(1) << 9)
 #define LAGHU_HTML_PLAN_LEXICAL                                            \
   (LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE | LAGHU_HTML_PLAN_REMOVE_COMMENTS | \
-   LAGHU_HTML_PLAN_REMOVE_QUOTES | LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES)
+   LAGHU_HTML_PLAN_REMOVE_QUOTES | LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES |      \
+   LAGHU_HTML_PLAN_TRIM_URLS)
 
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
@@ -574,6 +576,11 @@ bool laghu_runtime_finalize_html_headers(
 bool laghu_runtime_plan_html_document(laghu_buffer html,
                                       laghu_html_planner_mask plan,
                                       laghu_runtime_head_result *result);
+bool laghu_runtime_plan_html_document_at(laghu_buffer html,
+                                         const char *page_path,
+                                         const char *page_origin,
+                                         laghu_html_planner_mask plan,
+                                         laghu_runtime_head_result *result);
 void laghu_runtime_head_result_release(laghu_runtime_head_result *result);
 bool laghu_runtime_rewrite_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,

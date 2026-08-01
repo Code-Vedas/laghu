@@ -68,7 +68,7 @@ printf '%s\n' '<html><head><script src="/barrier.js"></script></head><body><styl
   >"${SMOKE_DIR}/html/no-cross-page.html"
 printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
   >"${SMOKE_DIR}/html/missing-head-page.html"
-printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
+printf '%s\n' "<html><body><!-- remove --><p class=\"safe\" title=\"two words\">one   two</p><audio src=\"http://127.0.0.1:${PORT}/asset.mp3?q=1#hero\"></audio><script type=\"text/javascript\"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>" \
   >"${SMOKE_DIR}/html/minify-page.html"
 printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
   >"${SMOKE_DIR}/html/hints-page.html"
@@ -1022,7 +1022,7 @@ for page in heads-page move-page; do
 done
 test "$(grep -oi '<head' "${SMOKE_DIR}/heads-page-warm" | wc -l | tr -d ' ')" = 1
 test "$(grep -bo '<style media=all>' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)" -lt \
-  "$(grep -bo '<script src=/barrier.js>' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)"
+  "$(grep -bo '<script src=barrier.js>' "${SMOKE_DIR}/move-page-warm" | cut -d: -f1)"
 curl --fail --silent --output "${SMOKE_DIR}/no-cross-page" \
   "http://127.0.0.1:${PORT}/no-cross-page.html"
 cmp "${SMOKE_DIR}/html/no-cross-page.html" "${SMOKE_DIR}/no-cross-page"
@@ -1035,6 +1035,7 @@ curl --fail --silent --dump-header "${SMOKE_DIR}/minify-page-warm.headers" \
   "http://127.0.0.1:${PORT}/minify-page.html"
 grep '<p class=safe title="two words">one two</p>' \
   "${SMOKE_DIR}/minify-page-warm" >/dev/null
+grep 'src="asset.mp3?q=1#hero"' "${SMOKE_DIR}/minify-page-warm" >/dev/null
 grep '<script> x  y </script><pre> a  b </pre><!-- @license keep -->' \
   "${SMOKE_DIR}/minify-page-warm" >/dev/null
 if grep '<!-- remove -->' "${SMOKE_DIR}/minify-page-warm" >/dev/null; then
