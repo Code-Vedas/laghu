@@ -19,6 +19,7 @@ $build = (Resolve-Path $BuildDirectory).Path
 $destination = [IO.Path]::GetFullPath((Join-Path $repo "$Output/$Architecture"))
 $binary = Join-Path $build "workers/laghu-libvips/$Configuration/laghu-libvips.exe"
 $fetchBinary = Join-Path $build "workers/laghu-resource-fetch/$Configuration/laghu-resource-fetch.exe"
+$assetBinary = Join-Path $build "workers/laghu-asset-upload/$Configuration/laghu-asset-upload.exe"
 $javascriptTarget = if ($Architecture -eq "arm64") {
   "cargo/aarch64-pc-windows-msvc/release/laghu-js-optimize.exe"
 } else {
@@ -32,17 +33,20 @@ $javascriptRoot = if ($JavascriptTargetDirectory) {
 $javascriptBinary = Join-Path $javascriptRoot ($javascriptTarget -replace '^cargo/', '')
 if (-not (Test-Path $binary)) { throw "laghu-libvips.exe was not built" }
 if (-not (Test-Path $fetchBinary)) { throw "laghu-resource-fetch.exe was not built" }
+if (-not (Test-Path $assetBinary)) { throw "laghu-asset-upload.exe was not built" }
 if (-not (Test-Path $javascriptBinary)) { throw "laghu-js-optimize.exe was not built" }
 Remove-Item -Recurse -Force $destination -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item $binary $destination
 Copy-Item $fetchBinary $destination
+Copy-Item $assetBinary $destination
 Copy-Item $javascriptBinary $destination
 Copy-Item (Join-Path $repo "packaging/font-providers.conf") $destination
 Copy-Item (Join-Path $repo "packaging/javascript-observation.conf") $destination
 Copy-Item (Join-Path $repo "packaging/javascript-defer.conf") $destination
 Get-ChildItem (Split-Path $binary) -Filter "*.dll" | Copy-Item -Destination $destination
 Get-ChildItem (Split-Path $fetchBinary) -Filter "*.dll" | Copy-Item -Destination $destination
+Get-ChildItem (Split-Path $assetBinary) -Filter "*.dll" | Copy-Item -Destination $destination
 
 $triplet = if ($Architecture -eq "x64") { "x64-windows" } else { "arm64-windows" }
 $installedRoot = if ($env:VCPKG_ROOT -and
@@ -59,7 +63,7 @@ if (Test-Path "$installedRoot/bin") {
   $dumpbin = Get-ChildItem "$visualStudio/VC/Tools/MSVC/*/bin/Host*/x64/dumpbin.exe" `
     -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
   if (-not $dumpbin) { throw "dumpbin.exe is required to stage runtime dependencies" }
-  $searchDirectories = @((Split-Path $binary), (Split-Path $fetchBinary), "$installedRoot/bin")
+  $searchDirectories = @((Split-Path $binary), (Split-Path $fetchBinary), (Split-Path $assetBinary), "$installedRoot/bin")
   $available = @{}
   foreach ($directory in $searchDirectories) {
     Get-ChildItem $directory -Filter "*.dll" | ForEach-Object {
@@ -69,6 +73,7 @@ if (Test-Path "$installedRoot/bin") {
   $pending = [Collections.Generic.Queue[string]]::new()
   $pending.Enqueue($binary)
   $pending.Enqueue($fetchBinary)
+  $pending.Enqueue($assetBinary)
   $visited = @{}
   while ($pending.Count -gt 0) {
     $candidate = $pending.Dequeue()
@@ -131,6 +136,7 @@ $manifest = [ordered]@{
   backend = $backend.Trim()
   worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-libvips.exe")).Hash.ToLowerInvariant()
   fetch_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-resource-fetch.exe")).Hash.ToLowerInvariant()
+  asset_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-asset-upload.exe")).Hash.ToLowerInvariant()
   javascript_worker_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "laghu-js-optimize.exe")).Hash.ToLowerInvariant()
   providers_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "font-providers.conf")).Hash.ToLowerInvariant()
   javascript_observations_sha256 = (Get-FileHash -Algorithm SHA256 (Join-Path $destination "javascript-observation.conf")).Hash.ToLowerInvariant()

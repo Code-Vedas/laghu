@@ -1,0 +1,26 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+[Unit]
+Description=Laghu asynchronous CDN asset upload worker
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/laghu/asset-offload.conf
+
+[Service]
+Type=simple
+User=laghu
+Group=laghu
+ExecStart=/usr/bin/laghu-asset-upload --serve /etc/laghu/asset-offload.conf
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/laghu /var/cache/laghu
+
+[Install]
+WantedBy=multi-user.target

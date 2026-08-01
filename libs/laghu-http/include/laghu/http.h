@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_HTTP_ABI_VERSION 1U
+#define LAGHU_HTTP_ABI_VERSION 2U
 #define LAGHU_HTTP_MAX_REQUEST_HEADERS 64U
 #define LAGHU_HTTP_MAX_RESPONSE_HEADERS 64U
 #define LAGHU_HTTP_MAX_HEADER_OPERATIONS 32U
@@ -79,6 +79,7 @@ typedef struct {
   const laghu_font_provider_set *font_providers;
   const laghu_javascript_observation_set *javascript_observations;
   const laghu_javascript_defer_set *javascript_defer;
+  const laghu_asset_config *asset_offload;
   uint64_t now;
 } laghu_http_environment;
 
@@ -154,6 +155,7 @@ typedef struct {
   unsigned int dpr_hundredths;
   bool accept_webp;
   bool prepared;
+  bool asset_allowed;
 } laghu_http_transaction;
 
 void laghu_http_transaction_init(laghu_http_transaction *transaction);

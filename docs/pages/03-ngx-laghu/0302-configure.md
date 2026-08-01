@@ -31,6 +31,8 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu javascript_inline_limit BYTES;` | inherited | `0..65536` | `2048` | Caps external JavaScript inlining. |
 | `laghu javascript_outline_threshold BYTES;` | inherited | `1024..1048576` | `8192` | Selects inline JavaScript for outlining. |
 | `laghu worker_queue PATH;` | inherited | bounded path | `/run/laghu/jobs.queue` | Selects the image queue. |
+| `laghu asset_offload_config PATH;` | inherited | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
+| `laghu asset_upload_queue PATH;` | inherited | policy-matching path | unset | Selects the asynchronous asset spool. |
 | `laghu font_fetch_queue PATH;` | inherited | bounded path | `/run/laghu/fonts.queue` | Selects the external-font queue. |
 | `laghu font_provider_config PATH;` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `laghu javascript_queue PATH;` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |

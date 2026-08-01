@@ -1,0 +1,30 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# Administrator-owned asynchronous S3-compatible asset offload configuration.
+version=1
+source_domain=https://www.example.com
+public_domain=https://cdn.example.com
+source_prefix=/assets
+public_prefix=/immutable
+mime_types=text/css,application/javascript,image/png,image/jpeg,image/webp,application/pdf,font/woff2,audio/mpeg,video/mp4
+allow_paths=/
+deny_paths=/private
+mode=upload_and_rewrite
+preserve_query=on
+trusted_origin_fallback=on
+max_body_bytes=67108864
+retry_limit=3
+timeout_seconds=10
+stale_ttl_seconds=86400
+catalog_path=/var/cache/laghu/assets
+queue_path=/run/laghu/assets
+provider=s3
+endpoint=https://s3.example.com
+region=us-east-1
+bucket=laghu-assets
+object_prefix=production
+access_key_env=LAGHU_S3_ACCESS_KEY
+secret_key_env=LAGHU_S3_SECRET_KEY

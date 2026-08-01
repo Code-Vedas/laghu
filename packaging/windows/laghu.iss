@@ -67,6 +67,8 @@ const
   SharedRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-libvips.exe';
   FetchRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-resource-fetch.exe';
   JavaScriptRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-js-optimize.exe';
+  AssetRuntime = '{commonpf}\Codevedas\Laghu\bin\laghu-asset-upload.exe';
+  AssetConfig = '{commonappdata}\Laghu\asset-offload.conf';
 
 procedure ExitProcess(ExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -78,6 +80,8 @@ var
   FetchServiceWasPresent: Boolean;
   JavaScriptServiceCreatedBySetup: Boolean;
   JavaScriptServiceWasPresent: Boolean;
+  AssetServiceCreatedBySetup: Boolean;
+  AssetServiceWasPresent: Boolean;
   InstallSucceeded: Boolean;
 
 function VersionWeight(const Value: String): Integer;
@@ -153,6 +157,15 @@ begin
   Result := ResultCode = 0;
 end;
 
+function AssetServiceExists(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'query laghu-asset-upload', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+  Result := ResultCode = 0;
+end;
+
 function StopSharedService(): Boolean;
 var
   PowerShell, Command: String;
@@ -206,12 +219,29 @@ begin
                  ResultCode) and (ResultCode = 0);
 end;
 
+function StopAssetService(): Boolean;
+var
+  PowerShell, Command: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  if not AssetServiceExists() then exit;
+  PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Command := '-NoProfile -NonInteractive -Command "' +
+    '$service = Get-Service laghu-asset-upload -ErrorAction Stop; ' +
+    'if ($service.Status -ne ''Stopped'') { $null = & sc.exe stop laghu-asset-upload; ' +
+    '$service.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(30)) }"';
+  Result := Exec(PowerShell, Command, '', SW_HIDE, ewWaitUntilTerminated,
+                 ResultCode) and (ResultCode = 0);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   ServiceWasPresent := ServiceExists();
   FetchServiceWasPresent := FetchServiceExists();
   JavaScriptServiceWasPresent := JavaScriptServiceExists();
+  AssetServiceWasPresent := AssetServiceExists();
   if ServiceWasPresent and not StopSharedService() then
     Result := 'Unable to stop the existing laghu-libvips service.';
   if (Result = '') and FetchServiceWasPresent and not StopFetchService() then
@@ -219,6 +249,25 @@ begin
   if (Result = '') and JavaScriptServiceWasPresent and
      not StopJavaScriptService() then
     Result := 'Unable to stop the existing laghu-js-optimize service.';
+  if (Result = '') and AssetServiceWasPresent and not StopAssetService() then
+    Result := 'Unable to stop the existing laghu-asset-upload service.';
+end;
+
+procedure ConfigureAssetService();
+var
+  BinaryPath: String;
+begin
+  BinaryPath := GetShortName(ExpandConstant(AssetRuntime)) + ' --service ' +
+    GetShortName(ExpandConstant(AssetConfig));
+  if not AssetServiceExists() then begin
+    RunAndRequire(ExpandConstant('{sys}\sc.exe'),
+      'create laghu-asset-upload start= demand binPath= "' + BinaryPath + '"',
+      'Unable to create laghu-asset-upload service');
+    AssetServiceCreatedBySetup := True;
+  end else
+    RunAndRequire(ExpandConstant('{sys}\sc.exe'),
+      'config laghu-asset-upload start= demand binPath= "' + BinaryPath + '"',
+      'Unable to update laghu-asset-upload service');
 end;
 
 procedure ConfigureFetchService();
@@ -349,6 +398,14 @@ begin
   end else if JavaScriptServiceWasPresent then
     Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-js-optimize', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
+  if AssetServiceCreatedBySetup then begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-asset-upload', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-asset-upload', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end else if AssetServiceWasPresent then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-asset-upload', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
   RegDeleteKeyIncludingSubkeys(HKLM,
     'Software\Codevedas\Laghu\Offerings\{#OFFERING}');
   RegDeleteKeyIncludingSubkeys(HKLM,
@@ -392,6 +449,7 @@ begin
       ConfigureSharedService();
       ConfigureFetchService();
       ConfigureJavaScriptService();
+      ConfigureAssetService();
     except
       RollBackFailedInstall();
       ExitProcess(7);
@@ -430,6 +488,14 @@ begin
   end else if not InstallSucceeded and JavaScriptServiceWasPresent then
     Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-js-optimize', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
+  if not InstallSucceeded and AssetServiceCreatedBySetup then begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-asset-upload', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-asset-upload', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+  end else if not InstallSucceeded and AssetServiceWasPresent then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'start laghu-asset-upload', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -446,6 +512,9 @@ begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'stop laghu-js-optimize', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-js-optimize', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
+    StopAssetService();
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete laghu-asset-upload', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     DelTree(ExpandConstant('{commonpf}\Codevedas\Laghu'), True, True, True);
     DelTree(ExpandConstant('{commonappdata}\Laghu'), True, True, True);

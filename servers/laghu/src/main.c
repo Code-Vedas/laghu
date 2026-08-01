@@ -37,6 +37,8 @@ static void usage(FILE *stream) {
       "  --rum-store-retry-limit N --rum-store-sync-interval SECONDS\n"
       "  --rum-store-memory-limit BYTES --rum-store-pending-limit BYTES\n"
       "  --javascript-observation-config PATH\n"
+      "  --asset-offload-config PATH\n"
+      "  --asset-upload-queue PATH\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
       stream);

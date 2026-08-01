@@ -33,6 +33,9 @@ Start-Sleep -Milliseconds 500
 if (Get-Service laghu-libvips -ErrorAction SilentlyContinue) {
   throw "failed installation retained the shared service"
 }
+if (Get-Service laghu-asset-upload -ErrorAction SilentlyContinue) {
+  throw "failed installation retained the asset service"
+}
 if (Test-Path "$root\server\nginx.exe") {
   throw "failed installation retained matched server files"
 }

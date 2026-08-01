@@ -54,6 +54,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_posix.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_win32.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/catalog.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/asset.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html_head.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html_hints.c \
@@ -72,6 +73,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/servers/laghu/src/proxy.c \
     "${REPO_ROOT}"/servers/laghu/src/main.c \
     "${REPO_ROOT}"/servers/laghu/tests/proxy_test.c \
+    "${REPO_ROOT}"/workers/laghu-asset-upload/main.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/cache_fixture.c \
     "${REPO_ROOT}"/workers/laghu-libvips/main.c \
     "${REPO_ROOT}"/modules/mod_laghu/mod_laghu.c \

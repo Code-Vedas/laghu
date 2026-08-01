@@ -368,7 +368,6 @@ def main():
     javascript_worker = pathlib.Path(sys.argv[3]).resolve()
     warm_attempts = 200 if os.name == "nt" else 50
     origin_port = free_port()
-    proxy_port = free_port()
     origin = QuietThreadingHTTPServer(("127.0.0.1", origin_port), Origin)
     thread = threading.Thread(target=origin.serve_forever, daemon=True)
     thread.start()
@@ -538,6 +537,7 @@ def main():
         assert invalid.returncode == 1
         invalid_log = invalid.stderr.decode().strip()
         assert json.loads(invalid_log)["event"] == "startup_failure"
+        proxy_port = free_port()
         main_log = (root / "main-proxy.log").open("w+b")
         process = start_process(
             [
@@ -579,9 +579,18 @@ def main():
         try:
             for _ in range(warm_attempts):
                 try:
-                    first_head, first_body = request(proxy_port, "/index.html")
+                    first_head, first_body = request(
+                        proxy_port, "/index.html", timeout=0.25
+                    )
                     break
                 except OSError:
+                    if process.poll() is not None:
+                        main_log.flush()
+                        main_log.seek(0)
+                        raise AssertionError(
+                            "proxy failed startup: "
+                            + main_log.read().decode(errors="replace")
+                        )
                     time.sleep(0.05)
             else:
                 raise AssertionError("proxy did not start")

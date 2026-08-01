@@ -30,6 +30,8 @@ The standalone server accepts command-line options only.
 | `--font-fetch-queue PATH` | bounded path | unset | Enables the font-fetch queue; requires provider config. |
 | `--font-provider-config PATH` | valid provider file | unset | Enables providers; requires font queue. |
 | `--javascript-queue PATH` | bounded path | unset | Enables the SWC queue. |
+| `--asset-offload-config PATH` | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
+| `--asset-upload-queue PATH` | policy-matching path | unset | Selects the asynchronous asset spool. |
 | `--javascript-target QUERY` | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering. |
 | `--javascript-inline-limit N` | `0..65536` | `2048` | Caps JavaScript inlining. |
 | `--javascript-outline-threshold N` | `1024..1048576` | `8192` | Selects inline scripts for outlining. |

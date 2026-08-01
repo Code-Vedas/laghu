@@ -19,12 +19,19 @@ runuser -u laghu -- laghu-resource-fetch --serve "${font_queue}" "${cache}" "${f
 runuser -u laghu -- laghu-js-optimize --init /run/laghu/javascript.queue "${cache}"
 runuser -u laghu -- laghu-js-optimize --serve /run/laghu/javascript.queue "${cache}" &
 font_pid=$!
+asset_pid=""
+if [ -f /etc/laghu/asset-offload.conf ]; then
+  runuser -u laghu -- laghu-asset-upload --serve /etc/laghu/asset-offload.conf &
+  asset_pid=$!
+fi
 
 cleanup() {
   kill "${service_pid}" 2>/dev/null || true
   kill "${font_pid}" 2>/dev/null || true
+  [ "${asset_pid}" = "" ] || kill "${asset_pid}" 2>/dev/null || true
   wait "${service_pid}" 2>/dev/null || true
   wait "${font_pid}" 2>/dev/null || true
+  [ "${asset_pid}" = "" ] || wait "${asset_pid}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

@@ -23,6 +23,7 @@ add_library(mod_laghu MODULE
   "${LAGHU_SOURCE}/libs/laghu-image/src/css.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/runtime_win32.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/catalog.c"
+  "${LAGHU_SOURCE}/libs/laghu-runtime/src/asset.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/html.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/html_head.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/html_hints.c"

@@ -41,6 +41,10 @@ typedef struct {
   ngx_str_t javascript_observation_config;
   ngx_str_t javascript_defer_config;
   ngx_str_t image_cache;
+  ngx_str_t asset_offload_config;
+  ngx_str_t asset_upload_queue;
+  laghu_asset_config asset_offload;
+  bool asset_offload_loaded;
   bool font_providers_loaded;
   bool javascript_observations_loaded;
   bool javascript_defer_loaded;
@@ -1321,6 +1325,8 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
                                            : NULL;
   context->environment.javascript_defer =
       conf->javascript_defer_loaded ? &conf->javascript_defer : NULL;
+  context->environment.asset_offload =
+      conf->asset_offload_loaded ? &conf->asset_offload : NULL;
   context->environment.now = (uint64_t)ngx_time();
   return true;
 }
@@ -2704,6 +2710,22 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   }
   ngx_conf_merge_str_value(child_conf->image_cache, parent_conf->image_cache,
                            LAGHU_NGINX_DEFAULT_CACHE);
+  ngx_conf_merge_str_value(child_conf->asset_offload_config,
+                           parent_conf->asset_offload_config, "");
+  ngx_conf_merge_str_value(child_conf->asset_upload_queue,
+                           parent_conf->asset_upload_queue, "");
+  if (!child_conf->asset_offload_loaded && parent_conf->asset_offload_loaded) {
+    child_conf->asset_offload = parent_conf->asset_offload;
+    child_conf->asset_offload_loaded = true;
+  }
+  if (child_conf->asset_offload_loaded &&
+      (child_conf->asset_upload_queue.len == 0U ||
+       ngx_strcmp(child_conf->asset_upload_queue.data,
+                  child_conf->asset_offload.queue_path) != 0))
+    return "asset_upload_queue must match the loaded asset offload config";
+  if (!child_conf->asset_offload_loaded &&
+      child_conf->asset_upload_queue.len != 0U)
+    return "asset_upload_queue requires asset_offload_config";
   return NGX_CONF_OK;
 }
 
@@ -3065,6 +3087,28 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return "is duplicate";
     }
     location->worker_queue = values[2];
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "asset_offload_config") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (location->asset_offload_config.len != 0U ||
+        !laghu_asset_config_load((const char *)values[2].data,
+                                 &location->asset_offload, error,
+                                 sizeof(error))) {
+      ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                         "invalid asset offload config \"%V\": %s", &values[2],
+                         error);
+      return NGX_CONF_ERROR;
+    }
+    location->asset_offload_config = values[2];
+    location->asset_offload_loaded = true;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "asset_upload_queue") == 0) {
+    if (location->asset_upload_queue.len != 0U) return "is duplicate";
+    location->asset_upload_queue = values[2];
     return NGX_CONF_OK;
   }
 

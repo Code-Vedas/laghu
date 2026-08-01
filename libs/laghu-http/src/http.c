@@ -768,6 +768,17 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   transaction->image_filters = laghu_http_image_filters(&transaction->policy);
   transaction->html_plan = laghu_http_html_plan(&transaction->policy);
   transaction->accept_webp = laghu_http_accepts_webp(request);
+  {
+    char asset_source[LAGHU_RUNTIME_PATH_SIZE];
+    transaction->asset_allowed =
+        environment->asset_offload != NULL && response->has_declared_length &&
+        snprintf(asset_source, sizeof(asset_source), "%s%s",
+                 environment->asset_offload->policy.source_domain,
+                 transaction->path) > 0 &&
+        laghu_asset_source_allowed(&environment->asset_offload->policy,
+                                   asset_source, transaction->content_type,
+                                   response->declared_length);
+  }
   if (laghu_http_content_type_is(transaction->content_type, "text/html")) {
     if (!response->has_declared_length || response->declared_length == 0U ||
         response->declared_length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
@@ -783,7 +794,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
         response->declared_length > LAGHU_CSS_MAX_INPUT_BYTES ||
         ((transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) ==
              0U &&
-         !transaction->policy.allow_structural_rewrite)) {
+         !transaction->policy.allow_structural_rewrite &&
+         !transaction->asset_allowed)) {
       transaction->decision = LAGHU_DECISION_PASS;
       transaction->prepared = true;
       return laghu_http_add_status(result, LAGHU_DECISION_PASS);
@@ -794,11 +806,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
                                         "application/javascript") ||
              laghu_http_content_type_is(transaction->content_type,
                                         "text/javascript")) {
-    if (!response->has_declared_length || response->declared_length == 0U ||
-        response->declared_length > LAGHU_JAVASCRIPT_MAX_BYTES ||
-        (transaction->policy.filter_families &
-         LAGHU_FILTER_JAVASCRIPT_MINIFY) == 0U ||
-        environment->javascript_queue == NULL) {
+    if ((!response->has_declared_length || response->declared_length == 0U ||
+         response->declared_length > LAGHU_JAVASCRIPT_MAX_BYTES ||
+         (transaction->policy.filter_families &
+          LAGHU_FILTER_JAVASCRIPT_MINIFY) == 0U ||
+         environment->javascript_queue == NULL) &&
+        !transaction->asset_allowed) {
       transaction->decision = LAGHU_DECISION_PASS;
       transaction->prepared = true;
       return laghu_http_add_status(result, LAGHU_DECISION_PASS);
@@ -858,10 +871,11 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
         !laghu_http_backend_supports(
             transaction->content_type, transaction->image_filters,
             transaction->capability_mask, transaction->policy.allow_lossy)) {
-      if ((transaction->policy.filter_families &
-           (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) != 0U &&
-          laghu_mime_type_allowed(transaction->policy.cache_mime_types,
-                                  transaction->content_type)) {
+      if (transaction->asset_allowed ||
+          ((transaction->policy.filter_families &
+            (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) != 0U &&
+           laghu_mime_type_allowed(transaction->policy.cache_mime_types,
+                                   transaction->content_type))) {
         transaction->action = LAGHU_HTTP_ACTION_CAPTURE_RESOURCE;
         result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
         transaction->decision = LAGHU_DECISION_PASS;
@@ -881,11 +895,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
     }
     transaction->action = LAGHU_HTTP_ACTION_CAPTURE_IMAGE;
     result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
-  } else if ((transaction->policy.filter_families &
-              (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) !=
-                 0U &&
-             laghu_mime_type_allowed(transaction->policy.cache_mime_types,
-                                     transaction->content_type)) {
+  } else if (transaction->asset_allowed ||
+             ((transaction->policy.filter_families &
+               (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) !=
+                  0U &&
+              laghu_mime_type_allowed(transaction->policy.cache_mime_types,
+                                      transaction->content_type))) {
     if (!laghu_runtime_index_key(transaction->path, transaction->validator,
                                  transaction->policy_key, false,
                                  transaction->cache_key)) {
@@ -1486,6 +1501,31 @@ static bool laghu_http_finalize_resource(
           transaction->environment.cache_path, resource_index, payload_hash, "",
           transaction->content_type, "opaque", body, &entry))
     return true;
+  if (transaction->environment.asset_offload != NULL) {
+    const laghu_asset_config *config = transaction->environment.asset_offload;
+    laghu_asset_record asset = {0};
+    if (snprintf(asset.source_url, sizeof(asset.source_url), "%s%s",
+                 config->policy.source_domain, transaction->path) > 0 &&
+        strlen(asset.source_url) < sizeof(asset.source_url) &&
+        snprintf(asset.source_validator, sizeof(asset.source_validator), "%s",
+                 transaction->validator) >= 0 &&
+        snprintf(asset.content_hash, sizeof(asset.content_hash), "%s",
+                 payload_hash) > 0 &&
+        snprintf(asset.content_type, sizeof(asset.content_type), "%s",
+                 transaction->content_type) > 0 &&
+        snprintf(asset.policy_digest, sizeof(asset.policy_digest), "%s",
+                 config->digest) > 0 &&
+        snprintf(asset.provider_digest, sizeof(asset.provider_digest), "%s",
+                 config->digest) > 0 &&
+        laghu_asset_object_key(&config->policy, asset.source_url,
+                               asset.content_hash, asset.object_key)) {
+      asset.state = LAGHU_ASSET_PENDING;
+      asset.body_length = body.length;
+      asset.updated_at = transaction->environment.now;
+      (void)laghu_asset_catalog_publish(config->catalog_path, &asset);
+      (void)laghu_asset_job_publish(config, &asset, body);
+    }
+  }
   result->job_published = true;
   memcpy(result->cache_key, payload_hash, sizeof(result->cache_key));
   return true;
@@ -1523,6 +1563,30 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
        captured_body.length != transaction->response->declared_length)) {
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
+  if (transaction->asset_allowed &&
+      transaction->action != LAGHU_HTTP_ACTION_CAPTURE_RESOURCE) {
+    const laghu_asset_config *config = transaction->environment.asset_offload;
+    laghu_asset_record asset = {0};
+    if (laghu_sha256_hex(captured_body, asset.content_hash) &&
+        snprintf(asset.source_url, sizeof(asset.source_url), "%s%s",
+                 config->policy.source_domain, transaction->path) > 0 &&
+        snprintf(asset.source_validator, sizeof(asset.source_validator), "%s",
+                 transaction->validator) >= 0 &&
+        snprintf(asset.content_type, sizeof(asset.content_type), "%s",
+                 transaction->content_type) > 0 &&
+        snprintf(asset.policy_digest, sizeof(asset.policy_digest), "%s",
+                 config->digest) > 0 &&
+        snprintf(asset.provider_digest, sizeof(asset.provider_digest), "%s",
+                 config->digest) > 0 &&
+        laghu_asset_object_key(&config->policy, asset.source_url,
+                               asset.content_hash, asset.object_key)) {
+      asset.state = LAGHU_ASSET_PENDING;
+      asset.body_length = captured_body.length;
+      asset.updated_at = transaction->environment.now;
+      (void)laghu_asset_catalog_publish(config->catalog_path, &asset);
+      (void)laghu_asset_job_publish(config, &asset, captured_body);
+    }
+  }
   if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS) {
     ok = laghu_http_finalize_css(transaction, captured_body, result);
   } else if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
@@ -1540,6 +1604,22 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
     result->selected = captured_body;
     result->action = transaction->action;
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  }
+  if (transaction->environment.asset_offload != NULL &&
+      (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
+       transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
+       transaction->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT)) {
+    unsigned char *rewritten = NULL;
+    size_t rewritten_length = 0U;
+    if (laghu_asset_rewrite_document_at(transaction->environment.asset_offload,
+                                        result->selected, transaction->path,
+                                        &rewritten, &rewritten_length) &&
+        rewritten != NULL) {
+      free(result->owned_body);
+      result->owned_body = rewritten;
+      result->selected = (laghu_buffer){rewritten, rewritten_length};
+      (void)laghu_http_add_length(result, rewritten_length);
+    }
   }
   return laghu_http_add_status(result, LAGHU_DECISION_PASS);
 }

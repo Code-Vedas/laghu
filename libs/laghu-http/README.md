@@ -6,6 +6,6 @@ Transport adapters retain configuration parsing, HTTP framing, response capture,
 
 The API has two phases. `laghu_http_transaction_prepare` decides whether a response bypasses processing, requires bounded capture, or can use a warm cached body. `laghu_http_transaction_finalize` accepts a complete captured body and returns an atomic body-and-header plan. Inputs are borrowed; result-owned storage is released with `laghu_http_transaction_result_release`.
 
-ABI version 1 accepts an optional explicit strong source validator for server-native validators that are not HTTP headers. It opens and refreshes the configured worker queue, rejects missing or stale heartbeats, derives codec capabilities from the queue header, parses image client hints, and carries catalog-selected target geometry into image jobs.
+ABI version 2 adds the optional shared asset-offload policy to the explicit strong-validator and worker contracts. It opens and refreshes configured queues, rejects missing or stale image-worker heartbeats, derives codec capabilities, and keeps CDN provider I/O in the asset worker.
 
 `ngx-laghu` and `mod-laghu` normalize native request and response metadata into this contract. They copy selected bodies and header values into server-owned pools before releasing results. Beacon request ingestion remains native because it mutates learning metadata rather than transforming a response.

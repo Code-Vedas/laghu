@@ -49,6 +49,8 @@ typedef struct {
   const char *javascript_observation_config;
   const char *javascript_defer_config;
   const char *image_cache;
+  const char *asset_offload_config;
+  const char *asset_upload_queue;
   const char *rum_store;
   const char *rum_snapshot;
   const char *rum_client_library;
@@ -66,9 +68,11 @@ typedef struct {
   laghu_font_provider_set font_providers;
   laghu_javascript_observation_set javascript_observations;
   laghu_javascript_defer_set javascript_defer;
+  laghu_asset_config asset_offload;
   bool font_providers_loaded;
   bool javascript_observations_loaded;
   bool javascript_defer_loaded;
+  bool asset_offload_loaded;
 } laghu_apache_config;
 
 typedef struct {
@@ -287,6 +291,19 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   laghu_config_merge(&merged->core, &parent->core, &child->core);
   merged->worker_queue =
       child->worker_queue != NULL ? child->worker_queue : parent->worker_queue;
+  merged->asset_offload_config = child->asset_offload_config != NULL
+                                     ? child->asset_offload_config
+                                     : parent->asset_offload_config;
+  merged->asset_upload_queue = child->asset_upload_queue != NULL
+                                   ? child->asset_upload_queue
+                                   : parent->asset_upload_queue;
+  if (child->asset_offload_loaded) {
+    merged->asset_offload = child->asset_offload;
+    merged->asset_offload_loaded = true;
+  } else if (parent->asset_offload_loaded) {
+    merged->asset_offload = parent->asset_offload;
+    merged->asset_offload_loaded = true;
+  }
   merged->image_cache =
       child->image_cache != NULL ? child->image_cache : parent->image_cache;
   merged->font_fetch_queue = child->font_fetch_queue != NULL
@@ -643,6 +660,23 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
       return "Laghu WorkerQueue may appear only once in this scope";
     }
     config->worker_queue = apr_pstrdup(command->pool, parameter);
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "AssetOffloadConfig") == 0) {
+    char error[256] = "configuration appears more than once";
+    if (config->asset_offload_config != NULL ||
+        !laghu_asset_config_load(parameter, &config->asset_offload, error,
+                                 sizeof(error)))
+      return apr_psprintf(command->pool, "invalid AssetOffloadConfig: %s",
+                          error);
+    config->asset_offload_config = apr_pstrdup(command->pool, parameter);
+    config->asset_offload_loaded = true;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "AssetUploadQueue") == 0) {
+    if (config->asset_upload_queue != NULL)
+      return "Laghu AssetUploadQueue may appear only once in this scope";
+    config->asset_upload_queue = apr_pstrdup(command->pool, parameter);
     return NULL;
   }
   if (ap_cstr_casecmp(name, "FontFetchQueue") == 0) {
@@ -1075,6 +1109,16 @@ static bool laghu_apache_normalize(request_rec *request,
       context->config->javascript_defer_loaded
           ? &context->config->javascript_defer
           : NULL;
+  context->environment.asset_offload = context->config->asset_offload_loaded
+                                           ? &context->config->asset_offload
+                                           : NULL;
+  if ((context->config->asset_offload_loaded &&
+       (context->config->asset_upload_queue == NULL ||
+        strcmp(context->config->asset_upload_queue,
+               context->config->asset_offload.queue_path) != 0)) ||
+      (!context->config->asset_offload_loaded &&
+       context->config->asset_upload_queue != NULL))
+    return false;
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;
 }

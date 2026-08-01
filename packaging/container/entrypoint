@@ -13,11 +13,13 @@ FONT_PROVIDER_CONFIG=${LAGHU_FONT_PROVIDER_CONFIG:-/etc/laghu/font-providers.con
 CACHE_PATH=${LAGHU_IMAGE_CACHE:-/var/cache/laghu/images}
 OPTIMIZER_PID=""
 FONT_FETCH_PID=""
+ASSET_PID=""
 NGINX_PID=""
 
 terminate() {
   [ "${NGINX_PID}" = "" ] || kill -TERM "${NGINX_PID}" 2>/dev/null || true
   [ "${FONT_FETCH_PID}" = "" ] || kill -TERM "${FONT_FETCH_PID}" 2>/dev/null || true
+  [ "${ASSET_PID}" = "" ] || kill -TERM "${ASSET_PID}" 2>/dev/null || true
   [ "${OPTIMIZER_PID}" = "" ] || kill -TERM "${OPTIMIZER_PID}" 2>/dev/null || true
 }
 trap terminate EXIT HUP INT QUIT TERM
@@ -30,11 +32,16 @@ laghu-resource-fetch --serve "${FONT_QUEUE_PATH}" "${FONT_CACHE_PATH}" "${FONT_P
 laghu-js-optimize --init /run/laghu/javascript.queue "${CACHE_PATH}"
 laghu-js-optimize --serve /run/laghu/javascript.queue "${CACHE_PATH}" &
 FONT_FETCH_PID=$!
+if [ -f /etc/laghu/asset-offload.conf ]; then
+  laghu-asset-upload --serve /etc/laghu/asset-offload.conf &
+  ASSET_PID=$!
+fi
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 
 while kill -0 "${OPTIMIZER_PID}" 2>/dev/null &&
       kill -0 "${FONT_FETCH_PID}" 2>/dev/null &&
+      { [ "${ASSET_PID}" = "" ] || kill -0 "${ASSET_PID}" 2>/dev/null; } &&
       kill -0 "${NGINX_PID}" 2>/dev/null; do
   sleep 1
 done
@@ -46,5 +53,7 @@ elif ! kill -0 "${OPTIMIZER_PID}" 2>/dev/null; then
   wait "${OPTIMIZER_PID}" || status=$?
 elif ! kill -0 "${FONT_FETCH_PID}" 2>/dev/null; then
   wait "${FONT_FETCH_PID}" || status=$?
+elif [ "${ASSET_PID}" != "" ] && ! kill -0 "${ASSET_PID}" 2>/dev/null; then
+  wait "${ASSET_PID}" || status=$?
 fi
 exit "${status}"

@@ -162,7 +162,7 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 - [x] `extend_cache_css`: CSS resource extension using the shared resource policy.
 - [x] `extend_cache_scripts`: JavaScript resource extension using the shared resource policy.
 - [x] `extend_cache_media`: explicitly MIME-allowlisted opaque images, PDFs, fonts, audio, video, and future binary resources.
-- [ ] `rewrite_domains`: resource domain mapping and rewriting.
+- [x] `rewrite_domains`: resource domain mapping and rewriting.
 
 ### 3.7 Configuration and Operations Parity
 

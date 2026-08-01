@@ -390,6 +390,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool javascript_defer_suggestions_seen = false;
   bool javascript_observation_config_seen = false;
   bool javascript_defer_config_seen = false;
+  bool asset_offload_seen = false, asset_queue_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
@@ -534,6 +535,25 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                            "invalid or duplicate --javascript-queue");
       options->javascript_queue_enabled = true;
       javascript_queue_seen = true;
+    } else if (strcmp(name, "--asset-offload-config") == 0) {
+      NEED_VALUE();
+      if (asset_offload_seen ||
+          !proxy_copy(options->asset_offload_config_path,
+                      sizeof(options->asset_offload_config_path), value) ||
+          !laghu_asset_config_load(value, &options->asset_offload, error,
+                                   error_size))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --asset-offload-config");
+      options->asset_offload_loaded = true;
+      asset_offload_seen = true;
+    } else if (strcmp(name, "--asset-upload-queue") == 0) {
+      NEED_VALUE();
+      if (asset_queue_seen ||
+          !proxy_copy(options->asset_upload_queue_path,
+                      sizeof(options->asset_upload_queue_path), value))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --asset-upload-queue");
+      asset_queue_seen = true;
     } else if (strcmp(name, "--javascript-target") == 0) {
       char normalized[LAGHU_JAVASCRIPT_TARGET_SIZE];
       NEED_VALUE();
@@ -744,6 +764,14 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     }
 #undef NEED_VALUE
   }
+  if (asset_queue_seen != asset_offload_seen)
+    return proxy_error(
+        error, error_size,
+        "asset offload config and upload queue are required together");
+  if (asset_offload_seen && strcmp(options->asset_offload.queue_path,
+                                   options->asset_upload_queue_path) != 0)
+    return proxy_error(error, error_size,
+                       "asset upload queue must match the asset configuration");
   if (!listen_seen || !origin_seen || !cache_seen || !queue_seen)
     return proxy_error(
         error, error_size,
@@ -1823,6 +1851,16 @@ static void proxy_log_event(proxy_queue *queue, const char *event,
   proxy_log_line(queue, line);
 }
 
+static void proxy_log_startup_failure(proxy_queue *queue, const char *failure) {
+  char timestamp[32], line[512];
+  proxy_timestamp(timestamp);
+  (void)snprintf(line, sizeof(line),
+                 "{\"timestamp\":\"%s\",\"event\":\"startup_failure\","
+                 "\"state\":\"stopped\",\"failure\":\"%s\"}",
+                 timestamp, failure);
+  proxy_log_line(queue, line);
+}
+
 static void proxy_log_readiness(proxy_queue *queue, bool cache_ready,
                                 bool optimizer_ready) {
   bool changed;
@@ -2220,6 +2258,8 @@ static void proxy_handle(const proxy_connection *connection,
         .struct_size = sizeof(environment),
         .config = options->config,
         .cache_path = options->cache_path,
+        .asset_offload =
+            options->asset_offload_loaded ? &options->asset_offload : NULL,
         .rum = worker->queue->rum,
         .worker_queue_path = options->worker_queue_path,
         .queue = &worker->runtime_queue,
@@ -2375,6 +2415,8 @@ static void proxy_handle(const proxy_connection *connection,
       .struct_size = sizeof(environment),
       .config = options->config,
       .cache_path = options->cache_path,
+      .asset_offload =
+          options->asset_offload_loaded ? &options->asset_offload : NULL,
       .rum = worker->queue->rum,
       .worker_queue_path = options->worker_queue_path,
       .queue = &worker->runtime_queue,
@@ -2939,23 +2981,26 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     }
     if (queue.rum == NULL) goto cleanup;
   }
-  if (!proxy_cache_probe(options->cache_path) ||
-      !proxy_queue_path_valid(options->worker_queue_path) ||
+  if (!proxy_cache_probe(options->cache_path)) {
+    proxy_log_startup_failure(&queue, "cache_unavailable");
+    goto cleanup;
+  }
+  if (!proxy_queue_path_valid(options->worker_queue_path) ||
       (options->font_providers_loaded &&
        !proxy_queue_path_valid(options->font_fetch_queue_path)) ||
       (options->javascript_queue_enabled &&
        !proxy_queue_path_valid(options->javascript_queue_path))) {
-    proxy_log_event(&queue, "startup_failure", "stopped");
+    proxy_log_startup_failure(&queue, "queue_unavailable");
     goto cleanup;
   }
   if (options->origin_tls &&
       (queue.tls_context = proxy_tls_context(options)) == NULL) {
-    proxy_log_event(&queue, "startup_failure", "stopped");
+    proxy_log_startup_failure(&queue, "origin_tls");
     goto cleanup;
   }
   listener = proxy_listen(options->listen_host, options->listen_port);
   if (listener == LAGHU_INVALID_SOCKET) {
-    proxy_log_event(&queue, "startup_failure", "stopped");
+    proxy_log_startup_failure(&queue, "listen");
     goto cleanup;
   }
   proxy_stop_requests = 0;

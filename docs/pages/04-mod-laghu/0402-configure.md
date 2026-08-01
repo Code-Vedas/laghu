@@ -31,6 +31,8 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu JavaScriptInlineLimit BYTES` | inherited | `0..65536` | `2048` | Caps external JavaScript inlining. |
 | `Laghu JavaScriptOutlineThreshold BYTES` | inherited | `1024..1048576` | `8192` | Selects inline JavaScript for outlining. |
 | `Laghu WorkerQueue PATH` | inherited | bounded path | `/run/laghu/jobs.queue` | Selects the image queue. |
+| `Laghu AssetOffloadConfig PATH` | inherited | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
+| `Laghu AssetUploadQueue PATH` | inherited | policy-matching path | unset | Selects the asynchronous asset spool. |
 | `Laghu FontFetchQueue PATH` | inherited | bounded path | `/run/laghu/fonts.queue` | Selects the font-fetch queue. |
 | `Laghu FontProviderConfig PATH` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `Laghu JavaScriptQueue PATH` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |

@@ -93,6 +93,19 @@ function Require-FetchService([bool] $Present) {
   }
 }
 
+function Require-AssetService([bool] $Present) {
+  $service = Get-Service laghu-asset-upload -ErrorAction SilentlyContinue
+  if ($Present -and $null -eq $service) {
+    throw "laghu-asset-upload service is missing"
+  }
+  if ($Present -and $service.StartType -ne "Manual") {
+    throw "laghu-asset-upload must remain demand-start until configured"
+  }
+  if (-not $Present -and $null -ne $service) {
+    throw "laghu-asset-upload service was not removed"
+  }
+}
+
 foreach ($offering in @("ngx-laghu", "mod-laghu")) {
   Remove-Item "HKLM:\Software\Codevedas\Laghu\Offerings\$offering" -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -104,6 +117,7 @@ try {
   Invoke-Installer $nginxInstallerPath $nginxRoot
   Require-Service $true
   Require-FetchService $true
+  Require-AssetService $true
   Write-Output "validate installed NGINX"
   & "$nginxRoot\server\nginx.exe" -t -p "$nginxRoot\server"
   if ($LASTEXITCODE -ne 0) { throw "installed NGINX validation failed" }
@@ -112,6 +126,7 @@ try {
   Invoke-Installer $nginxInstallerPath $nginxRoot
   Require-Service $true
   Require-FetchService $true
+  Require-AssetService $true
   Write-Output "upgrade ngx-laghu to 0.2.0"
   Invoke-Installer $nginxNewerInstallerPath $nginxRoot
   Write-Output "reject ngx-laghu downgrade"
@@ -123,6 +138,7 @@ try {
   Invoke-Installer $apacheInstallerPath $apacheRoot
   Require-Service $true
   Require-FetchService $true
+  Require-AssetService $true
   Write-Output "validate installed Apache"
   & "$apacheRoot\server\bin\httpd.exe" -t -d "$apacheRoot\server"
   if ($LASTEXITCODE -ne 0) { throw "installed Apache validation failed" }
@@ -135,10 +151,12 @@ try {
   Invoke-Uninstaller $nginxRoot
   Require-Service $true
   Require-FetchService $true
+  Require-AssetService $true
   Write-Output "uninstall mod-laghu and remove shared service"
   Invoke-Uninstaller $apacheRoot
   Require-Service $false
   Require-FetchService $false
+  Require-AssetService $false
 } finally {
   foreach ($root in @($nginxRoot, $apacheRoot)) {
     Get-ChildItem $root -Filter "unins*.exe" -ErrorAction SilentlyContinue |
@@ -158,6 +176,8 @@ try {
   & sc.exe delete laghu-libvips 2>$null | Out-Null
   & sc.exe stop laghu-resource-fetch 2>$null | Out-Null
   & sc.exe delete laghu-resource-fetch 2>$null | Out-Null
+  & sc.exe stop laghu-asset-upload 2>$null | Out-Null
+  & sc.exe delete laghu-asset-upload 2>$null | Out-Null
 }
 
 Write-Output "Laghu Windows installer lifecycle passed"

@@ -63,7 +63,7 @@ function Invoke-Build {
   if ($LASTEXITCODE -ne 0) { throw "Windows CMake configuration failed" }
   & cmake --build $BuildDirectory --config Debug --parallel
   if ($LASTEXITCODE -ne 0) { throw "Windows Debug build failed" }
-  & cmake --build $BuildDirectory --config Release --target laghu-libvips laghu-resource-fetch laghu-js-optimize --parallel
+  & cmake --build $BuildDirectory --config Release --target laghu-libvips laghu-resource-fetch laghu-asset-upload laghu-js-optimize --parallel
   if ($LASTEXITCODE -ne 0) { throw "Windows Release worker build failed" }
   & "$private/build-matched-servers.ps1" -Server all -Architecture $Architecture
   & "$private/stage-runtime.ps1" -BuildDirectory $BuildDirectory `
@@ -88,6 +88,8 @@ function Invoke-Test {
   $optimizer = "$BuildDirectory/workers/laghu-libvips/Debug/laghu-libvips.exe"
   $vips = "$vcpkg/installed/$triplet/tools/libvips/vips.exe"
   & "$private/test-worker-service.ps1" -Optimizer $optimizer -Vips $vips
+  & "$private/test-asset-service.ps1" `
+    -Worker "$BuildDirectory/workers/laghu-asset-upload/Debug/laghu-asset-upload.exe"
   & "$private/test-matched-servers.ps1" -NginxRoot $nginx -ApacheRoot $apache `
     -Optimizer $optimizer -Vips $vips
 }
