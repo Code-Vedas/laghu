@@ -3,6 +3,7 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +17,76 @@ typedef struct {
   char preview_data_uri[4096U];
   char *inline_uri;
 } laghu_runtime_resource_storage;
+
+static bool laghu_runtime_replace_cached_urls(
+    const char *cache_path, const char *policy_key,
+    laghu_image_discovery_result *discovery, laghu_buffer input,
+    unsigned char **output, size_t *output_length) {
+  unsigned char *current;
+  size_t current_length;
+  size_t index;
+  if (output == NULL || output_length == NULL ||
+      (input.data == NULL && input.length != 0U))
+    return false;
+  current = malloc(input.length + 1U);
+  if (current == NULL) return false;
+  memcpy(current, input.data, input.length);
+  current_length = input.length;
+  for (index = 0U; index < discovery->resource_count; ++index) {
+    char resource_index[LAGHU_RUNTIME_KEY_SIZE];
+    laghu_runtime_cache_entry entry;
+    char replacement[sizeof("/.laghu/media/") + LAGHU_SHA256_HEX_SIZE];
+    size_t source_length = strlen(discovery->resources[index].source_url);
+    size_t replacement_length;
+    size_t position = 0U;
+    size_t source_position = 0U;
+    size_t matches = 0U;
+    unsigned char *next;
+    if (source_length == 0U ||
+        !laghu_runtime_index_key(discovery->resources[index].source_url, "",
+                                 policy_key, false, resource_index) ||
+        !laghu_runtime_cache_lookup(cache_path, resource_index, "", &entry))
+      continue;
+    (void)snprintf(replacement, sizeof(replacement), "/.laghu/media/%s",
+                   entry.variant_key);
+    replacement_length = strlen(replacement);
+    while (source_position + source_length <= current_length) {
+      if (memcmp(current + source_position,
+                 discovery->resources[index].source_url, source_length) == 0) {
+        ++matches;
+        source_position += source_length;
+      } else {
+        ++source_position;
+      }
+    }
+    if (matches == 0U) continue;
+    next = malloc(current_length +
+                  matches * (replacement_length - source_length) + 1U);
+    if (next == NULL) {
+      free(current);
+      return false;
+    }
+    source_position = 0U;
+    while (source_position < current_length) {
+      if (source_position + source_length <= current_length &&
+          memcmp(current + source_position,
+                 discovery->resources[index].source_url, source_length) == 0) {
+        memcpy(next + position, replacement, replacement_length);
+        position += replacement_length;
+        source_position += source_length;
+      } else {
+        next[position++] = current[source_position++];
+      }
+    }
+    next[position] = '\0';
+    free(current);
+    current = next;
+    current_length = position;
+  }
+  *output = current;
+  *output_length = current_length;
+  return true;
+}
 
 static bool laghu_runtime_variant_seen(
     const laghu_runtime_resource_storage *storage, size_t count,
@@ -351,6 +422,26 @@ bool laghu_runtime_rewrite_html(
         rewritten.applied_filters = 1U;
         memcpy(rewritten.dependency_key, css_markup.dependency_key,
                sizeof(rewritten.dependency_key));
+      }
+    }
+    {
+      unsigned char *cached_urls = NULL;
+      size_t cached_length = 0U;
+      if (!laghu_runtime_replace_cached_urls(
+              cache_path, policy_key, discovery,
+              (laghu_buffer){rewritten.data, rewritten.length}, &cached_urls,
+              &cached_length)) {
+        laghu_image_markup_result_release(&rewritten);
+        goto finished;
+      }
+      if (cached_length != rewritten.length ||
+          memcmp(cached_urls, rewritten.data, cached_length) != 0) {
+        laghu_image_markup_result_release(&rewritten);
+        rewritten.data = cached_urls;
+        rewritten.length = cached_length;
+        rewritten.applied_filters |= LAGHU_IMAGE_REWRITE_IMAGES;
+      } else {
+        free(cached_urls);
       }
     }
     static const unsigned char beacon[] =

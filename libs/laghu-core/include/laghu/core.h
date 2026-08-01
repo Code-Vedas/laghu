@@ -17,6 +17,7 @@ extern "C" {
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
+#define LAGHU_MIME_ALLOWLIST_SIZE 2048U
 #define LAGHU_VARIANT_KEY_VERSION 7U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
@@ -83,7 +84,8 @@ typedef enum {
   LAGHU_FILTER_RESOURCE_INLINE = UINT32_C(1) << 12,
   LAGHU_FILTER_CRITICAL_CSS = UINT32_C(1) << 13,
   LAGHU_FILTER_JAVASCRIPT_DEFER = UINT32_C(1) << 14,
-  LAGHU_FILTER_IMMUTABLE_CACHE = UINT32_C(1) << 15
+  LAGHU_FILTER_IMMUTABLE_CACHE = UINT32_C(1) << 15,
+  LAGHU_FILTER_CACHE_MEDIA = UINT32_C(1) << 16
 } laghu_filter_family;
 
 typedef struct {
@@ -102,6 +104,7 @@ typedef struct {
   unsigned int css_outline_threshold;
   unsigned int javascript_inline_limit;
   unsigned int javascript_outline_threshold;
+  char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
 } laghu_policy;
 
 typedef struct {
@@ -123,6 +126,7 @@ typedef struct {
   unsigned int css_outline_threshold;
   unsigned int javascript_inline_limit;
   unsigned int javascript_outline_threshold;
+  char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
 } laghu_config;
 
 typedef struct {
@@ -184,6 +188,7 @@ bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
                                  laghu_policy *policy);
 bool laghu_resolve_config_policy(const laghu_config *config,
                                  laghu_policy *policy);
+bool laghu_mime_type_allowed(const char *allowlist, const char *content_type);
 
 laghu_decision laghu_decide(const laghu_config *config,
                             const laghu_response *response);

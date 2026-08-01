@@ -16,6 +16,7 @@ The standalone server accepts command-line options only.
 | `--origin http[s]://HOST[:PORT]` | one origin without path/query/credentials | required | Selects the upstream origin. |
 | `--cache PATH` | bounded path | required | Selects catalogs and immutable assets. |
 | `--worker-queue PATH` | bounded path | required | Selects the image queue. |
+| `--cache-mime-types LIST` | comma-separated MIME types | empty | Explicitly enables opaque media cache extension for matching response types. |
 | `--preset NAME` | supported preset | `balanced` | Selects policy; conflicts with `--rewrite-level`. |
 | `--rewrite-level NAME` | supported rewrite level | unset | Selects policy; conflicts with `--preset`. |
 | `--allow-api` | flag | off | Allows otherwise excluded API/GraphQL paths. |

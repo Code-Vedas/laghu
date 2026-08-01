@@ -593,6 +593,34 @@ static void test_validator_hints_and_worker_liveness(void) {
   (void)remove(test_queue_path);
 }
 
+static void test_mime_driven_opaque_resource_cache(void) {
+  static const unsigned char pdf[] = "%PDF-opaque";
+  const laghu_http_header headers[] = {
+      {VIEW("Content-Type"), VIEW("application/pdf")}};
+  laghu_http_environment environment = test_environment(test_cache_path, NULL);
+  laghu_http_request request =
+      test_request(NULL, 0U, VIEW("/manual.pdf?download=1"));
+  laghu_http_response response = test_response(headers, 1U, sizeof(pdf) - 1U);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result result;
+  laghu_runtime_cache_entry entry;
+  char key[LAGHU_RUNTIME_KEY_SIZE];
+  (void)snprintf(environment.config.cache_mime_types,
+                 sizeof(environment.config.cache_mime_types),
+                 "application/pdf, font/woff2, video/mp4");
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(result.action == LAGHU_HTTP_ACTION_CAPTURE_RESOURCE);
+  laghu_http_transaction_result_release(&result);
+  CHECK(laghu_http_transaction_finalize(
+      &transaction, (laghu_buffer){pdf, sizeof(pdf) - 1U}, &result));
+  CHECK(result.job_published);
+  CHECK(laghu_sha256_hex((laghu_buffer){pdf, sizeof(pdf) - 1U}, key));
+  CHECK(laghu_runtime_cache_lookup_variant(test_cache_path, key, &entry));
+  laghu_http_transaction_result_release(&result);
+}
+
 int main(void) {
   laghu_rum_options rum_options;
   initialize_test_paths();
@@ -607,6 +635,7 @@ int main(void) {
   test_javascript_cold_publication();
   test_html_cold_warm_headers();
   test_validator_hints_and_worker_liveness();
+  test_mime_driven_opaque_resource_cache();
   laghu_rum_engine_destroy(test_rum);
   puts("laghu-http tests passed");
   return 0;

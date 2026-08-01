@@ -591,6 +591,14 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
             "invalid or duplicate --javascript-outline-threshold");
       options->config.javascript_outline_threshold = (unsigned int)threshold;
       javascript_outline_threshold_seen = true;
+    } else if (strcmp(name, "--cache-mime-types") == 0) {
+      NEED_VALUE();
+      if (options->config.cache_mime_types[0] != '\0' ||
+          strlen(value) >= sizeof(options->config.cache_mime_types))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --cache-mime-types");
+      (void)snprintf(options->config.cache_mime_types,
+                     sizeof(options->config.cache_mime_types), "%s", value);
     } else if (strcmp(name, "--preset") == 0) {
       laghu_preset preset;
       NEED_VALUE();

@@ -158,11 +158,10 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 
 ### 3.6 Caching and URL Filters
 
-- [ ] `extend_cache`: content-hashed URLs with safe long-lived browser caching.
-- [ ] `extend_cache_css`: CSS-specific cache extension.
-- [ ] `extend_cache_scripts`: script-specific cache extension.
-- [ ] `extend_cache_images`: image-specific cache extension.
-- [ ] `extend_cache_pdfs`: PDF-specific cache extension.
+- [x] `extend_cache`: shared content-hashed URL extension with safe long-lived browser caching.
+- [x] `extend_cache_css`: CSS resource extension using the shared resource policy.
+- [x] `extend_cache_scripts`: JavaScript resource extension using the shared resource policy.
+- [x] `extend_cache_media`: explicitly MIME-allowlisted opaque images, PDFs, fonts, audio, video, and future binary resources.
 - [ ] `rewrite_domains`: resource domain mapping and rewriting.
 
 ### 3.7 Configuration and Operations Parity

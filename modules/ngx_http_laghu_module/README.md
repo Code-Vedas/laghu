@@ -9,6 +9,7 @@ It:
 - inherits configuration through NGINX's normal location hierarchy
 - delegates response eligibility, policy and backend resolution, cache lookup, transformation orchestration, body selection, and header planning to `laghu-http`
 - serves an already-published image variant on a strong-validator cache hit
+- accepts inherited `laghu cache_mime_types` for explicit opaque-media MIME allowlists
 - captures bounded cold image responses while streaming the original and uses a try-only shared queue publication
 - never links libvips or invokes a codec command
 

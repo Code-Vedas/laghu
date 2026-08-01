@@ -2,6 +2,8 @@
 
 Laghu is a free, open-source server-level content optimizer with native NGINX and Apache HTTP Server modules and a standalone reverse proxy. All three surfaces use the same policy, parsers, catalogs, workers, cache formats, and fail-open rules.
 
+Cache extension is MIME-driven: `extend_cache_media` only handles administrator-allowlisted opaque media such as images, PDFs, fonts, audio, and video. CSS and JavaScript remain separate parser-aware resource filters; unsafe, private, uncached, oversized, or mismatched resources remain unchanged.
+
 The image path uses an out-of-process libvips worker: a cold request serves the original while the adapter publishes a try-only job, and a later request can use a validated, strictly smaller cached variant. Codec work never runs inside NGINX or Apache.
 
 ## Product Shape

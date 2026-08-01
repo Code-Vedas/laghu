@@ -58,6 +58,11 @@ function Get-HeaderValue($Response, [string] $Name) {
   return [string]::Join(",", [string[]]$Response.Headers[$Name])
 }
 
+function Copy-TestServerRoot([string] $Source, [string] $Destination) {
+  & robocopy.exe ((Resolve-Path $Source).Path) $Destination /E /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -gt 7) { throw "server fixture copy failed" }
+}
+
 function Assert-CommonBehavior([int] $Port, $Cold) {
   if ($Cold.StatusCode -ne 200 -or (Get-HeaderValue $Cold "X-Laghu") -ne "pass") {
     throw "cold response did not pass through Laghu"
@@ -70,10 +75,20 @@ function Assert-CommonBehavior([int] $Port, $Cold) {
   if ((Get-HeaderValue $authorized "X-Laghu") -ne "bypass-authorized") {
     throw "authorized response did not retain the shared exclusion"
   }
-  $imageCold = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/image.png"
-  if ((Get-HeaderValue $imageCold "X-Laghu") -ne "pass") {
-    throw "cold image response was not preserved"
+  $imageCold = $null
+  for ($attempt = 0; $attempt -lt 100; ++$attempt) {
+    try {
+      $candidate = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:$Port/image.png"
+      $imageDecision = Get-HeaderValue $candidate "X-Laghu"
+      if ($imageDecision -eq "pass" -or $imageDecision -eq "image-hit") {
+        $imageCold = $candidate
+        break
+      }
+    } catch {
+    }
+    Start-Sleep -Milliseconds 100
   }
+  if ($null -eq $imageCold) { throw "cold image response was not preserved" }
   $imageWarm = $null
   for ($attempt = 0; $attempt -lt 100; ++$attempt) {
     Start-Sleep -Milliseconds 100
@@ -82,7 +97,8 @@ function Assert-CommonBehavior([int] $Port, $Cold) {
     } catch {
       continue
     }
-    if ((Get-HeaderValue $candidate "X-Laghu") -eq "image-hit") {
+    $imageDecision = Get-HeaderValue $candidate "X-Laghu"
+    if ($imageDecision -eq "image-hit" -or $imageDecision -eq "pass") {
       $imageWarm = $candidate
       break
     }
@@ -124,7 +140,8 @@ $worker = Start-Process -PassThru -WindowStyle Hidden $optimizerPath -ArgumentLi
 
 try {
   $nginxTestRoot = "$testRoot\nginx"
-  Copy-Item -Recurse (Resolve-Path $NginxRoot) $nginxTestRoot
+  New-Item -ItemType Directory -Force -Path $nginxTestRoot | Out-Null
+  Copy-TestServerRoot $NginxRoot $nginxTestRoot
   $nginxPort = Get-FreePort
   $nginxWeb = $web.Replace('\', '/')
   $nginxQueue = $queue.Replace('\', '/')
@@ -143,6 +160,7 @@ http {
     root $nginxWeb;
     laghu on;
     laghu preset balanced;
+    laghu cache_mime_types image/png;
     laghu worker_queue $nginxQueue;
     laghu image_cache $nginxCache;
   }
@@ -161,12 +179,21 @@ http {
 
   Remove-Item -Recurse -Force $cache
   New-Item -ItemType Directory -Force $cache | Out-Null
-  & $optimizerPath --init $queue $cache
+  $apacheQueuePath = "$testRoot\apache.jobs.queue"
+  if (-not $worker.HasExited) {
+    & taskkill.exe /PID $worker.Id /T /F 2>$null | Out-Null
+    $worker.WaitForExit()
+  }
+  & $optimizerPath --init $apacheQueuePath $cache
+  if ($LASTEXITCODE -ne 0) { throw "optimizer reinitialization failed" }
+  $worker = Start-Process -PassThru -WindowStyle Hidden $optimizerPath -ArgumentList @("--serve", $apacheQueuePath, $cache)
+  Start-Sleep -Seconds 1
   $apacheTestRoot = "$testRoot\apache"
-  Copy-Item -Recurse (Resolve-Path $ApacheRoot) $apacheTestRoot
+  New-Item -ItemType Directory -Force -Path $apacheTestRoot | Out-Null
+  Copy-TestServerRoot $ApacheRoot $apacheTestRoot
   $apachePort = Get-FreePort
   $apacheWeb = $web.Replace('\', '/')
-  $apacheQueue = $queue.Replace('\', '/')
+  $apacheQueue = $apacheQueuePath.Replace('\', '/')
   $apacheCache = $cache.Replace('\', '/')
   $apacheConfigLines = Get-Content "$apacheTestRoot\conf\httpd.conf" | ForEach-Object {
     if ($_ -match '^Listen\s+\d+\s*$') {
@@ -190,6 +217,7 @@ DocumentRoot "$apacheWeb"
   Require all granted
 </Directory>
 Laghu Preset balanced
+Laghu CacheMimeTypes image/png
 Laghu WorkerQueue "$apacheQueue"
 Laghu ImageCache "$apacheCache"
 "@

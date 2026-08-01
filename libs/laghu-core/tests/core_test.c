@@ -273,7 +273,7 @@ static void test_rewrite_level_parser_and_policies(void) {
   const uint32_t all =
       balanced | LAGHU_FILTER_RESOURCE_COMBINE | LAGHU_FILTER_RESOURCE_INLINE |
       LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER |
-      LAGHU_FILTER_IMMUTABLE_CACHE;
+      LAGHU_FILTER_IMMUTABLE_CACHE | LAGHU_FILTER_CACHE_MEDIA;
   laghu_rewrite_level rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   laghu_config config = enabled_config();
   laghu_policy policy;
@@ -589,6 +589,14 @@ static void test_hashing(void) {
 }
 
 int main(void) {
+  assert(laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
+                                 "IMAGE/PNG; charset=binary"));
+  assert(laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
+                                 "application/pdf"));
+  assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
+                                  "video/mp4"));
+  assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
+                                  "image/pngx"));
   test_config_defaults_and_inheritance();
   test_preset_parser();
   test_preset_policies();

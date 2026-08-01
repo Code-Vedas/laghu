@@ -709,6 +709,14 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     config->image_cache = apr_pstrdup(command->pool, parameter);
     return NULL;
   }
+  if (ap_cstr_casecmp(name, "CacheMimeTypes") == 0) {
+    if (config->core.cache_mime_types[0] != '\0' ||
+        strlen(parameter) >= sizeof(config->core.cache_mime_types))
+      return "Laghu CacheMimeTypes may appear only once and must be bounded";
+    (void)snprintf(config->core.cache_mime_types,
+                   sizeof(config->core.cache_mime_types), "%s", parameter);
+    return NULL;
+  }
   return "unknown Laghu setting";
 }
 
@@ -1707,6 +1715,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
   static const char javascript_prefix[] = "/.laghu/js/";
+  static const char media_prefix[] = "/.laghu/media/";
   static const char script_path[] = "/.laghu/beacon/images.js";
   static const char post_path[] = "/.laghu/beacon/images";
   static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
@@ -1735,6 +1744,7 @@ static int laghu_apache_variant_handler(request_rec *request) {
   bool css_asset;
   bool javascript_asset;
   bool javascript_map;
+  bool media_asset = false;
   if (request->uri == NULL ||
       strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0) {
     return DECLINED;
@@ -1954,7 +1964,11 @@ static int laghu_apache_variant_handler(request_rec *request) {
       strncmp(request->uri, javascript_prefix,
               sizeof(javascript_prefix) - 1U) == 0 &&
       strcmp(request->uri + strlen(request->uri) - 4U, ".map") == 0;
-  if (!css_asset && !javascript_asset && !javascript_map &&
+  media_asset =
+      strlen(request->uri) ==
+          sizeof(media_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH &&
+      strncmp(request->uri, media_prefix, sizeof(media_prefix) - 1U) == 0;
+  if (!css_asset && !javascript_asset && !javascript_map && !media_asset &&
       (strlen(request->uri) != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
        strncmp(request->uri, prefix, sizeof(prefix) - 1U) != 0)) {
     return HTTP_NOT_FOUND;
@@ -1965,7 +1979,8 @@ static int laghu_apache_variant_handler(request_rec *request) {
   key = request->uri + (css_asset ? sizeof(css_prefix) - 1U
                         : (javascript_asset || javascript_map)
                             ? sizeof(javascript_prefix) - 1U
-                            : sizeof(prefix) - 1U);
+                        : media_asset ? sizeof(media_prefix) - 1U
+                                      : sizeof(prefix) - 1U);
   {
     size_t offset;
     for (offset = 0U; offset < LAGHU_SHA256_HEX_LENGTH; ++offset) {

@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #define LAGHU_SHA256_BLOCK_SIZE 64U
@@ -47,7 +48,7 @@
 #define LAGHU_FILTER_STATIC \
   (LAGHU_FILTER_AGGRESSIVE | LAGHU_FILTER_IMMUTABLE_CACHE)
 
-#define LAGHU_FILTER_ALL LAGHU_FILTER_STATIC
+#define LAGHU_FILTER_ALL (LAGHU_FILTER_STATIC | LAGHU_FILTER_CACHE_MEDIA)
 
 typedef struct {
   uint32_t state[8];
@@ -332,7 +333,10 @@ static bool laghu_supported_content_type(const char *content_type) {
          laghu_starts_with(content_type, "application/javascript") ||
          laghu_starts_with(content_type, "image/") ||
          laghu_starts_with(content_type, "font/") ||
-         laghu_starts_with(content_type, "application/font-");
+         laghu_starts_with(content_type, "application/font-") ||
+         laghu_starts_with(content_type, "application/pdf") ||
+         laghu_starts_with(content_type, "audio/") ||
+         laghu_starts_with(content_type, "video/");
 }
 
 void laghu_config_init(laghu_config *config) {
@@ -359,6 +363,7 @@ void laghu_config_init(laghu_config *config) {
   config->javascript_inline_limit = LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET;
   config->javascript_outline_threshold =
       LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET;
+  config->cache_mime_types[0] = '\0';
 }
 
 void laghu_config_merge(laghu_config *result, const laghu_config *parent,
@@ -521,6 +526,46 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
                            LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET
           ? child->javascript_outline_threshold
           : parent_javascript_outline_threshold;
+  if (child != NULL && child->cache_mime_types[0] != '\0') {
+    (void)snprintf(result->cache_mime_types, sizeof(result->cache_mime_types),
+                   "%s", child->cache_mime_types);
+  } else if (parent != NULL) {
+    (void)snprintf(result->cache_mime_types, sizeof(result->cache_mime_types),
+                   "%s", parent->cache_mime_types);
+  } else {
+    result->cache_mime_types[0] = '\0';
+  }
+}
+
+bool laghu_mime_type_allowed(const char *allowlist, const char *content_type) {
+  const char *cursor;
+  size_t type_length;
+  if (allowlist == NULL || content_type == NULL || content_type[0] == '\0')
+    return false;
+  type_length = strcspn(content_type, "; \t\r\n");
+  if (type_length == 0U || type_length >= 256U) return false;
+  cursor = allowlist;
+  while (*cursor != '\0') {
+    const char *end = strchr(cursor, ',');
+    size_t length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
+    while (length > 0U && isspace((unsigned char)cursor[0])) {
+      ++cursor;
+      --length;
+    }
+    while (length > 0U && isspace((unsigned char)cursor[length - 1U])) --length;
+    if (length == type_length) {
+      size_t index;
+      for (index = 0U; index < type_length; ++index) {
+        if (tolower((unsigned char)cursor[index]) !=
+            tolower((unsigned char)content_type[index]))
+          break;
+      }
+      if (index == type_length) return true;
+    }
+    if (end == NULL) break;
+    cursor = end + 1U;
+  }
+  return false;
 }
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset) {
@@ -773,6 +818,8 @@ bool laghu_resolve_config_policy(const laghu_config *config,
                 LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET
             ? LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT
             : config->javascript_outline_threshold;
+    (void)snprintf(policy->cache_mime_types, sizeof(policy->cache_mime_types),
+                   "%s", config->cache_mime_types);
   }
   return resolved;
 }

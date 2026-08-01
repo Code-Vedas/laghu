@@ -2243,6 +2243,7 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
   static const char javascript_prefix[] = "/.laghu/js/";
+  static const char media_prefix[] = "/.laghu/media/";
   static const char beacon_script_path[] = "/.laghu/beacon/images.js";
   static const char beacon_post_path[] = "/.laghu/beacon/images";
   static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
@@ -2272,6 +2273,7 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   bool css_asset = false;
   bool javascript_asset = false;
   bool javascript_map = false;
+  bool media_asset = false;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
   if (request->uri.len == sizeof(beacon_script_path) - 1U &&
@@ -2448,7 +2450,11 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
       ngx_strncmp(request->uri.data, javascript_prefix,
                   sizeof(javascript_prefix) - 1U) == 0 &&
       ngx_strncmp(request->uri.data + request->uri.len - 4U, ".map", 4U) == 0;
-  if (!css_asset && !javascript_asset && !javascript_map &&
+  media_asset =
+      request->uri.len == sizeof(media_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH &&
+      ngx_strncmp(request->uri.data, media_prefix, sizeof(media_prefix) - 1U) ==
+          0;
+  if (!css_asset && !javascript_asset && !javascript_map && !media_asset &&
       (request->uri.len != sizeof(prefix) - 1U + LAGHU_SHA256_HEX_LENGTH ||
        ngx_strncmp(request->uri.data, prefix, sizeof(prefix) - 1U) != 0)) {
     return NGX_DECLINED;
@@ -2463,7 +2469,8 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
              request->uri.data + (css_asset ? sizeof(css_prefix) - 1U
                                   : (javascript_asset || javascript_map)
                                       ? sizeof(javascript_prefix) - 1U
-                                      : sizeof(prefix) - 1U),
+                                  : media_asset ? sizeof(media_prefix) - 1U
+                                                : sizeof(prefix) - 1U),
              LAGHU_SHA256_HEX_LENGTH);
   key[LAGHU_SHA256_HEX_LENGTH] = '\0';
   {
@@ -3135,6 +3142,17 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       return "is duplicate";
     }
     location->image_cache = values[2];
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "cache_mime_types") == 0) {
+    if (location->core.cache_mime_types[0] != '\0' ||
+        values[2].len >= sizeof(location->core.cache_mime_types)) {
+      return "is duplicate or too long";
+    }
+    ngx_memzero(location->core.cache_mime_types,
+                sizeof(location->core.cache_mime_types));
+    ngx_memcpy(location->core.cache_mime_types, values[2].data, values[2].len);
     return NGX_CONF_OK;
   }
 
