@@ -26,7 +26,7 @@ laghu \
   --listen 0.0.0.0:8443 \
   --origin https://application.internal:443 \
   --origin-ca-file /etc/laghu/origin-ca.pem \
-  --cache /var/cache/laghu/images \
+  --file-cache-backend file:///var/cache/laghu/images \
   --worker-queue /run/laghu/jobs.queue \
   --font-fetch-queue /run/laghu/fonts.queue \
   --font-provider-config /etc/laghu/font-providers.conf \

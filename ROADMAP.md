@@ -169,8 +169,8 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 - [x] Runtime on/off configuration and hierarchical inheritance.
 - [x] Rewrite-level selection.
 - [x] Enable, disable, and forbid individual filters.
-- [ ] File-backed cache path, size, cleaning interval, and inode limits (`FileCachePath` and related controls in migration input).
-- [ ] In-memory LRU cache and shared-memory metadata cache.
+- [x] Backend-driven file cache path, byte capacity, cleaning interval, and inode limits through `FileCacheBackend`, with deprecated path aliases.
+- [x] Bounded approximate-LRU and shared-memory metadata cache; shared memory contains coordination metadata only, never cached payloads.
 - [x] Memory-native RUM store with local persistence and optional Redis synchronization.
 - [ ] Domain mapping, sharding, proxying, and rewrite-domain configuration (`Domain`, `MapRewriteDomain`, `ShardDomain`, and `MapProxyDomain` in migration input).
 - [ ] Direct file loading that avoids loopback origin fetches (`LoadFromFile` in migration input).
@@ -179,9 +179,9 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 - [x] Per-location and per-server configuration scope and inheritance.
 - [ ] Statistics, administration, message history, console, and cache-purge UI, including migration from the legacy administration/statistics/console paths.
 - [x] Basic `X-Laghu` pass/bypass decision response header.
-- [ ] Cache-state and transform-decision response headers.
+- [x] Cache-state and transform-decision response headers.
 - [ ] Per-request query-string filter overrides.
-- [ ] Purge method, cache flush file, and query-driven purge (`PurgeMethod` and purge-query migration inputs).
+- [x] Purge method, cache flush file, and query-driven purge (`PurgeMethod` and purge-query migration inputs).
 - [x] In-place image-resource optimization with validator-keyed cold-original and warm-variant delivery.
 - [x] Client beaconing for critical-image, critical-CSS, and aggregate RUM discovery.
 - [ ] Experiment framework for controlled filter-set rollout.
@@ -376,12 +376,15 @@ Completion evidence for the checked geometry features is shared with Section 3.2
 
 Lifecycle evidence covers bounded POSIX signal drain, second-signal and deadline cancellation, queued-connection rejection, worker joins, local cache and optimizer readiness transitions, query/header/body-safe JSON records, and non-root execution with a read-only container filesystem. Native Windows AMD64 and ARM64 evidence covers the Win32 state machine, WinSock queue saturation and bounded rejection, local health/readiness probes, and an installed Service Control Manager lifecycle from start through health validation and stop.
 
+Cache-backend evidence covers strict local `file:` URI parsing, deprecated alias conflicts, portable versioned metadata mappings, immutable atomic publication, checksum-verified reads, fail-open corruption handling, bounded byte and inode admission, nonblocking access touches, shared cleaner election, low-water approximate-LRU eviction, and disposable-index recovery. NGINX, Apache, standalone, and `laghu-libvips` use the same backend contract; cached payloads remain exclusively in backend files.
+
 Origin-security evidence covers OpenSSL 3.x TLS 1.2-or-newer negotiation, system and additive private-CA trust, DNS SNI, DNS/IP certificate identity checks, HTTP/1.1 ALPN, bounded handshake and I/O cancellation, and distinct TLS failure classification. The accepted-connection queue retains binary peer addresses for allocation-free IPv4/IPv6 CIDR matching. Every inbound forwarding family is stripped; enabled output starts a canonical chain for untrusted peers or validates and extends a trusted peer's bounded chain. macOS, sanitizer, Linux AMD64, Windows AMD64, and non-root read-only-container fixtures verify trusted TLS, hostname rejection, spoof removal, trusted append, privacy-safe logs, cold/warm proxy behavior, and shutdown preservation.
 
 - [x] Complete the image-path two-process architecture for both lightweight NGINX and Apache interceptors plus the asynchronous out-of-process service.
 - [x] Serve the original image on first hit while an optimized variant is generated without blocking NGINX event loops or Apache request workers.
 - [x] Keep the memory-mapped queue and atomic disk cache interoperable across both adapters and `laghu-libvips`.
-- [ ] Add bounded LRU eviction and per-URL purge.
+- [x] Add bounded approximate-LRU eviction.
+- [x] Add per-URL purge.
 - [x] Reuse `laghu-libvips`, the queue, catalogs, and cache from standalone proxy mode; `laghu-libvips` remains a transform worker and never becomes an HTTP proxy.
 - [x] Make worker, queue, cache, and image-optimization failures fail open.
 - [x] Generate deterministic content-hashed variant URLs for fleet-safe caching.

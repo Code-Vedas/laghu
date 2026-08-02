@@ -51,7 +51,7 @@ class NgxLaghu < Formula
       laghu javascript_queue #{var}/run/laghu/javascript.queue;
       laghu javascript_observation_config #{etc}/laghu/javascript-observation.conf;
       laghu javascript_defer_config #{etc}/laghu/javascript-defer.conf;
-      laghu image_cache #{var}/cache/laghu/images;
+      laghu file_cache_backend file://#{var}/cache/laghu/images;
       laghu rum_store local:;
       laghu rum_store_local_snapshot #{var}/lib/laghu/rum/rum.snapshot;
       # For Redis, set rum_store_client_library to the installed hiredis 1.x library.

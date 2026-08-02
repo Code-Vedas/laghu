@@ -10,7 +10,7 @@
 static void usage(FILE *stream) {
   fputs(
       "Usage: laghu --listen HOST:PORT --origin http[s]://HOST[:PORT] "
-      "--cache PATH --worker-queue PATH [options]\n"
+      "--file-cache-backend file:///PATH --worker-queue PATH [options]\n"
       "Options:\n"
       "  --preset NAME | --rewrite-level NAME\n"
       "  --enable-filter NAME --disable-filter NAME --forbid-filter NAME\n"
@@ -41,7 +41,10 @@ static void usage(FILE *stream) {
       "  --asset-offload-config PATH\n"
       "  --asset-upload-queue PATH\n"
       "  --forwarded-headers off|forwarded|x-forwarded|both\n"
-      "  --trusted-proxy CIDR (repeatable, maximum 64)\n",
+      "  --trusted-proxy CIDR (repeatable, maximum 64)\n"
+      "  --purge-method PURGE --purge-query on|off\n"
+      "  --purge-token-file PATH --purge-allow CIDR\n"
+      "  --cache-flush-file PATH --statistics on|off\n",
       stream);
 #ifdef _WIN32
   fputs("  --service\n", stream);

@@ -52,7 +52,7 @@ http {
   laghu javascript_queue /run/laghu/javascript.queue;
   laghu javascript_target "defaults and supports es6-module and not dead";
   laghu javascript_observation_config /etc/laghu/javascript-observation.conf;
-  laghu image_cache /var/cache/laghu/images;
+  laghu file_cache_backend file:///var/cache/laghu/images;
 
   server {
     listen 443 ssl http2;

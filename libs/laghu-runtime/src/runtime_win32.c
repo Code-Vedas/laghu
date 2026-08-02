@@ -616,11 +616,10 @@ static bool laghu_write_atomic(const char *path, const void *data,
   return success;
 }
 
-bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
-                                 const char *variant_key, const char *validator,
-                                 const char *content_type,
-                                 const char *backend_id, laghu_buffer payload,
-                                 laghu_runtime_cache_entry *entry) {
+bool laghu_runtime_file_cache_publish(
+    const char *cache_path, const char *index_key, const char *variant_key,
+    const char *validator, const char *content_type, const char *backend_id,
+    laghu_buffer payload, laghu_runtime_cache_entry *entry) {
   char body_path[LAGHU_RUNTIME_PATH_SIZE];
   char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_cache_metadata metadata;
@@ -674,9 +673,9 @@ bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
   return true;
 }
 
-bool laghu_runtime_cache_lookup_variant(const char *cache_path,
-                                        const char *variant_key,
-                                        laghu_runtime_cache_entry *entry) {
+bool laghu_runtime_file_cache_lookup_variant(const char *cache_path,
+                                             const char *variant_key,
+                                             laghu_runtime_cache_entry *entry) {
   char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
   char body_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_cache_metadata metadata;
@@ -724,9 +723,10 @@ bool laghu_runtime_cache_lookup_variant(const char *cache_path,
   return true;
 }
 
-bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key,
-                                const char *validator,
-                                laghu_runtime_cache_entry *entry) {
+bool laghu_runtime_file_cache_lookup(const char *cache_path,
+                                     const char *index_key,
+                                     const char *validator,
+                                     laghu_runtime_cache_entry *entry) {
   char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
   char body_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_cache_metadata metadata;
@@ -776,8 +776,9 @@ bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key,
   return true;
 }
 
-bool laghu_runtime_cache_read(const laghu_runtime_cache_entry *entry,
-                              unsigned char *output, size_t output_capacity) {
+bool laghu_runtime_file_cache_read(const laghu_runtime_cache_entry *entry,
+                                   unsigned char *output,
+                                   size_t output_capacity) {
   HANDLE file;
   char hash[LAGHU_RUNTIME_KEY_SIZE];
   if (entry == NULL || output == NULL || entry->length == 0U ||
@@ -793,4 +794,121 @@ bool laghu_runtime_cache_read(const laghu_runtime_cache_entry *entry,
   CloseHandle(file);
   return laghu_sha256_hex((laghu_buffer){output, entry->length}, hash) &&
          strcmp(hash, entry->payload_hash) == 0;
+}
+
+void laghu_runtime_shared_mapping_init(laghu_runtime_shared_mapping *mapping) {
+  if (mapping == NULL) return;
+  memset(mapping, 0, sizeof(*mapping));
+  mapping->platform_file = (intptr_t)INVALID_HANDLE_VALUE;
+}
+
+bool laghu_runtime_directory_ensure(const char *path) {
+  wchar_t wide[LAGHU_RUNTIME_PATH_SIZE];
+  DWORD attributes;
+  if (!laghu_wide(path, wide, LAGHU_RUNTIME_PATH_SIZE)) return false;
+  if (CreateDirectoryW(wide, NULL)) return true;
+  if (GetLastError() != ERROR_ALREADY_EXISTS) return false;
+  attributes = GetFileAttributesW(wide);
+  return attributes != INVALID_FILE_ATTRIBUTES &&
+         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U;
+}
+
+bool laghu_runtime_directory_exists(const char *path) {
+  wchar_t wide[LAGHU_RUNTIME_PATH_SIZE];
+  DWORD attributes;
+  if (path == NULL || !laghu_wide(path, wide, LAGHU_RUNTIME_PATH_SIZE))
+    return false;
+  attributes = GetFileAttributesW(wide);
+  return attributes != INVALID_FILE_ATTRIBUTES &&
+         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U;
+}
+
+bool laghu_runtime_file_remove(const char *path) {
+  wchar_t wide[LAGHU_RUNTIME_PATH_SIZE];
+  return path != NULL && laghu_wide(path, wide, LAGHU_RUNTIME_PATH_SIZE) &&
+         (DeleteFileW(wide) || GetLastError() == ERROR_FILE_NOT_FOUND);
+}
+
+bool laghu_runtime_file_size(const char *path, uint64_t *size) {
+  wchar_t wide[LAGHU_RUNTIME_PATH_SIZE];
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (path == NULL || size == NULL ||
+      !laghu_wide(path, wide, LAGHU_RUNTIME_PATH_SIZE) ||
+      !GetFileAttributesExW(wide, GetFileExInfoStandard, &data))
+    return false;
+  *size = ((uint64_t)data.nFileSizeHigh << 32U) | data.nFileSizeLow;
+  return true;
+}
+
+bool laghu_runtime_shared_mapping_open(laghu_runtime_shared_mapping *mapping,
+                                       const char *path, size_t size) {
+  HANDLE file = INVALID_HANDLE_VALUE;
+  HANDLE object = NULL;
+  LARGE_INTEGER target;
+  LARGE_INTEGER current;
+  void *address;
+  if (mapping == NULL || path == NULL || size < 4096U ||
+      !laghu_open(path, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS, &file) ||
+      !laghu_lock(file)) {
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    return false;
+  }
+  if (!GetFileSizeEx(file, &current) ||
+      (current.QuadPart != 0 && current.QuadPart != (LONGLONG)size)) {
+    laghu_unlock(file);
+    CloseHandle(file);
+    return false;
+  }
+  target.QuadPart = (LONGLONG)size;
+  if (current.QuadPart == 0 &&
+      (!SetFilePointerEx(file, target, NULL, FILE_BEGIN) ||
+       !SetEndOfFile(file))) {
+    laghu_unlock(file);
+    CloseHandle(file);
+    return false;
+  }
+  object =
+      CreateFileMappingW(file, NULL, PAGE_READWRITE,
+                         (DWORD)(((uint64_t)size) >> 32U), (DWORD)size, NULL);
+  address = object != NULL
+                ? MapViewOfFile(object, FILE_MAP_ALL_ACCESS, 0, 0, size)
+                : NULL;
+  laghu_unlock(file);
+  if (address == NULL) {
+    if (object != NULL) CloseHandle(object);
+    CloseHandle(file);
+    return false;
+  }
+  mapping->platform_file = (intptr_t)(uintptr_t)file;
+  mapping->platform_mapping = (intptr_t)(uintptr_t)object;
+  mapping->mapping = address;
+  mapping->mapping_length = size;
+  return true;
+}
+
+bool laghu_runtime_shared_mapping_try_lock(
+    laghu_runtime_shared_mapping *mapping) {
+  return mapping != NULL && mapping->mapping != NULL &&
+         laghu_lock((HANDLE)(uintptr_t)mapping->platform_file);
+}
+
+void laghu_runtime_shared_mapping_unlock(
+    laghu_runtime_shared_mapping *mapping) {
+  if (mapping != NULL && mapping->mapping != NULL)
+    laghu_unlock((HANDLE)(uintptr_t)mapping->platform_file);
+}
+
+bool laghu_runtime_shared_mapping_sync(laghu_runtime_shared_mapping *mapping) {
+  return mapping != NULL && mapping->mapping != NULL &&
+         FlushViewOfFile(mapping->mapping, mapping->mapping_length) != 0;
+}
+
+void laghu_runtime_shared_mapping_close(laghu_runtime_shared_mapping *mapping) {
+  if (mapping == NULL) return;
+  if (mapping->mapping != NULL) (void)UnmapViewOfFile(mapping->mapping);
+  if (mapping->platform_mapping != 0)
+    CloseHandle((HANDLE)(uintptr_t)mapping->platform_mapping);
+  if ((HANDLE)(uintptr_t)mapping->platform_file != INVALID_HANDLE_VALUE)
+    CloseHandle((HANDLE)(uintptr_t)mapping->platform_file);
+  laghu_runtime_shared_mapping_init(mapping);
 }

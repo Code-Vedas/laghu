@@ -538,6 +538,11 @@ def main():
         invalid_log = invalid.stderr.decode().strip()
         assert json.loads(invalid_log)["event"] == "startup_failure"
         proxy_port = free_port()
+        purge_token = root / "purge.token"
+        purge_token.write_text("standalone-purge-token-0123456789\n")
+        if sys.platform != "win32":
+            purge_token.chmod(0o600)
+        flush_file = root / "cache.flush"
         main_log = (root / "main-proxy.log").open("w+b")
         process = start_process(
             [
@@ -572,6 +577,18 @@ def main():
                 "1",
                 "--connection-queue",
                 "1",
+                "--purge-method",
+                "PURGE",
+                "--purge-query",
+                "on",
+                "--purge-token-file",
+                str(purge_token),
+                "--purge-allow",
+                "127.0.0.1/32",
+                "--cache-flush-file",
+                str(flush_file),
+                "--statistics",
+                "on",
             ],
             stdout=subprocess.DEVNULL,
             stderr=main_log,
@@ -714,6 +731,25 @@ def main():
             ready_head, ready_body = request(proxy_port, "/.laghu/ready")
             assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
             assert b'"optimizer":"degraded"' in ready_body
+            forbidden_head, _ = request(proxy_port, "/.laghu/stats")
+            assert b" 403 " in forbidden_head.split(b"\r\n", 1)[0]
+            admin_headers = {"X-Laghu-Purge-Token":
+                             "standalone-purge-token-0123456789"}
+            stats_head, stats_body = request(
+                proxy_port, "/.laghu/stats", headers=admin_headers
+            )
+            assert b" 200 " in stats_head.split(b"\r\n", 1)[0]
+            assert b"laghu-cache-stats-v1" in stats_body
+            purge_head, purge_body = request(
+                proxy_port, "/site.css", method="PURGE", headers=admin_headers
+            )
+            assert b" 202 " in purge_head.split(b"\r\n", 1)[0]
+            assert b"cache-control: no-store" in purge_head
+            assert b'"status":"accepted"' in purge_body
+            query_head, _ = request(
+                proxy_port, "/site.css?laghu=purge", headers=admin_headers
+            )
+            assert b" 202 " in query_head.split(b"\r\n", 1)[0]
             subprocess.run(
                 [
                     str(cache_fixture),
@@ -756,6 +792,8 @@ def main():
             css_cold_head, css_cold_body = request(proxy_port, "/site.css")
             assert css_cold_body == b"body { color: red; }"
             assert b"x-laghu: pass" in css_cold_head
+            assert b"x-laghu-cache: miss" in css_cold_head
+            assert b"x-laghu-transform: queued" in css_cold_head
             css_warm_head, css_warm_body = request(proxy_port, "/site.css")
             assert len(css_warm_body) < len(css_cold_body)
             assert b"etag: \"laghu-css-" in css_warm_head
@@ -873,6 +911,13 @@ def main():
                 b"x-laghu: pass" in corrupt_head
                 or b"x-laghu: bypass-error" in corrupt_head
             )
+            flush_file.write_text("laghu-cache-flush-v1 9\n")
+            if sys.platform != "win32":
+                flush_file.chmod(0o600)
+            _, flushed_stats = request(
+                proxy_port, "/.laghu/stats", headers=admin_headers
+            )
+            assert b'"generation":9' in flushed_stats
             if sys.platform != "win32":
                 draining = socket.create_connection(
                     ("127.0.0.1", proxy_port), timeout=5

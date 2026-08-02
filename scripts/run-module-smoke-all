@@ -29,6 +29,8 @@ fi
 
 rm -rf "${SMOKE_DIR}"
 mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs" "${SMOKE_DIR}/cache"
+printf '%s\n' 'nginx-purge-token-0123456789' >"${SMOKE_DIR}/purge.token"
+chmod 600 "${SMOKE_DIR}/purge.token"
 printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
   >"${SMOKE_DIR}/html/index.html"
 
@@ -158,7 +160,16 @@ http {
     laghu include_js_source_maps on;
     laghu javascript_inline_limit 2048;
     laghu javascript_outline_threshold 8192;
-    laghu image_cache ${SMOKE_DIR}/cache;
+    laghu file_cache_backend file://${SMOKE_DIR}/cache;
+    laghu file_cache_size 10m;
+    laghu file_cache_inode_limit 1000;
+    laghu file_cache_clean_interval 60s;
+    laghu file_cache_metadata_size 1m;
+    laghu purge_method PURGE;
+    laghu purge_query on;
+    laghu purge_token_file ${SMOKE_DIR}/purge.token;
+    laghu purge_allow 127.0.0.1/32;
+    laghu statistics on;
 
     location = /site.css {
       default_type text/css;
@@ -524,18 +535,31 @@ for specification in \
   fi
 done
 
-for directive in worker_queue image_cache; do
-  sed "s#laghu ${directive} #laghu ${directive} /tmp/duplicate; laghu ${directive} #" \
-    "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-${directive}-nginx.conf"
-  if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
-      -c "${SMOKE_DIR}/duplicate-${directive}-nginx.conf" \
-      >"${SMOKE_DIR}/duplicate-${directive}-config-output" 2>&1; then
-    echo "NGINX accepted duplicate Laghu ${directive} directives." >&2
-    exit 1
-  fi
-  grep 'is duplicate' \
-    "${SMOKE_DIR}/duplicate-${directive}-config-output" >/dev/null
-done
+sed "s#laghu worker_queue #laghu worker_queue /tmp/duplicate; laghu worker_queue #" \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-worker_queue-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/duplicate-worker_queue-nginx.conf" \
+    >"${SMOKE_DIR}/duplicate-worker_queue-config-output" 2>&1; then
+  echo "NGINX accepted duplicate Laghu worker_queue directives." >&2
+  exit 1
+fi
+grep 'is duplicate' "${SMOKE_DIR}/duplicate-worker_queue-config-output" >/dev/null
+
+sed "s#laghu file_cache_backend [^;]*;#laghu file_cache_backend file:///tmp/one; laghu file_cache_backend file:///tmp/two;#" \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-file-cache-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/duplicate-file-cache-nginx.conf" >/dev/null 2>&1; then
+  echo "NGINX accepted duplicate Laghu file cache backends." >&2
+  exit 1
+fi
+
+sed "s#laghu file_cache_backend [^;]*;#laghu file_cache_backend memcached://127.0.0.1;#" \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-file-cache-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/invalid-file-cache-nginx.conf" >/dev/null 2>&1; then
+  echo "NGINX accepted an unsupported cache backend." >&2
+  exit 1
+fi
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "Skipping runtime header check: curl is not installed"
@@ -593,6 +617,15 @@ grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null || {
   cat "${SMOKE_DIR}/headers" >&2
   exit 1
 }
+grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/headers" >/dev/null
+grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/headers" >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/.laghu/stats" | \
+  grep 'laghu-cache-stats-v1' >/dev/null
+curl --fail --silent --show-error --request PURGE \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/site.css" | grep 'accepted' >/dev/null
 grep 'Laghu smoke test' "${SMOKE_DIR}/body" >/dev/null
 
 if [ "${image_smoke}" -eq 1 ]; then

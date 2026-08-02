@@ -365,7 +365,7 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(result.decision == LAGHU_DECISION_IMAGE_HIT);
   CHECK(result.selected.length == sizeof(variant) - 1U);
   CHECK(memcmp(result.selected.data, variant, sizeof(variant) - 1U) == 0);
-  CHECK(result.header_operation_count == 7U);
+  CHECK(result.header_operation_count == 9U);
   CHECK(strcmp(result.header_operations[0].name, "Content-Type") == 0);
   CHECK(strcmp(result.header_operations[1].name, "Content-Length") == 0);
   CHECK(strcmp(result.header_operations[2].name, "Vary") == 0);
@@ -377,6 +377,10 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(result.header_operations[4].kind == LAGHU_HTTP_HEADER_REMOVE);
   CHECK(result.header_operations[5].kind == LAGHU_HTTP_HEADER_REMOVE);
   CHECK(strcmp(result.header_operations[6].name, "X-Laghu") == 0);
+  CHECK(strcmp(result.header_operations[7].name, "X-Laghu-Cache") == 0);
+  CHECK(strcmp(result.header_operations[7].value, "hit") == 0);
+  CHECK(strcmp(result.header_operations[8].name, "X-Laghu-Transform") == 0);
+  CHECK(strcmp(result.header_operations[8].value, "optimized") == 0);
   laghu_http_transaction_result_release(&result);
   {
     char internal_path[LAGHU_RUNTIME_PATH_SIZE];

@@ -19,6 +19,8 @@ $testRoot = Join-Path $env:TEMP "laghu-matched-server-smoke"
 $cache = "$testRoot\cache"
 $queue = "$testRoot\jobs.queue"
 $web = "$testRoot\www"
+$token = "$testRoot\purge.token"
+$purgeToken = "matched-server-purge-token"
 
 function Get-FreePort {
   $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -58,6 +60,21 @@ function Get-HeaderValue($Response, [string] $Name) {
   return [string]::Join(",", [string[]]$Response.Headers[$Name])
 }
 
+function Invoke-Purge([int] $Port, [hashtable] $Headers) {
+  $request = [Net.HttpWebRequest]::Create("http://127.0.0.1:$Port/image.png")
+  $request.Method = "PURGE"
+  foreach ($name in $Headers.Keys) { $request.Headers[$name] = $Headers[$name] }
+  $response = $request.GetResponse()
+  try {
+    return [pscustomobject]@{
+      StatusCode = [int]$response.StatusCode
+      Headers = $response.Headers
+    }
+  } finally {
+    $response.Close()
+  }
+}
+
 function Copy-TestServerRoot([string] $Source, [string] $Destination) {
   & robocopy.exe ((Resolve-Path $Source).Path) $Destination /E /NFL /NDL /NJH /NJS /NP | Out-Null
   if ($LASTEXITCODE -gt 7) { throw "server fixture copy failed" }
@@ -66,6 +83,10 @@ function Copy-TestServerRoot([string] $Source, [string] $Destination) {
 function Assert-CommonBehavior([int] $Port, $Cold) {
   if ($Cold.StatusCode -ne 200 -or (Get-HeaderValue $Cold "X-Laghu") -ne "pass") {
     throw "cold response did not pass through Laghu"
+  }
+  if ((Get-HeaderValue $Cold "X-Laghu-Cache") -ne "miss" -or
+      (Get-HeaderValue $Cold "X-Laghu-Transform") -ne "queued") {
+    throw "cold response did not expose cache and transform decisions"
   }
   $api = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/api/data.json"
   if ((Get-HeaderValue $api "X-Laghu") -ne "bypass-api") {
@@ -124,6 +145,34 @@ function Assert-CommonBehavior([int] $Port, $Cold) {
     $decision = if ($candidate) { Get-HeaderValue $candidate "X-Laghu" } else { "<none>" }
     throw "warm HTML response was not served (X-Laghu=$decision, ETag=$etag)"
   }
+
+  try {
+    Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/.laghu/stats" | Out-Null
+    throw "unauthorized statistics request succeeded"
+  } catch {
+    if ($_.Exception.Response.StatusCode.value__ -ne 403) { throw }
+  }
+  $adminHeaders = @{ "X-Laghu-Purge-Token" = $purgeToken }
+  $stats = $null
+  for ($attempt = 0; $attempt -lt 100; ++$attempt) {
+    try {
+      $stats = Invoke-WebRequest -UseBasicParsing -Headers $adminHeaders `
+        "http://127.0.0.1:$Port/.laghu/stats"
+      break
+    } catch {
+      if ($_.Exception.Response.StatusCode.value__ -ne 503) { throw }
+      Start-Sleep -Milliseconds 100
+    }
+  }
+  if ($stats.StatusCode -ne 200 -or -not $stats.Content.Contains('"schema":"laghu-cache-stats-v1"')) {
+    throw "authorized statistics request failed"
+  }
+  $purge = Invoke-Purge $Port $adminHeaders
+  if ($purge.StatusCode -ne 202 -or (Get-HeaderValue $purge "Cache-Control") -ne "no-store") {
+    throw "authenticated PURGE failed"
+  }
+  $queryPurge = Invoke-WebRequest -UseBasicParsing -Headers $adminHeaders "http://127.0.0.1:$Port/image.png?laghu=purge"
+  if ($queryPurge.StatusCode -ne 202) { throw "authenticated query purge failed" }
 }
 
 Stop-TestProcesses
@@ -131,6 +180,7 @@ Remove-Item -Recurse -Force $testRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $cache, $web, "$web\api" | Out-Null
 Set-Content -Encoding UTF8 "$web\index.html" '<!doctype html><html><head></head><body>  <!-- remove -->  <img src="/image.png" width="512" height="512">  </body></html>'
 Set-Content -Encoding ASCII "$web\api\data.json" '{"ok":true}'
+Set-Content -Encoding ASCII -NoNewline -Path $token -Value $purgeToken
 & $vipsPath black "$testRoot\image.v" 512 512 --bands 3
 & $vipsPath pngsave "$testRoot\image.v" "$web\image.png" --compression 0
 Remove-Item "$testRoot\image.v"
@@ -146,6 +196,8 @@ try {
   $nginxWeb = $web.Replace('\', '/')
   $nginxQueue = $queue.Replace('\', '/')
   $nginxCache = $cache.Replace('\', '/')
+  $nginxCacheBackend = "file:///$nginxCache"
+  $nginxToken = $token.Replace('\', '/')
   @"
 worker_processes 1;
 error_log logs/error.log;
@@ -162,7 +214,12 @@ http {
     laghu preset balanced;
     laghu cache_mime_types image/png;
     laghu worker_queue $nginxQueue;
-    laghu image_cache $nginxCache;
+    laghu file_cache_backend $nginxCacheBackend;
+    laghu purge_method PURGE;
+    laghu purge_query on;
+    laghu purge_token_file $nginxToken;
+    laghu purge_allow 127.0.0.1/32;
+    laghu statistics on;
   }
 }
 "@ | Set-Content -Encoding ASCII "$nginxTestRoot\conf\nginx.conf"
@@ -195,6 +252,8 @@ http {
   $apacheWeb = $web.Replace('\', '/')
   $apacheQueue = $apacheQueuePath.Replace('\', '/')
   $apacheCache = $cache.Replace('\', '/')
+  $apacheCacheBackend = "file:///$apacheCache"
+  $apacheToken = $token.Replace('\', '/')
   $apacheConfigLines = Get-Content "$apacheTestRoot\conf\httpd.conf" | ForEach-Object {
     if ($_ -match '^Listen\s+\d+\s*$') {
       "Listen 127.0.0.1:$apachePort"
@@ -219,7 +278,12 @@ DocumentRoot "$apacheWeb"
 Laghu Preset balanced
 Laghu CacheMimeTypes image/png
 Laghu WorkerQueue "$apacheQueue"
-Laghu ImageCache "$apacheCache"
+Laghu FileCacheBackend "$apacheCacheBackend"
+Laghu PurgeMethod PURGE
+Laghu PurgeQuery On
+Laghu PurgeTokenFile "$apacheToken"
+Laghu PurgeAllow 127.0.0.1/32
+Laghu Statistics On
 "@
   [IO.File]::WriteAllText("$apacheTestRoot\conf\httpd.conf", $apacheConfig,
                           [Text.ASCIIEncoding]::new())

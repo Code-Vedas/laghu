@@ -10,6 +10,7 @@
 
 /* Apache requires httpd.h to define its public record types first. */
 #include <apr_buckets.h>
+#include <apr_network_io.h>
 #include <apr_strings.h>
 #include <apr_tables.h>
 #include <http_config.h>
@@ -26,6 +27,15 @@
 
 #define LAGHU_APACHE_FILTER "LAGHU"
 #define LAGHU_APACHE_INITIAL_CAPTURE (64U * 1024U)
+#define LAGHU_CACHE_SET_SIZE (1U << 0U)
+#define LAGHU_CACHE_SET_INODES (1U << 1U)
+#define LAGHU_CACHE_SET_CLEAN (1U << 2U)
+#define LAGHU_CACHE_SET_METADATA (1U << 3U)
+#define LAGHU_ADMIN_SET_METHOD (1U << 0U)
+#define LAGHU_ADMIN_SET_QUERY (1U << 1U)
+#define LAGHU_ADMIN_SET_STATS (1U << 2U)
+#define LAGHU_ADMIN_SET_TOKEN (1U << 3U)
+#define LAGHU_ADMIN_SET_FLUSH (1U << 4U)
 
 #ifdef _WIN32
 #define LAGHU_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
@@ -48,7 +58,18 @@ typedef struct {
   const char *javascript_target;
   const char *javascript_observation_config;
   const char *javascript_defer_config;
+  const char *file_cache_backend;
   const char *image_cache;
+  laghu_cache_limits cache_limits;
+  uint32_t cache_set_mask;
+  bool image_cache_set;
+  bool purge_method;
+  bool purge_query;
+  bool statistics;
+  const char *purge_token_file;
+  const char *cache_flush_file;
+  apr_array_header_t *purge_allow;
+  uint32_t admin_set_mask;
   const char *asset_offload_config;
   const char *asset_upload_queue;
   const char *rum_store;
@@ -174,6 +195,13 @@ static void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
   char error[160U];
   int length;
   laghu_rum_options_init(&options);
+  if (config != NULL && config->core.mode == LAGHU_MODE_ON &&
+      !laghu_cache_backend_register_path(config->image_cache != NULL
+                                             ? config->image_cache
+                                             : LAGHU_DEFAULT_CACHE,
+                                         &config->cache_limits))
+    ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server,
+                 "Laghu file cache backend unavailable; serving origin");
   length =
       config != NULL && config->rum_snapshot != NULL
           ? snprintf(snapshot, sizeof(snapshot), "%s", config->rum_snapshot)
@@ -268,6 +296,7 @@ static void *laghu_apache_create_config(apr_pool_t *pool, char *path) {
     config->rum_sync_interval = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
     config->rum_timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
     config->rum_retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
+    laghu_cache_limits_init(&config->cache_limits);
     apr_pool_cleanup_register(pool, config, laghu_apache_queue_cleanup,
                               apr_pool_cleanup_null);
   }
@@ -304,8 +333,43 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
     merged->asset_offload = parent->asset_offload;
     merged->asset_offload_loaded = true;
   }
-  merged->image_cache =
-      child->image_cache != NULL ? child->image_cache : parent->image_cache;
+  if (child->file_cache_backend != NULL || child->image_cache_set) {
+    merged->file_cache_backend = child->file_cache_backend;
+    merged->image_cache = child->image_cache;
+    merged->image_cache_set = child->image_cache_set;
+  } else {
+    merged->file_cache_backend = parent->file_cache_backend;
+    merged->image_cache = parent->image_cache;
+    merged->image_cache_set = parent->image_cache_set;
+  }
+  merged->cache_limits = parent->cache_limits;
+  if ((child->cache_set_mask & LAGHU_CACHE_SET_SIZE) != 0U)
+    merged->cache_limits.size_limit = child->cache_limits.size_limit;
+  if ((child->cache_set_mask & LAGHU_CACHE_SET_INODES) != 0U)
+    merged->cache_limits.inode_limit = child->cache_limits.inode_limit;
+  if ((child->cache_set_mask & LAGHU_CACHE_SET_CLEAN) != 0U)
+    merged->cache_limits.clean_interval = child->cache_limits.clean_interval;
+  if ((child->cache_set_mask & LAGHU_CACHE_SET_METADATA) != 0U)
+    merged->cache_limits.metadata_size = child->cache_limits.metadata_size;
+  merged->cache_set_mask = parent->cache_set_mask | child->cache_set_mask;
+  merged->purge_method = (child->admin_set_mask & LAGHU_ADMIN_SET_METHOD) != 0U
+                             ? child->purge_method
+                             : parent->purge_method;
+  merged->purge_query = (child->admin_set_mask & LAGHU_ADMIN_SET_QUERY) != 0U
+                            ? child->purge_query
+                            : parent->purge_query;
+  merged->statistics = (child->admin_set_mask & LAGHU_ADMIN_SET_STATS) != 0U
+                           ? child->statistics
+                           : parent->statistics;
+  merged->purge_token_file = child->purge_token_file != NULL
+                                 ? child->purge_token_file
+                                 : parent->purge_token_file;
+  merged->cache_flush_file = child->cache_flush_file != NULL
+                                 ? child->cache_flush_file
+                                 : parent->cache_flush_file;
+  merged->purge_allow =
+      child->purge_allow != NULL ? child->purge_allow : parent->purge_allow;
+  merged->admin_set_mask = parent->admin_set_mask | child->admin_set_mask;
   merged->font_fetch_queue = child->font_fetch_queue != NULL
                                  ? child->font_fetch_queue
                                  : parent->font_fetch_queue;
@@ -762,10 +826,113 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     return NULL;
   }
   if (ap_cstr_casecmp(name, "ImageCache") == 0) {
-    if (config->image_cache != NULL) {
+    if (config->image_cache != NULL || config->file_cache_backend != NULL) {
       return "Laghu ImageCache may appear only once in this scope";
     }
     config->image_cache = apr_pstrdup(command->pool, parameter);
+    config->image_cache_set = true;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "FileCacheBackend") == 0) {
+    char path[LAGHU_RUNTIME_PATH_SIZE];
+    if (config->file_cache_backend != NULL || config->image_cache_set ||
+        !laghu_cache_backend_uri_parse(parameter, path, sizeof(path)))
+      return "Laghu FileCacheBackend expects one local absolute file: URI";
+    config->file_cache_backend = apr_pstrdup(command->pool, parameter);
+    config->image_cache = apr_pstrdup(command->pool, path);
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "FileCacheSize") == 0 ||
+      ap_cstr_casecmp(name, "FileCacheInodeLimit") == 0 ||
+      ap_cstr_casecmp(name, "FileCacheMetadataSize") == 0) {
+    uint32_t bit = ap_cstr_casecmp(name, "FileCacheSize") == 0
+                       ? LAGHU_CACHE_SET_SIZE
+                       : (ap_cstr_casecmp(name, "FileCacheInodeLimit") == 0
+                              ? LAGHU_CACHE_SET_INODES
+                              : LAGHU_CACHE_SET_METADATA);
+    uint64_t minimum = bit == LAGHU_CACHE_SET_SIZE
+                           ? 1024U * 1024U
+                           : (bit == LAGHU_CACHE_SET_INODES ? 16U : 16384U);
+    uint64_t maximum =
+        bit == LAGHU_CACHE_SET_INODES
+            ? 100000000U
+            : (bit == LAGHU_CACHE_SET_METADATA ? 1024U * 1024U * 1024U
+                                               : UINT64_C(1) << 60U);
+    uint64_t parsed;
+    if ((config->cache_set_mask & bit) != 0U ||
+        !(bit == LAGHU_CACHE_SET_INODES
+              ? laghu_cache_count_parse(parameter, minimum, maximum, &parsed)
+              : laghu_cache_size_parse(parameter, minimum, maximum, &parsed)) ||
+        (bit == LAGHU_CACHE_SET_METADATA && parsed > SIZE_MAX))
+      return "invalid or duplicate Laghu file cache limit";
+    if (bit == LAGHU_CACHE_SET_SIZE)
+      config->cache_limits.size_limit = parsed;
+    else if (bit == LAGHU_CACHE_SET_INODES)
+      config->cache_limits.inode_limit = parsed;
+    else
+      config->cache_limits.metadata_size = (size_t)parsed;
+    config->cache_set_mask |= bit;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "FileCacheCleanInterval") == 0) {
+    unsigned int parsed;
+    if ((config->cache_set_mask & LAGHU_CACHE_SET_CLEAN) != 0U ||
+        !laghu_cache_duration_parse(parameter, 1U, 86400U, &parsed))
+      return "Laghu FileCacheCleanInterval expects 1s through 24h";
+    config->cache_limits.clean_interval = parsed;
+    config->cache_set_mask |= LAGHU_CACHE_SET_CLEAN;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "PurgeMethod") == 0) {
+    if ((config->admin_set_mask & LAGHU_ADMIN_SET_METHOD) != 0U ||
+        strcmp(parameter, "PURGE") != 0)
+      return "Laghu PurgeMethod accepts PURGE once";
+    config->purge_method = true;
+    config->admin_set_mask |= LAGHU_ADMIN_SET_METHOD;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "PurgeQuery") == 0 ||
+      ap_cstr_casecmp(name, "Statistics") == 0) {
+    uint32_t bit = ap_cstr_casecmp(name, "PurgeQuery") == 0
+                       ? LAGHU_ADMIN_SET_QUERY
+                       : LAGHU_ADMIN_SET_STATS;
+    bool *target = bit == LAGHU_ADMIN_SET_QUERY ? &config->purge_query
+                                                : &config->statistics;
+    if ((config->admin_set_mask & bit) != 0U ||
+        (ap_cstr_casecmp(parameter, "On") != 0 &&
+         ap_cstr_casecmp(parameter, "Off") != 0))
+      return "Laghu administration toggle expects On or Off once";
+    *target = ap_cstr_casecmp(parameter, "On") == 0;
+    config->admin_set_mask |= bit;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "PurgeTokenFile") == 0 ||
+      ap_cstr_casecmp(name, "CacheFlushFile") == 0) {
+    uint32_t bit = ap_cstr_casecmp(name, "PurgeTokenFile") == 0
+                       ? LAGHU_ADMIN_SET_TOKEN
+                       : LAGHU_ADMIN_SET_FLUSH;
+    const char **target = bit == LAGHU_ADMIN_SET_TOKEN
+                              ? &config->purge_token_file
+                              : &config->cache_flush_file;
+    if ((config->admin_set_mask & bit) != 0U ||
+        !ap_os_is_path_absolute(command->pool, parameter))
+      return "Laghu administration file expects one absolute path";
+    *target = apr_pstrdup(command->pool, parameter);
+    config->admin_set_mask |= bit;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "PurgeAllow") == 0) {
+    apr_ipsubnet_t *subnet;
+    char *copy = apr_pstrdup(command->pool, parameter);
+    char *slash = strrchr(copy, '/');
+    if (slash == NULL) return "Laghu PurgeAllow expects CIDR";
+    *slash++ = '\0';
+    if (apr_ipsubnet_create(&subnet, copy, slash, command->pool) != APR_SUCCESS)
+      return "Laghu PurgeAllow expects a valid CIDR";
+    if (config->purge_allow == NULL)
+      config->purge_allow =
+          apr_array_make(command->pool, 4, sizeof(apr_ipsubnet_t *));
+    *(apr_ipsubnet_t **)apr_array_push(config->purge_allow) = subnet;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "CacheMimeTypes") == 0) {
@@ -857,8 +1024,22 @@ static bool laghu_apache_backend_available(laghu_apache_config *config) {
 }
 
 static void laghu_apache_status(request_rec *request, laghu_decision decision) {
+  const char *cache = "bypass";
+  const char *transform = "pass";
   apr_table_setn(request->headers_out, "X-Laghu",
                  laghu_decision_name(decision));
+  if (decision == LAGHU_DECISION_IMAGE_HIT) {
+    cache = "hit";
+    transform = "optimized";
+  } else if (decision == LAGHU_DECISION_PASS) {
+    cache = "miss";
+    transform = "queued";
+  } else if (decision == LAGHU_DECISION_BYPASS_ERROR) {
+    cache = "error";
+    transform = "failed-open";
+  }
+  apr_table_setn(request->headers_out, "X-Laghu-Cache", cache);
+  apr_table_setn(request->headers_out, "X-Laghu-Transform", transform);
 }
 
 static laghu_decision laghu_apache_decide(ap_filter_t *filter,
@@ -1814,8 +1995,14 @@ static int laghu_apache_variant_handler(request_rec *request) {
   bool javascript_asset;
   bool javascript_map;
   bool media_asset = false;
+  bool administration_candidate =
+      strcmp(request->method, "PURGE") == 0 ||
+      (request->unparsed_uri != NULL &&
+       strstr(request->unparsed_uri, "laghu=purge") != NULL) ||
+      (request->uri != NULL && strcmp(request->uri, "/.laghu/stats") == 0);
   if (request->uri == NULL ||
-      strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0) {
+      (strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
+       !administration_candidate)) {
     return DECLINED;
   }
   server_config =
@@ -1826,6 +2013,123 @@ static int laghu_apache_variant_handler(request_rec *request) {
       laghu_apache_merge_config(request->pool, server_config, directory_config);
   if (config == NULL || config->core.mode != LAGHU_MODE_ON) {
     return HTTP_NOT_FOUND;
+  }
+  if (config->cache_flush_file != NULL)
+    (void)laghu_cache_flush_file_poll(
+        config->image_cache, config->cache_flush_file,
+        (uint64_t)apr_time_sec(apr_time_now()), NULL);
+  {
+    bool purge_control = false;
+    char normalized[LAGHU_RUNTIME_PATH_SIZE];
+    bool normalized_ok = laghu_cache_source_normalize(
+        request->unparsed_uri, normalized, sizeof(normalized), &purge_control);
+    bool purge_request = strcmp(request->method, "PURGE") == 0 ||
+                         purge_control ||
+                         (request->unparsed_uri != NULL &&
+                          strstr(request->unparsed_uri, "laghu=purge") != NULL);
+    bool stats_request =
+        normalized_ok && strcmp(normalized, "/.laghu/stats") == 0;
+    if (purge_request || stats_request) {
+      const char *provided =
+          apr_table_get(request->headers_in, "X-Laghu-Purge-Token");
+      bool peer_allowed = false, token_allowed = false;
+      int subnet_index;
+      if (config->purge_allow != NULL)
+        for (subnet_index = 0; subnet_index < config->purge_allow->nelts;
+             ++subnet_index)
+          if (apr_ipsubnet_test(APR_ARRAY_IDX(config->purge_allow, subnet_index,
+                                              apr_ipsubnet_t *),
+                                request->connection->client_addr)) {
+            peer_allowed = true;
+            break;
+          }
+      if (provided != NULL && config->purge_token_file != NULL) {
+        FILE *token_file = fopen(config->purge_token_file, "rb");
+        char expected[257U];
+        size_t length = token_file == NULL
+                            ? 0U
+                            : fread(expected, 1U, sizeof(expected), token_file);
+        size_t supplied = strlen(provided), maximum, token_index;
+        unsigned char difference = 0U;
+        if (token_file != NULL) (void)fclose(token_file);
+        while (length != 0U &&
+               (expected[length - 1U] == '\n' || expected[length - 1U] == '\r'))
+          --length;
+        maximum = length > supplied ? length : supplied;
+        difference = (unsigned char)(length ^ supplied);
+        for (token_index = 0U; token_index < maximum; ++token_index)
+          difference |=
+              (unsigned char)((token_index < length ? expected[token_index]
+                                                    : 0U) ^
+                              (token_index < supplied
+                                   ? (unsigned char)provided[token_index]
+                                   : 0U));
+        token_allowed =
+            length >= 16U && length < sizeof(expected) && difference == 0U;
+      }
+      apr_table_setn(request->headers_out, "Cache-Control", "no-store");
+      ap_set_content_type(request, "application/json");
+      if (!normalized_ok) {
+        request->status = HTTP_BAD_REQUEST;
+        ap_rputs("{\"status\":\"malformed\"}", request);
+        return OK;
+      }
+      if (!peer_allowed || !token_allowed) {
+        request->status = HTTP_FORBIDDEN;
+        ap_rputs("{\"status\":\"forbidden\"}", request);
+        return OK;
+      }
+      if (!laghu_cache_backend_register_path(config->image_cache,
+                                             &config->cache_limits)) {
+        request->status = HTTP_SERVICE_UNAVAILABLE;
+        ap_rputs("{\"status\":\"unavailable\"}", request);
+        return OK;
+      }
+      if (stats_request) {
+        laghu_cache_stats stats = {0};
+        if (!config->statistics ||
+            (request->method_number != M_GET && !request->header_only))
+          return HTTP_METHOD_NOT_ALLOWED;
+        if (!laghu_cache_backend_health_path(config->image_cache, &stats))
+          return HTTP_SERVICE_UNAVAILABLE;
+        ap_rprintf(
+            request,
+            "{\"schema\":\"laghu-cache-stats-v1\","
+            "\"backend\":\"file\",\"bytes\":%llu,"
+            "\"files\":%llu,\"hits\":%llu,\"misses\":%llu,"
+            "\"publications\":%llu,\"rejected_writes\":%llu,"
+            "\"evictions\":%llu,\"url_purges\":%llu,"
+            "\"full_purges\":%llu,\"generation\":%llu}",
+            (unsigned long long)stats.bytes, (unsigned long long)stats.files,
+            (unsigned long long)stats.hits, (unsigned long long)stats.misses,
+            (unsigned long long)stats.publications,
+            (unsigned long long)stats.rejected_publications,
+            (unsigned long long)stats.evictions,
+            (unsigned long long)stats.url_purges,
+            (unsigned long long)stats.full_purges,
+            (unsigned long long)stats.cache_generation);
+        return OK;
+      }
+      if ((strcmp(request->method, "PURGE") == 0 && !config->purge_method) ||
+          (purge_control && !config->purge_query))
+        return HTTP_METHOD_NOT_ALLOWED;
+      {
+        uint64_t matched = 0U;
+        laghu_cache_purge_result result = laghu_cache_backend_purge_url_path(
+            config->image_cache, normalized,
+            (uint64_t)apr_time_sec(apr_time_now()), &matched);
+        request->status = result == LAGHU_CACHE_PURGE_ACCEPTED
+                              ? HTTP_ACCEPTED
+                              : (result == LAGHU_CACHE_PURGE_SATURATED
+                                     ? HTTP_TOO_MANY_REQUESTS
+                                     : HTTP_SERVICE_UNAVAILABLE);
+        ap_rprintf(
+            request, "{\"status\":\"%s\",\"matched_artifacts\":%llu}",
+            result == LAGHU_CACHE_PURGE_ACCEPTED ? "accepted" : "rejected",
+            (unsigned long long)matched);
+        return OK;
+      }
+    }
   }
   if (strcmp(request->uri, script_path) == 0) {
     if (config->core.image_beacon != LAGHU_MODE_ON ||
@@ -2113,6 +2417,17 @@ static int laghu_apache_variant_handler(request_rec *request) {
   return OK;
 }
 
+static int laghu_apache_post_config(apr_pool_t *configuration_pool,
+                                    apr_pool_t *log_pool,
+                                    apr_pool_t *temporary_pool,
+                                    server_rec *server) {
+  (void)log_pool;
+  (void)temporary_pool;
+  (void)server;
+  (void)ap_method_register(configuration_pool, "PURGE");
+  return OK;
+}
+
 static void laghu_apache_register(apr_pool_t *pool) {
   (void)pool;
   ap_register_output_filter(LAGHU_APACHE_FILTER,
@@ -2122,6 +2437,7 @@ static void laghu_apache_register(apr_pool_t *pool) {
                         APR_HOOK_MIDDLE);
   ap_hook_handler(laghu_apache_variant_handler, NULL, NULL, APR_HOOK_MIDDLE);
   ap_hook_child_init(laghu_apache_child_init, NULL, NULL, APR_HOOK_MIDDLE);
+  ap_hook_post_config(laghu_apache_post_config, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 static const command_rec laghu_apache_commands[] = {

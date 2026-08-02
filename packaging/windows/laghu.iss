@@ -451,6 +451,7 @@ begin
       ConfigureJavaScriptService();
       ConfigureAssetService();
     except
+      Log('Laghu post-install failure: ' + GetExceptionMessage);
       RollBackFailedInstall();
       ExitProcess(7);
     end;

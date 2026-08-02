@@ -45,7 +45,9 @@ typedef struct {
   char origin_port[6];
   char origin_authority[264];
   char origin_ca_file[LAGHU_RUNTIME_PATH_SIZE];
+  char cache_backend_uri[LAGHU_RUNTIME_PATH_SIZE];
   char cache_path[LAGHU_RUNTIME_PATH_SIZE];
+  laghu_cache_limits cache_limits;
   char worker_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char font_fetch_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char font_provider_config_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -77,6 +79,13 @@ typedef struct {
   laghu_proxy_forwarded_mode forwarded_mode;
   laghu_proxy_cidr trusted_proxies[LAGHU_PROXY_MAX_TRUSTED_PROXIES];
   size_t trusted_proxy_count;
+  laghu_proxy_cidr purge_allow[LAGHU_PROXY_MAX_TRUSTED_PROXIES];
+  size_t purge_allow_count;
+  char purge_token_file[LAGHU_RUNTIME_PATH_SIZE];
+  char cache_flush_file[LAGHU_RUNTIME_PATH_SIZE];
+  bool purge_method;
+  bool purge_query;
+  bool statistics;
   bool origin_tls;
   bool font_providers_loaded;
   bool javascript_queue_enabled;

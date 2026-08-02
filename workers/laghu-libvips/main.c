@@ -71,6 +71,21 @@ static unsigned int laghu_libvips_timeout(void) {
 #endif
 }
 
+static bool laghu_libvips_cache_publish(
+    const char *cache_path, const char *index_key, const char *variant_key,
+    const char *validator, const char *content_type, const char *backend_id,
+    laghu_buffer payload, laghu_runtime_cache_entry *entry) {
+  unsigned int attempt;
+  for (attempt = 0U; attempt < 4U; ++attempt) {
+    if (laghu_runtime_cache_publish(cache_path, index_key, variant_key,
+                                    validator, content_type, backend_id,
+                                    payload, entry))
+      return true;
+    if (attempt + 1U < 4U) laghu_libvips_pause(5U << attempt);
+  }
+  return false;
+}
+
 static int laghu_libvips_probe(void) {
   laghu_image_backend backend;
 
@@ -256,7 +271,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
       sprite_status = 7;
       goto sprite_finished;
     }
-    if (laghu_runtime_cache_publish(
+    if (laghu_libvips_cache_publish(
             cache_path, job->index_key, job->index_key, job->validator,
             "image/png", backend.backend_id,
             (laghu_buffer){sprite.data, sprite.length}, &published)) {
@@ -353,7 +368,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     if (result.used_candidate &&
         laghu_image_variant_key(&backend, &request, job->policy_key,
                                 variant_key)) {
-      status = laghu_runtime_cache_publish(
+      status = laghu_libvips_cache_publish(
                    cache_path, index_key, variant_key, job->validator,
                    laghu_image_content_type(result.output_format),
                    backend.backend_id, result.selected, &entry)
@@ -631,6 +646,12 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     fprintf(stderr, "laghu-libvips: cannot open queue %s\n", queue_path);
     return 1;
   }
+  if (!laghu_cache_backend_register_path(cache_path, NULL)) {
+    fprintf(stderr, "laghu-libvips: cannot open file cache backend %s\n",
+            cache_path);
+    laghu_runtime_queue_close(&queue);
+    return 1;
+  }
   payload = malloc(queue.slot_payload_size);
   if (payload == NULL) {
     laghu_runtime_queue_close(&queue);
@@ -641,6 +662,7 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
       break;
     }
     (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
+    (void)laghu_cache_backend_maintain_path(cache_path, (uint64_t)time(NULL));
     if (laghu_runtime_queue_try_take(&queue, &job, payload,
                                      queue.slot_payload_size)) {
       int job_status = laghu_libvips_run_isolated(&job, cache_path);

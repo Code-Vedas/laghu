@@ -224,9 +224,26 @@ static bool laghu_http_add_header_operation(
 
 static bool laghu_http_add_status(laghu_http_transaction_result *result,
                                   laghu_decision decision) {
+  const char *cache = "bypass";
+  const char *transform = "pass";
   result->decision = decision;
-  return laghu_http_add_header_operation(
-      result, LAGHU_HTTP_HEADER_SET, "X-Laghu", laghu_decision_name(decision));
+  if (decision == LAGHU_DECISION_IMAGE_HIT) {
+    cache = "hit";
+    transform = "optimized";
+  } else if (decision == LAGHU_DECISION_PASS) {
+    cache = "miss";
+    transform = "queued";
+  } else if (decision == LAGHU_DECISION_BYPASS_ERROR) {
+    cache = "error";
+    transform = "failed-open";
+  }
+  return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET,
+                                         "X-Laghu",
+                                         laghu_decision_name(decision)) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET,
+                                         "X-Laghu-Cache", cache) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET,
+                                         "X-Laghu-Transform", transform);
 }
 
 static laghu_image_filter_mask laghu_http_image_filters(
@@ -654,6 +671,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   if (!laghu_http_set_origin(transaction, request)) {
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
   }
+  laghu_cache_source_scope(environment->cache_path, transaction->path);
   if (laghu_http_internal_asset_key(transaction->path,
                                     transaction->cache_key) &&
       laghu_runtime_cache_lookup_variant(
@@ -825,6 +843,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) &&
              false;
     }
+    (void)laghu_cache_backend_associate_path(
+        environment->cache_path, transaction->cache_key, transaction->path);
     memcpy(result->cache_key, transaction->cache_key,
            sizeof(result->cache_key));
     {
@@ -907,6 +927,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) &&
              false;
     }
+    (void)laghu_cache_backend_associate_path(
+        environment->cache_path, transaction->cache_key, transaction->path);
     transaction->action = LAGHU_HTTP_ACTION_CAPTURE_RESOURCE;
     result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
   }

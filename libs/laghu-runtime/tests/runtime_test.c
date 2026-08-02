@@ -789,6 +789,40 @@ int main(void) {
   assert(mkdtemp(temporary) != NULL);
 #endif
   {
+    laghu_cache_backend *backend = calloc(1U, sizeof(*backend));
+    laghu_cache_limits limits;
+    char uri[LAGHU_RUNTIME_PATH_SIZE];
+    char parsed[LAGHU_RUNTIME_PATH_SIZE];
+#ifdef _WIN32
+    char canonical[LAGHU_RUNTIME_PATH_SIZE];
+    size_t cursor;
+    assert(snprintf(canonical, sizeof(canonical), "%s", temporary) > 0);
+    for (cursor = 0U; canonical[cursor] != '\0'; ++cursor)
+      if (canonical[cursor] == '\\') canonical[cursor] = '/';
+    assert(snprintf(uri, sizeof(uri), "file:///%s", canonical) > 0);
+#else
+    assert(snprintf(uri, sizeof(uri), "file://%s", temporary) > 0);
+#endif
+    assert(backend != NULL);
+    assert(laghu_cache_backend_uri_parse(uri, parsed, sizeof(parsed)));
+    assert(strcmp(parsed, temporary) == 0);
+    assert(!laghu_cache_backend_uri_parse("memcached://127.0.0.1", parsed,
+                                          sizeof(parsed)));
+    assert(!laghu_cache_backend_uri_parse("file://server/cache", parsed,
+                                          sizeof(parsed)));
+    assert(!laghu_cache_backend_uri_parse("file:///tmp/cache?secret=x", parsed,
+                                          sizeof(parsed)));
+    assert(!laghu_cache_backend_uri_parse("file:///tmp/%2fcache", parsed,
+                                          sizeof(parsed)));
+    laghu_cache_limits_init(&limits);
+    assert(laghu_cache_backend_open(backend, uri, &limits));
+    assert(strcmp(backend->path, temporary) == 0);
+    laghu_cache_backend_close(backend);
+    assert(laghu_cache_backend_open_path(backend, temporary, &limits));
+    laghu_cache_backend_close(backend);
+    free(backend);
+  }
+  {
     laghu_asset_config asset_config;
     laghu_asset_record asset_record = {0}, loaded_record = {0}, taken_record;
     char config_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -1056,6 +1090,107 @@ int main(void) {
   assert(laghu_runtime_index_key("/image.png", "etag", policy_key, false,
                                  no_webp_index_key));
   assert(strcmp(index_key, no_webp_index_key) != 0);
+  {
+    laghu_cache_backend *backend = calloc(1U, sizeof(*backend));
+    laghu_cache_limits limits;
+    laghu_cache_stats stats;
+    laghu_runtime_cache_entry backend_entry;
+    char backend_path[LAGHU_RUNTIME_PATH_SIZE];
+    laghu_cache_limits_init(&limits);
+    limits.metadata_size = 16384U;
+    limits.size_limit = sizeof(payload) - 1U;
+    limits.inode_limit = 16U;
+    assert(snprintf(backend_path, sizeof(backend_path), "%s/backend-cache",
+                    temporary) > 0);
+    assert(backend != NULL && laghu_runtime_directory_ensure(backend_path));
+    assert(laghu_cache_backend_open_path(backend, backend_path, &limits));
+    assert(laghu_cache_backend_publish(
+        backend, index_key, policy_key, "etag", "text/plain", "test",
+        (laghu_buffer){payload, sizeof(payload) - 1U}, &backend_entry));
+    assert(
+        laghu_cache_backend_lookup(backend, index_key, "etag", &backend_entry));
+    assert(laghu_cache_backend_read(backend, &backend_entry, cached,
+                                    sizeof(cached)));
+    assert(laghu_cache_backend_health(backend, &stats));
+    assert(stats.bytes == sizeof(payload) - 1U && stats.files == 3U &&
+           stats.hits == 1U && stats.publications == 1U &&
+           stats.cache_generation == 1U);
+    {
+      char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
+      unsigned char *metadata = malloc(16384U);
+      FILE *file;
+      size_t length;
+      size_t cursor;
+      bool payload_found = false;
+      assert(snprintf(metadata_path, sizeof(metadata_path), "%s.laghu-metadata",
+                      backend_path) > 0);
+      file = fopen(metadata_path, "rb");
+      assert(file != NULL && metadata != NULL);
+      length = fread(metadata, 1U, 16384U, file);
+      assert(fclose(file) == 0 && length == 16384U);
+      for (cursor = 0U; cursor + sizeof(payload) - 1U <= length; ++cursor)
+        if (memcmp(metadata + cursor, payload, sizeof(payload) - 1U) == 0)
+          payload_found = true;
+      assert(!payload_found);
+      free(metadata);
+    }
+    assert(!laghu_cache_backend_publish(
+        backend, no_webp_index_key, no_webp_index_key, "etag-2", "text/plain",
+        "test", (laghu_buffer){payload, sizeof(payload) - 1U}, &backend_entry));
+    assert(laghu_cache_backend_health(backend, &stats));
+    assert(stats.rejected_publications == 1U);
+    assert(laghu_cache_backend_maintain(backend, 100U));
+    assert(!laghu_cache_backend_lookup(backend, index_key, "etag",
+                                       &backend_entry));
+    assert(laghu_cache_backend_health(backend, &stats));
+    assert(stats.bytes == 0U && stats.files == 0U && stats.evictions == 1U);
+    {
+      char normalized[LAGHU_RUNTIME_PATH_SIZE];
+      char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+      bool control = false;
+      uint64_t matched = 0U, generation = 0U;
+      assert(laghu_cache_source_normalize("/image.png?v=1&laghu=purge#ignored",
+                                          normalized, sizeof(normalized),
+                                          &control));
+      assert(control && strcmp(normalized, "/image.png?v=1") == 0);
+      assert(!laghu_cache_source_normalize("/image.png?laghu=purge&laghu=purge",
+                                           normalized, sizeof(normalized),
+                                           &control));
+      assert(laghu_cache_source_hash("/image.png?v=1", source_hash));
+      assert(laghu_cache_backend_associate(backend, index_key, source_hash));
+      assert(laghu_cache_backend_publish(
+          backend, index_key, policy_key, "etag", "text/plain", "test",
+          (laghu_buffer){payload, sizeof(payload) - 1U}, &backend_entry));
+      assert(laghu_cache_backend_purge_url(backend, "/image.png?v=1", 200U,
+                                           &matched) ==
+             LAGHU_CACHE_PURGE_ACCEPTED);
+      assert(matched == 1U);
+      assert(!laghu_cache_backend_lookup(backend, index_key, "etag",
+                                         &backend_entry));
+      assert(laghu_cache_backend_flush(backend, 7U, 201U, &generation));
+      assert(generation == 7U);
+      assert(!laghu_cache_backend_flush(backend, 6U, 202U, &generation));
+      assert(laghu_cache_backend_health(backend, &stats));
+      assert(stats.url_purges == 1U && stats.full_purges == 1U &&
+             stats.invalidated_artifacts >= 1U && stats.cache_generation == 7U);
+    }
+    {
+      char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
+      uint64_t zero = 0U;
+      FILE *file;
+      assert(snprintf(metadata_path, sizeof(metadata_path), "%s.laghu-metadata",
+                      backend_path) > 0);
+      file = fopen(metadata_path, "r+b");
+      assert(file != NULL && fwrite(&zero, sizeof(zero), 1U, file) == 1U);
+      assert(fclose(file) == 0);
+      assert(laghu_cache_backend_health(backend, &stats));
+      assert(stats.corrupt_removals == 1U && stats.rebuilding == false);
+    }
+    laghu_cache_backend_close(backend);
+    ++limits.inode_limit;
+    assert(!laghu_cache_backend_open_path(backend, backend_path, &limits));
+    free(backend);
+  }
   assert(laghu_runtime_queue_create(&producer, queue_path, 1U, 64U));
   assert(laghu_runtime_queue_set_backend(&producer, 0x55aaU, "test-vips"));
   assert(laghu_runtime_queue_heartbeat(&producer, 123456U));

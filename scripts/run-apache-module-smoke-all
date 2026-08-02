@@ -34,6 +34,8 @@ javascript_pid=
 origin_pid=
 rm -rf "${work}"
 mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache"
+printf '%s\n' 'apache-purge-token-0123456789' >"${work}/purge.token"
+chmod 600 "${work}/purge.token"
 printf '%s\n' 'apache laghu smoke' >"${work}/htdocs/index.html"
 printf '%s\n' '/*! keep */ .card { color: red; margin: 0  0; } /* remove */' \
   >"${work}/htdocs/site.css"
@@ -167,7 +169,16 @@ load_first_mpm() {
   printf '<Location "/.laghu/beacon/instrumentation.js">\nLaghu On\nLaghu InstrumentationBeacon On\n</Location>\n'
   printf '<Location "/.laghu/beacon/instrumentation">\nLaghu On\nLaghu InstrumentationBeacon On\n</Location>\n'
   printf '<LocationMatch "^/(combine-(one|two)\\.js|javascript-(combine|outline)\\.html)$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
-  printf 'Laghu ImageCache "%s/cache"\n' "${work}"
+  printf 'Laghu FileCacheBackend "file://%s/cache"\n' "${work}"
+  printf 'Laghu FileCacheSize 10g\n'
+  printf 'Laghu FileCacheInodeLimit 100000\n'
+  printf 'Laghu FileCacheCleanInterval 60s\n'
+  printf 'Laghu FileCacheMetadataSize 16m\n'
+  printf 'Laghu PurgeMethod PURGE\n'
+  printf 'Laghu PurgeQuery On\n'
+  printf 'Laghu PurgeTokenFile "%s/purge.token"\n' "${work}"
+  printf 'Laghu PurgeAllow 127.0.0.1/32\n'
+  printf 'Laghu Statistics On\n'
   if [ -x "${javascript_service}" ]; then
     printf 'Laghu JavaScriptQueue "%s/javascript.queue"\n' "${work}"
     printf 'Laghu JavaScriptTarget "last 2 chrome versions"\n'
@@ -295,6 +306,14 @@ done
 }
 cmp "${work}/htdocs/index.html" "${work}/body"
 grep -i '^X-Laghu: bypass-passthrough' "${work}/headers"
+grep -i '^X-Laghu-Cache: bypass' "${work}/headers"
+grep -i '^X-Laghu-Transform: pass' "${work}/headers"
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/.laghu/stats | grep 'laghu-cache-stats-v1' >/dev/null
+curl --fail --silent -X PURGE \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/site.css | grep 'accepted' >/dev/null
 
 if [ -x "${javascript_service}" ]; then
   curl --fail --silent http://127.0.0.1:18081/app.js >"${work}/javascript-cold"

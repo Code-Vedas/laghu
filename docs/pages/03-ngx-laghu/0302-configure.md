@@ -42,9 +42,20 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu javascript_target QUERY;` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering without polyfills. |
 | `laghu javascript_observation_config PATH;` | inherited | valid observation file | unset | Adds exact third-party script candidates. |
 | `laghu javascript_defer_config PATH;` | inherited | valid approval file | unset | Approves exact same-origin scripts for evidence-gated deferral. |
-| `laghu image_cache PATH;` | inherited | bounded path | `/var/cache/laghu/images` | Selects catalogs and immutable assets. |
+| `laghu file_cache_backend URI;` | inherited | local absolute `file:` URI | `file:///var/cache/laghu/images` | Selects the cache provider and location. |
+| `laghu file_cache_size SIZE;` | inherited | at least `1m`, size suffix accepted | `10g` | Bounds cached payload bytes. |
+| `laghu file_cache_inode_limit N;` | inherited | `16..100000000` | `100000` | Bounds files used by payloads, canonical records, and aliases. |
+| `laghu file_cache_clean_interval DURATION;` | inherited | `1s..24h` | `60s` | Sets background approximate-LRU maintenance cadence. |
+| `laghu file_cache_metadata_size SIZE;` | inherited | `16k..1g` | `16m` | Bounds shared metadata; payload bytes are never stored there. |
+| `laghu image_cache PATH;` | inherited | bounded path | deprecated | Compatibility alias for a local file backend; conflicts with `file_cache_backend`. |
+| `laghu purge_method PURGE;` | inherited | literal `PURGE` | disabled | Enables authenticated method-driven URL purge. |
+| `laghu purge_query on\|off;` | inherited | boolean | `off` | Enables authenticated `laghu=purge` query control. |
+| `laghu purge_token_file PATH;` | inherited | absolute protected file | unset | Loads the administrator token; never place the token in configuration. |
+| `laghu purge_allow CIDR;` | inherited, repeatable | IPv4/IPv6 CIDR | none | Restricts administration to matching direct peers. |
+| `laghu cache_flush_file PATH;` | inherited | absolute protected file | unset | Polls `laghu-cache-flush-v1 GENERATION` full-cache invalidations. |
+| `laghu statistics on\|off;` | inherited | boolean | `off` | Enables authenticated `GET`/`HEAD /.laghu/stats`. |
 | `laghu rum_store URI;` | `http` | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
-| `laghu rum_store_local_snapshot PATH;` | `http` | bounded path | `<image_cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
+| `laghu rum_store_local_snapshot PATH;` | `http` | bounded path | `<file cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
 | `laghu rum_store_client_library PATH;` | `http` | hiredis library path | unset | Enables runtime-loaded Redis/Valkey support. |
 | `laghu rum_store_timeout MS;` | `http` | `10..10000` | `100` | Bounds backend operations. |
 | `laghu rum_store_ttl SECONDS;` | `http` | `3600..2592000` | `604800` | Sets aggregate expiry. |
@@ -57,6 +68,8 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 `preset` and `rewrite_level` are mutually exclusive in one scope.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.
+
+The file cache is the only cache backend currently implemented. Its portable shared mapping contains bounded keys, sizes, state, and approximate-LRU access epochs only; response bodies and generated assets remain on disk. Unsupported schemes such as `memcached:` fail configuration so a future provider can implement the same contract without silently changing behavior.
 An inherited `disable_filter` may be reversed with `enable_filter`, but an inherited `forbid_filter` cannot be reversed.
 Enabling a filter with the `passthrough` rewrite level is invalid.
 The provider and observation files are validated during configuration loading; malformed files fail `nginx -t`.

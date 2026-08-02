@@ -8,13 +8,18 @@ permalink: /laghu-server/configure/
 # Configure the Laghu Server
 
 The standalone server accepts command-line options only.
-`--listen`, `--origin`, `--cache`, and `--worker-queue` are required; duplicate or unknown options fail startup.
+`--listen`, `--origin`, one of `--file-cache-backend` or deprecated `--cache`, and `--worker-queue` are required; duplicate, conflicting, or unknown options fail startup.
 
 | Option | Accepted value | Default | Effect |
 | --- | --- | --- | --- |
 | `--listen HOST:PORT` | valid endpoint | required | Selects the client listener. |
 | `--origin http[s]://HOST[:PORT]` | one origin without path/query/credentials | required | Selects the upstream origin. |
-| `--cache PATH` | bounded path | required | Selects catalogs and immutable assets. |
+| `--file-cache-backend URI` | local absolute `file:` URI | required | Selects the cache provider and location. |
+| `--file-cache-size SIZE` | at least `1m`, `k`/`m`/`g` suffix accepted | `10g` | Bounds cached payload bytes. |
+| `--file-cache-inode-limit N` | `16..100000000` | `100000` | Bounds backend files. |
+| `--file-cache-clean-interval DURATION` | `1s..24h` | `60s` | Sets background approximate-LRU maintenance cadence. |
+| `--file-cache-metadata-size SIZE` | `16k..1g` | `16m` | Bounds shared metadata; it never stores payload bytes. |
+| `--cache PATH` | bounded path | deprecated | Compatibility alias for a local file backend. |
 | `--worker-queue PATH` | bounded path | required | Selects the image queue. |
 | `--cache-mime-types LIST` | comma-separated MIME types | empty | Explicitly enables opaque media cache extension for matching response types. |
 | `--preset NAME` | supported preset | `balanced` | Selects policy; conflicts with `--rewrite-level`. |
@@ -48,6 +53,12 @@ The standalone server accepts command-line options only.
 | `--origin-ca-file PATH` | CA bundle path | platform trust | Overrides trust for HTTPS origins; invalid with HTTP. |
 | `--forwarded-headers MODE` | `off`, `forwarded`, `x-forwarded`, `both` | `off` | Selects trusted forwarding syntax. |
 | `--trusted-proxy CIDR` | canonical IPv4/IPv6 CIDR, repeatable to 64 | none | Trusts forwarding headers from matching peers; requires forwarding mode. |
+| `--purge-method PURGE` | literal `PURGE` | disabled | Enables authenticated method-driven URL purge. |
+| `--purge-query on\|off` | boolean | `off` | Enables authenticated `laghu=purge` query control. |
+| `--purge-token-file PATH` | absolute protected file | unset | Loads the administrator token; never pass the token as an argument. |
+| `--purge-allow CIDR` | canonical IPv4/IPv6 CIDR, repeatable to 64 | none | Restricts administration to matching direct peers. |
+| `--cache-flush-file PATH` | absolute protected file | unset | Polls `laghu-cache-flush-v1 GENERATION` full-cache invalidations. |
+| `--statistics on\|off` | boolean | `off` | Enables authenticated `GET`/`HEAD /.laghu/stats`. |
 | `--rum-store URI` | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
 | `--rum-store-local-snapshot PATH` | bounded path | `<cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
 | `--rum-store-client-library PATH` | hiredis library path | unset | Enables Redis/Valkey support. |
@@ -65,6 +76,8 @@ The standalone server accepts command-line options only.
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be controlled only once; duplicates and conflicts fail startup, as does enabling a filter with `passthrough`.
+
+The file cache is the only cache backend currently implemented. Its portable shared mapping contains bounded keys, sizes, state, and approximate-LRU access epochs only; response bodies and generated assets remain on disk. Unsupported schemes such as `memcached:` fail startup so a future provider can implement the same contract without changing callers.
 Remote RUM synchronization requires verified `rediss://`; `redis://` is loopback-only and Memcached is unsupported.
 
 ## JavaScript deferral approvals

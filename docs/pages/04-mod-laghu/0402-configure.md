@@ -42,9 +42,20 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu JavaScriptTarget QUERY` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering. |
 | `Laghu JavaScriptObservationConfig PATH` | inherited | valid observation file | unset | Adds exact third-party script candidates. |
 | `Laghu JavaScriptDeferConfig PATH` | inherited | valid approval file | unset | Approves exact same-origin scripts for evidence-gated deferral. |
-| `Laghu ImageCache PATH` | inherited | bounded path | `/var/cache/laghu/images` | Selects catalogs and immutable assets. |
+| `Laghu FileCacheBackend URI` | inherited | local absolute `file:` URI | `file:///var/cache/laghu/images` | Selects the cache provider and location. |
+| `Laghu FileCacheSize SIZE` | inherited | at least `1m`, `k`/`m`/`g` suffix accepted | `10g` | Bounds cached payload bytes. |
+| `Laghu FileCacheInodeLimit N` | inherited | `16..100000000` | `100000` | Bounds files used by payloads, canonical records, and aliases. |
+| `Laghu FileCacheCleanInterval DURATION` | inherited | `1s..24h` | `60s` | Sets background approximate-LRU maintenance cadence. |
+| `Laghu FileCacheMetadataSize SIZE` | inherited | `16k..1g` | `16m` | Bounds shared metadata; payload bytes are never stored there. |
+| `Laghu ImageCache PATH` | inherited | bounded path | deprecated | Compatibility alias for a local file backend; conflicts with `FileCacheBackend`. |
+| `Laghu PurgeMethod PURGE` | inherited | literal `PURGE` | disabled | Enables authenticated method-driven URL purge. |
+| `Laghu PurgeQuery On\|Off` | inherited | boolean | `Off` | Enables authenticated `laghu=purge` query control. |
+| `Laghu PurgeTokenFile PATH` | inherited | absolute protected file | unset | Loads the administrator token; never place the token in configuration. |
+| `Laghu PurgeAllow CIDR` | inherited, repeatable | IPv4/IPv6 CIDR | none | Restricts administration to matching direct peers. |
+| `Laghu CacheFlushFile PATH` | inherited | absolute protected file | unset | Polls `laghu-cache-flush-v1 GENERATION` full-cache invalidations. |
+| `Laghu Statistics On\|Off` | inherited | boolean | `Off` | Enables authenticated `GET`/`HEAD /.laghu/stats`. |
 | `Laghu RumStore URI` | main server | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
-| `Laghu RumStoreLocalSnapshot PATH` | main server | bounded path | `<ImageCache>/rum.snapshot` | Selects last-known-good snapshot storage. |
+| `Laghu RumStoreLocalSnapshot PATH` | main server | bounded path | `<file cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
 | `Laghu RumStoreClientLibrary PATH` | main server | hiredis library path | unset | Enables runtime-loaded Redis/Valkey support. |
 | `Laghu RumStoreTimeout MS` | main server | `10..10000` | `100` | Bounds backend operations. |
 | `Laghu RumStoreTtl SECONDS` | main server | `3600..2592000` | `604800` | Sets aggregate expiry. |
@@ -57,6 +68,8 @@ Optimization settings inherit through main server, virtual host, directory, and 
 `Preset` and `RewriteLevel` cannot appear together in the same scope.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.
+
+The file cache is the only cache backend currently implemented. Its portable shared mapping contains bounded keys, sizes, state, and approximate-LRU access epochs only; response bodies and generated assets remain on disk. Unsupported schemes such as `memcached:` fail configuration so a future provider can implement the same contract without silently changing behavior.
 An inherited `DisableFilter` may be reversed with `EnableFilter`, but an inherited `ForbidFilter` cannot be reversed.
 Enabling a filter with the `passthrough` rewrite level is invalid.
 Provider and observation files are validated during configuration loading.

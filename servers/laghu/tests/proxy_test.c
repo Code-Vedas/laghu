@@ -39,6 +39,38 @@ int main(void) {
                    "16384",
                    "--drain-timeout",
                    "45"};
+  char *backend[] = {"laghu",
+                     "--listen",
+                     "127.0.0.1:8080",
+                     "--origin",
+                     "http://127.0.0.1:8000",
+                     "--file-cache-backend",
+#ifdef _WIN32
+                     "file:///C:/laghu-cache",
+#else
+                     "file:///tmp/cache",
+#endif
+                     "--file-cache-size",
+                     "20m",
+                     "--file-cache-inode-limit",
+                     "2000",
+                     "--file-cache-clean-interval",
+                     "2m",
+                     "--file-cache-metadata-size",
+                     "1m",
+                     "--worker-queue",
+                     "/tmp/jobs"};
+  char *backend_conflict[] = {"laghu",
+                              "--listen",
+                              "127.0.0.1:8080",
+                              "--origin",
+                              "http://127.0.0.1:8000",
+                              "--cache",
+                              "/tmp/cache",
+                              "--file-cache-backend",
+                              "file:///tmp/cache",
+                              "--worker-queue",
+                              "/tmp/jobs"};
   char *conflict[] = {"laghu",
                       "--listen",
                       "127.0.0.1:8080",
@@ -130,6 +162,29 @@ int main(void) {
                      "/tmp/jobs",
                      "--rum-store",
                      "redis://example.test:6379/0"};
+  char *admin[] = {"laghu",
+                   "--listen",
+                   "127.0.0.1:8080",
+                   "--origin",
+                   "http://127.0.0.1:8000",
+                   "--cache",
+                   "/tmp/cache",
+                   "--worker-queue",
+                   "/tmp/jobs",
+                   "--purge-method",
+                   "PURGE",
+                   "--purge-query",
+                   "on",
+                   "--purge-token-file",
+#ifdef _WIN32
+                   "C:/ProgramData/Laghu/purge.token",
+#else
+                   "/etc/laghu/purge.token",
+#endif
+                   "--purge-allow",
+                   "127.0.0.0/8",
+                   "--statistics",
+                   "on"};
   char *rum[] = {"laghu",
                  "--listen",
                  "127.0.0.1:8080",
@@ -160,6 +215,11 @@ int main(void) {
   unsigned char decoded[16];
   size_t decoded_length = 0U;
   laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) ==
+        LAGHU_PROXY_PARSE_OK);
+  CHECK(options.purge_method && options.purge_query && options.statistics &&
+        options.purge_allow_count == 1U);
+  laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(20, valid, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.origin_host, "127.0.0.1"));
@@ -171,6 +231,23 @@ int main(void) {
   CHECK(options.config.javascript_inline_limit == 4096U);
   CHECK(options.config.javascript_outline_threshold == 16384U);
   CHECK(options.drain_timeout == 45U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(17, backend, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+#ifdef _WIN32
+  CHECK(!strcmp(options.cache_backend_uri, "file:///C:/laghu-cache"));
+  CHECK(!strcmp(options.cache_path, "C:\\laghu-cache"));
+#else
+  CHECK(!strcmp(options.cache_backend_uri, "file:///tmp/cache"));
+  CHECK(!strcmp(options.cache_path, "/tmp/cache"));
+#endif
+  CHECK(options.cache_limits.size_limit == 20U * 1024U * 1024U);
+  CHECK(options.cache_limits.inode_limit == 2000U);
+  CHECK(options.cache_limits.clean_interval == 120U);
+  CHECK(options.cache_limits.metadata_size == 1024U * 1024U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, backend_conflict, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, secure, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);

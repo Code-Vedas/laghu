@@ -894,6 +894,7 @@ bool laghu_runtime_rewrite_javascript_html(
   char dependencies[LAGHU_JAVASCRIPT_MAX_SCRIPTS][LAGHU_RUNTIME_KEY_SIZE];
   size_t dependency_count = 0U;
   laghu_javascript_combine_result combined;
+  laghu_runtime_cache_entry entry;
   if (result == NULL) return false;
   memset(result, 0, sizeof(*result));
   if (queue == NULL || cache_path == NULL || html.data == NULL ||
@@ -982,7 +983,6 @@ bool laghu_runtime_rewrite_javascript_html(
           if (laghu_javascript_external_lookup(cache_path, url, policy_key,
                                                normalized_target, module, now,
                                                ttl_seconds, &record)) {
-            laghu_runtime_cache_entry entry;
             bool defer_ready =
                 allow_defer && !module && strchr(url, '?') == NULL &&
                 strchr(url, '#') == NULL &&
@@ -1109,7 +1109,10 @@ bool laghu_runtime_rewrite_javascript_html(
               }
               free(body);
             }
-            if ((route_length = snprintf(route, sizeof(route), "/.laghu/js/%s",
+            if (laghu_runtime_cache_lookup_variant(cache_path, record.variant,
+                                                   &entry) &&
+                entry.length == record.derived_length &&
+                (route_length = snprintf(route, sizeof(route), "/.laghu/js/%s",
                                          record.variant)) > 0 &&
                 (size_t)route_length < sizeof(route)) {
               size_t prefix = (size_t)(source_attribute - html.data);
@@ -1167,7 +1170,10 @@ bool laghu_runtime_rewrite_javascript_html(
                                              normalized_target, module, now,
                                              ttl_seconds, &inline_record) &&
             (inline_record.flags & LAGHU_JAVASCRIPT_FLAG_URL_INDEPENDENT) !=
-                0U) {
+                0U &&
+            laghu_runtime_cache_lookup_variant(cache_path,
+                                               inline_record.variant, &entry) &&
+            entry.length == inline_record.derived_length) {
           char source_attribute[LAGHU_RUNTIME_KEY_SIZE + 32U];
           int source_attribute_length =
               snprintf(source_attribute, sizeof(source_attribute),

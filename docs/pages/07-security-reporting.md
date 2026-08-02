@@ -16,4 +16,6 @@ Laghu is disabled by default in both native modules, bypasses authorization-bear
 
 External font CSS fetching permits only administrator-configured exact HTTPS hosts and paths, validates DNS and redirects, and rejects private or reserved destinations. Redis credentials stay in administrator configuration and never enter browser output, policy keys, snapshots, or normal diagnostics. Browser instrumentation accepts bounded same-origin reports and stores aggregate opaque records rather than raw events or identifiers.
 
+Cache administration is off by default. When enabled, purge and detailed statistics require both a direct-peer CIDR match and the `X-Laghu-Purge-Token` value from an absolute, access-restricted token file. Do not place tokens in URLs, configuration values, logs, or responses. Keep `/.laghu/stats` on a private operations network. Purges invalidate shared metadata immediately and reclaim backend files asynchronously; they never delete CDN objects or unrelated files.
+
 Review the product configuration before deployment: [`ngx-laghu`](/ngx-laghu/configure/), [`mod-laghu`](/mod-laghu/configure/), or [`laghu` server](/laghu-server/configure/).

@@ -33,6 +33,7 @@ typedef int laghu_socklen;
 #include <netdb.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -368,6 +369,7 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->rum_sync_interval = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
   options->rum_memory_limit = LAGHU_RUM_DEFAULT_MEMORY_BYTES;
   options->rum_pending_limit = LAGHU_RUM_DEFAULT_PENDING_BYTES;
+  laghu_cache_limits_init(&options->cache_limits);
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity,
@@ -381,6 +383,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                                                    char *error,
                                                    size_t error_size) {
   bool listen_seen = false, origin_seen = false, cache_seen = false;
+  bool legacy_cache_seen = false, backend_cache_seen = false;
+  bool cache_size_seen = false, cache_inode_seen = false;
+  bool cache_clean_seen = false, cache_metadata_seen = false;
   bool queue_seen = false, selector_seen = false;
   bool font_queue_seen = false, font_config_seen = false;
   bool javascript_queue_seen = false, javascript_target_seen = false;
@@ -399,6 +404,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool rum_library_seen = false, rum_timeout_seen = false, rum_ttl_seen = false;
   bool rum_retry_seen = false, rum_sync_seen = false;
   bool rum_memory_seen = false, rum_pending_seen = false;
+  bool purge_method_seen = false, purge_query_seen = false;
+  bool purge_token_seen = false, flush_file_seen = false;
+  bool statistics_seen = false;
   int index;
   if (options == NULL || argc < 1)
     return proxy_error(error, error_size, "invalid arguments");
@@ -427,10 +435,107 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       origin_seen = true;
     } else if (strcmp(name, "--cache") == 0) {
       NEED_VALUE();
-      if (cache_seen ||
+      if (cache_seen || backend_cache_seen ||
           !proxy_copy(options->cache_path, sizeof(options->cache_path), value))
         return proxy_error(error, error_size, "invalid or duplicate --cache");
       cache_seen = true;
+      legacy_cache_seen = true;
+    } else if (strcmp(name, "--file-cache-backend") == 0) {
+      char path[LAGHU_RUNTIME_PATH_SIZE];
+      NEED_VALUE();
+      if (cache_seen || legacy_cache_seen ||
+          !laghu_cache_backend_uri_parse(value, path, sizeof(path)) ||
+          !proxy_copy(options->cache_backend_uri,
+                      sizeof(options->cache_backend_uri), value) ||
+          !proxy_copy(options->cache_path, sizeof(options->cache_path), path))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --file-cache-backend");
+      cache_seen = true;
+      backend_cache_seen = true;
+    } else if (strcmp(name, "--file-cache-size") == 0) {
+      NEED_VALUE();
+      if (cache_size_seen ||
+          !laghu_cache_size_parse(value, 1024U * 1024U, UINT64_C(1) << 60U,
+                                  &options->cache_limits.size_limit))
+        return proxy_error(error, error_size, "invalid --file-cache-size");
+      cache_size_seen = true;
+    } else if (strcmp(name, "--file-cache-inode-limit") == 0) {
+      NEED_VALUE();
+      if (cache_inode_seen ||
+          !laghu_cache_count_parse(value, 16U, 100000000U,
+                                   &options->cache_limits.inode_limit))
+        return proxy_error(error, error_size,
+                           "invalid --file-cache-inode-limit");
+      cache_inode_seen = true;
+    } else if (strcmp(name, "--file-cache-clean-interval") == 0) {
+      NEED_VALUE();
+      if (cache_clean_seen ||
+          !laghu_cache_duration_parse(value, 1U, 86400U,
+                                      &options->cache_limits.clean_interval))
+        return proxy_error(error, error_size,
+                           "invalid --file-cache-clean-interval");
+      cache_clean_seen = true;
+    } else if (strcmp(name, "--file-cache-metadata-size") == 0) {
+      uint64_t parsed;
+      NEED_VALUE();
+      if (cache_metadata_seen ||
+          !laghu_cache_size_parse(value, 16384U, 1024U * 1024U * 1024U,
+                                  &parsed) ||
+          parsed > SIZE_MAX)
+        return proxy_error(error, error_size,
+                           "invalid --file-cache-metadata-size");
+      options->cache_limits.metadata_size = (size_t)parsed;
+      cache_metadata_seen = true;
+    } else if (strcmp(name, "--purge-method") == 0) {
+      NEED_VALUE();
+      if (purge_method_seen || strcmp(value, "PURGE") != 0)
+        return proxy_error(error, error_size,
+                           "--purge-method accepts PURGE once");
+      options->purge_method = true;
+      purge_method_seen = true;
+    } else if (strcmp(name, "--purge-query") == 0 ||
+               strcmp(name, "--statistics") == 0) {
+      bool *target = strcmp(name, "--purge-query") == 0 ? &options->purge_query
+                                                        : &options->statistics;
+      bool *seen = strcmp(name, "--purge-query") == 0 ? &purge_query_seen
+                                                      : &statistics_seen;
+      NEED_VALUE();
+      if (*seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
+        return proxy_error(error, error_size,
+                           "invalid duplicate on|off option");
+      *target = strcmp(value, "on") == 0;
+      *seen = true;
+    } else if (strcmp(name, "--purge-token-file") == 0 ||
+               strcmp(name, "--cache-flush-file") == 0) {
+      char *target = strcmp(name, "--purge-token-file") == 0
+                         ? options->purge_token_file
+                         : options->cache_flush_file;
+      bool *seen = strcmp(name, "--purge-token-file") == 0 ? &purge_token_seen
+                                                           : &flush_file_seen;
+      NEED_VALUE();
+      if (*seen || !proxy_copy(target, LAGHU_RUNTIME_PATH_SIZE, value) ||
+#ifdef _WIN32
+          !(isalpha((unsigned char)value[0]) && value[1] == ':' &&
+            (value[2] == '\\' || value[2] == '/'))
+#else
+          value[0] != '/'
+#endif
+      )
+        return proxy_error(error, error_size,
+                           "invalid duplicate absolute file");
+      *seen = true;
+    } else if (strcmp(name, "--purge-allow") == 0) {
+      laghu_proxy_cidr cidr;
+      size_t cidr_index;
+      NEED_VALUE();
+      if (options->purge_allow_count >= LAGHU_PROXY_MAX_TRUSTED_PROXIES ||
+          !proxy_parse_cidr(value, &cidr))
+        return proxy_error(error, error_size, "invalid --purge-allow CIDR");
+      for (cidr_index = 0U; cidr_index < options->purge_allow_count;
+           ++cidr_index)
+        if (proxy_cidr_equal(&options->purge_allow[cidr_index], &cidr))
+          return proxy_error(error, error_size, "duplicate --purge-allow");
+      options->purge_allow[options->purge_allow_count++] = cidr;
     } else if (strcmp(name, "--worker-queue") == 0) {
       NEED_VALUE();
       if (queue_seen || !proxy_copy(options->worker_queue_path,
@@ -793,9 +898,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     return proxy_error(error, error_size,
                        "asset upload queue must match the asset configuration");
   if (!listen_seen || !origin_seen || !cache_seen || !queue_seen)
-    return proxy_error(
-        error, error_size,
-        "--listen, --origin, --cache, and --worker-queue are required");
+    return proxy_error(error, error_size,
+                       "--listen, --origin, a file cache backend, and "
+                       "--worker-queue are required");
   if (font_config_seen != font_queue_seen)
     return proxy_error(
         error, error_size,
@@ -807,6 +912,11 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF)
     return proxy_error(error, error_size,
                        "--trusted-proxy requires forwarded headers");
+  if ((options->purge_method || options->purge_query || options->statistics) &&
+      (!purge_token_seen || options->purge_allow_count == 0U))
+    return proxy_error(
+        error, error_size,
+        "network administration requires --purge-token-file and --purge-allow");
   {
     laghu_policy policy;
     if (!laghu_resolve_config_policy(&options->config, &policy))
@@ -1113,6 +1223,92 @@ static bool proxy_peer_trusted(const laghu_proxy_options *options,
     if (equal) return true;
   }
   return false;
+}
+
+static bool proxy_peer_in_cidrs(const proxy_connection *connection,
+                                const laghu_proxy_cidr *cidrs, size_t count) {
+  const unsigned char *peer;
+  unsigned int family;
+  size_t index;
+  if (connection->peer.ss_family == AF_INET) {
+    peer =
+        (const unsigned char *)&((const struct sockaddr_in *)&connection->peer)
+            ->sin_addr;
+    family = AF_INET;
+  } else if (connection->peer.ss_family == AF_INET6) {
+    peer =
+        (const unsigned char *)&((const struct sockaddr_in6 *)&connection->peer)
+            ->sin6_addr;
+    family = AF_INET6;
+  } else {
+    return false;
+  }
+  for (index = 0U; index < count; ++index) {
+    unsigned int bit;
+    bool equal = cidrs[index].family == family;
+    for (bit = 0U; equal && bit < cidrs[index].prefix; ++bit)
+      equal = (peer[bit / 8U] & (1U << (7U - bit % 8U))) ==
+              (cidrs[index].address[bit / 8U] & (1U << (7U - bit % 8U)));
+    if (equal) return true;
+  }
+  return false;
+}
+
+static bool proxy_admin_token(const laghu_proxy_options *options,
+                              const proxy_request *request) {
+  proxy_header *provided =
+      proxy_find((proxy_header *)request->headers, request->header_count,
+                 "X-Laghu-Purge-Token");
+  unsigned char expected[257U];
+  size_t length, provided_length, index, maximum;
+  unsigned char difference = 0U;
+  FILE *file;
+#ifndef _WIN32
+  struct stat status;
+  if (lstat(options->purge_token_file, &status) != 0 ||
+      !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
+      (status.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
+    return false;
+#else
+  DWORD attributes = GetFileAttributesA(options->purge_token_file);
+  if (attributes == INVALID_FILE_ATTRIBUTES ||
+      (attributes &
+       (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U)
+    return false;
+#endif
+  if (provided == NULL) return false;
+#ifdef _WIN32
+  if (fopen_s(&file, options->purge_token_file, "rb") != 0) return false;
+#else
+  file = fopen(options->purge_token_file, "rb");
+  if (file == NULL) return false;
+#endif
+  length = fread(expected, 1U, sizeof(expected), file);
+  if (fclose(file) != 0 || length == 0U || length == sizeof(expected))
+    return false;
+  while (length != 0U &&
+         (expected[length - 1U] == '\n' || expected[length - 1U] == '\r'))
+    --length;
+  if (length < 16U) return false;
+  for (index = 0U; index < length; ++index)
+    if (expected[index] <= 0x20U || expected[index] == 0x7fU) return false;
+  provided_length = strlen(provided->value);
+  maximum = length > provided_length ? length : provided_length;
+  difference = (unsigned char)(length ^ provided_length);
+  for (index = 0U; index < maximum; ++index) {
+    unsigned char left = index < length ? expected[index] : 0U;
+    unsigned char right =
+        index < provided_length ? (unsigned char)provided->value[index] : 0U;
+    difference |= (unsigned char)(left ^ right);
+  }
+  return difference == 0U;
+}
+
+static void proxy_poll_flush_file(const laghu_proxy_options *options) {
+  if (options->cache_flush_file[0] != '\0')
+    (void)laghu_cache_flush_file_poll(options->cache_path,
+                                      options->cache_flush_file,
+                                      (uint64_t)time(NULL), NULL);
 }
 
 static bool proxy_peer_text(const proxy_connection *connection, char *output,
@@ -1808,6 +2004,22 @@ static void proxy_send_json(laghu_socket client, unsigned int status,
     (void)proxy_send_all(client, json, length);
 }
 
+static void proxy_send_admin_json(laghu_socket client, unsigned int status,
+                                  const char *reason, const char *json,
+                                  bool head) {
+  char headers[512];
+  size_t length = strlen(json);
+  int count = snprintf(headers, sizeof(headers),
+                       "HTTP/1.1 %u %s\r\nContent-Type: application/json\r\n"
+                       "Cache-Control: no-store\r\nContent-Length: %zu\r\n"
+                       "Connection: close\r\n\r\n",
+                       status, reason, length);
+  if (count > 0 && (size_t)count < sizeof(headers)) {
+    (void)proxy_send_all(client, headers, (size_t)count);
+    if (!head) (void)proxy_send_all(client, json, length);
+  }
+}
+
 static bool proxy_json_escape(const char *input, char *output,
                               size_t capacity) {
   size_t used = 0U;
@@ -2013,6 +2225,7 @@ static void proxy_handle(const proxy_connection *connection,
   }
   access.input_bytes = header_length + request.content_length;
   request_host = proxy_find(request.headers, request.header_count, "Host");
+  proxy_poll_flush_file(options);
   if (!strcmp(request.method, "CONNECT") || !strcmp(request.method, "TRACE")) {
     PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
     goto done;
@@ -2040,6 +2253,123 @@ static void proxy_handle(const proxy_connection *connection,
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
+  {
+    bool purge_control = false;
+    char purge_target[LAGHU_RUNTIME_PATH_SIZE];
+    bool normalized = laghu_cache_source_normalize(
+        request.target, purge_target, sizeof(purge_target), &purge_control);
+    bool purge_request = strcmp(request.method, "PURGE") == 0 ||
+                         purge_control ||
+                         strstr(request.target, "laghu=purge") != NULL;
+    bool stats_request =
+        normalized && strcmp(purge_target, "/.laghu/stats") == 0;
+    if (purge_request || stats_request) {
+      bool head = strcmp(request.method, "HEAD") == 0;
+      bool authorized = proxy_peer_in_cidrs(connection, options->purge_allow,
+                                            options->purge_allow_count) &&
+                        proxy_admin_token(options, &request);
+      if (!normalized) {
+        proxy_send_admin_json(client, 400U, "Bad Request",
+                              "{\"status\":\"malformed\"}", false);
+        access.status = 400U;
+        access.failure = "admin_malformed";
+      } else if (!authorized) {
+        proxy_send_admin_json(client, 403U, "Forbidden",
+                              "{\"status\":\"forbidden\"}", head);
+        access.status = 403U;
+        access.failure = "admin_auth";
+      } else if (stats_request) {
+        laghu_cache_stats stats = {0};
+        char json[1536];
+        uint64_t requests;
+        if (!options->statistics ||
+            (strcmp(request.method, "GET") != 0 && !head)) {
+          proxy_send_admin_json(client, 405U, "Method Not Allowed",
+                                "{\"status\":\"method_not_allowed\"}", head);
+          access.status = 405U;
+          access.failure = "admin_method";
+        } else if (!laghu_cache_backend_health_path(options->cache_path,
+                                                    &stats)) {
+          proxy_send_admin_json(client, 503U, "Service Unavailable",
+                                "{\"status\":\"unavailable\"}", head);
+          access.status = 503U;
+          access.failure = "cache";
+        } else {
+          requests = stats.hits + stats.misses;
+          (void)snprintf(
+              json, sizeof(json),
+              "{\"schema\":\"laghu-cache-stats-v1\",\"backend\":\"file\","
+              "\"capacity\":{\"bytes\":%llu,\"files\":%llu},"
+              "\"usage\":{\"bytes\":%llu,\"files\":%llu},"
+              "\"requests\":{\"hits\":%llu,\"misses\":%llu,"
+              "\"hit_ratio_ppm\":%llu},\"publications\":%llu,"
+              "\"rejected_writes\":%llu,\"evictions\":%llu,"
+              "\"purges\":{\"url\":%llu,\"full\":%llu,"
+              "\"artifacts\":%llu,\"bytes\":%llu,\"generation\":%llu,"
+              "\"last\":%llu},\"corrupt_removals\":%llu,"
+              "\"cleaner_active\":%s,\"rebuilding\":%s,"
+              "\"last_maintenance\":%llu}",
+              (unsigned long long)options->cache_limits.size_limit,
+              (unsigned long long)options->cache_limits.inode_limit,
+              (unsigned long long)stats.bytes, (unsigned long long)stats.files,
+              (unsigned long long)stats.hits, (unsigned long long)stats.misses,
+              (unsigned long long)(requests == 0U
+                                       ? 0U
+                                       : stats.hits * UINT64_C(1000000) /
+                                             requests),
+              (unsigned long long)stats.publications,
+              (unsigned long long)stats.rejected_publications,
+              (unsigned long long)stats.evictions,
+              (unsigned long long)stats.url_purges,
+              (unsigned long long)stats.full_purges,
+              (unsigned long long)stats.invalidated_artifacts,
+              (unsigned long long)stats.invalidated_bytes,
+              (unsigned long long)stats.cache_generation,
+              (unsigned long long)stats.last_purge,
+              (unsigned long long)stats.corrupt_removals,
+              stats.cleaner_active ? "true" : "false",
+              stats.rebuilding ? "true" : "false",
+              (unsigned long long)stats.last_cleanup);
+          proxy_send_admin_json(client, 200U, "OK", json, head);
+          access.status = 200U;
+          access.output_bytes = head ? 0U : strlen(json);
+        }
+      } else if ((strcmp(request.method, "PURGE") == 0 &&
+                  !options->purge_method) ||
+                 (purge_control && !options->purge_query) ||
+                 (strcmp(request.method, "PURGE") != 0 &&
+                  strcmp(request.method, "GET") != 0)) {
+        proxy_send_admin_json(client, 405U, "Method Not Allowed",
+                              "{\"status\":\"method_not_allowed\"}", false);
+        access.status = 405U;
+        access.failure = "admin_method";
+      } else {
+        uint64_t matched = 0U;
+        laghu_cache_purge_result purged = laghu_cache_backend_purge_url_path(
+            options->cache_path, purge_target, (uint64_t)time(NULL), &matched);
+        unsigned int status =
+            purged == LAGHU_CACHE_PURGE_ACCEPTED
+                ? 202U
+                : (purged == LAGHU_CACHE_PURGE_SATURATED
+                       ? 429U
+                       : (purged == LAGHU_CACHE_PURGE_INVALID ? 400U : 503U));
+        char json[192];
+        const char *reason = status == 202U   ? "Accepted"
+                             : status == 429U ? "Too Many Requests"
+                             : status == 400U ? "Bad Request"
+                                              : "Service Unavailable";
+        (void)snprintf(json, sizeof(json),
+                       "{\"status\":\"%s\",\"matched_artifacts\":%llu}",
+                       status == 202U ? "accepted" : "rejected",
+                       (unsigned long long)matched);
+        proxy_send_admin_json(client, status, reason, json, false);
+        access.status = status;
+        access.failure = status == 202U ? "none" : "cache";
+        access.output_bytes = strlen(json);
+      }
+      goto done;
+    }
+  }
   if (!strncmp(request.target, "/.laghu/", 8U)) {
     if (!strcmp(request.target, "/.laghu/health") ||
         !strcmp(request.target, "/.laghu/ready")) {
@@ -2056,17 +2386,30 @@ static void proxy_handle(const proxy_connection *connection,
         access.status = 200U;
         access.output_bytes = head ? 0U : strlen(json);
       } else {
-        char json[160];
+        char json[512];
+        laghu_cache_stats cache_stats = {0};
         bool cache_ready = proxy_cache_probe(options->cache_path);
+        bool cache_stats_ready =
+            laghu_cache_backend_health_path(options->cache_path, &cache_stats);
         bool optimizer_ready =
             proxy_optimizer_ready(worker, (uint64_t)time(NULL));
         unsigned int status = cache_ready ? 200U : 503U;
-        (void)snprintf(json, sizeof(json),
-                       "{\"status\":\"%s\",\"cache\":\"%s\","
-                       "\"optimizer\":\"%s\"}",
-                       cache_ready ? "ready" : "not_ready",
-                       cache_ready ? "ok" : "unavailable",
-                       optimizer_ready ? "ready" : "degraded");
+        (void)snprintf(
+            json, sizeof(json),
+            "{\"status\":\"%s\",\"cache\":\"%s\","
+            "\"cache_backend\":\"file\",\"cache_bytes\":%llu,"
+            "\"cache_files\":%llu,\"cache_hits\":%llu,"
+            "\"cache_misses\":%llu,\"cache_evictions\":%llu,"
+            "\"optimizer\":\"%s\"}",
+            cache_ready ? "ready" : "not_ready",
+            cache_ready ? "ok" : "unavailable",
+            (unsigned long long)(cache_stats_ready ? cache_stats.bytes : 0U),
+            (unsigned long long)(cache_stats_ready ? cache_stats.files : 0U),
+            (unsigned long long)(cache_stats_ready ? cache_stats.hits : 0U),
+            (unsigned long long)(cache_stats_ready ? cache_stats.misses : 0U),
+            (unsigned long long)(cache_stats_ready ? cache_stats.evictions
+                                                   : 0U),
+            optimizer_ready ? "ready" : "degraded");
         proxy_send_json(client, status,
                         cache_ready ? "OK" : "Service Unavailable", json, head);
         access.status = status;
@@ -2808,7 +3151,8 @@ static bool proxy_cache_probe(const char *cache_path) {
 static bool proxy_queue_path_valid(const char *path) {
   laghu_runtime_queue queue;
   bool exists;
-  bool valid;
+  bool valid = false;
+  unsigned int attempt;
 #ifdef _WIN32
   DWORD attributes = GetFileAttributesA(path);
   exists = attributes != INVALID_FILE_ATTRIBUTES;
@@ -2846,10 +3190,13 @@ static bool proxy_queue_path_valid(const char *path) {
     return access(parent, R_OK | X_OK) == 0;
 #endif
   }
-  laghu_runtime_queue_init(&queue);
-  valid = laghu_runtime_queue_open(&queue, path) &&
-          laghu_runtime_queue_refresh(&queue);
-  laghu_runtime_queue_close(&queue);
+  for (attempt = 0U; attempt < 10U; ++attempt) {
+    laghu_runtime_queue_init(&queue);
+    valid = laghu_runtime_queue_open(&queue, path);
+    laghu_runtime_queue_close(&queue);
+    if (valid) break;
+    proxy_pause_ms(10U);
+  }
   return valid;
 }
 
@@ -2934,6 +3281,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   unsigned int index, started = 0U;
   int result = 1;
   bool lock_ready = false;
+  if (options == NULL) return 1;
 #ifndef _WIN32
   bool ready_condition = false, drained_condition = false;
 #endif
@@ -3016,6 +3364,11 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
       (options->javascript_queue_enabled &&
        !proxy_queue_path_valid(options->javascript_queue_path))) {
     proxy_log_startup_failure(&queue, "queue_unavailable");
+    goto cleanup;
+  }
+  if (!laghu_cache_backend_register_path(options->cache_path,
+                                         &options->cache_limits)) {
+    proxy_log_startup_failure(&queue, "cache_backend");
     goto cleanup;
   }
   if (options->origin_tls &&

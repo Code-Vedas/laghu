@@ -40,7 +40,19 @@ typedef struct {
   ngx_str_t javascript_target;
   ngx_str_t javascript_observation_config;
   ngx_str_t javascript_defer_config;
+  ngx_str_t file_cache_backend;
   ngx_str_t image_cache;
+  size_t file_cache_size;
+  size_t file_cache_inode_limit;
+  size_t file_cache_metadata_size;
+  ngx_uint_t file_cache_clean_interval;
+  bool image_cache_set;
+  ngx_flag_t purge_method;
+  ngx_flag_t purge_query;
+  ngx_flag_t statistics;
+  ngx_str_t purge_token_file;
+  ngx_str_t cache_flush_file;
+  ngx_array_t *purge_allow;
   ngx_str_t asset_offload_config;
   ngx_str_t asset_upload_queue;
   laghu_asset_config asset_offload;
@@ -375,6 +387,8 @@ static char *ngx_http_laghu_copy_header_array(ngx_http_request_t *request,
 static ngx_int_t ngx_http_laghu_add_status_header(ngx_http_request_t *request,
                                                   laghu_decision decision) {
   const char *status;
+  const char *cache = "bypass";
+  const char *transform = "pass";
   ngx_table_elt_t *header;
 
   header = ngx_list_push(&request->headers_out.headers);
@@ -387,6 +401,28 @@ static ngx_int_t ngx_http_laghu_add_status_header(ngx_http_request_t *request,
   ngx_str_set(&header->key, "X-Laghu");
   header->value.len = ngx_strlen(status);
   header->value.data = (u_char *)status;
+  if (decision == LAGHU_DECISION_IMAGE_HIT) {
+    cache = "hit";
+    transform = "optimized";
+  } else if (decision == LAGHU_DECISION_PASS) {
+    cache = "miss";
+    transform = "queued";
+  } else if (decision == LAGHU_DECISION_BYPASS_ERROR) {
+    cache = "error";
+    transform = "failed-open";
+  }
+  header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) return NGX_ERROR;
+  header->hash = 1;
+  ngx_str_set(&header->key, "X-Laghu-Cache");
+  header->value.len = ngx_strlen(cache);
+  header->value.data = (u_char *)cache;
+  header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) return NGX_ERROR;
+  header->hash = 1;
+  ngx_str_set(&header->key, "X-Laghu-Transform");
+  header->value.len = ngx_strlen(transform);
+  header->value.data = (u_char *)transform;
   return NGX_OK;
 }
 
@@ -1339,6 +1375,10 @@ ngx_int_t ngx_http_laghu_header_filter(ngx_http_request_t *request) {
   laghu_image_filter_mask image_filters;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+  if (conf->cache_flush_file.len != 0U)
+    (void)laghu_cache_flush_file_poll((char *)conf->image_cache.data,
+                                      (char *)conf->cache_flush_file.data,
+                                      (uint64_t)ngx_time(), NULL);
   if (request->uri.len >= sizeof("/.laghu/") - 1U &&
       ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) ==
           0) {
@@ -2066,6 +2106,20 @@ static ngx_int_t ngx_http_laghu_transaction_header_filter(
     laghu_http_transaction_result_release(&result);
     return ngx_http_laghu_next_header_filter(request);
   }
+  {
+    laghu_cache_limits limits = {
+        .size_limit = conf->file_cache_size,
+        .inode_limit = conf->file_cache_inode_limit,
+        .metadata_size = conf->file_cache_metadata_size,
+        .clean_interval = (unsigned int)conf->file_cache_clean_interval};
+    if (!laghu_cache_backend_register_path((const char *)conf->image_cache.data,
+                                           &limits)) {
+      ngx_log_error(NGX_LOG_WARN, request->connection->log, 0,
+                    "laghu file cache backend unavailable; serving origin");
+      laghu_http_transaction_result_release(&result);
+      return ngx_http_laghu_next_header_filter(request);
+    }
+  }
   if (result.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
     ngx_buf_t *buffer;
     context->cached_body = ngx_pnalloc(request->pool, result.selected.length);
@@ -2245,6 +2299,34 @@ static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {
   return NGX_OK;
 }
 
+static ngx_int_t ngx_http_laghu_admin_json(ngx_http_request_t *request,
+                                           ngx_uint_t status,
+                                           const char *json) {
+  ngx_buf_t *buffer;
+  ngx_chain_t output;
+  ngx_table_elt_t *header = ngx_list_push(&request->headers_out.headers);
+  size_t length = strlen(json);
+  if (header == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  header->hash = 1U;
+  ngx_str_set(&header->key, "Cache-Control");
+  ngx_str_set(&header->value, "no-store");
+  request->headers_out.status = status;
+  ngx_str_set(&request->headers_out.content_type, "application/json");
+  request->headers_out.content_length_n = (off_t)length;
+  if (ngx_http_send_header(request) == NGX_ERROR ||
+      request->method == NGX_HTTP_HEAD)
+    return NGX_OK;
+  buffer = ngx_calloc_buf(request->pool);
+  if (buffer == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  buffer->pos = (u_char *)json;
+  buffer->last = (u_char *)json + length;
+  buffer->memory = 1U;
+  buffer->last_buf = 1U;
+  output.buf = buffer;
+  output.next = NULL;
+  return ngx_http_output_filter(request, &output);
+}
+
 static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
@@ -2282,6 +2364,154 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   bool media_asset = false;
 
   conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+  {
+    char target[LAGHU_RUNTIME_PATH_SIZE];
+    char normalized[LAGHU_RUNTIME_PATH_SIZE];
+    bool control = false;
+    bool normalized_ok = request->unparsed_uri.len < sizeof(target);
+    bool purge_request;
+    bool stats_request;
+    if (normalized_ok) {
+      ngx_memcpy(target, request->unparsed_uri.data, request->unparsed_uri.len);
+      target[request->unparsed_uri.len] = '\0';
+      normalized_ok = laghu_cache_source_normalize(
+          target, normalized, sizeof(normalized), &control);
+    } else {
+      target[0] = '\0';
+    }
+    purge_request = request->method_name.len == sizeof("PURGE") - 1U &&
+                    ngx_strncmp(request->method_name.data, "PURGE",
+                                sizeof("PURGE") - 1U) == 0;
+    purge_request =
+        purge_request || control ||
+        (target[0] != '\0' && strstr(target, "laghu=purge") != NULL);
+    stats_request = normalized_ok && strcmp(normalized, "/.laghu/stats") == 0;
+    if (purge_request || stats_request) {
+      ngx_table_elt_t *token = NULL;
+      ngx_list_part_t *part = &request->headers_in.headers.part;
+      ngx_table_elt_t *headers = part->elts;
+      ngx_uint_t header_index;
+      bool authorized = false;
+      for (header_index = 0U;; ++header_index) {
+        if (header_index >= part->nelts) {
+          if (part->next == NULL) break;
+          part = part->next;
+          headers = part->elts;
+          header_index = 0U;
+        }
+        if (headers[header_index].key.len ==
+                sizeof("X-Laghu-Purge-Token") - 1U &&
+            ngx_strncasecmp(headers[header_index].key.data,
+                            (u_char *)"X-Laghu-Purge-Token",
+                            sizeof("X-Laghu-Purge-Token") - 1U) == 0) {
+          token = &headers[header_index];
+          break;
+        }
+      }
+      if (token != NULL && conf->purge_token_file.len != 0U &&
+          conf->purge_allow != NULL &&
+          ngx_cidr_match(request->connection->sockaddr, conf->purge_allow) ==
+              NGX_OK) {
+        ngx_file_t file;
+        u_char expected[257U];
+        ssize_t length;
+        size_t supplied = token->value.len, maximum, compare_index;
+        u_char difference;
+        ngx_memzero(&file, sizeof(file));
+        file.name = conf->purge_token_file;
+        file.fd = ngx_open_file(conf->purge_token_file.data, NGX_FILE_RDONLY,
+                                NGX_FILE_OPEN, 0U);
+        length = file.fd == NGX_INVALID_FILE
+                     ? -1
+                     : ngx_read_file(&file, expected, sizeof(expected), 0U);
+        if (file.fd != NGX_INVALID_FILE) ngx_close_file(file.fd);
+        while (length > 0 &&
+               (expected[length - 1] == '\n' || expected[length - 1] == '\r'))
+          --length;
+        maximum =
+            length > 0 && (size_t)length > supplied ? (size_t)length : supplied;
+        difference = (u_char)((length > 0 ? (size_t)length : 0U) ^ supplied);
+        for (compare_index = 0U; compare_index < maximum; ++compare_index)
+          difference |=
+              (u_char)((compare_index < (size_t)(length > 0 ? length : 0)
+                            ? expected[compare_index]
+                            : 0U) ^
+                       (compare_index < supplied
+                            ? token->value.data[compare_index]
+                            : 0U));
+        authorized = length >= 16 && length < (ssize_t)sizeof(expected) &&
+                     difference == 0U;
+      }
+      if (!normalized_ok)
+        return ngx_http_laghu_admin_json(request, NGX_HTTP_BAD_REQUEST,
+                                         "{\"status\":\"malformed\"}");
+      if (!authorized)
+        return ngx_http_laghu_admin_json(request, NGX_HTTP_FORBIDDEN,
+                                         "{\"status\":\"forbidden\"}");
+      {
+        laghu_cache_limits limits = {
+            .size_limit = conf->file_cache_size,
+            .inode_limit = conf->file_cache_inode_limit,
+            .metadata_size = conf->file_cache_metadata_size,
+            .clean_interval = (unsigned int)conf->file_cache_clean_interval};
+        if (!laghu_cache_backend_register_path(
+                (const char *)conf->image_cache.data, &limits))
+          return ngx_http_laghu_admin_json(request,
+                                           NGX_HTTP_SERVICE_UNAVAILABLE,
+                                           "{\"status\":\"unavailable\"}");
+      }
+      if (stats_request) {
+        laghu_cache_stats stats = {0};
+        char *json;
+        if (!conf->statistics || (request->method != NGX_HTTP_GET &&
+                                  request->method != NGX_HTTP_HEAD))
+          return NGX_HTTP_NOT_ALLOWED;
+        if (!laghu_cache_backend_health_path((char *)conf->image_cache.data,
+                                             &stats))
+          return NGX_HTTP_SERVICE_UNAVAILABLE;
+        json = ngx_pnalloc(request->pool, 1024U);
+        if (json == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        (void)snprintf(
+            json, 1024U,
+            "{\"schema\":\"laghu-cache-stats-v1\",\"backend\":\"file\","
+            "\"bytes\":%llu,\"files\":%llu,\"hits\":%llu,"
+            "\"misses\":%llu,\"publications\":%llu,"
+            "\"rejected_writes\":%llu,\"evictions\":%llu,"
+            "\"url_purges\":%llu,\"full_purges\":%llu,"
+            "\"generation\":%llu}",
+            (unsigned long long)stats.bytes, (unsigned long long)stats.files,
+            (unsigned long long)stats.hits, (unsigned long long)stats.misses,
+            (unsigned long long)stats.publications,
+            (unsigned long long)stats.rejected_publications,
+            (unsigned long long)stats.evictions,
+            (unsigned long long)stats.url_purges,
+            (unsigned long long)stats.full_purges,
+            (unsigned long long)stats.cache_generation);
+        return ngx_http_laghu_admin_json(request, NGX_HTTP_OK, json);
+      }
+      if ((!conf->purge_method && request->method_name.len == 5U) ||
+          (!conf->purge_query && control))
+        return NGX_HTTP_NOT_ALLOWED;
+      {
+        uint64_t matched = 0U;
+        laghu_cache_purge_result result = laghu_cache_backend_purge_url_path(
+            (char *)conf->image_cache.data, normalized, (uint64_t)ngx_time(),
+            &matched);
+        char *json = ngx_pnalloc(request->pool, 192U);
+        ngx_uint_t status = result == LAGHU_CACHE_PURGE_ACCEPTED
+                                ? NGX_HTTP_ACCEPTED
+                                : (result == LAGHU_CACHE_PURGE_SATURATED
+                                       ? NGX_HTTP_TOO_MANY_REQUESTS
+                                       : NGX_HTTP_SERVICE_UNAVAILABLE);
+        if (json == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        (void)snprintf(
+            json, 192U, "{\"status\":\"%s\",\"matched_artifacts\":%llu}",
+            result == LAGHU_CACHE_PURGE_ACCEPTED ? "accepted" : "rejected",
+            (unsigned long long)matched);
+        return ngx_http_laghu_admin_json(request, status, json);
+      }
+    }
+  }
   if (request->uri.len == sizeof(beacon_script_path) - 1U &&
       ngx_strncmp(request->uri.data, beacon_script_path,
                   sizeof(beacon_script_path) - 1U) == 0) {
@@ -2647,6 +2877,13 @@ static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   laghu_runtime_queue_init(&conf->runtime_queue);
   laghu_runtime_queue_init(&conf->font_fetch_runtime_queue);
   laghu_runtime_queue_init(&conf->javascript_runtime_queue);
+  conf->file_cache_size = NGX_CONF_UNSET_SIZE;
+  conf->file_cache_inode_limit = NGX_CONF_UNSET_SIZE;
+  conf->file_cache_metadata_size = NGX_CONF_UNSET_SIZE;
+  conf->file_cache_clean_interval = NGX_CONF_UNSET_UINT;
+  conf->purge_method = NGX_CONF_UNSET;
+  conf->purge_query = NGX_CONF_UNSET;
+  conf->statistics = NGX_CONF_UNSET;
   cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
   if (cleanup == NULL) {
     return NULL;
@@ -2711,8 +2948,41 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
     child_conf->javascript_defer = parent_conf->javascript_defer;
     child_conf->javascript_defer_loaded = true;
   }
-  ngx_conf_merge_str_value(child_conf->image_cache, parent_conf->image_cache,
-                           LAGHU_NGINX_DEFAULT_CACHE);
+  if (child_conf->file_cache_backend.len == 0U &&
+      !child_conf->image_cache_set) {
+    child_conf->file_cache_backend = parent_conf->file_cache_backend;
+    child_conf->image_cache = parent_conf->image_cache;
+    child_conf->image_cache_set = parent_conf->image_cache_set;
+  }
+  if (child_conf->image_cache.len == 0U) {
+    ngx_str_set(&child_conf->image_cache, LAGHU_NGINX_DEFAULT_CACHE);
+  }
+  ngx_conf_merge_size_value(child_conf->file_cache_size,
+                            parent_conf->file_cache_size,
+                            (size_t)LAGHU_CACHE_DEFAULT_SIZE_BYTES);
+  ngx_conf_merge_size_value(child_conf->file_cache_inode_limit,
+                            parent_conf->file_cache_inode_limit,
+                            LAGHU_CACHE_DEFAULT_INODE_LIMIT);
+  ngx_conf_merge_size_value(child_conf->file_cache_metadata_size,
+                            parent_conf->file_cache_metadata_size,
+                            LAGHU_CACHE_DEFAULT_METADATA_BYTES);
+  ngx_conf_merge_uint_value(child_conf->file_cache_clean_interval,
+                            parent_conf->file_cache_clean_interval,
+                            LAGHU_CACHE_DEFAULT_CLEAN_INTERVAL);
+  ngx_conf_merge_value(child_conf->purge_method, parent_conf->purge_method, 0);
+  ngx_conf_merge_value(child_conf->purge_query, parent_conf->purge_query, 0);
+  ngx_conf_merge_value(child_conf->statistics, parent_conf->statistics, 0);
+  ngx_conf_merge_str_value(child_conf->purge_token_file,
+                           parent_conf->purge_token_file, "");
+  ngx_conf_merge_str_value(child_conf->cache_flush_file,
+                           parent_conf->cache_flush_file, "");
+  if (child_conf->purge_allow == NULL)
+    child_conf->purge_allow = parent_conf->purge_allow;
+  if ((child_conf->purge_method || child_conf->purge_query ||
+       child_conf->statistics) &&
+      (child_conf->purge_token_file.len == 0U ||
+       child_conf->purge_allow == NULL || child_conf->purge_allow->nelts == 0U))
+    return "network administration requires purge_token_file and purge_allow";
   ngx_conf_merge_str_value(child_conf->asset_offload_config,
                            parent_conf->asset_offload_config, "");
   ngx_conf_merge_str_value(child_conf->asset_upload_queue,
@@ -3210,10 +3480,113 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
   }
 
   if (ngx_strcmp(values[1].data, "image_cache") == 0) {
-    if (location->image_cache.len != 0U) {
+    if (location->image_cache.len != 0U ||
+        location->file_cache_backend.len != 0U) {
       return "is duplicate";
     }
     location->image_cache = values[2];
+    location->image_cache_set = true;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "file_cache_backend") == 0) {
+    char backend_path[LAGHU_RUNTIME_PATH_SIZE];
+    u_char *path;
+    if (location->file_cache_backend.len != 0U || location->image_cache_set ||
+        !laghu_cache_backend_uri_parse((const char *)values[2].data,
+                                       backend_path, sizeof(backend_path)))
+      return "file_cache_backend expects one local absolute file: URI";
+    path = ngx_pnalloc(configuration->pool, strlen(backend_path) + 1U);
+    if (path == NULL) return NGX_CONF_ERROR;
+    ngx_memcpy(path, backend_path, strlen(backend_path) + 1U);
+    location->file_cache_backend = values[2];
+    location->image_cache.data = path;
+    location->image_cache.len = strlen(backend_path);
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "file_cache_size") == 0 ||
+      ngx_strcmp(values[1].data, "file_cache_inode_limit") == 0 ||
+      ngx_strcmp(values[1].data, "file_cache_metadata_size") == 0) {
+    ssize_t parsed = ngx_strcmp(values[1].data, "file_cache_inode_limit") == 0
+                         ? ngx_atoi(values[2].data, values[2].len)
+                         : ngx_parse_size(&values[2]);
+    size_t *target =
+        ngx_strcmp(values[1].data, "file_cache_size") == 0
+            ? &location->file_cache_size
+            : (ngx_strcmp(values[1].data, "file_cache_inode_limit") == 0
+                   ? &location->file_cache_inode_limit
+                   : &location->file_cache_metadata_size);
+    size_t minimum =
+        target == &location->file_cache_size
+            ? 1024U * 1024U
+            : (target == &location->file_cache_inode_limit ? 16U : 16384U);
+    if (*target != NGX_CONF_UNSET_SIZE || parsed < 0 ||
+        (size_t)parsed < minimum)
+      return "invalid or duplicate file cache limit";
+    *target = (size_t)parsed;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "file_cache_clean_interval") == 0) {
+    time_t parsed = ngx_parse_time(&values[2], 1);
+    if (location->file_cache_clean_interval != NGX_CONF_UNSET_UINT ||
+        parsed < 1 || parsed > 86400)
+      return "file_cache_clean_interval expects 1s through 24h";
+    location->file_cache_clean_interval = (ngx_uint_t)parsed;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "purge_method") == 0) {
+    if (location->purge_method != NGX_CONF_UNSET ||
+        ngx_strcmp(values[2].data, "PURGE") != 0)
+      return "purge_method accepts PURGE once";
+    location->purge_method = 1;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "purge_query") == 0 ||
+      ngx_strcmp(values[1].data, "statistics") == 0) {
+    ngx_flag_t *target = ngx_strcmp(values[1].data, "purge_query") == 0
+                             ? &location->purge_query
+                             : &location->statistics;
+    if (*target != NGX_CONF_UNSET) return "is duplicate";
+    if (ngx_strcmp(values[2].data, "on") == 0)
+      *target = 1;
+    else if (ngx_strcmp(values[2].data, "off") == 0)
+      *target = 0;
+    else
+      return "expects on or off";
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "purge_token_file") == 0 ||
+      ngx_strcmp(values[1].data, "cache_flush_file") == 0) {
+    ngx_str_t *target = ngx_strcmp(values[1].data, "purge_token_file") == 0
+                            ? &location->purge_token_file
+                            : &location->cache_flush_file;
+    if (target->len != 0U || values[2].len == 0U ||
+#ifdef _WIN32
+        !(values[2].len >= 3U &&
+          ((values[2].data[0] >= 'A' && values[2].data[0] <= 'Z') ||
+           (values[2].data[0] >= 'a' && values[2].data[0] <= 'z')) &&
+          values[2].data[1] == ':' &&
+          (values[2].data[2] == '/' || values[2].data[2] == '\\'))
+#else
+        values[2].data[0] != '/'
+#endif
+    )
+      return "expects one absolute local path";
+    *target = values[2];
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "purge_allow") == 0) {
+    ngx_cidr_t cidr;
+    ngx_cidr_t *stored;
+    if (ngx_ptocidr(&values[2], &cidr) != NGX_OK)
+      return "purge_allow expects a canonical CIDR";
+    if (location->purge_allow == NULL) {
+      location->purge_allow =
+          ngx_array_create(configuration->pool, 4U, sizeof(ngx_cidr_t));
+      if (location->purge_allow == NULL) return NGX_CONF_ERROR;
+    }
+    stored = ngx_array_push(location->purge_allow);
+    if (stored == NULL) return NGX_CONF_ERROR;
+    *stored = cidr;
     return NGX_CONF_OK;
   }
 
