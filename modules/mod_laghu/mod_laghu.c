@@ -512,6 +512,31 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
              "Preset";
     }
     config->core.rewrite_level = level;
+    if (level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
+        config->core.enabled_filters != 0U)
+      return "Laghu RewriteLevel passthrough conflicts with EnableFilter";
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "EnableFilter") == 0 ||
+      ap_cstr_casecmp(name, "DisableFilter") == 0 ||
+      ap_cstr_casecmp(name, "ForbidFilter") == 0) {
+    uint32_t filter;
+    uint32_t declared = config->core.enabled_filters |
+                        config->core.disabled_filters |
+                        config->core.forbidden_filters;
+    if (!laghu_parse_filter(parameter, &filter))
+      return "Laghu filter name is unknown";
+    if ((declared & filter) != 0U)
+      return "Laghu filter is duplicated or conflicting in this scope";
+    if (ap_cstr_casecmp(name, "EnableFilter") == 0)
+      config->core.enabled_filters |= filter;
+    else if (ap_cstr_casecmp(name, "DisableFilter") == 0)
+      config->core.disabled_filters |= filter;
+    else
+      config->core.forbidden_filters |= filter;
+    if (config->core.rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
+        config->core.enabled_filters != 0U)
+      return "Laghu EnableFilter conflicts with RewriteLevel passthrough";
     return NULL;
   }
   if (ap_cstr_casecmp(name, "AllowApi") == 0) {

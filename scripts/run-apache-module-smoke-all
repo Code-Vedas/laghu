@@ -148,6 +148,7 @@ load_first_mpm() {
   printf 'Laghu CssInlineLimit 2048\nLaghu CssOutlineThreshold 8192\n'
   printf 'Laghu ImageMetadataLimit 10000\nLaghu ImageMetadataTtl 7d\n'
   printf '<Location "/site.css">\nLaghu RewriteLevel core\n</Location>\n'
+  printf '<Location "/filter-policy">\nLaghu RewriteLevel core\nLaghu EnableFilter resource_inline\nLaghu DisableFilter html_minify\nLaghu ForbidFilter javascript_defer\n</Location>\n'
   printf '<Location "/inline.css">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/inline-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/outline-page.html">\nLaghu RewriteLevel all\n</Location>\n'
@@ -235,6 +236,18 @@ if [ -x "${javascript_service}" ]; then
 fi
 
 "${HTTPD}" -t -f "${work}/httpd.conf"
+cp "${work}/httpd.conf" "${work}/invalid-filter.conf"
+printf 'Laghu EnableFilter unknown\n' >>"${work}/invalid-filter.conf"
+if "${HTTPD}" -t -f "${work}/invalid-filter.conf" >/dev/null 2>&1; then
+  echo "Apache accepted an unknown Laghu filter." >&2
+  exit 1
+fi
+sed 's/Laghu DisableFilter html_minify/Laghu DisableFilter resource_inline/' \
+  "${work}/httpd.conf" >"${work}/conflicting-filter.conf"
+if "${HTTPD}" -t -f "${work}/conflicting-filter.conf" >/dev/null 2>&1; then
+  echo "Apache accepted conflicting Laghu filter controls." >&2
+  exit 1
+fi
 cp "${work}/httpd.conf" "${work}/duplicate.conf"
 printf 'Laghu On\n' >>"${work}/duplicate.conf"
 if "${HTTPD}" -t -f "${work}/duplicate.conf" >/dev/null 2>&1; then

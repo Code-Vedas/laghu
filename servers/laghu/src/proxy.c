@@ -637,6 +637,26 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       options->config.preset = LAGHU_PRESET_UNSET;
       options->config.rewrite_level = level;
       selector_seen = true;
+    } else if (strcmp(name, "--enable-filter") == 0 ||
+               strcmp(name, "--disable-filter") == 0 ||
+               strcmp(name, "--forbid-filter") == 0) {
+      uint32_t filter;
+      uint32_t declared;
+      NEED_VALUE();
+      declared = options->config.enabled_filters |
+                 options->config.disabled_filters |
+                 options->config.forbidden_filters;
+      if (!laghu_parse_filter(value, &filter))
+        return proxy_error(error, error_size, "unknown filter name");
+      if ((declared & filter) != 0U)
+        return proxy_error(error, error_size,
+                           "duplicate or conflicting filter control");
+      if (strcmp(name, "--enable-filter") == 0)
+        options->config.enabled_filters |= filter;
+      else if (strcmp(name, "--disable-filter") == 0)
+        options->config.disabled_filters |= filter;
+      else
+        options->config.forbidden_filters |= filter;
     } else if (strcmp(name, "--allow-api") == 0) {
       if (options->config.allow_api == LAGHU_MODE_ON)
         return proxy_error(error, error_size, "duplicate --allow-api");
@@ -787,6 +807,11 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF)
     return proxy_error(error, error_size,
                        "--trusted-proxy requires forwarded headers");
+  {
+    laghu_policy policy;
+    if (!laghu_resolve_config_policy(&options->config, &policy))
+      return proxy_error(error, error_size, "invalid filter policy");
+  }
   return LAGHU_PROXY_PARSE_OK;
 }
 

@@ -2671,10 +2671,13 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   ngx_http_laghu_loc_conf_t *parent_conf = parent;
   ngx_http_laghu_loc_conf_t *child_conf = child;
   laghu_config merged;
+  laghu_policy policy;
 
   (void)configuration;
 
   laghu_config_merge(&merged, &parent_conf->core, &child_conf->core);
+  if (!laghu_resolve_config_policy(&merged, &policy))
+    return "invalid or conflicting inherited laghu filter policy";
   child_conf->core = merged;
   ngx_conf_merge_str_value(child_conf->worker_queue, parent_conf->worker_queue,
                            LAGHU_NGINX_DEFAULT_QUEUE);
@@ -2883,6 +2886,31 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
                        "unknown laghu rewrite level \"%V\"", &values[2]);
     return NGX_CONF_ERROR;
+  }
+
+  if (ngx_strcmp(values[1].data, "enable_filter") == 0 ||
+      ngx_strcmp(values[1].data, "disable_filter") == 0 ||
+      ngx_strcmp(values[1].data, "forbid_filter") == 0) {
+    uint32_t filter;
+    uint32_t declared;
+
+    if (!laghu_parse_filter((const char *)values[2].data, &filter)) {
+      ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                         "unknown laghu filter \"%V\"", &values[2]);
+      return NGX_CONF_ERROR;
+    }
+    declared = location->core.enabled_filters |
+               location->core.disabled_filters |
+               location->core.forbidden_filters;
+    if ((declared & filter) != 0U)
+      return "laghu filter is duplicated or conflicting in this context";
+    if (ngx_strcmp(values[1].data, "enable_filter") == 0)
+      location->core.enabled_filters |= filter;
+    else if (ngx_strcmp(values[1].data, "disable_filter") == 0)
+      location->core.disabled_filters |= filter;
+    else
+      location->core.forbidden_filters |= filter;
+    return NGX_CONF_OK;
   }
 
   if (ngx_strcmp(values[1].data, "allow_api") == 0) {

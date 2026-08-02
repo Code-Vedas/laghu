@@ -393,10 +393,37 @@ http {
       return 200 'preset override';
     }
   }
+
+  server {
+    listen 127.0.0.1:${PORT};
+    server_name filter-policy;
+    laghu on;
+    laghu preset balanced;
+    laghu enable_filter resource_inline;
+    laghu disable_filter html_minify;
+    laghu forbid_filter javascript_defer;
+    return 204;
+  }
 }
 EOF
 
 "${NGINX_BIN}" -t -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/nginx.conf"
+
+sed 's/laghu enable_filter resource_inline;/laghu enable_filter unknown;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-filter-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/invalid-filter-nginx.conf" >/dev/null 2>&1; then
+  echo "NGINX accepted an unknown Laghu filter." >&2
+  exit 1
+fi
+
+sed 's/laghu enable_filter resource_inline;/laghu enable_filter resource_inline; laghu disable_filter resource_inline;/' \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/conflicting-filter-nginx.conf"
+if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
+    -c "${SMOKE_DIR}/conflicting-filter-nginx.conf" >/dev/null 2>&1; then
+  echo "NGINX accepted conflicting Laghu filter controls." >&2
+  exit 1
+fi
 
 sed 's/laghu preset balanced;/laghu preset invalid;/' \
   "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-nginx.conf"

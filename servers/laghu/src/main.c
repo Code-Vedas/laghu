@@ -13,6 +13,7 @@ static void usage(FILE *stream) {
       "--cache PATH --worker-queue PATH [options]\n"
       "Options:\n"
       "  --preset NAME | --rewrite-level NAME\n"
+      "  --enable-filter NAME --disable-filter NAME --forbid-filter NAME\n"
       "  --allow-api --image-beacon --critical-css-beacon "
       "--instrumentation-beacon "
       "--image-quality 1..100\n"

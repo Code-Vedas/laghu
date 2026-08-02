@@ -14,7 +14,10 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | --- | --- | --- | --- | --- |
 | `Laghu On\|Off` | inherited | boolean | `Off` | Enables or bypasses transformation. |
 | `Laghu Preset NAME` | inherited | `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, `static` | `balanced` | Selects a policy preset. |
-| `Laghu RewriteLevel NAME` | inherited | `passthrough`, `bandwidth`, `core`, `testing` | unset | Selects a rewrite level instead of a preset. |
+| `Laghu RewriteLevel NAME` | inherited | `passthrough`, `bandwidth`, `core`, `all`, `experimental` | unset | Selects a rewrite level instead of a preset. |
+| `Laghu EnableFilter NAME` | inherited, repeatable | filter name | none | Enables one filter after resolving the baseline policy. |
+| `Laghu DisableFilter NAME` | inherited, repeatable | filter name | none | Disables one filter; a child scope may re-enable it. |
+| `Laghu ForbidFilter NAME` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |
 | `Laghu AllowApi On\|Off` | inherited | boolean | `Off` | Allows otherwise excluded API/GraphQL paths. |
 | `Laghu ImageQuality N` | inherited | `1..100` | codec default | Overrides lossy image quality. |
 | `Laghu ImageBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-image observations. |
@@ -52,6 +55,10 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu RumStoreRequired On\|Off` | main server | boolean | `Off` | Makes RUM initialization failure fatal. |
 
 `Preset` and `RewriteLevel` cannot appear together in the same scope.
+Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
+Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.
+An inherited `DisableFilter` may be reversed with `EnableFilter`, but an inherited `ForbidFilter` cannot be reversed.
+Enabling a filter with the `passthrough` rewrite level is invalid.
 Provider and observation files are validated during configuration loading.
 Remote synchronization requires verified `rediss://`; `redis://` is restricted to loopback development, and Memcached is unsupported.
 

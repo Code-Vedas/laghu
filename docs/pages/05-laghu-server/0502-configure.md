@@ -19,6 +19,9 @@ The standalone server accepts command-line options only.
 | `--cache-mime-types LIST` | comma-separated MIME types | empty | Explicitly enables opaque media cache extension for matching response types. |
 | `--preset NAME` | supported preset | `balanced` | Selects policy; conflicts with `--rewrite-level`. |
 | `--rewrite-level NAME` | supported rewrite level | unset | Selects policy; conflicts with `--preset`. |
+| `--enable-filter NAME` | filter name, repeatable | none | Enables one filter after resolving the baseline policy. |
+| `--disable-filter NAME` | filter name, repeatable | none | Disables one filter. |
+| `--forbid-filter NAME` | filter name, repeatable | none | Permanently disables one filter for configuration parity. |
 | `--allow-api` | flag | off | Allows otherwise excluded API/GraphQL paths. |
 | `--image-quality N` | `1..100` | codec default | Overrides lossy image quality. |
 | `--image-beacon` | flag | off | Enables critical-image observations. |
@@ -60,6 +63,8 @@ The standalone server accepts command-line options only.
 | `--service` | Windows-only flag | off | Runs through the Windows service entry point. |
 
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
+Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
+Each filter may be controlled only once; duplicates and conflicts fail startup, as does enabling a filter with `passthrough`.
 Remote RUM synchronization requires verified `rediss://`; `redis://` is loopback-only and Memcached is unsupported.
 
 ## JavaScript deferral approvals

@@ -168,7 +168,7 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 
 - [x] Runtime on/off configuration and hierarchical inheritance.
 - [x] Rewrite-level selection.
-- [ ] Enable, disable, and forbid individual filters.
+- [x] Enable, disable, and forbid individual filters.
 - [ ] File-backed cache path, size, cleaning interval, and inode limits (`FileCachePath` and related controls in migration input).
 - [ ] In-memory LRU cache and shared-memory metadata cache.
 - [x] Memory-native RUM store with local persistence and optional Redis synchronization.
@@ -185,6 +185,8 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 - [x] In-place image-resource optimization with validator-keyed cold-original and warm-variant delivery.
 - [x] Client beaconing for critical-image, critical-CSS, and aggregate RUM discovery.
 - [ ] Experiment framework for controlled filter-set rollout.
+
+Filter-control evidence: `laghu-core` owns the canonical 17-filter registry, reversible enable/disable masks, monotonically inherited forbidden masks, conflict validation, safety-capability promotion, and variant-key separation. NGINX, Apache, and standalone expose matching repeatable controls; unknown, duplicate, conflicting, and passthrough-incompatible policies fail configuration. Core and parser tests cover name round trips, mask resolution, inheritance, permanent forbids, and risk permissions, while native NGINX and Apache smoke fixtures cover accepted and rejected configuration.
 
 RUM-store evidence: every native NGINX, Apache, and standalone worker owns a bounded memory engine, and request planners and beacon handlers access only that engine. The background adapter rotates pending deltas without holding the request-facing mutex during backend I/O. `memory:` is process-lifetime only; `local:` uses a separately locked atomic portable-v2 snapshot and merges concurrent worker deltas; optional Redis and Valkey support dynamically loads administrator-installed hiredis and requires verified `rediss://` away from loopback. A versioned Lua contract validates and byte-merges bounded portable-record batches atomically, updates TTLs, commits idempotent batch markers without distributed locks, and returns aggregates for memory and last-known-good snapshot reconciliation. Unit tests cover portable structured-record round trips, two-worker additive and monotonic local merging, TTL and memory bounds, malformed/redacted configuration, and real isolated Redis convergence across independent engines. Backend failures preserve the in-memory view and fail open, while required mode refuses worker startup.
 

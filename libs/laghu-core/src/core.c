@@ -48,7 +48,32 @@
 #define LAGHU_FILTER_STATIC \
   (LAGHU_FILTER_AGGRESSIVE | LAGHU_FILTER_IMMUTABLE_CACHE)
 
-#define LAGHU_FILTER_ALL (LAGHU_FILTER_STATIC | LAGHU_FILTER_CACHE_MEDIA)
+#define LAGHU_FILTER_ALL LAGHU_FILTER_ALL_MASK
+
+typedef struct {
+  const char *name;
+  uint32_t filter;
+} laghu_filter_definition;
+
+static const laghu_filter_definition laghu_filters[] = {
+    {"image_lossless", LAGHU_FILTER_IMAGE_LOSSLESS},
+    {"image_metadata", LAGHU_FILTER_IMAGE_METADATA},
+    {"image_dimensions", LAGHU_FILTER_IMAGE_DIMENSIONS},
+    {"image_modern", LAGHU_FILTER_IMAGE_MODERN},
+    {"image_responsive", LAGHU_FILTER_IMAGE_RESPONSIVE},
+    {"image_lazyload", LAGHU_FILTER_IMAGE_LAZYLOAD},
+    {"html_minify", LAGHU_FILTER_HTML_MINIFY},
+    {"css_minify", LAGHU_FILTER_CSS_MINIFY},
+    {"javascript_minify", LAGHU_FILTER_JAVASCRIPT_MINIFY},
+    {"resource_hints", LAGHU_FILTER_RESOURCE_HINTS},
+    {"cache_extension", LAGHU_FILTER_CACHE_EXTENSION},
+    {"resource_combine", LAGHU_FILTER_RESOURCE_COMBINE},
+    {"resource_inline", LAGHU_FILTER_RESOURCE_INLINE},
+    {"critical_css", LAGHU_FILTER_CRITICAL_CSS},
+    {"javascript_defer", LAGHU_FILTER_JAVASCRIPT_DEFER},
+    {"immutable_cache", LAGHU_FILTER_IMMUTABLE_CACHE},
+    {"cache_media", LAGHU_FILTER_CACHE_MEDIA},
+};
 
 typedef struct {
   uint32_t state[8];
@@ -347,6 +372,9 @@ void laghu_config_init(laghu_config *config) {
   config->mode = LAGHU_MODE_UNSET;
   config->preset = LAGHU_PRESET_UNSET;
   config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
+  config->enabled_filters = 0U;
+  config->disabled_filters = 0U;
+  config->forbidden_filters = 0U;
   config->allow_api = LAGHU_MODE_UNSET;
   config->image_beacon = LAGHU_MODE_UNSET;
   config->critical_css_beacon = LAGHU_MODE_UNSET;
@@ -453,6 +481,16 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
 
   result->mode = child != NULL && child->mode != LAGHU_MODE_UNSET ? child->mode
                                                                   : parent_mode;
+  result->enabled_filters = parent != NULL ? parent->enabled_filters : 0U;
+  result->disabled_filters = parent != NULL ? parent->disabled_filters : 0U;
+  result->forbidden_filters = parent != NULL ? parent->forbidden_filters : 0U;
+  if (child != NULL) {
+    result->enabled_filters &= ~child->disabled_filters;
+    result->disabled_filters &= ~child->enabled_filters;
+    result->enabled_filters |= child->enabled_filters;
+    result->disabled_filters |= child->disabled_filters;
+    result->forbidden_filters |= child->forbidden_filters;
+  }
   if (laghu_config_has_policy_selector(child)) {
     result->preset = child->preset;
     result->rewrite_level = child->rewrite_level;
@@ -724,6 +762,30 @@ const char *laghu_rewrite_level_name(laghu_rewrite_level rewrite_level) {
   }
 }
 
+bool laghu_parse_filter(const char *value, uint32_t *filter) {
+  size_t index;
+
+  if (value == NULL || filter == NULL) return false;
+  for (index = 0U; index < sizeof(laghu_filters) / sizeof(laghu_filters[0]);
+       ++index) {
+    if (strcmp(value, laghu_filters[index].name) == 0) {
+      *filter = laghu_filters[index].filter;
+      return true;
+    }
+  }
+  return false;
+}
+
+const char *laghu_filter_name(uint32_t filter) {
+  size_t index;
+
+  for (index = 0U; index < sizeof(laghu_filters) / sizeof(laghu_filters[0]);
+       ++index) {
+    if (filter == laghu_filters[index].filter) return laghu_filters[index].name;
+  }
+  return NULL;
+}
+
 bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
                                  laghu_policy *policy) {
   if (policy == NULL) {
@@ -776,6 +838,13 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   if (config == NULL || policy == NULL) {
     return false;
   }
+  if (((config->enabled_filters | config->disabled_filters |
+        config->forbidden_filters) &
+       ~LAGHU_FILTER_ALL_MASK) != 0U ||
+      (config->enabled_filters & config->disabled_filters) != 0U ||
+      (config->enabled_filters & config->forbidden_filters) != 0U) {
+    return false;
+  }
   if (config->instrumentation_sample_rate !=
           LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET &&
       config->instrumentation_sample_rate > 100U)
@@ -790,6 +859,39 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   resolved = has_preset
                  ? laghu_resolve_policy(config->preset, policy)
                  : laghu_resolve_rewrite_level(config->rewrite_level, policy);
+  if (resolved && config->rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
+      config->enabled_filters != 0U) {
+    return false;
+  }
+  if (resolved) {
+    policy->filter_families |= config->enabled_filters;
+    policy->filter_families &=
+        ~(config->disabled_filters | config->forbidden_filters);
+    if ((config->enabled_filters &
+         (LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE)) != 0U) {
+      policy->allow_lossy = true;
+      if (policy->image_quality == LAGHU_IMAGE_QUALITY_UNSET)
+        policy->image_quality = 82U;
+    }
+    if ((config->enabled_filters &
+         (LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY |
+          LAGHU_FILTER_RESOURCE_HINTS | LAGHU_FILTER_RESOURCE_COMBINE |
+          LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS |
+          LAGHU_FILTER_JAVASCRIPT_DEFER)) != 0U)
+      policy->allow_structural_rewrite = true;
+    if ((config->enabled_filters &
+         (LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS)) != 0U)
+      policy->allow_resource_inlining = true;
+    if ((config->enabled_filters & LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U)
+      policy->allow_script_reordering = true;
+    if ((config->enabled_filters &
+         (LAGHU_FILTER_RESOURCE_COMBINE | LAGHU_FILTER_RESOURCE_INLINE |
+          LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER)) != 0U)
+      policy->risk_level = LAGHU_RISK_EXPANSIVE;
+    else if (config->enabled_filters != 0U &&
+             policy->risk_level < LAGHU_RISK_MODERATE)
+      policy->risk_level = LAGHU_RISK_MODERATE;
+  }
   if (resolved && config->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
     if (config->image_quality > 100U) {
       return false;

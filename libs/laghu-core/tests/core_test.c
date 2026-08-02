@@ -326,6 +326,83 @@ static void test_rewrite_level_parser_and_policies(void) {
   assert(!laghu_resolve_config_policy(&config, NULL));
 }
 
+static void test_filter_controls(void) {
+  static const struct {
+    const char *name;
+    uint32_t filter;
+  } filters[] = {
+      {"image_lossless", LAGHU_FILTER_IMAGE_LOSSLESS},
+      {"image_metadata", LAGHU_FILTER_IMAGE_METADATA},
+      {"image_dimensions", LAGHU_FILTER_IMAGE_DIMENSIONS},
+      {"image_modern", LAGHU_FILTER_IMAGE_MODERN},
+      {"image_responsive", LAGHU_FILTER_IMAGE_RESPONSIVE},
+      {"image_lazyload", LAGHU_FILTER_IMAGE_LAZYLOAD},
+      {"html_minify", LAGHU_FILTER_HTML_MINIFY},
+      {"css_minify", LAGHU_FILTER_CSS_MINIFY},
+      {"javascript_minify", LAGHU_FILTER_JAVASCRIPT_MINIFY},
+      {"resource_hints", LAGHU_FILTER_RESOURCE_HINTS},
+      {"cache_extension", LAGHU_FILTER_CACHE_EXTENSION},
+      {"resource_combine", LAGHU_FILTER_RESOURCE_COMBINE},
+      {"resource_inline", LAGHU_FILTER_RESOURCE_INLINE},
+      {"critical_css", LAGHU_FILTER_CRITICAL_CSS},
+      {"javascript_defer", LAGHU_FILTER_JAVASCRIPT_DEFER},
+      {"immutable_cache", LAGHU_FILTER_IMMUTABLE_CACHE},
+      {"cache_media", LAGHU_FILTER_CACHE_MEDIA},
+  };
+  laghu_config parent = enabled_config();
+  laghu_config child;
+  laghu_config merged;
+  laghu_policy policy;
+  size_t index;
+
+  for (index = 0U; index < sizeof(filters) / sizeof(filters[0]); ++index) {
+    uint32_t parsed = 0U;
+    assert(laghu_parse_filter(filters[index].name, &parsed));
+    assert(parsed == filters[index].filter);
+    assert(strcmp(laghu_filter_name(parsed), filters[index].name) == 0);
+  }
+  assert(!laghu_parse_filter("HTML_minify", &parent.enabled_filters));
+  assert(!laghu_parse_filter("unknown", &parent.enabled_filters));
+  assert(!laghu_parse_filter(NULL, &parent.enabled_filters));
+  assert(laghu_filter_name(0U) == NULL);
+
+  laghu_config_init(&child);
+  parent.disabled_filters = LAGHU_FILTER_HTML_MINIFY;
+  child.enabled_filters = LAGHU_FILTER_HTML_MINIFY;
+  laghu_config_merge(&merged, &parent, &child);
+  assert((merged.enabled_filters & LAGHU_FILTER_HTML_MINIFY) != 0U);
+  assert((merged.disabled_filters & LAGHU_FILTER_HTML_MINIFY) == 0U);
+  assert(laghu_resolve_config_policy(&merged, &policy));
+  assert((policy.filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U);
+
+  laghu_config_init(&child);
+  child.disabled_filters = LAGHU_FILTER_HTML_MINIFY;
+  laghu_config_merge(&merged, &parent, &child);
+  assert((merged.disabled_filters & LAGHU_FILTER_HTML_MINIFY) != 0U);
+  assert(laghu_resolve_config_policy(&merged, &policy));
+  assert((policy.filter_families & LAGHU_FILTER_HTML_MINIFY) == 0U);
+
+  parent.forbidden_filters = LAGHU_FILTER_JAVASCRIPT_DEFER;
+  laghu_config_init(&child);
+  child.enabled_filters = LAGHU_FILTER_JAVASCRIPT_DEFER;
+  laghu_config_merge(&merged, &parent, &child);
+  assert(!laghu_resolve_config_policy(&merged, &policy));
+
+  parent = enabled_config();
+  parent.preset = LAGHU_PRESET_SAFE;
+  parent.enabled_filters =
+      LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_JAVASCRIPT_DEFER;
+  assert(laghu_resolve_config_policy(&parent, &policy));
+  assert(policy.allow_structural_rewrite);
+  assert(policy.allow_resource_inlining);
+  assert(policy.allow_script_reordering);
+  assert(policy.risk_level == LAGHU_RISK_EXPANSIVE);
+
+  parent.preset = LAGHU_PRESET_UNSET;
+  parent.rewrite_level = LAGHU_REWRITE_LEVEL_PASSTHROUGH;
+  assert(!laghu_resolve_config_policy(&parent, &policy));
+}
+
 static void test_decision_precedence(void) {
   laghu_config config = enabled_config();
   laghu_response response = html_response();
@@ -534,8 +611,8 @@ static void test_hashing(void) {
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
   assert(strcmp(key,
-                "d2ff33be78aaed874171f5a5ee9a3183d02444c47b62535a4343f230dda6"
-                "a314") == 0);
+                "1fdaad88dd0fe81834f74a034843706ccfb8ece8050b02d7a3d7f03d26f1"
+                "875c") == 0);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,
@@ -601,6 +678,7 @@ int main(void) {
   test_preset_parser();
   test_preset_policies();
   test_rewrite_level_parser_and_policies();
+  test_filter_controls();
   test_decision_precedence();
   test_api_path_policy();
   test_rewrite_level_safety_precedence();

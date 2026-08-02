@@ -14,7 +14,10 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | --- | --- | --- | --- | --- |
 | `laghu on\|off;` | inherited | boolean | `off` | Enables or bypasses transformation. |
 | `laghu preset NAME;` | inherited | `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, `static` | `balanced` | Selects a policy preset. |
-| `laghu rewrite_level NAME;` | inherited | `passthrough`, `bandwidth`, `core`, `testing` | unset | Selects a rewrite level instead of a preset. |
+| `laghu rewrite_level NAME;` | inherited | `passthrough`, `bandwidth`, `core`, `all`, `experimental` | unset | Selects a rewrite level instead of a preset. |
+| `laghu enable_filter NAME;` | inherited, repeatable | filter name | none | Enables one filter after resolving the baseline policy. |
+| `laghu disable_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter; a child scope may re-enable it. |
+| `laghu forbid_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |
 | `laghu allow_api on\|off;` | inherited | boolean | `off` | Allows otherwise excluded API/GraphQL paths. |
 | `laghu image_quality N;` | inherited | `1..100` | codec default | Overrides lossy image quality. |
 | `laghu image_beacon on\|off;` | inherited | boolean | `off` | Enables critical-image observations. |
@@ -52,6 +55,10 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu rum_store_required on\|off;` | `http` | boolean | `off` | Makes RUM initialization failure fatal. |
 
 `preset` and `rewrite_level` are mutually exclusive in one scope.
+Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
+Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.
+An inherited `disable_filter` may be reversed with `enable_filter`, but an inherited `forbid_filter` cannot be reversed.
+Enabling a filter with the `passthrough` rewrite level is invalid.
 The provider and observation files are validated during configuration loading; malformed files fail `nginx -t`.
 The installed package may explicitly set smaller RUM memory limits than runtime defaults.
 

@@ -63,6 +63,34 @@ int main(void) {
                        "/tmp/jobs",
                        "--drain-timeout",
                        "0"};
+  char *filters[] = {"laghu",
+                     "--listen",
+                     "127.0.0.1:8080",
+                     "--origin",
+                     "http://127.0.0.1:8000",
+                     "--cache",
+                     "/tmp/cache",
+                     "--worker-queue",
+                     "/tmp/jobs",
+                     "--enable-filter",
+                     "resource_inline",
+                     "--disable-filter",
+                     "html_minify",
+                     "--forbid-filter",
+                     "javascript_defer"};
+  char *filter_conflict[] = {"laghu",
+                             "--listen",
+                             "127.0.0.1:8080",
+                             "--origin",
+                             "http://127.0.0.1:8000",
+                             "--cache",
+                             "/tmp/cache",
+                             "--worker-queue",
+                             "/tmp/jobs",
+                             "--disable-filter",
+                             "html_minify",
+                             "--enable-filter",
+                             "html_minify"};
   char *secure[] = {"laghu",
                     "--listen",
                     "127.0.0.1:8080",
@@ -178,6 +206,15 @@ int main(void) {
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(11, bad_drain, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(15, filters, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.config.enabled_filters == LAGHU_FILTER_RESOURCE_INLINE);
+  CHECK(options.config.disabled_filters == LAGHU_FILTER_HTML_MINIFY);
+  CHECK(options.config.forbidden_filters == LAGHU_FILTER_JAVASCRIPT_DEFER);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(13, filter_conflict, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   CHECK(
       laghu_proxy_decode_chunked((laghu_buffer){chunked, sizeof(chunked) - 1U},

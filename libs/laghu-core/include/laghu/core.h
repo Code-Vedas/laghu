@@ -18,7 +18,7 @@ extern "C" {
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
 #define LAGHU_MIME_ALLOWLIST_SIZE 2048U
-#define LAGHU_VARIANT_KEY_VERSION 7U
+#define LAGHU_VARIANT_KEY_VERSION 8U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -88,6 +88,17 @@ typedef enum {
   LAGHU_FILTER_CACHE_MEDIA = UINT32_C(1) << 16
 } laghu_filter_family;
 
+#define LAGHU_FILTER_ALL_MASK                                                \
+  ((uint32_t)(LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA |    \
+              LAGHU_FILTER_IMAGE_DIMENSIONS | LAGHU_FILTER_IMAGE_MODERN |    \
+              LAGHU_FILTER_IMAGE_RESPONSIVE | LAGHU_FILTER_IMAGE_LAZYLOAD |  \
+              LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY |           \
+              LAGHU_FILTER_JAVASCRIPT_MINIFY | LAGHU_FILTER_RESOURCE_HINTS | \
+              LAGHU_FILTER_CACHE_EXTENSION | LAGHU_FILTER_RESOURCE_COMBINE | \
+              LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS |     \
+              LAGHU_FILTER_JAVASCRIPT_DEFER | LAGHU_FILTER_IMMUTABLE_CACHE | \
+              LAGHU_FILTER_CACHE_MEDIA))
+
 typedef struct {
   laghu_preset preset;
   laghu_rewrite_level rewrite_level;
@@ -111,6 +122,9 @@ typedef struct {
   laghu_mode mode;
   laghu_preset preset;
   laghu_rewrite_level rewrite_level;
+  uint32_t enabled_filters;
+  uint32_t disabled_filters;
+  uint32_t forbidden_filters;
   laghu_mode allow_api;
   laghu_mode image_beacon;
   laghu_mode critical_css_beacon;
@@ -188,6 +202,8 @@ bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
                                  laghu_policy *policy);
 bool laghu_resolve_config_policy(const laghu_config *config,
                                  laghu_policy *policy);
+bool laghu_parse_filter(const char *value, uint32_t *filter);
+const char *laghu_filter_name(uint32_t filter);
 bool laghu_mime_type_allowed(const char *allowlist, const char *content_type);
 
 laghu_decision laghu_decide(const laghu_config *config,
