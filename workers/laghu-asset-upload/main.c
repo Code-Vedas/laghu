@@ -169,32 +169,6 @@ static bool laghu_s3_authorization(laghu_s3 *s3, const char *method,
                                    authorization);
 }
 
-static bool laghu_address_private(const struct sockaddr *address) {
-  if (address->sa_family == AF_INET) {
-    uint32_t value =
-        ntohl(((const struct sockaddr_in *)address)->sin_addr.s_addr);
-    unsigned int first = value >> 24U;
-    unsigned int second = (value >> 16U) & 0xffU;
-    return first == 0U || first == 10U || first == 127U || first >= 224U ||
-           (first == 169U && second == 254U) ||
-           (first == 172U && second >= 16U && second <= 31U) ||
-           (first == 192U && second == 168U);
-  }
-  if (address->sa_family == AF_INET6) {
-    const unsigned char *bytes =
-        ((const struct sockaddr_in6 *)address)->sin6_addr.s6_addr;
-    static const unsigned char zero[16] = {0};
-    static const unsigned char loopback[16] = {0, 0, 0, 0, 0, 0, 0, 0,
-                                               0, 0, 0, 0, 0, 0, 0, 1};
-    return memcmp(bytes, zero, sizeof(zero)) == 0 ||
-           memcmp(bytes, loopback, sizeof(loopback)) == 0 ||
-           (bytes[0] & 0xfeU) == 0xfcU ||
-           (bytes[0] == 0xfeU && (bytes[1] & 0xc0U) == 0x80U) ||
-           bytes[0] == 0xffU;
-  }
-  return true;
-}
-
 static void laghu_socket_timeout(laghu_socket socket_value,
                                  unsigned int seconds) {
 #ifdef _WIN32
@@ -222,7 +196,7 @@ static laghu_socket laghu_s3_connect(const char *host, unsigned int timeout,
   if (getaddrinfo(host, "443", &hints, &addresses) != 0) return socket_value;
   if (public_only)
     for (item = addresses; item != NULL; item = item->ai_next)
-      if (laghu_address_private(item->ai_addr)) {
+      if (!laghu_source_address_public(item->ai_addr)) {
         freeaddrinfo(addresses);
         return socket_value;
       }
@@ -554,8 +528,31 @@ static int laghu_asset_process(laghu_s3 *s3, laghu_asset_provider *provider) {
   if (!laghu_asset_job_take(&s3->config, &record, &body, &length, job_path))
     return 0;
   if (length == 0U) {
-    if (!s3->config.policy.trusted_origin_fallback ||
-        !laghu_origin_fetch(s3, &record, &body, &length) ||
+    laghu_source_policy source_policy;
+    char validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
+    char mapping[LAGHU_RUNTIME_KEY_SIZE];
+    laghu_source_load_result loaded = LAGHU_SOURCE_LOAD_MISS;
+    if (laghu_source_registry_load(s3->config.queue_path, &source_policy))
+      loaded = laghu_source_file_load(&source_policy, record.source_url, &body,
+                                      &length, record.content_type, validator,
+                                      mapping);
+    if (loaded == LAGHU_SOURCE_LOAD_READY)
+      (void)snprintf(record.source_validator, sizeof(record.source_validator),
+                     "%s", validator);
+    if (loaded == LAGHU_SOURCE_LOAD_READY) {
+      char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+      if (laghu_sha256_hex(
+              (laghu_buffer){(const unsigned char *)record.source_url,
+                             strlen(record.source_url)},
+              source_hash))
+        fprintf(stderr,
+                "laghu-asset-upload: event=source_acquired loader=file "
+                "source=%.12s mapping=%.12s bytes=%zu result=ready\n",
+                source_hash, mapping, length);
+    }
+    if ((loaded != LAGHU_SOURCE_LOAD_READY &&
+         (!s3->config.policy.trusted_origin_fallback ||
+          !laghu_origin_fetch(s3, &record, &body, &length))) ||
         !laghu_sha256_hex((laghu_buffer){body, length}, record.content_hash) ||
         !laghu_asset_object_key(&s3->config.policy, record.source_url,
                                 record.content_hash, record.object_key)) {

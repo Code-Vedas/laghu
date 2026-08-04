@@ -44,6 +44,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-core/include/laghu/core.h \
     "${REPO_ROOT}"/libs/laghu-core/src/core.c \
     "${REPO_ROOT}"/libs/laghu-core/tests/core_test.c \
+    "${REPO_ROOT}"/libs/laghu-core/tests/policy_fuzz.c \
     "${REPO_ROOT}"/libs/laghu-image/include/laghu/image.h \
     "${REPO_ROOT}"/libs/laghu-image/src/image.c \
     "${REPO_ROOT}"/libs/laghu-image/src/markup.c \
@@ -55,6 +56,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_win32.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/catalog.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/asset.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/source.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html_head.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/html_hints.c \

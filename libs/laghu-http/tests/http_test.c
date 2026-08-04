@@ -329,12 +329,12 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(
       strcmp(
           transaction.policy_key,
-          "ce804a2d5cb22a77fac967fde07fbf00e426d14ad132411347fe9090bfe285ce") ==
+          "64d1c9bd266aa148203dcc16c2b1a9df4e83b448ba86347af976380781b1b7b9") ==
       0);
   CHECK(
       strcmp(
           result.cache_key,
-          "ac2556d79dd984f22f60ad58148dbd77655c4871582ddd4d57f8c375d82281a6") ==
+          "a235a40c90c727a526ebbe07596508ec0de92b3ca9176602314e6ef7d05d7f6e") ==
       0);
   laghu_http_transaction_result_release(&result);
   CHECK(laghu_http_transaction_finalize(
@@ -625,6 +625,56 @@ static void test_mime_driven_opaque_resource_cache(void) {
   laghu_http_transaction_result_release(&result);
 }
 
+static void test_request_policy_enforcement(void) {
+  const laghu_http_header normal_headers[] = {
+      {VIEW("Content-Type"), VIEW("text/html")}};
+  const laghu_http_header vary_headers[] = {
+      {VIEW("Content-Type"), VIEW("text/html")},
+      {VIEW("Vary"), VIEW("Cookie")}};
+  laghu_http_environment environment = test_environment(test_cache_path, NULL);
+  laghu_http_request request =
+      test_request(NULL, 0U, VIEW("/private/index.html"));
+  laghu_http_response response = test_response(normal_headers, 1U, 128U);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result result;
+  CHECK(laghu_resource_rule_add(&environment.config, false, "/private/*"));
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(result.decision == LAGHU_DECISION_BYPASS_RESOURCE_POLICY);
+  laghu_http_transaction_result_release(&result);
+
+  environment.config.disallow_resource_count = 0U;
+  request.normalized_path = VIEW("/index.html?laghuFilters=-html_minify");
+  environment.config.query_filter_overrides = LAGHU_MODE_ON;
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK((transaction.policy.filter_families & LAGHU_FILTER_HTML_MINIFY) == 0U);
+  laghu_http_transaction_result_release(&result);
+
+  request.normalized_path = VIEW("/index.html?laghuFilters=bad");
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(result.decision == LAGHU_DECISION_BYPASS_QUERY_OVERRIDE);
+  laghu_http_transaction_result_release(&result);
+
+  request.normalized_path = VIEW("/index.html");
+  response = test_response(vary_headers, 2U, 128U);
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(result.decision == LAGHU_DECISION_BYPASS_VARY);
+  laghu_http_transaction_result_release(&result);
+  environment.config.respect_vary = LAGHU_MODE_OFF;
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(transaction.cache_publishable == false);
+  laghu_http_transaction_result_release(&result);
+}
+
 int main(void) {
   laghu_rum_options rum_options;
   initialize_test_paths();
@@ -640,6 +690,7 @@ int main(void) {
   test_html_cold_warm_headers();
   test_validator_hints_and_worker_liveness();
   test_mime_driven_opaque_resource_cache();
+  test_request_policy_enforcement();
   laghu_rum_engine_destroy(test_rum);
   puts("laghu-http tests passed");
   return 0;

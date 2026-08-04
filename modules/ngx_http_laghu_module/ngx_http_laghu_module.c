@@ -53,10 +53,13 @@ typedef struct {
   ngx_str_t purge_token_file;
   ngx_str_t cache_flush_file;
   ngx_array_t *purge_allow;
+  ngx_array_t *trusted_proxy;
   ngx_str_t asset_offload_config;
   ngx_str_t asset_upload_queue;
   laghu_asset_config asset_offload;
   bool asset_offload_loaded;
+  laghu_source_policy source_policy;
+  bool source_mode_set;
   bool font_providers_loaded;
   bool javascript_observations_loaded;
   bool javascript_defer_loaded;
@@ -183,7 +186,7 @@ static bool ngx_http_laghu_javascript_queue_refresh(
 static ngx_command_t ngx_http_laghu_commands[] = {
     {ngx_string("laghu"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-         NGX_CONF_TAKE1 | NGX_CONF_TAKE2,
+         NGX_CONF_TAKE1 | NGX_CONF_TAKE2 | NGX_CONF_TAKE3,
      ngx_http_laghu_command, NGX_HTTP_LOC_CONF_OFFSET, 0, NULL},
     ngx_null_command};
 
@@ -1315,8 +1318,55 @@ static bool ngx_http_laghu_normalize(ngx_http_request_t *request,
 #else
   context->request.scheme = (laghu_buffer){(const unsigned char *)"http", 4U};
 #endif
+  if (conf->core.respect_x_forwarded_proto == LAGHU_MODE_ON &&
+      conf->trusted_proxy != NULL &&
+      ngx_cidr_match(request->connection->sockaddr, conf->trusted_proxy) ==
+          NGX_OK) {
+    ngx_list_part_t *part = &request->headers_in.headers.part;
+    ngx_table_elt_t *headers = part->elts;
+    ngx_table_elt_t *forwarded = NULL;
+    ngx_uint_t index;
+    for (index = 0U;; ++index) {
+      if (index >= part->nelts) {
+        if (part->next == NULL) break;
+        part = part->next;
+        headers = part->elts;
+        index = 0U;
+      }
+      if (headers[index].hash != 0U &&
+          headers[index].key.len == sizeof("X-Forwarded-Proto") - 1U &&
+          ngx_strcasecmp(headers[index].key.data,
+                         (u_char *)"X-Forwarded-Proto") == 0) {
+        if (forwarded != NULL) {
+          forwarded = NULL;
+          break;
+        }
+        forwarded = &headers[index];
+      }
+    }
+    if (forwarded != NULL && forwarded->value.len == 5U &&
+        ngx_strncasecmp(forwarded->value.data, (u_char *)"https", 5U) == 0)
+      context->request.scheme =
+          (laghu_buffer){(const unsigned char *)"https", 5U};
+    else if (forwarded != NULL && forwarded->value.len == 4U &&
+             ngx_strncasecmp(forwarded->value.data, (u_char *)"http", 4U) == 0)
+      context->request.scheme =
+          (laghu_buffer){(const unsigned char *)"http", 4U};
+  }
   context->request.authority = ngx_http_laghu_view(authority);
-  context->request.normalized_path = ngx_http_laghu_view(&request->uri);
+  if (request->args.len != 0U) {
+    u_char *path =
+        ngx_pnalloc(request->pool, request->uri.len + 1U + request->args.len);
+    if (path == NULL) return false;
+    ngx_memcpy(path, request->uri.data, request->uri.len);
+    path[request->uri.len] = '?';
+    ngx_memcpy(path + request->uri.len + 1U, request->args.data,
+               request->args.len);
+    context->request.normalized_path =
+        (laghu_buffer){path, request->uri.len + 1U + request->args.len};
+  } else {
+    context->request.normalized_path = ngx_http_laghu_view(&request->uri);
+  }
   context->request.headers = context->request_headers;
   context->response.version = LAGHU_HTTP_ABI_VERSION;
   context->response.struct_size = sizeof(context->response);
@@ -2874,6 +2924,7 @@ static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   }
 
   laghu_config_init(&conf->core);
+  laghu_source_policy_init(&conf->source_policy);
   laghu_runtime_queue_init(&conf->runtime_queue);
   laghu_runtime_queue_init(&conf->font_fetch_runtime_queue);
   laghu_runtime_queue_init(&conf->javascript_runtime_queue);
@@ -2909,9 +2960,14 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   ngx_http_laghu_loc_conf_t *child_conf = child;
   laghu_config merged;
   laghu_policy policy;
+  laghu_source_policy source;
+  char source_error[160U];
 
   (void)configuration;
 
+  if (!laghu_resource_rules_merge_valid(&parent_conf->core, &child_conf->core))
+    return "invalid, duplicate, conflicting, or excessive inherited resource "
+           "rules";
   laghu_config_merge(&merged, &parent_conf->core, &child_conf->core);
   if (!laghu_resolve_config_policy(&merged, &policy))
     return "invalid or conflicting inherited laghu filter policy";
@@ -2983,6 +3039,12 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
       (child_conf->purge_token_file.len == 0U ||
        child_conf->purge_allow == NULL || child_conf->purge_allow->nelts == 0U))
     return "network administration requires purge_token_file and purge_allow";
+  if (child_conf->trusted_proxy == NULL)
+    child_conf->trusted_proxy = parent_conf->trusted_proxy;
+  if (child_conf->core.respect_x_forwarded_proto == LAGHU_MODE_ON &&
+      (child_conf->trusted_proxy == NULL ||
+       child_conf->trusted_proxy->nelts == 0U))
+    return "respect_x_forwarded_proto requires trusted_proxy";
   ngx_conf_merge_str_value(child_conf->asset_offload_config,
                            parent_conf->asset_offload_config, "");
   ngx_conf_merge_str_value(child_conf->asset_upload_queue,
@@ -2999,6 +3061,38 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   if (!child_conf->asset_offload_loaded &&
       child_conf->asset_upload_queue.len != 0U)
     return "asset_upload_queue requires asset_offload_config";
+  if (!laghu_source_policy_merge(&source, &parent_conf->source_policy,
+                                 &child_conf->source_policy))
+    return "invalid, duplicate, or excessive inherited file source mapping";
+  if (child_conf->source_mode_set) source.mode = child_conf->source_policy.mode;
+  if (source.mode == LAGHU_SOURCE_FILE_OFF) {
+    source.mapping_count = 0U;
+    source.native_root[0] = '\0';
+  }
+  if (source.mode == LAGHU_SOURCE_FILE_NATIVE ||
+      source.mode == LAGHU_SOURCE_FILE_BOTH) {
+    ngx_http_core_loc_conf_t *core_location =
+        ngx_http_conf_get_module_loc_conf(configuration, ngx_http_core_module);
+    if (core_location == NULL || core_location->alias != 0U ||
+        core_location->root.len == 0U ||
+        core_location->root.len >= sizeof(source.native_root) ||
+        core_location->root_lengths != NULL)
+      return "native file loading requires one static non-alias NGINX root";
+    ngx_memcpy(source.native_root, core_location->root.data,
+               core_location->root.len);
+    source.native_root[core_location->root.len] = '\0';
+  }
+  if (!laghu_source_policy_validate(&source, true, source_error,
+                                    sizeof(source_error)))
+    return "invalid direct file loading configuration";
+  child_conf->source_policy = source;
+  if (source.mode != LAGHU_SOURCE_FILE_OFF) {
+    if (!child_conf->asset_offload_loaded)
+      return "direct file loading requires asset_offload_config";
+    if (!laghu_source_registry_publish(
+            (const char *)child_conf->asset_upload_queue.data, &source))
+      return "unable to publish direct file source registry";
+  }
   return NGX_CONF_OK;
 }
 
@@ -3010,6 +3104,15 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
   ngx_str_t *values = configuration->args->elts;
 
   (void)command;
+
+  if (configuration->args->nelts == 4 &&
+      ngx_strcmp(values[1].data, "file_source_map") == 0) {
+    if (!laghu_source_mapping_add(&location->source_policy,
+                                  (const char *)values[2].data,
+                                  (const char *)values[3].data))
+      return "file source mapping is invalid, duplicate, or excessive";
+    return NGX_CONF_OK;
+  }
 
   if (configuration->args->nelts == 3 && values[1].len >= 9U &&
       ngx_strncmp(values[1].data, "rum_store", 9U) == 0) {
@@ -3180,6 +3283,50 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       location->core.disabled_filters |= filter;
     else
       location->core.forbidden_filters |= filter;
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "allow_resources") == 0 ||
+      ngx_strcmp(values[1].data, "disallow") == 0) {
+    if (!laghu_resource_rule_add(
+            &location->core, ngx_strcmp(values[1].data, "allow_resources") == 0,
+            (const char *)values[2].data))
+      return "resource rule is invalid, duplicate, conflicting, or excessive";
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "respect_vary") == 0 ||
+      ngx_strcmp(values[1].data, "respect_x_forwarded_proto") == 0 ||
+      ngx_strcmp(values[1].data, "query_filter_overrides") == 0) {
+    laghu_mode *target =
+        ngx_strcmp(values[1].data, "respect_vary") == 0
+            ? &location->core.respect_vary
+        : ngx_strcmp(values[1].data, "respect_x_forwarded_proto") == 0
+            ? &location->core.respect_x_forwarded_proto
+            : &location->core.query_filter_overrides;
+    if (*target != LAGHU_MODE_UNSET) return "is duplicate";
+    if (ngx_strcmp(values[2].data, "on") == 0)
+      *target = LAGHU_MODE_ON;
+    else if (ngx_strcmp(values[2].data, "off") == 0)
+      *target = LAGHU_MODE_OFF;
+    else
+      return "expects on or off";
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "trusted_proxy") == 0) {
+    ngx_cidr_t cidr;
+    ngx_cidr_t *stored;
+    if (ngx_ptocidr(&values[2], &cidr) != NGX_OK)
+      return "trusted_proxy expects a canonical CIDR";
+    if (location->trusted_proxy == NULL) {
+      location->trusted_proxy =
+          ngx_array_create(configuration->pool, 4U, sizeof(ngx_cidr_t));
+      if (location->trusted_proxy == NULL) return NGX_CONF_ERROR;
+    }
+    stored = ngx_array_push(location->trusted_proxy);
+    if (stored == NULL) return NGX_CONF_ERROR;
+    *stored = cidr;
     return NGX_CONF_OK;
   }
 
@@ -3407,6 +3554,15 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
   if (ngx_strcmp(values[1].data, "asset_upload_queue") == 0) {
     if (location->asset_upload_queue.len != 0U) return "is duplicate";
     location->asset_upload_queue = values[2];
+    return NGX_CONF_OK;
+  }
+
+  if (ngx_strcmp(values[1].data, "load_from_file") == 0) {
+    if (location->source_mode_set ||
+        !laghu_source_mode_parse((const char *)values[2].data, true,
+                                 &location->source_policy.mode))
+      return "load_from_file expects off, mapped, native, or both once";
+    location->source_mode_set = true;
     return NGX_CONF_OK;
   }
 

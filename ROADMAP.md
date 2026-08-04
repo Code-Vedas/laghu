@@ -2,6 +2,8 @@
 
 This is a temporary internal execution tracker. It preserves the complete work inventory while Laghu is built and will be removed when it is no longer needed. It is not public product documentation and public docs or code must not depend on it.
 
+`1-pager.md` is the private north-star product specification. Keep it timeless: no milestones, completion status, delivery phases, or incremental scheduling.
+
 ## Tracking Rules
 
 - `[x]` means the capability is implemented and backed by executable validation.
@@ -173,20 +175,24 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 - [x] Bounded approximate-LRU and shared-memory metadata cache; shared memory contains coordination metadata only, never cached payloads.
 - [x] Memory-native RUM store with local persistence and optional Redis synchronization.
 - [ ] Domain mapping, sharding, proxying, and rewrite-domain configuration (`Domain`, `MapRewriteDomain`, `ShardDomain`, and `MapProxyDomain` in migration input).
-- [ ] Direct file loading that avoids loopback origin fetches (`LoadFromFile` in migration input).
-- [ ] Configurable `Vary` and forwarded-protocol handling (`RespectVary` and `RespectXForwardedProto` in migration input).
-- [ ] Allow/disallow URL wildcard filtering (`AllowResources` and `Disallow` in migration input).
+- [x] Direct file loading that avoids loopback origin fetches (`LoadFromFile` in migration input).
+- [x] Configurable `Vary` and forwarded-protocol handling (`RespectVary` and `RespectXForwardedProto` in migration input).
+- [x] Allow/disallow URL wildcard filtering (`AllowResources` and `Disallow` in migration input).
 - [x] Per-location and per-server configuration scope and inheritance.
 - [ ] Statistics, administration, message history, console, and cache-purge UI, including migration from the legacy administration/statistics/console paths.
 - [x] Basic `X-Laghu` pass/bypass decision response header.
 - [x] Cache-state and transform-decision response headers.
-- [ ] Per-request query-string filter overrides.
+- [x] Per-request query-string filter overrides.
 - [x] Purge method, cache flush file, and query-driven purge (`PurgeMethod` and purge-query migration inputs).
 - [x] In-place image-resource optimization with validator-keyed cold-original and warm-variant delivery.
 - [x] Client beaconing for critical-image, critical-CSS, and aggregate RUM discovery.
 - [ ] Experiment framework for controlled filter-set rollout.
 
 Filter-control evidence: `laghu-core` owns the canonical 17-filter registry, reversible enable/disable masks, monotonically inherited forbidden masks, conflict validation, safety-capability promotion, and variant-key separation. NGINX, Apache, and standalone expose matching repeatable controls; unknown, duplicate, conflicting, and passthrough-incompatible policies fail configuration. Core and parser tests cover name round trips, mask resolution, inheritance, permanent forbids, and risk permissions, while native NGINX and Apache smoke fixtures cover accepted and rejected configuration.
+
+Request-policy evidence: `laghu-core` compiles bounded allocation-free URL globs, resolves deny-over-allow inheritance, validates supported `Vary` dimensions, parses strict opt-in `laghuFilters` operations, and incorporates the resulting resource and filter policy into variant identity. NGINX, Apache, and standalone expose matching controls and trusted-proxy-gated forwarded-protocol handling. Core fuzz/unit tests, HTTP lifecycle tests, native module/proxy smoke, Windows codec/no-codec CTest, matched NGINX/Apache denial and override smoke, services, installer upgrade/downgrade rejection, rollback, and uninstall all pass.
+
+Source-acquisition evidence: the shared runtime publishes a checksummed, bounded source registry beside the asset queue and the asynchronous asset worker resolves captured bodies before explicit longest-prefix mappings, native adapter roots, and trusted HTTPS fallback. File acquisition rejects traversal, alternate streams, device and remote paths, symlinks and Windows reparse points, non-regular or changed files, unsupported MIME types, and oversized bodies; opened-handle metadata and SHA-256 are revalidated before publication. NGINX, Apache, and standalone expose matching opt-in controls, while standalone rejects native modes. Runtime/fuzz, mocked S3 worker, proxy, native module, and Windows codec/no-codec tests pass, including matched NGINX/Apache source-registry smoke, worker services, installer upgrade/downgrade rejection, rollback, and uninstall.
 
 RUM-store evidence: every native NGINX, Apache, and standalone worker owns a bounded memory engine, and request planners and beacon handlers access only that engine. The background adapter rotates pending deltas without holding the request-facing mutex during backend I/O. `memory:` is process-lifetime only; `local:` uses a separately locked atomic portable-v2 snapshot and merges concurrent worker deltas; optional Redis and Valkey support dynamically loads administrator-installed hiredis and requires verified `rediss://` away from loopback. A versioned Lua contract validates and byte-merges bounded portable-record batches atomically, updates TTLs, commits idempotent batch markers without distributed locks, and returns aggregates for memory and last-known-good snapshot reconciliation. Unit tests cover portable structured-record round trips, two-worker additive and monotonic local merging, TTL and memory bounds, malformed/redacted configuration, and real isolated Redis convergence across independent engines. Backend failures preserve the in-memory view and fail open, while required mode refuses worker startup.
 
@@ -251,7 +257,7 @@ Completion evidence for the checked geometry features is shared with Section 3.2
 - [ ] Make transforms Content-Security-Policy-safe, including nonce and `strict-dynamic` detection and unsafe-transform auto-disable.
 - [x] Respect `no-store` and `private` throughout every implemented cache and transform path.
 - [x] Bypass authenticated requests in the initial eligibility policy.
-- [ ] Make all outbound resource fetching SSRF-safe with private and loopback access disabled by default.
+- [x] Make all outbound resource fetching SSRF-safe with private and loopback access disabled by default.
 - [ ] Document and implement dark-mode-safe critical-CSS behavior.
 - [ ] Bound content size, memory, optimization time, cache growth, and variant fanout.
 

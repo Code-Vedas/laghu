@@ -49,3 +49,15 @@
 ## Verification
 
 Run `scripts/run-all` for the full repository lane. Use the focused scripts under `scripts/` while iterating.
+
+## High-Priority Validation Efficiency
+
+- Treat bounded validation output and avoiding redundant work as a priority for every agent run; this must not weaken the required acceptance bar.
+- Redirect verbose compiler, dependency, matched-server, packaging, and installer output to per-phase log files. Report a concise phase result and print only a bounded failure tail with the first actionable error.
+- Do not stream successful file-by-file compilation, installation, staging, or compression output into the conversation.
+- Run focused build and test targets while iterating. Run the full repository and cross-platform acceptance lanes once after focused checks pass or when a shared contract requires them.
+- Preserve verified dependency and matched-server artifacts between retries. Restart only the failed phase; do not rebuild APR, Apache, NGINX, Rust dependencies, runtime staging, or installers when their inputs are unchanged.
+- Split remote Windows work into independently logged build, codec test, no-codec test, matched-server smoke, service, package, rollback, and uninstall phases. Record each phase's exit code and summary so a detached connection does not require rerunning successful phases.
+- Prefer one bounded status poll over frequent empty polling. For long remote work, launch a logged job and inspect its status and failure tail rather than holding or repeatedly reopening a verbose output stream.
+- Before transferring a working tree, verify exclusion patterns against required scripts and sources. Never use broad patterns such as `build*` that can omit tracked build scripts.
+- Keep final reports concise: list exact commands or named phases, outcomes, and unresolved failures; do not reproduce routine build logs.

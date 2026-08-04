@@ -3,6 +3,7 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <ctype.h>
 #include <errno.h>
 #include <httpd.h>
 #include <stdint.h>
@@ -69,6 +70,7 @@ typedef struct {
   const char *purge_token_file;
   const char *cache_flush_file;
   apr_array_header_t *purge_allow;
+  apr_array_header_t *trusted_proxy;
   uint32_t admin_set_mask;
   const char *asset_offload_config;
   const char *asset_upload_queue;
@@ -94,6 +96,8 @@ typedef struct {
   bool javascript_observations_loaded;
   bool javascript_defer_loaded;
   bool asset_offload_loaded;
+  laghu_source_policy source_policy;
+  bool source_mode_set;
 } laghu_apache_config;
 
 typedef struct {
@@ -297,6 +301,7 @@ static void *laghu_apache_create_config(apr_pool_t *pool, char *path) {
     config->rum_timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
     config->rum_retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
     laghu_cache_limits_init(&config->cache_limits);
+    laghu_source_policy_init(&config->source_policy);
     apr_pool_cleanup_register(pool, config, laghu_apache_queue_cleanup,
                               apr_pool_cleanup_null);
   }
@@ -317,6 +322,8 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   if (merged == NULL || parent == NULL || child == NULL) {
     return NULL;
   }
+  if (!laghu_resource_rules_merge_valid(&parent->core, &child->core))
+    return NULL;
   laghu_config_merge(&merged->core, &parent->core, &child->core);
   merged->worker_queue =
       child->worker_queue != NULL ? child->worker_queue : parent->worker_queue;
@@ -332,6 +339,16 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   } else if (parent->asset_offload_loaded) {
     merged->asset_offload = parent->asset_offload;
     merged->asset_offload_loaded = true;
+  }
+  if (!laghu_source_policy_merge(&merged->source_policy, &parent->source_policy,
+                                 &child->source_policy))
+    return NULL;
+  merged->source_mode_set = parent->source_mode_set || child->source_mode_set;
+  if (child->source_mode_set)
+    merged->source_policy.mode = child->source_policy.mode;
+  if (merged->source_policy.mode == LAGHU_SOURCE_FILE_OFF) {
+    merged->source_policy.mapping_count = 0U;
+    merged->source_policy.native_root[0] = '\0';
   }
   if (child->file_cache_backend != NULL || child->image_cache_set) {
     merged->file_cache_backend = child->file_cache_backend;
@@ -369,6 +386,8 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
                                  : parent->cache_flush_file;
   merged->purge_allow =
       child->purge_allow != NULL ? child->purge_allow : parent->purge_allow;
+  merged->trusted_proxy = child->trusted_proxy != NULL ? child->trusted_proxy
+                                                       : parent->trusted_proxy;
   merged->admin_set_mask = parent->admin_set_mask | child->admin_set_mask;
   merged->font_fetch_queue = child->font_fetch_queue != NULL
                                  ? child->font_fetch_queue
@@ -466,6 +485,14 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
   char *end = NULL;
   unsigned long quality;
 
+  if (ap_cstr_casecmp(name, "FileSourceMap") == 0) {
+    if (command->path != NULL)
+      return "Laghu FileSourceMap is allowed only in server configuration";
+    if (parameter[0] == '\0' || extra[0] == '\0' || *cursor != '\0' ||
+        !laghu_source_mapping_add(&config->source_policy, parameter, extra))
+      return "Laghu FileSourceMap is invalid, duplicated, or excessive";
+    return NULL;
+  }
   if (name[0] == '\0' || extra[0] != '\0') {
     return "Laghu expects one setting and, where required, one value";
   }
@@ -601,6 +628,68 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     if (config->core.rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
         config->core.enabled_filters != 0U)
       return "Laghu EnableFilter conflicts with RewriteLevel passthrough";
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "AllowResources") == 0 ||
+      ap_cstr_casecmp(name, "Disallow") == 0) {
+    if (!laghu_resource_rule_add(&config->core,
+                                 ap_cstr_casecmp(name, "AllowResources") == 0,
+                                 parameter))
+      return "Laghu resource rule is invalid, duplicated, conflicting, or "
+             "excessive";
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "RespectVary") == 0 ||
+      ap_cstr_casecmp(name, "RespectXForwardedProto") == 0 ||
+      ap_cstr_casecmp(name, "QueryFilterOverrides") == 0) {
+    laghu_mode *target = ap_cstr_casecmp(name, "RespectVary") == 0
+                             ? &config->core.respect_vary
+                         : ap_cstr_casecmp(name, "RespectXForwardedProto") == 0
+                             ? &config->core.respect_x_forwarded_proto
+                             : &config->core.query_filter_overrides;
+    if (*target != LAGHU_MODE_UNSET || !laghu_apache_on_off(parameter, target))
+      return "Laghu request policy toggle expects On or Off once";
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "LoadFromFile") == 0) {
+    const char *root;
+    char lowered[16U];
+    size_t index;
+    if (command->path != NULL)
+      return "Laghu LoadFromFile is allowed only in server configuration";
+    if (config->source_mode_set || strlen(parameter) >= sizeof(lowered))
+      return "Laghu LoadFromFile is duplicated or invalid";
+    for (index = 0U; parameter[index] != '\0'; ++index)
+      lowered[index] = (char)tolower((unsigned char)parameter[index]);
+    lowered[index] = '\0';
+    if (!laghu_source_mode_parse(lowered, true, &config->source_policy.mode))
+      return "Laghu LoadFromFile expects Off, Mapped, Native, or Both";
+    config->source_mode_set = true;
+    if (config->source_policy.mode == LAGHU_SOURCE_FILE_NATIVE ||
+        config->source_policy.mode == LAGHU_SOURCE_FILE_BOTH) {
+      const core_server_config *core_server =
+          ap_get_core_module_config(command->server->module_config);
+      root = core_server == NULL ? NULL : core_server->ap_document_root;
+      if (root == NULL ||
+          strlen(root) >= sizeof(config->source_policy.native_root))
+        return "Laghu native file loading requires an absolute document root";
+      (void)snprintf(config->source_policy.native_root,
+                     sizeof(config->source_policy.native_root), "%s", root);
+    }
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "TrustedProxy") == 0) {
+    apr_ipsubnet_t *subnet;
+    char *copy = apr_pstrdup(command->pool, parameter);
+    char *slash = strrchr(copy, '/');
+    if (slash == NULL) return "Laghu TrustedProxy expects CIDR";
+    *slash++ = '\0';
+    if (apr_ipsubnet_create(&subnet, copy, slash, command->pool) != APR_SUCCESS)
+      return "Laghu TrustedProxy expects a valid CIDR";
+    if (config->trusted_proxy == NULL)
+      config->trusted_proxy =
+          apr_array_make(command->pool, 4, sizeof(apr_ipsubnet_t *));
+    *(apr_ipsubnet_t **)apr_array_push(config->trusted_proxy) = subnet;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "AllowApi") == 0) {
@@ -1246,12 +1335,33 @@ static bool laghu_apache_normalize(request_rec *request,
   context->request.scheme =
       (laghu_buffer){(const unsigned char *)ap_http_scheme(request),
                      strlen(ap_http_scheme(request))};
+  if (context->config->core.respect_x_forwarded_proto == LAGHU_MODE_ON &&
+      context->config->trusted_proxy != NULL) {
+    int subnet_index;
+    bool trusted = false;
+    const char *forwarded =
+        apr_table_get(request->headers_in, "X-Forwarded-Proto");
+    for (subnet_index = 0; subnet_index < context->config->trusted_proxy->nelts;
+         ++subnet_index) {
+      if (apr_ipsubnet_test(APR_ARRAY_IDX(context->config->trusted_proxy,
+                                          subnet_index, apr_ipsubnet_t *),
+                            request->connection->client_addr)) {
+        trusted = true;
+        break;
+      }
+    }
+    if (trusted && forwarded != NULL && strchr(forwarded, ',') == NULL &&
+        (ap_cstr_casecmp(forwarded, "http") == 0 ||
+         ap_cstr_casecmp(forwarded, "https") == 0))
+      context->request.scheme =
+          (laghu_buffer){(const unsigned char *)forwarded, strlen(forwarded)};
+  }
   context->request.authority =
       (laghu_buffer){(const unsigned char *)authority,
                      authority == NULL ? 0U : strlen(authority)};
-  context->request.normalized_path =
-      (laghu_buffer){(const unsigned char *)request->uri,
-                     request->uri == NULL ? 0U : strlen(request->uri)};
+  context->request.normalized_path = (laghu_buffer){
+      (const unsigned char *)request->unparsed_uri,
+      request->unparsed_uri == NULL ? 0U : strlen(request->unparsed_uri)};
   context->request.headers = context->request_headers;
   context->response.version = LAGHU_HTTP_ABI_VERSION;
   context->response.struct_size = sizeof(context->response);
@@ -2423,7 +2533,44 @@ static int laghu_apache_post_config(apr_pool_t *configuration_pool,
                                     server_rec *server) {
   (void)log_pool;
   (void)temporary_pool;
-  (void)server;
+  {
+    server_rec *item;
+    for (item = server; item != NULL; item = item->next) {
+      laghu_apache_config *config =
+          ap_get_module_config(item->module_config, &laghu_module);
+      const core_server_config *core_server =
+          ap_get_core_module_config(item->module_config);
+      char error[160U];
+      if (config != NULL &&
+          (config->source_policy.mode == LAGHU_SOURCE_FILE_NATIVE ||
+           config->source_policy.mode == LAGHU_SOURCE_FILE_BOTH) &&
+          core_server != NULL && core_server->ap_document_root != NULL &&
+          strlen(core_server->ap_document_root) <
+              sizeof(config->source_policy.native_root))
+        (void)snprintf(config->source_policy.native_root,
+                       sizeof(config->source_policy.native_root), "%s",
+                       core_server->ap_document_root);
+      if (config == NULL ||
+          !laghu_source_policy_validate(&config->source_policy, true, error,
+                                        sizeof(error))) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, item,
+                     "Laghu direct file configuration is invalid: %s",
+                     config == NULL ? "missing configuration" : error);
+        return HTTP_INTERNAL_SERVER_ERROR;
+      }
+      if (config->source_policy.mode != LAGHU_SOURCE_FILE_OFF) {
+        if (!config->asset_offload_loaded ||
+            config->asset_upload_queue == NULL ||
+            !laghu_source_registry_publish(config->asset_upload_queue,
+                                           &config->source_policy)) {
+          ap_log_error(APLOG_MARK, APLOG_ERR, 0, item,
+                       "Laghu direct file loading requires asset offload and "
+                       "a writable source registry");
+          return HTTP_INTERNAL_SERVER_ERROR;
+        }
+      }
+    }
+  }
   (void)ap_method_register(configuration_pool, "PURGE");
   return OK;
 }

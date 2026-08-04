@@ -18,6 +18,12 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu enable_filter NAME;` | inherited, repeatable | filter name | none | Enables one filter after resolving the baseline policy. |
 | `laghu disable_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter; a child scope may re-enable it. |
 | `laghu forbid_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |
+| `laghu allow_resources PATTERN;` | inherited, repeatable to 8 | bounded URL glob | none | Restricts optimization to matching resources when any allow rule exists. |
+| `laghu disallow PATTERN;` | inherited, repeatable to 8 | bounded URL glob | none | Excludes matching resources; deny rules always win. |
+| `laghu respect_vary on\|off;` | inherited | boolean | `on` | Bypasses unsupported `Vary` dimensions; unsafe variants are never published. |
+| `laghu respect_x_forwarded_proto on\|off;` | inherited | boolean | `off` | Uses a valid forwarded scheme only from a trusted direct peer. |
+| `laghu trusted_proxy CIDR;` | inherited, repeatable | IPv4/IPv6 CIDR | none | Defines direct peers trusted for forwarded scheme handling. |
+| `laghu query_filter_overrides on\|off;` | inherited | boolean | `off` | Enables bounded `laghuFilters=+name,-name` request overrides. |
 | `laghu allow_api on\|off;` | inherited | boolean | `off` | Allows otherwise excluded API/GraphQL paths. |
 | `laghu image_quality N;` | inherited | `1..100` | codec default | Overrides lossy image quality. |
 | `laghu image_beacon on\|off;` | inherited | boolean | `off` | Enables critical-image observations. |
@@ -36,6 +42,8 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu worker_queue PATH;` | inherited | bounded path | `/run/laghu/jobs.queue` | Selects the image queue. |
 | `laghu asset_offload_config PATH;` | inherited | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `laghu asset_upload_queue PATH;` | inherited | policy-matching path | unset | Selects the asynchronous asset spool. |
+| `laghu load_from_file off\|mapped\|native\|both;` | inherited | source-loader mode | `off` | Enables asynchronous mapped or native-root acquisition. |
+| `laghu file_source_map SOURCE_PREFIX ROOT;` | inherited, repeatable to 8 | normalized HTTPS prefix and absolute local root | none | Maps an eligible origin prefix to a local file tree. |
 | `laghu font_fetch_queue PATH;` | inherited | bounded path | `/run/laghu/fonts.queue` | Selects the external-font queue. |
 | `laghu font_provider_config PATH;` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `laghu javascript_queue PATH;` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
@@ -68,11 +76,14 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 `preset` and `rewrite_level` are mutually exclusive in one scope.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.
+Resource patterns start with `/`, `http://`, or `https://`; `*` matches any sequence and `?` one character. Rules match the normalized URL without its fragment, and inherited duplicates, conflicts, or limit overflow fail startup.
+Query overrides never bypass `forbid_filter` or resource-deny rules and remain part of the application-visible query and cache identity. In URLs, encode `+` as `%2B` when the client treats plus as a form-space.
 
 The file cache is the only cache backend currently implemented. Its portable shared mapping contains bounded keys, sizes, state, and approximate-LRU access epochs only; response bodies and generated assets remain on disk. Unsupported schemes such as `memcached:` fail configuration so a future provider can implement the same contract without silently changing behavior.
 An inherited `disable_filter` may be reversed with `enable_filter`, but an inherited `forbid_filter` cannot be reversed.
 Enabling a filter with the `passthrough` rewrite level is invalid.
 The provider and observation files are validated during configuration loading; malformed files fail `nginx -t`.
+File loading requires asset offload configuration and remains capture-first and worker-only. Explicit mappings win over native document-root inference. Roots, every path component, and the final regular file are checked; symlinks, traversal, reparse points, device paths, and changed files fail open.
 The installed package may explicitly set smaller RUM memory limits than runtime defaults.
 
 Redis uses `redis://` only for loopback development and verified `rediss://` for remote endpoints.

@@ -64,6 +64,7 @@ typedef struct {
   laghu_javascript_observation_set javascript_observations;
   laghu_javascript_defer_set javascript_defer;
   laghu_asset_config asset_offload;
+  laghu_source_policy source_policy;
   laghu_config config;
   unsigned int workers;
   unsigned int connection_queue;

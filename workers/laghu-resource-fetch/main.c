@@ -96,33 +96,6 @@ static bool laghu_fetch_url(const char *url, char host[256],
   return true;
 }
 
-static bool laghu_fetch_private(const struct sockaddr *address) {
-  if (address->sa_family == AF_INET) {
-    uint32_t value =
-        ntohl(((const struct sockaddr_in *)address)->sin_addr.s_addr);
-    unsigned int first = value >> 24U;
-    unsigned int second = (value >> 16U) & 0xffU;
-    return first == 0U || first == 10U || first == 127U || first >= 224U ||
-           (first == 100U && second >= 64U && second <= 127U) ||
-           (first == 169U && second == 254U) ||
-           (first == 172U && second >= 16U && second <= 31U) ||
-           (first == 192U && second == 168U) ||
-           (first == 198U && (second == 18U || second == 19U));
-  }
-  if (address->sa_family == AF_INET6) {
-    const unsigned char *bytes =
-        ((const struct sockaddr_in6 *)address)->sin6_addr.s6_addr;
-    static const unsigned char zero[16] = {0};
-    static const unsigned char loopback[16] = {0, 0, 0, 0, 0, 0, 0, 0,
-                                               0, 0, 0, 0, 0, 0, 0, 1};
-    return memcmp(bytes, zero, 16U) == 0 || memcmp(bytes, loopback, 16U) == 0 ||
-           (bytes[0] & 0xfeU) == 0xfcU ||
-           (bytes[0] == 0xfeU && (bytes[1] & 0xc0U) == 0x80U) ||
-           bytes[0] == 0xffU;
-  }
-  return true;
-}
-
 static void laghu_fetch_timeout(laghu_socket socket) {
 #ifdef _WIN32
   DWORD timeout = LAGHU_FETCH_TIMEOUT_SECONDS * 1000U;
@@ -167,7 +140,7 @@ static laghu_socket laghu_fetch_connect(const char *host) {
                   &hints, &addresses) != 0)
     return result;
   for (item = addresses; item != NULL; item = item->ai_next)
-    if (laghu_fetch_private(item->ai_addr)
+    if (!laghu_source_address_public(item->ai_addr)
 #if LAGHU_TEST_HOOKS
         && endpoint == NULL
 #endif

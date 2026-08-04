@@ -644,6 +644,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   const laghu_http_header *cache_control;
   const laghu_http_header *encoding;
   const laghu_http_header *etag;
+  const laghu_http_header *vary;
   laghu_response classification;
   laghu_runtime_cache_entry cache_entry;
   laghu_decision decision;
@@ -671,6 +672,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   if (!laghu_http_set_origin(transaction, request)) {
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
   }
+  transaction->cache_publishable = true;
   laghu_cache_source_scope(environment->cache_path, transaction->path);
   if (laghu_http_internal_asset_key(transaction->path,
                                     transaction->cache_key) &&
@@ -710,6 +712,22 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
            sizeof(result->cache_key));
     return true;
   }
+  {
+    char source[LAGHU_RUNTIME_PATH_SIZE * 2U];
+    int written =
+        transaction->origin[0] == '\0'
+            ? snprintf(source, sizeof(source), "%s", transaction->path)
+            : snprintf(source, sizeof(source), "%s%s", transaction->origin,
+                       transaction->path);
+    if (written <= 0 || (size_t)written >= sizeof(source) ||
+        !laghu_resource_allowed(&environment->config, source)) {
+      transaction->decision = LAGHU_DECISION_BYPASS_RESOURCE_POLICY;
+      transaction->prepared = true;
+      result->action = LAGHU_HTTP_ACTION_BYPASS;
+      return laghu_http_add_status(result,
+                                   LAGHU_DECISION_BYPASS_RESOURCE_POLICY);
+    }
+  }
   content_type = laghu_http_find_header(response->headers,
                                         response->header_count, "Content-Type");
   cache_control = laghu_http_find_header(
@@ -718,6 +736,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
                                     "Content-Encoding");
   etag =
       laghu_http_find_header(response->headers, response->header_count, "ETag");
+  vary =
+      laghu_http_find_header(response->headers, response->header_count, "Vary");
   if (!laghu_http_copy_header(content_type, transaction->content_type,
                               sizeof(transaction->content_type)) ||
       !laghu_http_copy_header(etag, transaction->validator,
@@ -764,6 +784,17 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       encoding->value.length != 0U) {
     decision = LAGHU_DECISION_BYPASS_ENCODED;
   }
+  if (decision == LAGHU_DECISION_PASS && vary != NULL) {
+    char vary_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
+    if (!laghu_http_join_response_headers(response, "Vary", vary_value,
+                                          sizeof(vary_value))) {
+      decision = LAGHU_DECISION_BYPASS_ERROR;
+    } else if (!laghu_vary_supported(vary_value)) {
+      transaction->cache_publishable = false;
+      if (environment->config.respect_vary != LAGHU_MODE_OFF)
+        decision = LAGHU_DECISION_BYPASS_VARY;
+    }
+  }
   if (decision == LAGHU_DECISION_PASS &&
       (!laghu_http_method_is(request, "GET") ||
        laghu_http_method_is(request, "HEAD"))) {
@@ -777,11 +808,26 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
     result->action = LAGHU_HTTP_ACTION_BYPASS;
     return laghu_http_add_status(result, decision);
   }
-  if (!laghu_resolve_config_policy(&environment->config,
-                                   &transaction->policy) ||
-      !laghu_variant_key((laghu_buffer){NULL, 0U}, &transaction->policy,
+  {
+    const char *query = strchr(transaction->path, '?');
+    if (!laghu_apply_query_filter_overrides(&environment->config, query,
+                                            &transaction->policy, NULL, NULL)) {
+      transaction->decision = LAGHU_DECISION_BYPASS_QUERY_OVERRIDE;
+      transaction->prepared = true;
+      result->action = LAGHU_HTTP_ACTION_BYPASS;
+      return laghu_http_add_status(result,
+                                   LAGHU_DECISION_BYPASS_QUERY_OVERRIDE);
+    }
+  }
+  if (!laghu_variant_key((laghu_buffer){NULL, 0U}, &transaction->policy,
                          transaction->policy_key)) {
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
+  }
+  if (!transaction->cache_publishable) {
+    transaction->decision = LAGHU_DECISION_PASS;
+    transaction->prepared = true;
+    result->action = LAGHU_HTTP_ACTION_BYPASS;
+    return laghu_http_add_status(result, LAGHU_DECISION_PASS);
   }
   transaction->image_filters = laghu_http_image_filters(&transaction->policy);
   transaction->html_plan = laghu_http_html_plan(&transaction->policy);
@@ -789,7 +835,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   {
     char asset_source[LAGHU_RUNTIME_PATH_SIZE];
     transaction->asset_allowed =
-        environment->asset_offload != NULL && response->has_declared_length &&
+        transaction->cache_publishable && environment->asset_offload != NULL &&
+        response->has_declared_length &&
         snprintf(asset_source, sizeof(asset_source), "%s%s",
                  environment->asset_offload->policy.source_domain,
                  transaction->path) > 0 &&

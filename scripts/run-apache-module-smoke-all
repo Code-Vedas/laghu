@@ -33,7 +33,24 @@ service_pid=
 javascript_pid=
 origin_pid=
 rm -rf "${work}"
-mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache"
+mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache" \
+  "${work}/asset-catalog" "${work}/asset-queue"
+cat >"${work}/assets.conf" <<EOF
+version=1
+source_domain=https://origin.example.test
+public_domain=https://cdn.example.test
+source_prefix=/assets
+public_prefix=/immutable
+mime_types=image/png,text/css,application/javascript
+mode=rewrite_only
+catalog_path=${work}/asset-catalog
+queue_path=${work}/asset-queue
+endpoint=https://s3.example.test
+region=test-1
+bucket=assets
+access_key_env=LAGHU_TEST_ACCESS_KEY
+secret_key_env=LAGHU_TEST_SECRET_KEY
+EOF
 printf '%s\n' 'apache-purge-token-0123456789' >"${work}/purge.token"
 chmod 600 "${work}/purge.token"
 printf '%s\n' 'apache laghu smoke' >"${work}/htdocs/index.html"
@@ -141,6 +158,9 @@ load_first_mpm() {
   printf '<Directory "%s/htdocs">\nRequire all granted\n</Directory>\n' "${work}"
   printf 'ErrorLog "%s/logs/error.log"\n' "${work}"
   printf 'Laghu On\nLaghu RewriteLevel passthrough\n'
+  printf 'Laghu AllowResources "/*"\nLaghu Disallow "/never-optimized/*"\n'
+  printf 'Laghu RespectVary On\nLaghu QueryFilterOverrides On\n'
+  printf 'Laghu RespectXForwardedProto On\nLaghu TrustedProxy 127.0.0.1/32\n'
   printf 'Laghu RumStore local:%s/rum.snapshot\n' "${work}"
   printf 'Laghu RumStoreSyncInterval 1\n'
   printf 'Laghu RumStoreMemoryLimit 8m\n'
@@ -179,6 +199,10 @@ load_first_mpm() {
   printf 'Laghu PurgeTokenFile "%s/purge.token"\n' "${work}"
   printf 'Laghu PurgeAllow 127.0.0.1/32\n'
   printf 'Laghu Statistics On\n'
+  printf 'Laghu AssetOffloadConfig "%s/assets.conf"\n' "${work}"
+  printf 'Laghu AssetUploadQueue "%s/asset-queue"\n' "${work}"
+  printf 'Laghu LoadFromFile Mapped\n'
+  printf 'Laghu FileSourceMap "https://origin.example.test/assets/" "%s/htdocs"\n' "${work}"
   if [ -x "${javascript_service}" ]; then
     printf 'Laghu JavaScriptQueue "%s/javascript.queue"\n' "${work}"
     printf 'Laghu JavaScriptTarget "last 2 chrome versions"\n'

@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "laghu/runtime.h"
 
@@ -14,6 +15,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   laghu_html_planner_mask plan =
       size == 0U ? LAGHU_HTML_PLAN_LEXICAL
                  : (laghu_html_planner_mask)(data[0] & UINT8_C(0x7f));
+  if (size != 0U && size < 900U) {
+    laghu_source_policy source;
+    char prefix[512], root[512], error[128];
+    size_t split = size / 2U;
+    memcpy(prefix, data, split);
+    prefix[split] = '\0';
+    memcpy(root, data + split, size - split);
+    root[size - split] = '\0';
+    laghu_source_policy_init(&source);
+    (void)laghu_source_mapping_add(&source, prefix, root);
+    (void)laghu_source_policy_validate(&source, true, error, sizeof(error));
+  }
   if (size > 1U && (data[1] & UINT8_C(1)) != 0U) {
     plan |= LAGHU_HTML_PLAN_CONVERT_META_TAGS | LAGHU_HTML_PLAN_RESOURCE_HINTS;
   }

@@ -96,6 +96,16 @@ function Assert-CommonBehavior([int] $Port, $Cold) {
   if ((Get-HeaderValue $authorized "X-Laghu") -ne "bypass-authorized") {
     throw "authorized response did not retain the shared exclusion"
   }
+  $denied = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/blocked.txt"
+  if ((Get-HeaderValue $denied "X-Laghu") -ne "bypass-resource-policy" -or
+      $denied.Content.Trim() -ne "origin-only") {
+    throw "disallowed resource was not preserved as an origin response"
+  }
+  $override = Invoke-WebRequest -UseBasicParsing `
+    "http://127.0.0.1:$Port/index.html?laghuFilters=%2Bhtml_minify"
+  if ((Get-HeaderValue $override "X-Laghu") -eq "bypass-query-override") {
+    throw "valid query filter override was rejected"
+  }
   $imageCold = $null
   for ($attempt = 0; $attempt -lt 100; ++$attempt) {
     try {
@@ -178,8 +188,38 @@ function Assert-CommonBehavior([int] $Port, $Cold) {
 Stop-TestProcesses
 Remove-Item -Recurse -Force $testRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $cache, $web, "$web\api" | Out-Null
+$assetCatalog = "$testRoot\asset-catalog"
+$assetQueue = "$testRoot\asset.queue"
+$assetConfig = "$testRoot\asset-offload.conf"
+New-Item -ItemType Directory -Force -Path $assetCatalog, $assetQueue | Out-Null
+@"
+version=1
+source_domain=https://origin.example.test
+public_domain=https://cdn.example.test
+source_prefix=/assets
+public_prefix=/immutable
+mime_types=text/css,image/png
+allow_paths=/
+mode=upload_and_rewrite
+preserve_query=on
+trusted_origin_fallback=on
+max_body_bytes=67108864
+retry_limit=3
+timeout_seconds=10
+stale_ttl_seconds=86400
+catalog_path=$($assetCatalog.Replace('\', '/'))
+queue_path=$($assetQueue.Replace('\', '/'))
+provider=s3
+endpoint=https://s3.example.test
+region=us-east-1
+bucket=laghu-assets
+object_prefix=production
+access_key_env=LAGHU_TEST_S3_ACCESS_KEY
+secret_key_env=LAGHU_TEST_S3_SECRET_KEY
+"@ | Set-Content -Encoding ASCII $assetConfig
 Set-Content -Encoding UTF8 "$web\index.html" '<!doctype html><html><head></head><body>  <!-- remove -->  <img src="/image.png" width="512" height="512">  </body></html>'
 Set-Content -Encoding ASCII "$web\api\data.json" '{"ok":true}'
+Set-Content -Encoding ASCII "$web\blocked.txt" 'origin-only'
 Set-Content -Encoding ASCII -NoNewline -Path $token -Value $purgeToken
 & $vipsPath black "$testRoot\image.v" 512 512 --bands 3
 & $vipsPath pngsave "$testRoot\image.v" "$web\image.png" --compression 0
@@ -198,6 +238,8 @@ try {
   $nginxCache = $cache.Replace('\', '/')
   $nginxCacheBackend = "file:///$nginxCache"
   $nginxToken = $token.Replace('\', '/')
+  $nginxAssetConfig = $assetConfig.Replace('\', '/')
+  $nginxAssetQueue = $assetQueue.Replace('\', '/')
   @"
 worker_processes 1;
 error_log logs/error.log;
@@ -213,7 +255,16 @@ http {
     laghu on;
     laghu preset balanced;
     laghu cache_mime_types image/png;
+    laghu disallow /blocked*;
+    laghu respect_vary on;
+    laghu respect_x_forwarded_proto on;
+    laghu trusted_proxy 127.0.0.1/32;
+    laghu query_filter_overrides on;
     laghu worker_queue $nginxQueue;
+    laghu asset_offload_config $nginxAssetConfig;
+    laghu asset_upload_queue $nginxAssetQueue;
+    laghu load_from_file both;
+    laghu file_source_map https://origin.example.test/assets/ $nginxWeb;
     laghu file_cache_backend $nginxCacheBackend;
     laghu purge_method PURGE;
     laghu purge_query on;
@@ -225,6 +276,9 @@ http {
 "@ | Set-Content -Encoding ASCII "$nginxTestRoot\conf\nginx.conf"
   & "$nginxTestRoot\nginx.exe" -t -p $nginxTestRoot
   if ($LASTEXITCODE -ne 0) { throw "NGINX matched configuration failed" }
+  if (-not (Test-Path "$assetQueue.sources")) {
+    throw "NGINX source-loader registry was not published"
+  }
   $nginx = Start-Process -PassThru -WindowStyle Hidden "$nginxTestRoot\nginx.exe" -ArgumentList @("-p", $nginxTestRoot)
   try {
     Assert-CommonBehavior $nginxPort (Wait-ForServer $nginxPort)
@@ -254,6 +308,8 @@ http {
   $apacheCache = $cache.Replace('\', '/')
   $apacheCacheBackend = "file:///$apacheCache"
   $apacheToken = $token.Replace('\', '/')
+  $apacheAssetConfig = $assetConfig.Replace('\', '/')
+  $apacheAssetQueue = $assetQueue.Replace('\', '/')
   $apacheConfigLines = Get-Content "$apacheTestRoot\conf\httpd.conf" | ForEach-Object {
     if ($_ -match '^Listen\s+\d+\s*$') {
       "Listen 127.0.0.1:$apachePort"
@@ -277,7 +333,16 @@ DocumentRoot "$apacheWeb"
 </Directory>
 Laghu Preset balanced
 Laghu CacheMimeTypes image/png
+Laghu Disallow "/blocked*"
+Laghu RespectVary On
+Laghu RespectXForwardedProto On
+Laghu TrustedProxy 127.0.0.1/32
+Laghu QueryFilterOverrides On
 Laghu WorkerQueue "$apacheQueue"
+Laghu AssetOffloadConfig "$apacheAssetConfig"
+Laghu AssetUploadQueue "$apacheAssetQueue"
+Laghu LoadFromFile Both
+Laghu FileSourceMap "https://origin.example.test/assets/" "$apacheWeb"
 Laghu FileCacheBackend "$apacheCacheBackend"
 Laghu PurgeMethod PURGE
 Laghu PurgeQuery On
@@ -289,6 +354,9 @@ Laghu Statistics On
                           [Text.ASCIIEncoding]::new())
   & "$apacheTestRoot\bin\httpd.exe" -t -d $apacheTestRoot
   if ($LASTEXITCODE -ne 0) { throw "Apache matched configuration failed" }
+  if (-not (Test-Path "$assetQueue.sources")) {
+    throw "Apache source-loader registry was not published"
+  }
   $apache = Start-Process -PassThru -WindowStyle Hidden "$apacheTestRoot\bin\httpd.exe" -ArgumentList @("-d", $apacheTestRoot, "-f", "conf/httpd.conf")
   try {
     Assert-CommonBehavior $apachePort (Wait-ForServer $apachePort)

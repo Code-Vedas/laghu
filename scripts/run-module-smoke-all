@@ -28,7 +28,24 @@ if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
 fi
 
 rm -rf "${SMOKE_DIR}"
-mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs" "${SMOKE_DIR}/cache"
+mkdir -p "${SMOKE_DIR}/html" "${SMOKE_DIR}/logs" "${SMOKE_DIR}/cache" \
+  "${SMOKE_DIR}/asset-catalog" "${SMOKE_DIR}/asset-queue"
+cat >"${SMOKE_DIR}/assets.conf" <<EOF
+version=1
+source_domain=https://origin.example.test
+public_domain=https://cdn.example.test
+source_prefix=/assets
+public_prefix=/immutable
+mime_types=image/png,text/css,application/javascript
+mode=rewrite_only
+catalog_path=${SMOKE_DIR}/asset-catalog
+queue_path=${SMOKE_DIR}/asset-queue
+endpoint=https://s3.example.test
+region=test-1
+bucket=assets
+access_key_env=LAGHU_TEST_ACCESS_KEY
+secret_key_env=LAGHU_TEST_SECRET_KEY
+EOF
 printf '%s\n' 'nginx-purge-token-0123456789' >"${SMOKE_DIR}/purge.token"
 chmod 600 "${SMOKE_DIR}/purge.token"
 printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
@@ -146,6 +163,12 @@ http {
     root ${SMOKE_DIR}/html;
     laghu on;
     laghu preset balanced;
+    laghu allow_resources /*;
+    laghu disallow /never-optimized/*;
+    laghu respect_vary on;
+    laghu query_filter_overrides on;
+    laghu respect_x_forwarded_proto on;
+    laghu trusted_proxy 127.0.0.1/32;
     laghu image_quality 82;
     laghu image_beacon on;
     laghu critical_css_beacon on;
@@ -418,6 +441,13 @@ http {
 }
 EOF
 
+sed "/laghu statistics on;/a\\
+    laghu asset_offload_config ${SMOKE_DIR}/assets.conf;\\
+    laghu asset_upload_queue ${SMOKE_DIR}/asset-queue;\\
+    laghu load_from_file mapped;\\
+    laghu file_source_map https://origin.example.test/assets/ ${SMOKE_DIR}/html;" \
+  "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/source-loader-nginx.conf"
+"${NGINX_BIN}" -t -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/source-loader-nginx.conf"
 "${NGINX_BIN}" -t -p "${SMOKE_DIR}" -c "${SMOKE_DIR}/nginx.conf"
 
 sed 's/laghu enable_filter resource_inline;/laghu enable_filter unknown;/' \

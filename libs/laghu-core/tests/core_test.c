@@ -111,6 +111,9 @@ static void test_config_defaults_and_inheritance(void) {
          LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT);
   assert(result.javascript_outline_threshold ==
          LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT);
+  assert(result.respect_vary == LAGHU_MODE_ON);
+  assert(result.respect_x_forwarded_proto == LAGHU_MODE_OFF);
+  assert(result.query_filter_overrides == LAGHU_MODE_OFF);
 
   parent.mode = LAGHU_MODE_ON;
   parent.preset = LAGHU_PRESET_SAFE;
@@ -180,6 +183,64 @@ static void test_config_defaults_and_inheritance(void) {
   laghu_config_merge(&result, &parent, &child);
   assert(result.preset == LAGHU_PRESET_SAFE);
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
+}
+
+static void test_request_policy_controls(void) {
+  laghu_config config = enabled_config();
+  laghu_config child;
+  laghu_config merged;
+  laghu_policy policy;
+  uint32_t enabled = 0U, disabled = 0U;
+
+  assert(laghu_resource_pattern_valid("/assets/*"));
+  assert(laghu_resource_pattern_valid("https://cdn.example/*"));
+  assert(!laghu_resource_pattern_valid("relative/*"));
+  assert(!laghu_resource_pattern_valid("//remote.example/*"));
+  assert(!laghu_resource_pattern_valid("/assets/#fragment"));
+  assert(laghu_resource_rule_add(&config, true, "/assets/*"));
+  assert(laghu_resource_rule_add(&config, false, "/assets/private/*"));
+  assert(!laghu_resource_rule_add(&config, true, "/assets/*"));
+  assert(laghu_resource_allowed(&config, "/assets/app.css?v=1#x"));
+  assert(!laghu_resource_allowed(&config, "/assets/private/key.css"));
+  assert(!laghu_resource_allowed(&config, "/other/app.css"));
+  assert(!laghu_resource_allowed(&config, "/.laghu/stats"));
+  assert(!laghu_resource_allowed(&config,
+                                 "https://user@example.test/assets/a.css"));
+
+  laghu_config_init(&child);
+  assert(laghu_resource_rule_add(&child, false, "/assets/generated/*"));
+  laghu_config_merge(&merged, &config, &child);
+  assert(merged.allow_resource_count == 1U);
+  assert(merged.disallow_resource_count == 2U);
+  assert(!laghu_resource_allowed(&merged, "/assets/generated/a.css"));
+
+  assert(laghu_vary_supported(NULL));
+  assert(laghu_vary_supported("Accept"));
+  assert(laghu_vary_supported(" accept , ACCEPT "));
+  assert(!laghu_vary_supported("*"));
+  assert(!laghu_vary_supported("Accept-Encoding"));
+  assert(!laghu_vary_supported("Accept, Cookie"));
+
+  config.query_filter_overrides = LAGHU_MODE_ON;
+  assert(laghu_apply_query_filter_overrides(
+      &config, "x=1&laghuFilters=%2Bhtml_minify,-image_modern", &policy,
+      &enabled, &disabled));
+  assert(enabled == LAGHU_FILTER_HTML_MINIFY);
+  assert(disabled == LAGHU_FILTER_IMAGE_MODERN);
+  assert((policy.filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U);
+  assert((policy.filter_families & LAGHU_FILTER_IMAGE_MODERN) == 0U);
+  assert(!laghu_apply_query_filter_overrides(
+      &config, "laghuFilters=%2Bhtml_minify,%2Bhtml_minify", &policy, NULL,
+      NULL));
+  assert(!laghu_apply_query_filter_overrides(&config, "laghuFilters=%2Bunknown",
+                                             &policy, NULL, NULL));
+  config.forbidden_filters = LAGHU_FILTER_HTML_MINIFY;
+  assert(!laghu_apply_query_filter_overrides(
+      &config, "laghuFilters=%2Bhtml_minify", &policy, NULL, NULL));
+  config.query_filter_overrides = LAGHU_MODE_OFF;
+  assert(laghu_apply_query_filter_overrides(
+      &config, "laghuFilters=%2Bhtml_minify", &policy, &enabled, &disabled));
+  assert(enabled == 0U && disabled == 0U);
 }
 
 static void test_preset_parser(void) {
@@ -611,8 +672,8 @@ static void test_hashing(void) {
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
   assert(strcmp(key,
-                "1fdaad88dd0fe81834f74a034843706ccfb8ece8050b02d7a3d7f03d26f1"
-                "875c") == 0);
+                "8f871bfec868a16a7a78d503491e63ac6dcc74e663472f3871632cd5f8c1"
+                "dd40") == 0);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,
@@ -675,6 +736,7 @@ int main(void) {
   assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
                                   "image/pngx"));
   test_config_defaults_and_inheritance();
+  test_request_policy_controls();
   test_preset_parser();
   test_preset_policies();
   test_rewrite_level_parser_and_policies();

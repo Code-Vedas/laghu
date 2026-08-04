@@ -27,6 +27,11 @@ The standalone server accepts command-line options only.
 | `--enable-filter NAME` | filter name, repeatable | none | Enables one filter after resolving the baseline policy. |
 | `--disable-filter NAME` | filter name, repeatable | none | Disables one filter. |
 | `--forbid-filter NAME` | filter name, repeatable | none | Permanently disables one filter for configuration parity. |
+| `--allow-resources PATTERN` | bounded URL glob, repeatable to 8 | none | Restricts optimization to matching resources when configured. |
+| `--disallow PATTERN` | bounded URL glob, repeatable to 8 | none | Excludes matching resources; deny rules win. |
+| `--respect-vary on\|off` | boolean | `on` | Bypasses unsupported response variation dimensions. |
+| `--respect-x-forwarded-proto on\|off` | boolean | `off` | Uses a valid forwarded scheme only from a trusted direct peer. |
+| `--query-filter-overrides on\|off` | boolean | `off` | Enables bounded `laghuFilters=+name,-name` request overrides. |
 | `--allow-api` | flag | off | Allows otherwise excluded API/GraphQL paths. |
 | `--image-quality N` | `1..100` | codec default | Overrides lossy image quality. |
 | `--image-beacon` | flag | off | Enables critical-image observations. |
@@ -40,6 +45,8 @@ The standalone server accepts command-line options only.
 | `--javascript-queue PATH` | bounded path | unset | Enables the SWC queue. |
 | `--asset-offload-config PATH` | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `--asset-upload-queue PATH` | policy-matching path | unset | Selects the asynchronous asset spool. |
+| `--load-from-file off\|mapped` | source-loader mode | `off` | Enables asynchronous explicitly mapped file acquisition. |
+| `--file-source-map SOURCE_PREFIX=ROOT` | normalized HTTPS prefix and absolute local root, repeatable to 8 | none | Maps an eligible origin prefix to a local file tree. |
 | `--javascript-target QUERY` | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering. |
 | `--javascript-inline-limit N` | `0..65536` | `2048` | Caps JavaScript inlining. |
 | `--javascript-outline-threshold N` | `1024..1048576` | `8192` | Selects inline scripts for outlining. |
@@ -76,9 +83,11 @@ The standalone server accepts command-line options only.
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be controlled only once; duplicates and conflicts fail startup, as does enabling a filter with `passthrough`.
+Resource patterns begin with `/`, `http://`, or `https://`; support `*` and `?`; and match normalized URLs without fragments. Query overrides cannot bypass forbidden filters or denied resources, remain origin-visible, and participate in cache identity. Encode `+` as `%2B` for form-style clients.
 
 The file cache is the only cache backend currently implemented. Its portable shared mapping contains bounded keys, sizes, state, and approximate-LRU access epochs only; response bodies and generated assets remain on disk. Unsupported schemes such as `memcached:` fail startup so a future provider can implement the same contract without changing callers.
 Remote RUM synchronization requires verified `rediss://`; `redis://` is loopback-only and Memcached is unsupported.
+Mapped loading requires asset offload configuration and remains capture-first and worker-only. Standalone rejects `native` and `both` because its origin is remote. Roots, every path component, and the final regular file are checked; symlinks, traversal, reparse points, device paths, and changed files fail open.
 
 ## JavaScript deferral approvals
 

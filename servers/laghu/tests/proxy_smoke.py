@@ -543,6 +543,41 @@ def main():
         if sys.platform != "win32":
             purge_token.chmod(0o600)
         flush_file = root / "cache.flush"
+        asset_catalog = root / "asset-catalog"
+        asset_queue = root / "asset.queue"
+        asset_catalog.mkdir()
+        asset_queue.mkdir()
+        asset_config = root / "asset-offload.conf"
+        asset_config.write_text(
+            "\n".join(
+                [
+                    "version=1",
+                    "source_domain=https://origin.example.test",
+                    "public_domain=https://cdn.example.test",
+                    "source_prefix=/assets",
+                    "public_prefix=/immutable",
+                    "mime_types=text/css,image/png",
+                    "allow_paths=/",
+                    "mode=upload_and_rewrite",
+                    "preserve_query=on",
+                    "trusted_origin_fallback=on",
+                    "max_body_bytes=67108864",
+                    "retry_limit=3",
+                    "timeout_seconds=10",
+                    "stale_ttl_seconds=86400",
+                    f"catalog_path={asset_catalog}",
+                    f"queue_path={asset_queue}",
+                    "provider=s3",
+                    "endpoint=https://s3.example.test",
+                    "region=us-east-1",
+                    "bucket=laghu-assets",
+                    "object_prefix=production",
+                    "access_key_env=LAGHU_TEST_S3_ACCESS_KEY",
+                    "secret_key_env=LAGHU_TEST_S3_SECRET_KEY",
+                    "",
+                ]
+            )
+        )
         main_log = (root / "main-proxy.log").open("w+b")
         process = start_process(
             [
@@ -559,6 +594,14 @@ def main():
                 str(root / "missing.queue"),
                 "--javascript-queue",
                 str(root / "javascript.queue"),
+                "--asset-offload-config",
+                str(asset_config),
+                "--asset-upload-queue",
+                str(asset_queue),
+                "--load-from-file",
+                "mapped",
+                "--file-source-map",
+                f"https://origin.example.test/assets/={root}",
                 "--javascript-target",
                 "last 2 chrome versions",
                 "--javascript-inline-limit",
@@ -567,6 +610,18 @@ def main():
                 "8192",
                 "--rewrite-level",
                 "all",
+                "--allow-resources",
+                "/*",
+                "--disallow",
+                "/never-optimized/*",
+                "--respect-vary",
+                "on",
+                "--query-filter-overrides",
+                "on",
+                "--respect-x-forwarded-proto",
+                "on",
+                "--trusted-proxy",
+                "127.0.0.1/32",
                 "--critical-css-beacon",
                 "--instrumentation-beacon",
                 "--instrumentation-sample-rate",
@@ -612,6 +667,7 @@ def main():
             else:
                 raise AssertionError("proxy did not start")
             assert b"<body>hello" in first_body, (first_head, first_body)
+            assert pathlib.Path(str(asset_queue) + ".sources").is_file()
             assert b"/.laghu/beacon/instrumentation.js" in first_body
             assert b'data-laghu-sample="100"' in first_body
             assert b"x-laghu: pass" in first_head, first_head

@@ -12,6 +12,7 @@
 
 #define LAGHU_SHA256_BLOCK_SIZE 64U
 #define LAGHU_SHA256_DIGEST_SIZE 32U
+#define LAGHU_NORMALIZED_URL_SIZE 4096U
 
 #define LAGHU_FILTER_SAFE                                      \
   (LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA | \
@@ -277,6 +278,8 @@ static void laghu_policy_init(laghu_policy *policy) {
   policy->javascript_inline_limit = LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT;
   policy->javascript_outline_threshold =
       LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT;
+  policy->cache_mime_types[0] = '\0';
+  memset(policy->resource_policy_hash, 0, sizeof(policy->resource_policy_hash));
 }
 
 static bool laghu_config_has_policy_selector(const laghu_config *config) {
@@ -392,6 +395,11 @@ void laghu_config_init(laghu_config *config) {
   config->javascript_outline_threshold =
       LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET;
   config->cache_mime_types[0] = '\0';
+  config->respect_vary = LAGHU_MODE_UNSET;
+  config->respect_x_forwarded_proto = LAGHU_MODE_UNSET;
+  config->query_filter_overrides = LAGHU_MODE_UNSET;
+  config->allow_resource_count = 0U;
+  config->disallow_resource_count = 0U;
 }
 
 void laghu_config_merge(laghu_config *result, const laghu_config *parent,
@@ -418,6 +426,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT;
   unsigned int parent_javascript_outline_threshold =
       LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT;
+  laghu_mode parent_respect_vary = LAGHU_MODE_ON;
+  laghu_mode parent_respect_x_forwarded_proto = LAGHU_MODE_OFF;
+  laghu_mode parent_query_filter_overrides = LAGHU_MODE_OFF;
 
   if (result == NULL) {
     return;
@@ -477,6 +488,12 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       parent_javascript_outline_threshold =
           parent->javascript_outline_threshold;
     }
+    if (parent->respect_vary != LAGHU_MODE_UNSET)
+      parent_respect_vary = parent->respect_vary;
+    if (parent->respect_x_forwarded_proto != LAGHU_MODE_UNSET)
+      parent_respect_x_forwarded_proto = parent->respect_x_forwarded_proto;
+    if (parent->query_filter_overrides != LAGHU_MODE_UNSET)
+      parent_query_filter_overrides = parent->query_filter_overrides;
   }
 
   result->mode = child != NULL && child->mode != LAGHU_MODE_UNSET ? child->mode
@@ -564,6 +581,18 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
                            LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET
           ? child->javascript_outline_threshold
           : parent_javascript_outline_threshold;
+  result->respect_vary =
+      child != NULL && child->respect_vary != LAGHU_MODE_UNSET
+          ? child->respect_vary
+          : parent_respect_vary;
+  result->respect_x_forwarded_proto =
+      child != NULL && child->respect_x_forwarded_proto != LAGHU_MODE_UNSET
+          ? child->respect_x_forwarded_proto
+          : parent_respect_x_forwarded_proto;
+  result->query_filter_overrides =
+      child != NULL && child->query_filter_overrides != LAGHU_MODE_UNSET
+          ? child->query_filter_overrides
+          : parent_query_filter_overrides;
   if (child != NULL && child->cache_mime_types[0] != '\0') {
     (void)snprintf(result->cache_mime_types, sizeof(result->cache_mime_types),
                    "%s", child->cache_mime_types);
@@ -573,6 +602,267 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   } else {
     result->cache_mime_types[0] = '\0';
   }
+  result->allow_resource_count = 0U;
+  result->disallow_resource_count = 0U;
+  if (parent != NULL) {
+    unsigned int index;
+    for (index = 0U; index < parent->allow_resource_count; ++index)
+      (void)laghu_resource_rule_add(result, true,
+                                    parent->allow_resources[index]);
+    for (index = 0U; index < parent->disallow_resource_count; ++index)
+      (void)laghu_resource_rule_add(result, false,
+                                    parent->disallow_resources[index]);
+  }
+  if (child != NULL) {
+    unsigned int index;
+    for (index = 0U; index < child->allow_resource_count; ++index)
+      (void)laghu_resource_rule_add(result, true,
+                                    child->allow_resources[index]);
+    for (index = 0U; index < child->disallow_resource_count; ++index)
+      (void)laghu_resource_rule_add(result, false,
+                                    child->disallow_resources[index]);
+  }
+}
+
+static bool laghu_glob_match(const char *pattern, const char *value) {
+  const char *star = NULL, *retry = NULL;
+  while (*value != '\0') {
+    if (*pattern == '?' || *pattern == *value) {
+      ++pattern;
+      ++value;
+    } else if (*pattern == '*') {
+      star = pattern++;
+      retry = value;
+    } else if (star != NULL) {
+      pattern = star + 1;
+      value = ++retry;
+    } else {
+      return false;
+    }
+  }
+  while (*pattern == '*') ++pattern;
+  return *pattern == '\0';
+}
+
+bool laghu_resource_pattern_valid(const char *pattern) {
+  size_t length;
+  if (pattern == NULL || pattern[0] == '\0') return false;
+  length = strlen(pattern);
+  if (length >= LAGHU_RESOURCE_PATTERN_SIZE || strchr(pattern, '#') != NULL ||
+      strchr(pattern, '\r') != NULL || strchr(pattern, '\n') != NULL)
+    return false;
+  if (pattern[0] == '/') return pattern[1] != '/';
+  return laghu_starts_with(pattern, "http://") ||
+         laghu_starts_with(pattern, "https://");
+}
+
+bool laghu_resource_rule_add(laghu_config *config, bool allow,
+                             const char *pattern) {
+  unsigned int *count;
+  char (*rules)[LAGHU_RESOURCE_PATTERN_SIZE];
+  unsigned int index;
+  if (config == NULL || !laghu_resource_pattern_valid(pattern)) return false;
+  count =
+      allow ? &config->allow_resource_count : &config->disallow_resource_count;
+  rules = allow ? config->allow_resources : config->disallow_resources;
+  if (*count >= LAGHU_RESOURCE_RULE_LIMIT) return false;
+  for (index = 0U; index < config->allow_resource_count; ++index)
+    if (strcmp(config->allow_resources[index], pattern) == 0) return false;
+  for (index = 0U; index < config->disallow_resource_count; ++index)
+    if (strcmp(config->disallow_resources[index], pattern) == 0) return false;
+  (void)snprintf(rules[*count], LAGHU_RESOURCE_PATTERN_SIZE, "%s", pattern);
+  ++*count;
+  return true;
+}
+
+bool laghu_resource_rules_merge_valid(const laghu_config *parent,
+                                      const laghu_config *child) {
+  unsigned int left, right;
+  if (parent == NULL || child == NULL) return true;
+  if (parent->allow_resource_count + child->allow_resource_count >
+          LAGHU_RESOURCE_RULE_LIMIT ||
+      parent->disallow_resource_count + child->disallow_resource_count >
+          LAGHU_RESOURCE_RULE_LIMIT)
+    return false;
+  for (left = 0U; left < parent->allow_resource_count; ++left) {
+    for (right = 0U; right < child->allow_resource_count; ++right)
+      if (strcmp(parent->allow_resources[left],
+                 child->allow_resources[right]) == 0)
+        return false;
+    for (right = 0U; right < child->disallow_resource_count; ++right)
+      if (strcmp(parent->allow_resources[left],
+                 child->disallow_resources[right]) == 0)
+        return false;
+  }
+  for (left = 0U; left < parent->disallow_resource_count; ++left) {
+    for (right = 0U; right < child->allow_resource_count; ++right)
+      if (strcmp(parent->disallow_resources[left],
+                 child->allow_resources[right]) == 0)
+        return false;
+    for (right = 0U; right < child->disallow_resource_count; ++right)
+      if (strcmp(parent->disallow_resources[left],
+                 child->disallow_resources[right]) == 0)
+        return false;
+  }
+  return true;
+}
+
+bool laghu_resource_allowed(const laghu_config *config, const char *url) {
+  const char *target = url;
+  const char *scheme;
+  const char *path;
+  unsigned int index;
+  size_t length;
+  char normalized[LAGHU_NORMALIZED_URL_SIZE];
+  if (config == NULL || url == NULL || url[0] == '\0') return false;
+  length = strcspn(url, "#");
+  if (length >= sizeof(normalized)) return false;
+  memcpy(normalized, url, length);
+  normalized[length] = '\0';
+  if (laghu_starts_with(normalized, "/.laghu") &&
+      (normalized[7] == '\0' || normalized[7] == '/' || normalized[7] == '?'))
+    return false;
+  scheme = strstr(normalized, "://");
+  if (scheme != NULL) {
+    const char *authority = scheme + 3;
+    bool has_path;
+    if (!(laghu_starts_with(normalized, "http://") ||
+          laghu_starts_with(normalized, "https://")) ||
+        authority[0] == '\0')
+      return false;
+    path = strchr(authority, '/');
+    has_path = path != NULL;
+    if (!has_path) path = "/";
+    if (strchr(authority, '@') != NULL &&
+        (!has_path || strchr(authority, '@') < path))
+      return false;
+  } else if (normalized[0] == '/') {
+    path = normalized;
+  } else {
+    return false;
+  }
+  if (laghu_starts_with(path, "/.laghu") &&
+      (path[7] == '\0' || path[7] == '/' || path[7] == '?'))
+    return false;
+  for (index = 0U; index < config->disallow_resource_count; ++index) {
+    target = config->disallow_resources[index][0] == '/' ? path : normalized;
+    if (laghu_glob_match(config->disallow_resources[index], target))
+      return false;
+  }
+  if (config->allow_resource_count == 0U) return true;
+  for (index = 0U; index < config->allow_resource_count; ++index) {
+    target = config->allow_resources[index][0] == '/' ? path : normalized;
+    if (laghu_glob_match(config->allow_resources[index], target)) return true;
+  }
+  return false;
+}
+
+bool laghu_vary_supported(const char *vary) {
+  const char *cursor = vary;
+  if (vary == NULL || *vary == '\0') return true;
+  while (*cursor != '\0') {
+    const char *end;
+    size_t length;
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == ',') ++cursor;
+    end = strchr(cursor, ',');
+    length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
+    while (length > 0U && isspace((unsigned char)cursor[length - 1U])) --length;
+    if (length != 6U || tolower((unsigned char)cursor[0]) != 'a' ||
+        tolower((unsigned char)cursor[1]) != 'c' ||
+        tolower((unsigned char)cursor[2]) != 'c' ||
+        tolower((unsigned char)cursor[3]) != 'e' ||
+        tolower((unsigned char)cursor[4]) != 'p' ||
+        tolower((unsigned char)cursor[5]) != 't')
+      return false;
+    if (end == NULL) break;
+    cursor = end + 1;
+  }
+  return true;
+}
+
+static int laghu_hex_value(char value) {
+  if (value >= '0' && value <= '9') return value - '0';
+  if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+  if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+  return -1;
+}
+
+bool laghu_apply_query_filter_overrides(const laghu_config *config,
+                                        const char *query, laghu_policy *policy,
+                                        uint32_t *enabled, uint32_t *disabled) {
+  const char *cursor;
+  char decoded[LAGHU_QUERY_OVERRIDE_SIZE];
+  size_t used = 0U;
+  bool found = false;
+  uint32_t enable_mask = 0U, disable_mask = 0U;
+  laghu_config effective;
+  if (config == NULL || policy == NULL) return false;
+  if (enabled != NULL) *enabled = 0U;
+  if (disabled != NULL) *disabled = 0U;
+  if (config->query_filter_overrides != LAGHU_MODE_ON || query == NULL)
+    return laghu_resolve_config_policy(config, policy);
+  cursor = query[0] == '?' ? query + 1 : query;
+  while (*cursor != '\0') {
+    const char *end = strchr(cursor, '&');
+    size_t length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
+    if (length >= 13U && strncmp(cursor, "laghuFilters=", 13U) == 0) {
+      size_t index;
+      if (found) return false;
+      found = true;
+      for (index = 13U; index < length; ++index) {
+        unsigned char value = (unsigned char)cursor[index];
+        if (value == '%' && index + 2U < length) {
+          int high = laghu_hex_value(cursor[index + 1U]);
+          int low = laghu_hex_value(cursor[index + 2U]);
+          if (high < 0 || low < 0) return false;
+          value = (unsigned char)((high << 4) | low);
+          index += 2U;
+        } else if (value == '%' || value <= 0x20U || value >= 0x7fU) {
+          return false;
+        }
+        if (used + 1U >= sizeof(decoded)) return false;
+        decoded[used++] = (char)value;
+      }
+    }
+    if (end == NULL) break;
+    cursor = end + 1U;
+  }
+  if (!found) return laghu_resolve_config_policy(config, policy);
+  if (used == 0U) return false;
+  decoded[used] = '\0';
+  cursor = decoded;
+  while (*cursor != '\0') {
+    const char *end = strchr(cursor, ',');
+    size_t length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
+    char name[64U];
+    uint32_t filter;
+    bool turn_on;
+    if (length < 2U || length >= sizeof(name) ||
+        (cursor[0] != '+' && cursor[0] != '-'))
+      return false;
+    turn_on = cursor[0] == '+';
+    memcpy(name, cursor + 1U, length - 1U);
+    name[length - 1U] = '\0';
+    if (!laghu_parse_filter(name, &filter) ||
+        ((enable_mask | disable_mask) & filter) != 0U ||
+        (turn_on && (config->forbidden_filters & filter) != 0U))
+      return false;
+    if (turn_on)
+      enable_mask |= filter;
+    else
+      disable_mask |= filter;
+    if (end == NULL) break;
+    cursor = end + 1U;
+  }
+  effective = *config;
+  effective.enabled_filters &= ~disable_mask;
+  effective.disabled_filters &= ~enable_mask;
+  effective.enabled_filters |= enable_mask;
+  effective.disabled_filters |= disable_mask;
+  if (!laghu_resolve_config_policy(&effective, policy)) return false;
+  if (enabled != NULL) *enabled = enable_mask;
+  if (disabled != NULL) *disabled = disable_mask;
+  return true;
 }
 
 bool laghu_mime_type_allowed(const char *allowlist, const char *content_type) {
@@ -834,6 +1124,8 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   bool has_preset;
   bool has_rewrite_level;
   bool resolved;
+  laghu_sha256_context resource_context;
+  unsigned int index;
 
   if (config == NULL || policy == NULL) {
     return false;
@@ -922,6 +1214,23 @@ bool laghu_resolve_config_policy(const laghu_config *config,
             : config->javascript_outline_threshold;
     (void)snprintf(policy->cache_mime_types, sizeof(policy->cache_mime_types),
                    "%s", config->cache_mime_types);
+    laghu_sha256_init(&resource_context);
+    for (index = 0U; index < config->allow_resource_count; ++index) {
+      static const unsigned char allow_marker = 'A';
+      laghu_sha256_update(&resource_context, &allow_marker, 1U);
+      laghu_sha256_update(&resource_context,
+                          (const unsigned char *)config->allow_resources[index],
+                          strlen(config->allow_resources[index]) + 1U);
+    }
+    for (index = 0U; index < config->disallow_resource_count; ++index) {
+      static const unsigned char deny_marker = 'D';
+      laghu_sha256_update(&resource_context, &deny_marker, 1U);
+      laghu_sha256_update(
+          &resource_context,
+          (const unsigned char *)config->disallow_resources[index],
+          strlen(config->disallow_resources[index]) + 1U);
+    }
+    laghu_sha256_final(&resource_context, policy->resource_policy_hash);
   }
   return resolved;
 }
@@ -993,6 +1302,14 @@ const char *laghu_decision_name(laghu_decision decision) {
       return "bypass-encoded";
     case LAGHU_DECISION_BYPASS_IMAGE_BACKEND:
       return "bypass-image-backend";
+    case LAGHU_DECISION_BYPASS_RESOURCE_POLICY:
+      return "bypass-resource-policy";
+    case LAGHU_DECISION_BYPASS_VARY:
+      return "bypass-vary";
+    case LAGHU_DECISION_BYPASS_QUERY_OVERRIDE:
+      return "bypass-query-override";
+    case LAGHU_DECISION_BYPASS_FORWARDED_PROTO:
+      return "bypass-forwarded-proto";
     case LAGHU_DECISION_IMAGE_HIT:
       return "image-hit";
     case LAGHU_DECISION_BYPASS_ERROR:
@@ -1133,6 +1450,8 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
   laghu_sha256_init(&context);
   laghu_sha256_update(&context, namespace_value, sizeof(namespace_value) - 1U);
   laghu_sha256_update(&context, fields, sizeof(fields));
+  laghu_sha256_update(&context, policy->resource_policy_hash,
+                      sizeof(policy->resource_policy_hash));
   laghu_sha256_update(&context, original.data, original.length);
   laghu_sha256_final(&context, digest);
   laghu_digest_to_hex(digest, output);

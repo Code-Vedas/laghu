@@ -18,6 +18,12 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu EnableFilter NAME` | inherited, repeatable | filter name | none | Enables one filter after resolving the baseline policy. |
 | `Laghu DisableFilter NAME` | inherited, repeatable | filter name | none | Disables one filter; a child scope may re-enable it. |
 | `Laghu ForbidFilter NAME` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |
+| `Laghu AllowResources PATTERN` | inherited, repeatable to 8 | bounded URL glob | none | Restricts optimization to matching resources when any allow rule exists. |
+| `Laghu Disallow PATTERN` | inherited, repeatable to 8 | bounded URL glob | none | Excludes matching resources; deny rules always win. |
+| `Laghu RespectVary On\|Off` | inherited | boolean | `On` | Bypasses unsupported `Vary` dimensions; unsafe variants are never published. |
+| `Laghu RespectXForwardedProto On\|Off` | inherited | boolean | `Off` | Uses a valid forwarded scheme only from a trusted direct peer. |
+| `Laghu TrustedProxy CIDR` | inherited, repeatable | IPv4/IPv6 CIDR | none | Defines direct peers trusted for forwarded scheme handling. |
+| `Laghu QueryFilterOverrides On\|Off` | inherited | boolean | `Off` | Enables bounded `laghuFilters=+name,-name` request overrides. |
 | `Laghu AllowApi On\|Off` | inherited | boolean | `Off` | Allows otherwise excluded API/GraphQL paths. |
 | `Laghu ImageQuality N` | inherited | `1..100` | codec default | Overrides lossy image quality. |
 | `Laghu ImageBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-image observations. |
@@ -36,6 +42,8 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu WorkerQueue PATH` | inherited | bounded path | `/run/laghu/jobs.queue` | Selects the image queue. |
 | `Laghu AssetOffloadConfig PATH` | inherited | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `Laghu AssetUploadQueue PATH` | inherited | policy-matching path | unset | Selects the asynchronous asset spool. |
+| `Laghu LoadFromFile Off\|Mapped\|Native\|Both` | server/vhost | source-loader mode | `Off` | Enables asynchronous mapped or native-root acquisition. |
+| `Laghu FileSourceMap SOURCE_PREFIX ROOT` | server/vhost, repeatable to 8 | normalized HTTPS prefix and absolute local root | none | Maps an eligible origin prefix to a local file tree. |
 | `Laghu FontFetchQueue PATH` | inherited | bounded path | `/run/laghu/fonts.queue` | Selects the font-fetch queue. |
 | `Laghu FontProviderConfig PATH` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `Laghu JavaScriptQueue PATH` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
@@ -68,11 +76,14 @@ Optimization settings inherit through main server, virtual host, directory, and 
 `Preset` and `RewriteLevel` cannot appear together in the same scope.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.
+Resource patterns start with `/`, `http://`, or `https://`; `*` matches any sequence and `?` one character. Rules match normalized URLs without fragments, with inherited deny precedence.
+Query overrides cannot bypass forbidden filters or denied resources and remain in the origin-visible query and cache identity. Encode `+` as `%2B` for form-style clients.
 
 The file cache is the only cache backend currently implemented. Its portable shared mapping contains bounded keys, sizes, state, and approximate-LRU access epochs only; response bodies and generated assets remain on disk. Unsupported schemes such as `memcached:` fail configuration so a future provider can implement the same contract without silently changing behavior.
 An inherited `DisableFilter` may be reversed with `EnableFilter`, but an inherited `ForbidFilter` cannot be reversed.
 Enabling a filter with the `passthrough` rewrite level is invalid.
 Provider and observation files are validated during configuration loading.
+File loading requires asset offload configuration and remains capture-first and worker-only. Explicit mappings win over native `DocumentRoot` inference. Roots, every path component, and the final regular file are checked; symlinks, traversal, reparse points, device paths, and changed files fail open.
 Remote synchronization requires verified `rediss://`; `redis://` is restricted to loopback development, and Memcached is unsupported.
 
 ```apache

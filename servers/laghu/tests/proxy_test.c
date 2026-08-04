@@ -123,6 +123,27 @@ int main(void) {
                              "html_minify",
                              "--enable-filter",
                              "html_minify"};
+  char *request_policy[] = {"laghu",
+                            "--listen",
+                            "127.0.0.1:8080",
+                            "--origin",
+                            "http://127.0.0.1:8000",
+                            "--cache",
+                            "/tmp/cache",
+                            "--worker-queue",
+                            "/tmp/jobs",
+                            "--allow-resources",
+                            "/assets/*",
+                            "--disallow",
+                            "/assets/private/*",
+                            "--respect-vary",
+                            "off",
+                            "--respect-x-forwarded-proto",
+                            "on",
+                            "--query-filter-overrides",
+                            "on",
+                            "--trusted-proxy",
+                            "127.0.0.0/8"};
   char *secure[] = {"laghu",
                     "--listen",
                     "127.0.0.1:8080",
@@ -162,6 +183,30 @@ int main(void) {
                      "/tmp/jobs",
                      "--rum-store",
                      "redis://example.test:6379/0"};
+  char *native_file[] = {"laghu",
+                         "--listen",
+                         "127.0.0.1:8080",
+                         "--origin",
+                         "http://127.0.0.1:8000",
+                         "--cache",
+                         "/tmp/cache",
+                         "--worker-queue",
+                         "/tmp/jobs",
+                         "--load-from-file",
+                         "native"};
+  char *unbound_file[] = {"laghu",
+                          "--listen",
+                          "127.0.0.1:8080",
+                          "--origin",
+                          "http://127.0.0.1:8000",
+                          "--cache",
+                          "/tmp/cache",
+                          "--worker-queue",
+                          "/tmp/jobs",
+                          "--load-from-file",
+                          "mapped",
+                          "--file-source-map",
+                          "https://origin.example.test/assets/=/tmp/assets"};
   char *admin[] = {"laghu",
                    "--listen",
                    "127.0.0.1:8080",
@@ -270,6 +315,12 @@ int main(void) {
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(11, bad_rum, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, native_file, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(13, unbound_file, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
 #ifndef _WIN32
   {
     char *service[] = {"laghu", "--service"};
@@ -290,6 +341,14 @@ int main(void) {
   CHECK(options.config.enabled_filters == LAGHU_FILTER_RESOURCE_INLINE);
   CHECK(options.config.disabled_filters == LAGHU_FILTER_HTML_MINIFY);
   CHECK(options.config.forbidden_filters == LAGHU_FILTER_JAVASCRIPT_DEFER);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(21, request_policy, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.config.allow_resource_count == 1U);
+  CHECK(options.config.disallow_resource_count == 1U);
+  CHECK(options.config.respect_vary == LAGHU_MODE_OFF);
+  CHECK(options.config.respect_x_forwarded_proto == LAGHU_MODE_ON);
+  CHECK(options.config.query_filter_overrides == LAGHU_MODE_ON);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, filter_conflict, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);

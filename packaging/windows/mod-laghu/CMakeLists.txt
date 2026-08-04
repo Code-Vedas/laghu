@@ -23,6 +23,7 @@ add_library(mod_laghu MODULE
   "${LAGHU_SOURCE}/libs/laghu-image/src/css.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/runtime_win32.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/cache.c"
+  "${LAGHU_SOURCE}/libs/laghu-runtime/src/source.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/catalog.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/asset.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/html.c"
@@ -51,6 +52,6 @@ target_include_directories(mod_laghu PRIVATE
   "${LAGHU_SOURCE}/libs/laghu-runtime/include"
 )
 target_link_libraries(mod_laghu PRIVATE
-  "${HTTPD_LIBRARY}" "${APR_LIBRARY}" "${APRUTIL_LIBRARY}"
+  "${HTTPD_LIBRARY}" "${APR_LIBRARY}" "${APRUTIL_LIBRARY}" ws2_32
 )
 set_target_properties(mod_laghu PROPERTIES PREFIX "" SUFFIX ".so")

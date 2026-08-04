@@ -4,11 +4,41 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #define main laghu_asset_worker_entry
 #include "main.c"
 #undef main
+
+static laghu_asset_provider_result contract_ok_upload(void *context,
+                                                      const char *key,
+                                                      laghu_buffer body,
+                                                      const char *type,
+                                                      const char *checksum) {
+  (void)context;
+  assert(key != NULL && body.length == sizeof("file-body") - 1U);
+  assert(strcmp(type, "image/png") == 0 && checksum[0] != '\0');
+  return LAGHU_ASSET_PROVIDER_OK;
+}
+
+static laghu_asset_provider_result contract_ok_verify(void *context,
+                                                      const char *key,
+                                                      size_t size,
+                                                      const char *type,
+                                                      const char *checksum) {
+  (void)context;
+  assert(key != NULL && size == sizeof("file-body") - 1U);
+  assert(strcmp(type, "image/png") == 0 && checksum[0] != '\0');
+  return LAGHU_ASSET_PROVIDER_OK;
+}
 
 int main(void) {
   static const char checksum[] =
@@ -64,5 +94,68 @@ int main(void) {
                                 "https://evil.example/b", next));
   assert(!laghu_origin_redirect(&policy, "https://origin.example.com/a",
                                 "https://origin.example.com/a", next));
+  {
+    char root[LAGHU_RUNTIME_PATH_SIZE], queue[LAGHU_RUNTIME_PATH_SIZE];
+    char catalog[LAGHU_RUNTIME_PATH_SIZE], source_path[LAGHU_RUNTIME_PATH_SIZE];
+    laghu_source_policy source;
+    laghu_asset_record pending = {0}, ready_record;
+    laghu_asset_provider provider = {contract_ok_upload, contract_ok_verify,
+                                     NULL, laghu_s3_healthy, &s3};
+    FILE *file;
+#ifdef _WIN32
+    assert(snprintf(root, sizeof(root), "%s\\laghu-source-contract-%lu",
+                    getenv("TEMP"), (unsigned long)GetCurrentProcessId()) > 0);
+    assert(_mkdir(root) == 0 || errno == EEXIST);
+#else
+    assert(snprintf(root, sizeof(root), "/tmp/laghu-source-contract-%ld",
+                    (long)getpid()) > 0);
+    assert(mkdir(root, 0700) == 0 || errno == EEXIST);
+#endif
+    assert(snprintf(queue, sizeof(queue), "%s/queue", root) > 0);
+    assert(snprintf(catalog, sizeof(catalog), "%s/catalog", root) > 0);
+    assert(snprintf(source_path, sizeof(source_path), "%s/source.png", root) >
+           0);
+    file = fopen(source_path, "wb");
+    assert(file != NULL);
+    assert(fwrite("file-body", sizeof("file-body") - 1U, 1U, file) == 1U);
+    assert(fclose(file) == 0);
+    laghu_asset_policy_init(&s3.config.policy);
+    (void)snprintf(s3.config.policy.source_domain,
+                   sizeof(s3.config.policy.source_domain),
+                   "https://origin.example.com");
+    (void)snprintf(s3.config.policy.public_domain,
+                   sizeof(s3.config.policy.public_domain),
+                   "https://cdn.example.com");
+    (void)snprintf(s3.config.policy.mime_types,
+                   sizeof(s3.config.policy.mime_types), "image/png");
+    s3.config.policy.upload = true;
+    (void)snprintf(s3.config.queue_path, sizeof(s3.config.queue_path), "%s",
+                   queue);
+    (void)snprintf(s3.config.catalog_path, sizeof(s3.config.catalog_path), "%s",
+                   catalog);
+    assert(laghu_sha256_hex(
+        (laghu_buffer){(const unsigned char *)"config", sizeof("config") - 1U},
+        s3.config.digest));
+    laghu_source_policy_init(&source);
+    source.mode = LAGHU_SOURCE_FILE_MAPPED;
+    assert(laghu_source_mapping_add(
+        &source, "https://origin.example.com/assets/", root));
+    assert(laghu_source_registry_publish(queue, &source));
+    pending.state = LAGHU_ASSET_PENDING;
+    (void)snprintf(pending.source_url, sizeof(pending.source_url),
+                   "https://origin.example.com/assets/source.png");
+    (void)snprintf(pending.policy_digest, sizeof(pending.policy_digest), "%s",
+                   s3.config.digest);
+    (void)snprintf(pending.provider_digest, sizeof(pending.provider_digest),
+                   "%s", s3.config.digest);
+    assert(laghu_asset_job_publish(&s3.config, &pending,
+                                   (laghu_buffer){NULL, 0U}));
+    assert(laghu_asset_process(&s3, &provider) == 0);
+    assert(laghu_asset_catalog_lookup_url(&s3.config, pending.source_url,
+                                          &ready_record));
+    assert(ready_record.state == LAGHU_ASSET_READY &&
+           ready_record.body_length == sizeof("file-body") - 1U &&
+           ready_record.source_validator[0] != '\0');
+  }
   return 0;
 }

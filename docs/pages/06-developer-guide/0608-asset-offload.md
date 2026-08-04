@@ -27,6 +27,28 @@ Laghu AssetUploadQueue /run/laghu/assets
 laghu ... --asset-offload-config /etc/laghu/asset-offload.conf --asset-upload-queue /run/laghu/assets
 ```
 
+## Optional direct acquisition
+
+When an eligible response body was not captured, native adapters can ask the background worker to read it from an explicitly mapped local root or the adapter's document root:
+
+```nginx
+laghu load_from_file both;
+laghu file_source_map https://www.example.com/assets/ /srv/assets;
+```
+
+```apache
+Laghu LoadFromFile Both
+Laghu FileSourceMap "https://www.example.com/assets/" "/srv/assets"
+```
+
+```console
+laghu ... --load-from-file mapped --file-source-map https://www.example.com/assets/=/srv/assets
+```
+
+Standalone supports mapped mode only. Mappings do not enable loading by themselves, and they must use normalized HTTPS prefixes and absolute local roots. The worker rejects traversal, symlinks and Windows reparse points, non-regular or changed files, disallowed MIME types, and oversized bodies. Request threads never read these files.
+
+If capture and file acquisition miss, the same worker may use the asset policy's trusted HTTPS fallback. Every DNS answer and redirect is revalidated; non-global, loopback, private, link-local, reserved, documentation, carrier-grade NAT, multicast, and IPv4-mapped private addresses are rejected. Connections use only the validated address while preserving the original hostname for TLS SNI and certificate verification. Credentials, cookies, authorization, proxy environment settings, unsafe ports, and cross-policy redirects are never forwarded.
+
 `rewrite_only` verifies pre-existing immutable objects; `upload_and_rewrite` uploads and then verifies them. Both modes preserve the original URL for pending, failed, stale, corrupt, oversized, denied, or unavailable assets. Query strings and fragments are preserved by default but never determine the immutable content key.
 
-Provider health is represented by catalog transitions. Retryable failures use bounded exponential backoff; permanent failures remain fail-open. Deleting a failed catalog record allows an administrator to retry after correcting configuration. Mutable overwrites, proxy-domain routing, direct-file loading, and vendor-specific providers are outside this feature.
+Provider health is represented by catalog transitions. Retryable failures use bounded exponential backoff; permanent failures remain fail-open. Deleting a failed catalog record allows an administrator to retry after correcting configuration. Mutable overwrites, proxy-domain routing, and vendor-specific providers are outside this feature.

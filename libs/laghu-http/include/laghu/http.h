@@ -156,6 +156,7 @@ typedef struct {
   bool accept_webp;
   bool prepared;
   bool asset_allowed;
+  bool cache_publishable;
 } laghu_http_transaction;
 
 void laghu_http_transaction_init(laghu_http_transaction *transaction);

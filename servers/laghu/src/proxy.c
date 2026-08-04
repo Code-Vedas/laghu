@@ -370,6 +370,7 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->rum_memory_limit = LAGHU_RUM_DEFAULT_MEMORY_BYTES;
   options->rum_pending_limit = LAGHU_RUM_DEFAULT_PENDING_BYTES;
   laghu_cache_limits_init(&options->cache_limits);
+  laghu_source_policy_init(&options->source_policy);
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity,
@@ -400,6 +401,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
   bool ca_seen = false, forwarded_seen = false;
+  bool respect_vary_seen = false, respect_proto_seen = false;
+  bool query_overrides_seen = false;
   bool rum_store_seen = false, rum_snapshot_seen = false;
   bool rum_library_seen = false, rum_timeout_seen = false, rum_ttl_seen = false;
   bool rum_retry_seen = false, rum_sync_seen = false;
@@ -407,6 +410,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool purge_method_seen = false, purge_query_seen = false;
   bool purge_token_seen = false, flush_file_seen = false;
   bool statistics_seen = false;
+  bool load_from_file_seen = false;
   int index;
   if (options == NULL || argc < 1)
     return proxy_error(error, error_size, "invalid arguments");
@@ -659,6 +663,30 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return proxy_error(error, error_size,
                            "invalid or duplicate --asset-upload-queue");
       asset_queue_seen = true;
+    } else if (strcmp(name, "--load-from-file") == 0) {
+      NEED_VALUE();
+      if (load_from_file_seen ||
+          !laghu_source_mode_parse(value, false, &options->source_policy.mode))
+        return proxy_error(error, error_size,
+                           "invalid or duplicate --load-from-file");
+      load_from_file_seen = true;
+    } else if (strcmp(name, "--file-source-map") == 0) {
+      const char *separator;
+      char prefix[LAGHU_RUNTIME_PATH_SIZE];
+      size_t prefix_length;
+      NEED_VALUE();
+      separator = strchr(value, '=');
+      prefix_length = separator == NULL ? 0U : (size_t)(separator - value);
+      if (prefix_length == 0U || prefix_length >= sizeof(prefix) ||
+          separator[1] == '\0')
+        return proxy_error(error, error_size, "invalid --file-source-map");
+      memcpy(prefix, value, prefix_length);
+      prefix[prefix_length] = '\0';
+      if (!laghu_source_mapping_add(&options->source_policy, prefix,
+                                    separator + 1U))
+        return proxy_error(
+            error, error_size,
+            "invalid, duplicate, or excessive --file-source-map");
     } else if (strcmp(name, "--javascript-target") == 0) {
       char normalized[LAGHU_JAVASCRIPT_TARGET_SIZE];
       NEED_VALUE();
@@ -766,6 +794,32 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       if (options->config.allow_api == LAGHU_MODE_ON)
         return proxy_error(error, error_size, "duplicate --allow-api");
       options->config.allow_api = LAGHU_MODE_ON;
+    } else if (strcmp(name, "--allow-resources") == 0 ||
+               strcmp(name, "--disallow") == 0) {
+      NEED_VALUE();
+      if (!laghu_resource_rule_add(
+              &options->config, strcmp(name, "--allow-resources") == 0, value))
+        return proxy_error(
+            error, error_size,
+            "invalid, duplicate, conflicting, or excessive resource rule");
+    } else if (strcmp(name, "--respect-vary") == 0 ||
+               strcmp(name, "--respect-x-forwarded-proto") == 0 ||
+               strcmp(name, "--query-filter-overrides") == 0) {
+      bool *seen = strcmp(name, "--respect-vary") == 0 ? &respect_vary_seen
+                   : strcmp(name, "--respect-x-forwarded-proto") == 0
+                       ? &respect_proto_seen
+                       : &query_overrides_seen;
+      laghu_mode *target = strcmp(name, "--respect-vary") == 0
+                               ? &options->config.respect_vary
+                           : strcmp(name, "--respect-x-forwarded-proto") == 0
+                               ? &options->config.respect_x_forwarded_proto
+                               : &options->config.query_filter_overrides;
+      NEED_VALUE();
+      if (*seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
+        return proxy_error(error, error_size,
+                           "request policy toggle expects on or off once");
+      *target = strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
+      *seen = true;
     } else if (strcmp(name, "--image-beacon") == 0) {
       if (options->config.image_beacon == LAGHU_MODE_ON)
         return proxy_error(error, error_size, "duplicate --image-beacon");
@@ -897,6 +951,13 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                                    options->asset_upload_queue_path) != 0)
     return proxy_error(error, error_size,
                        "asset upload queue must match the asset configuration");
+  if (!laghu_source_policy_validate(&options->source_policy, false, error,
+                                    error_size))
+    return LAGHU_PROXY_PARSE_ERROR;
+  if (options->source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
+      !asset_offload_seen)
+    return proxy_error(error, error_size,
+                       "direct file loading requires asset offload");
   if (!listen_seen || !origin_seen || !cache_seen || !queue_seen)
     return proxy_error(error, error_size,
                        "--listen, --origin, a file cache backend, and "
@@ -909,9 +970,14 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     return proxy_error(error, error_size,
                        "--origin-ca-file requires an https origin");
   if (options->trusted_proxy_count != 0U &&
-      options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF)
+      options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF &&
+      options->config.respect_x_forwarded_proto != LAGHU_MODE_ON)
     return proxy_error(error, error_size,
                        "--trusted-proxy requires forwarded headers");
+  if (options->config.respect_x_forwarded_proto == LAGHU_MODE_ON &&
+      options->trusted_proxy_count == 0U)
+    return proxy_error(error, error_size,
+                       "--respect-x-forwarded-proto requires --trusted-proxy");
   if ((options->purge_method || options->purge_query || options->statistics) &&
       (!purge_token_seen || options->purge_allow_count == 0U))
     return proxy_error(
@@ -1223,6 +1289,24 @@ static bool proxy_peer_trusted(const laghu_proxy_options *options,
     if (equal) return true;
   }
   return false;
+}
+
+static const char *proxy_effective_scheme(const laghu_proxy_options *options,
+                                          const proxy_connection *connection,
+                                          const proxy_request *request) {
+  const proxy_header *header = NULL;
+  size_t index;
+  if (options->config.respect_x_forwarded_proto != LAGHU_MODE_ON ||
+      !proxy_peer_trusted(options, connection))
+    return "http";
+  for (index = 0U; index < request->header_count; ++index)
+    if (proxy_name_equal(request->headers[index].name, "X-Forwarded-Proto")) {
+      if (header != NULL) return "http";
+      header = &request->headers[index];
+    }
+  if (header == NULL || strchr(header->value, ',') != NULL) return "http";
+  if (proxy_name_equal(header->value, "https")) return "https";
+  return "http";
 }
 
 static bool proxy_peer_in_cidrs(const proxy_connection *connection,
@@ -2594,15 +2678,19 @@ static void proxy_handle(const proxy_connection *connection,
     memset(&normalized_request, 0, sizeof(normalized_request));
     memset(&normalized_response, 0, sizeof(normalized_response));
     memset(&environment, 0, sizeof(environment));
-    normalized_request = (laghu_http_request){
-        LAGHU_HTTP_ABI_VERSION,
-        sizeof(normalized_request),
-        {(const unsigned char *)request.method, strlen(request.method)},
-        {(const unsigned char *)"http", 4U},
-        {NULL, 0U},
-        {(const unsigned char *)request.target, strlen(request.target)},
-        NULL,
-        0U};
+    {
+      const char *scheme =
+          proxy_effective_scheme(options, connection, &request);
+      normalized_request = (laghu_http_request){
+          LAGHU_HTTP_ABI_VERSION,
+          sizeof(normalized_request),
+          {(const unsigned char *)request.method, strlen(request.method)},
+          {(const unsigned char *)scheme, strlen(scheme)},
+          {NULL, 0U},
+          {(const unsigned char *)request.target, strlen(request.target)},
+          NULL,
+          0U};
+    }
     {
       proxy_header *host =
           proxy_find(request.headers, request.header_count, "Host");
@@ -2749,15 +2837,18 @@ static void proxy_handle(const proxy_connection *connection,
                              strlen(response.headers[index].name)},
                             {(unsigned char *)response.headers[index].value,
                              strlen(response.headers[index].value)}};
-  normalized_request = (laghu_http_request){
-      LAGHU_HTTP_ABI_VERSION,
-      sizeof(normalized_request),
-      {(unsigned char *)request.method, strlen(request.method)},
-      {(unsigned char *)"http", 4U},
-      {NULL, 0U},
-      {(unsigned char *)request.target, strlen(request.target)},
-      request_headers,
-      request.header_count};
+  {
+    const char *scheme = proxy_effective_scheme(options, connection, &request);
+    normalized_request = (laghu_http_request){
+        LAGHU_HTTP_ABI_VERSION,
+        sizeof(normalized_request),
+        {(unsigned char *)request.method, strlen(request.method)},
+        {(unsigned char *)scheme, strlen(scheme)},
+        {NULL, 0U},
+        {(unsigned char *)request.target, strlen(request.target)},
+        request_headers,
+        request.header_count};
+  }
   {
     proxy_header *host =
         proxy_find(request.headers, request.header_count, "Host");
@@ -3364,6 +3455,12 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
       (options->javascript_queue_enabled &&
        !proxy_queue_path_valid(options->javascript_queue_path))) {
     proxy_log_startup_failure(&queue, "queue_unavailable");
+    goto cleanup;
+  }
+  if (options->source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
+      !laghu_source_registry_publish(options->asset_upload_queue_path,
+                                     &options->source_policy)) {
+    proxy_log_startup_failure(&queue, "source_registry");
     goto cleanup;
   }
   if (!laghu_cache_backend_register_path(options->cache_path,

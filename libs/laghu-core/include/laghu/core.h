@@ -18,7 +18,7 @@ extern "C" {
 #define LAGHU_SHA256_HEX_LENGTH 64U
 #define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
 #define LAGHU_MIME_ALLOWLIST_SIZE 2048U
-#define LAGHU_VARIANT_KEY_VERSION 8U
+#define LAGHU_VARIANT_KEY_VERSION 9U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -36,6 +36,9 @@ extern "C" {
 #define LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT 8192U
 #define LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET UINT32_MAX
 #define LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT 10U
+#define LAGHU_RESOURCE_RULE_LIMIT 8U
+#define LAGHU_RESOURCE_PATTERN_SIZE 128U
+#define LAGHU_QUERY_OVERRIDE_SIZE 1024U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -116,6 +119,7 @@ typedef struct {
   unsigned int javascript_inline_limit;
   unsigned int javascript_outline_threshold;
   char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
+  unsigned char resource_policy_hash[32U];
 } laghu_policy;
 
 typedef struct {
@@ -141,6 +145,14 @@ typedef struct {
   unsigned int javascript_inline_limit;
   unsigned int javascript_outline_threshold;
   char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
+  laghu_mode respect_vary;
+  laghu_mode respect_x_forwarded_proto;
+  laghu_mode query_filter_overrides;
+  unsigned int allow_resource_count;
+  unsigned int disallow_resource_count;
+  char allow_resources[LAGHU_RESOURCE_RULE_LIMIT][LAGHU_RESOURCE_PATTERN_SIZE];
+  char disallow_resources[LAGHU_RESOURCE_RULE_LIMIT]
+                         [LAGHU_RESOURCE_PATTERN_SIZE];
 } laghu_config;
 
 typedef struct {
@@ -162,6 +174,10 @@ typedef enum {
   LAGHU_DECISION_BYPASS_CONTENT_TYPE,
   LAGHU_DECISION_BYPASS_ENCODED,
   LAGHU_DECISION_BYPASS_IMAGE_BACKEND,
+  LAGHU_DECISION_BYPASS_RESOURCE_POLICY,
+  LAGHU_DECISION_BYPASS_VARY,
+  LAGHU_DECISION_BYPASS_QUERY_OVERRIDE,
+  LAGHU_DECISION_BYPASS_FORWARDED_PROTO,
   LAGHU_DECISION_IMAGE_HIT,
   LAGHU_DECISION_BYPASS_ERROR
 } laghu_decision;
@@ -205,6 +221,16 @@ bool laghu_resolve_config_policy(const laghu_config *config,
 bool laghu_parse_filter(const char *value, uint32_t *filter);
 const char *laghu_filter_name(uint32_t filter);
 bool laghu_mime_type_allowed(const char *allowlist, const char *content_type);
+bool laghu_resource_pattern_valid(const char *pattern);
+bool laghu_resource_rule_add(laghu_config *config, bool allow,
+                             const char *pattern);
+bool laghu_resource_rules_merge_valid(const laghu_config *parent,
+                                      const laghu_config *child);
+bool laghu_resource_allowed(const laghu_config *config, const char *url);
+bool laghu_vary_supported(const char *vary);
+bool laghu_apply_query_filter_overrides(const laghu_config *config,
+                                        const char *query, laghu_policy *policy,
+                                        uint32_t *enabled, uint32_t *disabled);
 
 laghu_decision laghu_decide(const laghu_config *config,
                             const laghu_response *response);
