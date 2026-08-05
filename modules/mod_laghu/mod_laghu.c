@@ -862,6 +862,34 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     config->core.javascript_outline_threshold = (unsigned int)quality;
     return NULL;
   }
+  if (ap_cstr_casecmp(name, "TransformMemoryLimit") == 0) {
+    uint64_t parsed;
+    if (config->core.transform_memory_limit !=
+            LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET ||
+        !laghu_cache_size_parse(parameter, LAGHU_TRANSFORM_MEMORY_LIMIT_MIN,
+                                LAGHU_TRANSFORM_MEMORY_LIMIT_MAX, &parsed))
+      return "Laghu TransformMemoryLimit expects 4m through 256m once";
+    config->core.transform_memory_limit = (unsigned int)parsed;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "TransformDeadlineMs") == 0 ||
+      ap_cstr_casecmp(name, "VariantsPerSource") == 0) {
+    unsigned int *target = ap_cstr_casecmp(name, "TransformDeadlineMs") == 0
+                               ? &config->core.transform_deadline_ms
+                               : &config->core.variants_per_source;
+    unsigned long parsed = strtoul(parameter, &end, 10);
+    unsigned int minimum = target == &config->core.transform_deadline_ms
+                               ? LAGHU_TRANSFORM_DEADLINE_MS_MIN
+                               : LAGHU_VARIANTS_PER_SOURCE_MIN;
+    unsigned int maximum = target == &config->core.transform_deadline_ms
+                               ? LAGHU_TRANSFORM_DEADLINE_MS_MAX
+                               : LAGHU_VARIANTS_PER_SOURCE_MAX;
+    if (*target != 0U || end == parameter || *end != '\0' || parsed < minimum ||
+        parsed > maximum)
+      return "invalid or duplicate Laghu transform budget setting";
+    *target = (unsigned int)parsed;
+    return NULL;
+  }
   if (ap_cstr_casecmp(name, "WorkerQueue") == 0) {
     if (config->worker_queue != NULL) {
       return "Laghu WorkerQueue may appear only once in this scope";
@@ -2064,6 +2092,9 @@ static apr_status_t laghu_apache_transaction_filter(
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
+    laghu_operational_registry_budget(
+        &laghu_apache_operational, &context->transaction.budget,
+        context->transaction.environment.config.transform_deadline_ms);
     laghu_apache_log_defer_recommendation(request, &result);
     if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
         context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||

@@ -110,11 +110,32 @@ static void assert_html_plan(const char *input, laghu_html_planner_mask plan,
   laghu_runtime_head_result_release(&result);
 }
 
+static void test_transform_budget(void) {
+  laghu_transform_budget budget;
+  laghu_transform_budget_init(&budget, 4096U, 1000U, 2U);
+  assert(laghu_transform_budget_reserve(&budget, 1024U));
+  assert(laghu_transform_budget_reserve(&budget, 2048U));
+  assert(budget.current_memory == 3072U && budget.peak_memory == 3072U);
+  laghu_transform_budget_release(&budget, 2048U);
+  assert(budget.current_memory == 1024U);
+  assert(!laghu_transform_budget_reserve(&budget, 4096U));
+  assert(budget.rejection == LAGHU_BUDGET_REJECTION_MEMORY);
+  budget.rejection = LAGHU_BUDGET_REJECTION_NONE;
+  assert(laghu_transform_budget_checkpoint(&budget, 128U));
+  assert(laghu_transform_budget_generate(&budget, 3072U));
+  assert(!laghu_transform_budget_generate(&budget, 1U));
+  assert(laghu_transform_budget_variant(&budget));
+  assert(laghu_transform_budget_variant(&budget));
+  assert(!laghu_transform_budget_variant(&budget));
+  assert(budget.rejection == LAGHU_BUDGET_REJECTION_VARIANTS);
+}
+
 static void test_operational_registry(const char *cache_path) {
   laghu_operational_registry adapter, worker;
   laghu_operational_snapshot *snapshot = calloc(1U, sizeof(*snapshot));
   laghu_operational_readiness readiness;
   laghu_cache_stats cache = {0};
+  laghu_transform_budget budget;
   char *output = calloc(LAGHU_OPERATIONAL_RENDER_SIZE, 1U);
   size_t length = 0U;
   uint64_t now = (uint64_t)time(NULL);
@@ -167,7 +188,13 @@ static void test_operational_registry(const char *cache_path) {
   cache.evictions = 1U;
   cache.bytes = 4096U;
   cache.files = 7U;
+  cache.rejected_publications = 2U;
+  cache.variant_occupancy = 3U;
   laghu_operational_registry_cache(&adapter, &cache);
+  laghu_transform_budget_init(&budget, 32U * 1024U * 1024U, 50U, 16U);
+  assert(laghu_transform_budget_reserve(&budget, 4096U));
+  budget.rejection = LAGHU_BUDGET_REJECTION_DEADLINE;
+  laghu_operational_registry_budget(&adapter, &budget, 50U);
   assert(laghu_operational_registry_heartbeat(&worker, now, true, 64U, 3U));
   assert(laghu_operational_registry_snapshot(&adapter, snapshot));
   assert(snapshot->slots[adapter.slot].requests == 40002U);
@@ -175,6 +202,11 @@ static void test_operational_registry(const char *cache_path) {
       snapshot, now, output, LAGHU_OPERATIONAL_RENDER_SIZE, &length));
   assert(length != 0U && strstr(output, "laghu_requests_total") != NULL);
   assert(strstr(output, "laghu_cache_bytes 4096") != NULL);
+  assert(strstr(output, "laghu_cache_rejected_writes_total 2") != NULL);
+  assert(strstr(output, "laghu_variant_occupancy 3") != NULL);
+  assert(strstr(output,
+                "laghu_transform_rejections_total{reason=\"deadline\"} 1") !=
+         NULL);
   assert(strstr(output, "laghu_response_bytes_total{kind=\"saved\"} 400") !=
          NULL);
   assert(strstr(output, cache_path) == NULL);
@@ -193,6 +225,7 @@ static void test_operational_registry(const char *cache_path) {
   assert(laghu_operational_render_readiness(
       &readiness, true, output, LAGHU_OPERATIONAL_RENDER_SIZE, &length));
   assert(strstr(output, "\"status\":\"not_ready\"") != NULL);
+  assert(strstr(output, "\"budgets\":\"ready\"") != NULL);
   laghu_operational_registry_close(&worker);
   laghu_operational_registry_close(&adapter);
   free(output);
@@ -804,6 +837,7 @@ static void test_html_lexical_cache(const char *cache_path,
 }
 
 int main(void) {
+  test_transform_budget();
   static const unsigned char payload[] = "runtime payload";
   char temporary[LAGHU_RUNTIME_PATH_SIZE];
   char queue_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -1232,7 +1266,7 @@ int main(void) {
     assert(laghu_cache_backend_health(backend, &stats));
     assert(stats.bytes == sizeof(payload) - 1U && stats.files == 3U &&
            stats.hits == 1U && stats.publications == 1U &&
-           stats.cache_generation == 1U);
+           stats.variant_occupancy == 1U && stats.cache_generation == 1U);
     {
       char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
       unsigned char *metadata = malloc(16384U);
@@ -1261,7 +1295,8 @@ int main(void) {
     assert(!laghu_cache_backend_lookup(backend, index_key, "etag",
                                        &backend_entry));
     assert(laghu_cache_backend_health(backend, &stats));
-    assert(stats.bytes == 0U && stats.files == 0U && stats.evictions == 1U);
+    assert(stats.bytes == 0U && stats.files == 0U && stats.evictions == 1U &&
+           stats.variant_occupancy == 0U);
     {
       char normalized[LAGHU_RUNTIME_PATH_SIZE];
       char source_hash[LAGHU_RUNTIME_KEY_SIZE];
@@ -2250,8 +2285,10 @@ int main(void) {
       (laghu_buffer){payload, sizeof(payload) - 1U}, &entry));
   {
     static const unsigned char css[] =
-        ".hero{color:red}.footer{color:blue}@font-face{font-family:x;src:url(x."
-        "woff2)}";
+        ":root{--tone:red;color-scheme:light "
+        "dark}.hero{color:red}.footer{color:"
+        "blue}@media(prefers-color-scheme:dark){.hero{color:white}}@font-face{"
+        "font-family:x;src:url(x.woff2)}";
     static const unsigned char critical_html[] =
         "<html><head><link rel=\"stylesheet\" href=\"/critical.css\"></head>"
         "<body><div class=hero>hero</div></body></html>";
@@ -2313,9 +2350,24 @@ int main(void) {
         (laghu_buffer){critical_html, sizeof(critical_html) - 1U}, "/critical",
         "https://example.test", policy_key, 0x55aaU, 2005U, 604800U, 2048U,
         8192U, 1024U, true, NULL, &critical_page));
+    assert(strstr((const char *)critical_page.data, "<style>") == NULL);
+    laghu_runtime_html_result_release(&critical_page);
+    observation.color_scheme_bucket = 1U;
+    for (observation_index = 0U; observation_index < 3U; ++observation_index)
+      assert(laghu_critical_css_apply_beacon(rum_engine, temporary, policy_key,
+                                             2005U + observation_index, 604800U,
+                                             &observation));
+    assert(laghu_runtime_prioritize_critical_css(
+        rum_engine, temporary,
+        (laghu_buffer){critical_html, sizeof(critical_html) - 1U}, "/critical",
+        "https://example.test", policy_key, 0x55aaU, 2008U, 604800U, 2048U,
+        8192U, 1024U, true, NULL, &critical_page));
     assert(critical_page.rewritten);
     assert(strstr((const char *)critical_page.data,
-                  "<style>.hero{color:red}@font-face") != NULL);
+                  "<style>:root{--tone:red;color-scheme:light dark}") != NULL);
+    assert(strstr((const char *)critical_page.data,
+                  "@media(prefers-color-scheme:dark){.hero{color:white}}") !=
+           NULL);
     assert(strstr((const char *)critical_page.data, "</style></head><body>") !=
            NULL);
     assert(strstr((const char *)critical_page.data, "/.laghu/css/") != NULL);
@@ -2323,12 +2375,12 @@ int main(void) {
     {
       static const unsigned char json[] =
           "{\"template\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          "aaaaaaaaaaaaaaaa\",\"bucket\":0,\"rules\":[0,7]}";
+          "aaaaaaaaaaaaaaaa\",\"bucket\":0,\"scheme\":1,\"rules\":[0,7]}";
       laghu_critical_css_beacon parsed;
       assert(laghu_runtime_parse_critical_css_beacon(
           (laghu_buffer){json, sizeof(json) - 1U}, &parsed));
-      assert(parsed.viewport_bucket == 0U && parsed.rule_count == 2U &&
-             parsed.rules[1] == 7U);
+      assert(parsed.viewport_bucket == 0U && parsed.color_scheme_bucket == 1U &&
+             parsed.rule_count == 2U && parsed.rules[1] == 7U);
     }
   }
   {

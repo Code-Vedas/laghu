@@ -637,6 +637,10 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   transaction->request = request;
   transaction->response = response;
   transaction->environment = *environment;
+  laghu_transform_budget_init(&transaction->budget,
+                              environment->config.transform_memory_limit,
+                              environment->config.transform_deadline_ms,
+                              environment->config.variants_per_source);
   transaction->capability_mask =
       laghu_http_refresh_backend(&transaction->environment);
   transaction->viewport_width =
@@ -651,6 +655,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   }
   transaction->cache_publishable = true;
   laghu_cache_source_scope(environment->cache_path, transaction->path);
+  laghu_cache_variant_limit_scope(environment->cache_path,
+                                  environment->config.variants_per_source);
   if (laghu_http_internal_asset_key(transaction->path,
                                     transaction->cache_key) &&
       laghu_runtime_cache_lookup_variant(
@@ -1599,6 +1605,15 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
        captured_body.length > LAGHU_IMAGE_MAX_INPUT_BYTES) ||
       (transaction->response->has_declared_length &&
        captured_body.length != transaction->response->declared_length)) {
+    transaction->budget.rejection = LAGHU_BUDGET_REJECTION_CONTENT;
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  }
+  if (!laghu_transform_budget_reserve(&transaction->budget,
+                                      captured_body.length))
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  if (!laghu_transform_budget_checkpoint(&transaction->budget,
+                                         captured_body.length)) {
+    laghu_transform_budget_release(&transaction->budget, captured_body.length);
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
   if (transaction->asset_allowed &&
@@ -1625,6 +1640,10 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
       (void)laghu_asset_job_publish(config, &asset, captured_body);
     }
   }
+  if (!laghu_transform_budget_checkpoint(&transaction->budget, 1U)) {
+    laghu_transform_budget_release(&transaction->budget, captured_body.length);
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  }
   if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS) {
     ok = laghu_http_finalize_css(transaction, captured_body, result);
   } else if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
@@ -1636,13 +1655,26 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
   } else if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE) {
     ok = laghu_http_finalize_image(transaction, captured_body, result);
   }
+  if (ok && !laghu_transform_budget_checkpoint(&transaction->budget, 1U))
+    ok = false;
   if (!ok) {
+    laghu_transform_budget_release(&transaction->budget, captured_body.length);
     laghu_http_transaction_result_release(result);
     result->original = captured_body;
     result->selected = captured_body;
     result->action = transaction->action;
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
+  if (!laghu_transform_budget_generate(&transaction->budget,
+                                       result->selected.length)) {
+    laghu_transform_budget_release(&transaction->budget, captured_body.length);
+    laghu_http_transaction_result_release(result);
+    result->original = captured_body;
+    result->selected = captured_body;
+    result->action = transaction->action;
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  }
+  laghu_transform_budget_release(&transaction->budget, captured_body.length);
   if (transaction->environment.asset_offload != NULL &&
       (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
        transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||

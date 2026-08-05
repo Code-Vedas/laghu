@@ -71,6 +71,21 @@ int main(void) {
                               "file:///tmp/cache",
                               "--worker-queue",
                               "/tmp/jobs"};
+  char *budgets[] = {"laghu",
+                     "--listen",
+                     "127.0.0.1:8080",
+                     "--origin",
+                     "http://127.0.0.1:8000",
+                     "--cache",
+                     "/tmp/cache",
+                     "--worker-queue",
+                     "/tmp/jobs",
+                     "--transform-memory-limit",
+                     "64m",
+                     "--transform-deadline-ms",
+                     "125",
+                     "--variants-per-source",
+                     "8"};
   char *conflict[] = {"laghu",
                       "--listen",
                       "127.0.0.1:8080",
@@ -296,6 +311,12 @@ int main(void) {
   CHECK(options.cache_limits.inode_limit == 2000U);
   CHECK(options.cache_limits.clean_interval == 120U);
   CHECK(options.cache_limits.metadata_size == 1024U * 1024U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(15, budgets, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.config.transform_memory_limit == 64U * 1024U * 1024U);
+  CHECK(options.config.transform_deadline_ms == 125U);
+  CHECK(options.config.variants_per_source == 8U);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(11, backend_conflict, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);

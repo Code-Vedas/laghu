@@ -39,6 +39,18 @@ extern "C" {
 #define LAGHU_RESOURCE_RULE_LIMIT 8U
 #define LAGHU_RESOURCE_PATTERN_SIZE 128U
 #define LAGHU_QUERY_OVERRIDE_SIZE 1024U
+#define LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET 0U
+#define LAGHU_TRANSFORM_MEMORY_LIMIT_DEFAULT (32U * 1024U * 1024U)
+#define LAGHU_TRANSFORM_MEMORY_LIMIT_MIN (4U * 1024U * 1024U)
+#define LAGHU_TRANSFORM_MEMORY_LIMIT_MAX (256U * 1024U * 1024U)
+#define LAGHU_TRANSFORM_DEADLINE_MS_UNSET 0U
+#define LAGHU_TRANSFORM_DEADLINE_MS_DEFAULT 50U
+#define LAGHU_TRANSFORM_DEADLINE_MS_MIN 5U
+#define LAGHU_TRANSFORM_DEADLINE_MS_MAX 1000U
+#define LAGHU_VARIANTS_PER_SOURCE_UNSET 0U
+#define LAGHU_VARIANTS_PER_SOURCE_DEFAULT 16U
+#define LAGHU_VARIANTS_PER_SOURCE_MIN 1U
+#define LAGHU_VARIANTS_PER_SOURCE_MAX 64U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -144,6 +156,9 @@ typedef struct {
   unsigned int css_outline_threshold;
   unsigned int javascript_inline_limit;
   unsigned int javascript_outline_threshold;
+  unsigned int transform_memory_limit;
+  unsigned int transform_deadline_ms;
+  unsigned int variants_per_source;
   char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
   laghu_mode respect_vary;
   laghu_mode respect_x_forwarded_proto;

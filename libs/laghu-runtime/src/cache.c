@@ -27,6 +27,7 @@
 #define LAGHU_CACHE_SLOT_READY 1U
 #define LAGHU_CACHE_SLOT_DELETED 2U
 #define LAGHU_CACHE_SLOT_ASSOCIATION 3U
+#define LAGHU_CACHE_SLOT_PUBLISHING 4U
 #define LAGHU_CACHE_BACKEND_REGISTRY_SIZE 16U
 #define LAGHU_CACHE_TOMBSTONE_COUNT 128U
 
@@ -42,6 +43,8 @@ static size_t laghu_cache_backend_count;
 static LAGHU_THREAD_LOCAL char laghu_cache_scoped_path[LAGHU_RUNTIME_PATH_SIZE];
 static LAGHU_THREAD_LOCAL char
     laghu_cache_scoped_source[LAGHU_RUNTIME_KEY_SIZE];
+static LAGHU_THREAD_LOCAL unsigned int laghu_cache_scoped_variant_limit =
+    LAGHU_VARIANTS_PER_SOURCE_DEFAULT;
 
 typedef struct {
   uint64_t magic;
@@ -198,7 +201,8 @@ static laghu_cache_index_slot *laghu_cache_slot(laghu_file_cache_state *state,
     }
     if (slot->state == LAGHU_CACHE_SLOT_DELETED && empty == NULL) empty = slot;
     if ((slot->state == LAGHU_CACHE_SLOT_READY ||
-         slot->state == LAGHU_CACHE_SLOT_ASSOCIATION) &&
+         slot->state == LAGHU_CACHE_SLOT_ASSOCIATION ||
+         slot->state == LAGHU_CACHE_SLOT_PUBLISHING) &&
         strcmp(slot->variant_key, variant_key) == 0)
       return slot;
   }
@@ -394,6 +398,16 @@ static bool laghu_cache_file_publish(
   }
   publication_generation = laghu_cache_source_generation(state, source_hash);
   existing = slot != NULL && slot->state == LAGHU_CACHE_SLOT_READY;
+  if (slot != NULL && slot->state == LAGHU_CACHE_SLOT_PUBLISHING) slot = NULL;
+  if (!existing && source_hash[0] != '\0') {
+    unsigned int index, variants = 0U;
+    for (index = 0U; index < state->slot_count; ++index)
+      if ((state->slots[index].state == LAGHU_CACHE_SLOT_READY ||
+           state->slots[index].state == LAGHU_CACHE_SLOT_PUBLISHING) &&
+          strcmp(state->slots[index].source_hash, source_hash) == 0)
+        ++variants;
+    if (variants >= laghu_cache_scoped_variant_limit) slot = NULL;
+  }
   if (slot == NULL ||
       (!existing &&
        (state->header->bytes > state->header->size_limit ||
@@ -403,12 +417,27 @@ static bool laghu_cache_file_publish(
     laghu_runtime_shared_mapping_unlock(&state->mapping);
     return false;
   }
+  if (!existing) {
+    memset(slot, 0, sizeof(*slot));
+    slot->state = LAGHU_CACHE_SLOT_PUBLISHING;
+    slot->accessed_at = now;
+    (void)snprintf(slot->variant_key, sizeof(slot->variant_key), "%s",
+                   variant_key);
+    (void)snprintf(slot->source_hash, sizeof(slot->source_hash), "%s",
+                   source_hash);
+  }
   laghu_runtime_shared_mapping_unlock(&state->mapping);
   published = laghu_runtime_file_cache_publish(
       backend->path, index_key, variant_key, validator, content_type,
       backend_id, payload, entry);
-  if (!published || !laghu_runtime_shared_mapping_try_lock(&state->mapping))
-    return published;
+  if (!laghu_runtime_shared_mapping_try_lock(&state->mapping)) return published;
+  if (!published) {
+    slot = laghu_cache_slot(state, variant_key, false);
+    if (slot != NULL && slot->state == LAGHU_CACHE_SLOT_PUBLISHING)
+      slot->state = LAGHU_CACHE_SLOT_DELETED;
+    laghu_runtime_shared_mapping_unlock(&state->mapping);
+    return false;
+  }
   if (publication_generation !=
       laghu_cache_source_generation(state, source_hash)) {
     laghu_runtime_shared_mapping_unlock(&state->mapping);
@@ -509,10 +538,16 @@ static bool laghu_cache_file_maintain(laghu_cache_backend *backend,
     return false;
   }
   for (index = 0U; index < state->header->slot_count; ++index)
-    if (state->slots[index].state == LAGHU_CACHE_SLOT_READY &&
-        state->slots[index].generation <
-            laghu_cache_source_generation(state,
-                                          state->slots[index].source_hash)) {
+    if (state->slots[index].state == LAGHU_CACHE_SLOT_PUBLISHING &&
+        state->slots[index].accessed_at < now &&
+        now - state->slots[index].accessed_at >
+            backend->limits.clean_interval) {
+      memset(&state->slots[index], 0, sizeof(state->slots[index]));
+      state->slots[index].state = LAGHU_CACHE_SLOT_DELETED;
+    } else if (state->slots[index].state == LAGHU_CACHE_SLOT_READY &&
+               state->slots[index].generation <
+                   laghu_cache_source_generation(
+                       state, state->slots[index].source_hash)) {
       laghu_cache_index_slot *slot = &state->slots[index];
       if (laghu_cache_delete_slot(backend, slot)) {
         state->header->bytes = state->header->bytes >= slot->length
@@ -564,6 +599,15 @@ static bool laghu_cache_file_health(laghu_cache_backend *backend,
   stats->hits = state->header->hits;
   stats->misses = state->header->misses;
   stats->rejected_publications = state->header->rejected_publications;
+  {
+    unsigned int index;
+    uint64_t occupancy = 0U;
+    for (index = 0U; index < state->slot_count; ++index)
+      if (state->slots[index].state == LAGHU_CACHE_SLOT_READY ||
+          state->slots[index].state == LAGHU_CACHE_SLOT_PUBLISHING)
+        ++occupancy;
+    stats->variant_occupancy = occupancy;
+  }
   stats->evictions = state->header->evictions;
   stats->corrupt_removals = state->header->corrupt_removals;
   stats->publications = state->header->publications;
@@ -957,6 +1001,15 @@ void laghu_cache_source_scope(const char *path, const char *source_target) {
     return;
   (void)snprintf(laghu_cache_scoped_path, sizeof(laghu_cache_scoped_path), "%s",
                  path);
+}
+
+void laghu_cache_variant_limit_scope(const char *path, unsigned int limit) {
+  if (path != NULL && strcmp(path, laghu_cache_scoped_path) == 0 &&
+      limit >= LAGHU_VARIANTS_PER_SOURCE_MIN &&
+      limit <= LAGHU_VARIANTS_PER_SOURCE_MAX)
+    laghu_cache_scoped_variant_limit = limit;
+  else
+    laghu_cache_scoped_variant_limit = LAGHU_VARIANTS_PER_SOURCE_DEFAULT;
 }
 
 laghu_cache_purge_result laghu_cache_backend_purge_url(

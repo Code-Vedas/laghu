@@ -36,7 +36,7 @@ struct sockaddr;
 #define LAGHU_STYLESHEET_CATALOG_VERSION 2U
 #define LAGHU_CSS_IMPORT_MAX_DEPTH 8U
 #define LAGHU_HTML_PLANNER_VERSION 4U
-#define LAGHU_CRITICAL_CSS_VERSION 1U
+#define LAGHU_CRITICAL_CSS_VERSION 2U
 #define LAGHU_CRITICAL_CSS_MAX_RULES 512U
 #define LAGHU_CRITICAL_CSS_QUORUM 3U
 #define LAGHU_HTML_MAX_TOKENS 4096U
@@ -84,6 +84,43 @@ struct sockaddr;
 #define LAGHU_CACHE_DEFAULT_CLEAN_INTERVAL 60U
 #define LAGHU_CACHE_DEFAULT_METADATA_BYTES (16U * 1024U * 1024U)
 #define LAGHU_CACHE_LOW_WATER_PERCENT 90U
+
+typedef enum {
+  LAGHU_BUDGET_REJECTION_NONE = 0,
+  LAGHU_BUDGET_REJECTION_CONTENT,
+  LAGHU_BUDGET_REJECTION_MEMORY,
+  LAGHU_BUDGET_REJECTION_DEADLINE,
+  LAGHU_BUDGET_REJECTION_CACHE,
+  LAGHU_BUDGET_REJECTION_VARIANTS,
+  LAGHU_BUDGET_REJECTION_COUNT
+} laghu_budget_rejection;
+
+typedef struct {
+  uint64_t deadline_ms;
+  size_t memory_limit;
+  size_t current_memory;
+  size_t peak_memory;
+  size_t generated_bytes;
+  uint64_t work_units;
+  unsigned int dependencies;
+  unsigned int variants;
+  unsigned int variant_limit;
+  laghu_budget_rejection rejection;
+} laghu_transform_budget;
+
+uint64_t laghu_runtime_monotonic_ms(void);
+void laghu_transform_budget_init(laghu_transform_budget *budget,
+                                 size_t memory_limit, unsigned int deadline_ms,
+                                 unsigned int variant_limit);
+bool laghu_transform_budget_reserve(laghu_transform_budget *budget,
+                                    size_t bytes);
+void laghu_transform_budget_release(laghu_transform_budget *budget,
+                                    size_t bytes);
+bool laghu_transform_budget_checkpoint(laghu_transform_budget *budget,
+                                       uint64_t work_units);
+bool laghu_transform_budget_generate(laghu_transform_budget *budget,
+                                     size_t bytes);
+bool laghu_transform_budget_variant(laghu_transform_budget *budget);
 
 #define LAGHU_SOURCE_MAX_MAPPINGS 8U
 #define LAGHU_SOURCE_PATH_SIZE 1024U
@@ -387,7 +424,7 @@ typedef struct {
   size_t mapping_length;
 } laghu_runtime_shared_mapping;
 
-#define LAGHU_OPERATIONAL_VERSION 1U
+#define LAGHU_OPERATIONAL_VERSION 2U
 #define LAGHU_OPERATIONAL_MAX_SLOTS 64U
 #define LAGHU_OPERATIONAL_LATENCY_BUCKETS 12U
 #define LAGHU_OPERATIONAL_RENDER_SIZE 65536U
@@ -488,6 +525,14 @@ typedef struct {
   uint64_t selected_bytes;
   uint64_t saved_bytes;
   uint64_t failures[LAGHU_OPERATIONAL_FAILURE_COUNT];
+  uint64_t budget_rejections[LAGHU_BUDGET_REJECTION_COUNT];
+  uint64_t transform_memory_current;
+  uint64_t transform_memory_peak;
+  uint64_t transform_memory_limit;
+  uint64_t transform_deadline_limit_ms;
+  uint64_t cache_rejected_writes;
+  uint64_t variant_occupancy;
+  uint64_t variant_limit;
   uint64_t latency_buckets[LAGHU_OPERATIONAL_LATENCY_BUCKETS];
   uint64_t latency_count;
   uint64_t latency_sum_microseconds;
@@ -511,6 +556,7 @@ typedef struct {
   bool runtime_ready;
   bool cache_ready;
   bool workers_ready;
+  bool budgets_ready;
   bool degraded;
   unsigned int configured_workers;
   unsigned int healthy_workers;
@@ -539,6 +585,7 @@ typedef struct {
   uint64_t hits;
   uint64_t misses;
   uint64_t rejected_publications;
+  uint64_t variant_occupancy;
   uint64_t evictions;
   uint64_t corrupt_removals;
   uint64_t publications;
@@ -760,13 +807,14 @@ typedef struct {
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t updated_at;
   uint32_t generation;
-  uint16_t observation_count[2];
-  unsigned char critical_rules[2][LAGHU_CRITICAL_CSS_MAX_RULES / 8U];
+  uint16_t observation_count[4];
+  unsigned char critical_rules[4][LAGHU_CRITICAL_CSS_MAX_RULES / 8U];
 } laghu_critical_css_record;
 
 typedef struct {
   char template_key[LAGHU_RUNTIME_KEY_SIZE];
   unsigned int viewport_bucket;
+  unsigned int color_scheme_bucket;
   unsigned int rule_count;
   uint16_t rules[LAGHU_CRITICAL_CSS_MAX_RULES];
 } laghu_critical_css_beacon;
@@ -963,6 +1011,9 @@ void laghu_operational_registry_failure(laghu_operational_registry *registry,
                                         laghu_operational_failure failure);
 void laghu_operational_registry_cache(laghu_operational_registry *registry,
                                       const laghu_cache_stats *stats);
+void laghu_operational_registry_budget(laghu_operational_registry *registry,
+                                       const laghu_transform_budget *budget,
+                                       unsigned int deadline_limit_ms);
 bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
                                          laghu_operational_snapshot *snapshot);
 bool laghu_operational_render_prometheus(
@@ -1023,6 +1074,7 @@ bool laghu_cache_backend_associate(laghu_cache_backend *backend,
 bool laghu_cache_backend_associate_path(const char *path, const char *index_key,
                                         const char *source_target);
 void laghu_cache_source_scope(const char *path, const char *source_target);
+void laghu_cache_variant_limit_scope(const char *path, unsigned int limit);
 laghu_cache_purge_result laghu_cache_backend_purge_url(
     laghu_cache_backend *backend, const char *source_target, uint64_t now,
     uint64_t *matched_artifacts);

@@ -76,9 +76,9 @@ static bool laghu_path(const char *cache_path, char *output, size_t capacity) {
   size_t length;
   if (cache_path == NULL || output == NULL || capacity == 0U) return false;
   length = strlen(cache_path);
-  if (length == 0U || length + sizeof(".laghu-operations-v1") > capacity)
+  if (length == 0U || length + sizeof(".laghu-operations-v2") > capacity)
     return false;
-  return snprintf(output, capacity, "%s.laghu-operations-v1", cache_path) > 0;
+  return snprintf(output, capacity, "%s.laghu-operations-v2", cache_path) > 0;
 }
 
 void laghu_operational_registry_init(laghu_operational_registry *registry) {
@@ -221,6 +221,24 @@ void laghu_operational_registry_cache(laghu_operational_registry *registry,
   laghu_store(&slot->cache_evictions, stats->evictions);
   laghu_store(&slot->cache_bytes, stats->bytes);
   laghu_store(&slot->cache_files, stats->files);
+  laghu_store(&slot->cache_rejected_writes, stats->rejected_publications);
+  laghu_store(&slot->variant_occupancy, stats->variant_occupancy);
+}
+
+void laghu_operational_registry_budget(laghu_operational_registry *registry,
+                                       const laghu_transform_budget *budget,
+                                       unsigned int deadline_limit_ms) {
+  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
+  if (slot == NULL || budget == NULL) return;
+  laghu_store(&slot->transform_memory_current, budget->current_memory);
+  if (budget->peak_memory > laghu_load(&slot->transform_memory_peak))
+    laghu_store(&slot->transform_memory_peak, budget->peak_memory);
+  laghu_store(&slot->transform_memory_limit, budget->memory_limit);
+  laghu_store(&slot->transform_deadline_limit_ms, deadline_limit_ms);
+  laghu_store(&slot->variant_limit, budget->variant_limit);
+  if (budget->rejection > LAGHU_BUDGET_REJECTION_NONE &&
+      budget->rejection < LAGHU_BUDGET_REJECTION_COUNT)
+    laghu_add(&slot->budget_rejections[budget->rejection], 1U);
 }
 
 bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
@@ -278,12 +296,18 @@ bool laghu_operational_render_prometheus(
            cache_evictions = 0U, cache_bytes = 0U, cache_files = 0U;
   uint64_t decisions[LAGHU_OPERATIONAL_DECISION_COUNT] = {0};
   uint64_t failures[LAGHU_OPERATIONAL_FAILURE_COUNT] = {0};
+  uint64_t budget_rejections[LAGHU_BUDGET_REJECTION_COUNT] = {0};
   uint64_t latency[LAGHU_OPERATIONAL_LATENCY_BUCKETS] = {0};
   uint64_t latency_count = 0U, latency_sum = 0U;
+  uint64_t transform_current = 0U, transform_peak = 0U, transform_limit = 0U,
+           deadline_limit = 0U, cache_rejected = 0U, variant_occupancy = 0U,
+           variant_limit = 0U;
   static const char *decision_names[] = {"bypass", "original", "optimized",
                                          "cached", "queued"};
   static const char *failure_names[] = {"runtime", "cache",     "queue",
                                         "worker",  "transform", "transport"};
+  static const char *rejection_names[] = {"none",     "content", "memory",
+                                          "deadline", "cache",   "variants"};
   static const char *bucket_names[] = {"0.001", "0.005", "0.010", "0.025",
                                        "0.050", "0.100", "0.250", "0.500",
                                        "1.000", "2.500", "5.000", "+Inf"};
@@ -313,12 +337,24 @@ bool laghu_operational_render_prometheus(
     cache_evictions += slot->cache_evictions;
     if (slot->cache_bytes > cache_bytes) cache_bytes = slot->cache_bytes;
     if (slot->cache_files > cache_files) cache_files = slot->cache_files;
+    transform_current += slot->transform_memory_current;
+    if (slot->transform_memory_peak > transform_peak)
+      transform_peak = slot->transform_memory_peak;
+    transform_limit += slot->transform_memory_limit;
+    if (slot->transform_deadline_limit_ms > deadline_limit)
+      deadline_limit = slot->transform_deadline_limit_ms;
+    if (slot->cache_rejected_writes > cache_rejected)
+      cache_rejected = slot->cache_rejected_writes;
+    variant_occupancy += slot->variant_occupancy;
+    variant_limit += slot->variant_limit;
     {
       unsigned int metric;
       for (metric = 0U; metric < LAGHU_OPERATIONAL_DECISION_COUNT; ++metric)
         decisions[metric] += slot->decisions[metric];
       for (metric = 0U; metric < LAGHU_OPERATIONAL_FAILURE_COUNT; ++metric)
         failures[metric] += slot->failures[metric];
+      for (metric = 0U; metric < LAGHU_BUDGET_REJECTION_COUNT; ++metric)
+        budget_rejections[metric] += slot->budget_rejections[metric];
       for (metric = 0U; metric < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++metric)
         latency[metric] += slot->latency_buckets[metric];
       latency_count += slot->latency_count;
@@ -367,6 +403,31 @@ bool laghu_operational_render_prometheus(
                       "laghu_failures_total{subsystem=\"%s\"} %" PRIu64 "\n",
                       failure_names[index], failures[index]))
       return false;
+  if (!laghu_append(output, capacity, &used,
+                    "# TYPE laghu_transform_rejections_total counter\n"))
+    return false;
+  for (index = 1U; index < LAGHU_BUDGET_REJECTION_COUNT; ++index)
+    if (!laghu_append(output, capacity, &used,
+                      "laghu_transform_rejections_total{reason=\"%s\"} %" PRIu64
+                      "\n",
+                      rejection_names[index], budget_rejections[index]))
+      return false;
+  if (!laghu_append(
+          output, capacity, &used,
+          "# TYPE laghu_transform_memory_bytes gauge\n"
+          "laghu_transform_memory_bytes{kind=\"current\"} %" PRIu64 "\n"
+          "laghu_transform_memory_bytes{kind=\"peak\"} %" PRIu64 "\n"
+          "laghu_transform_memory_bytes{kind=\"limit\"} %" PRIu64 "\n"
+          "# TYPE laghu_transform_deadline_milliseconds gauge\n"
+          "laghu_transform_deadline_milliseconds %" PRIu64 "\n"
+          "# TYPE laghu_cache_rejected_writes_total counter\n"
+          "laghu_cache_rejected_writes_total %" PRIu64 "\n"
+          "# TYPE laghu_variant_occupancy gauge\n"
+          "laghu_variant_occupancy %" PRIu64 "\n"
+          "# TYPE laghu_variant_limit gauge\nlaghu_variant_limit %" PRIu64 "\n",
+          transform_current, transform_peak, transform_limit, deadline_limit,
+          cache_rejected, variant_occupancy, variant_limit))
+    return false;
   if (!laghu_append(output, capacity, &used,
                     "# TYPE laghu_request_duration_seconds histogram\n"))
     return false;
@@ -420,6 +481,7 @@ bool laghu_operational_readiness_evaluate(
   readiness->runtime_ready = runtime_ready;
   readiness->cache_ready = cache_ready;
   readiness->workers_ready = true;
+  readiness->budgets_ready = true;
   for (index = 0U; index < snapshot->slot_count; ++index) {
     const laghu_operational_slot_snapshot *slot = &snapshot->slots[index];
     bool healthy;
@@ -443,20 +505,21 @@ bool laghu_operational_render_readiness(
     char *output, size_t capacity, size_t *length) {
   int written;
   if (readiness == NULL || output == NULL || length == NULL) return false;
-  written =
-      snprintf(output, capacity,
-               "{\"status\":\"%s\",\"runtime\":\"%s\",\"cache\":\"%s\","
-               "\"workers\":\"%s\",\"policy\":\"%s\",\"configured_workers\":%u,"
-               "\"healthy_workers\":%u}",
-               readiness->runtime_ready && readiness->cache_ready &&
-                       readiness->workers_ready
-                   ? (readiness->degraded ? "degraded" : "ready")
-                   : "not_ready",
-               readiness->runtime_ready ? "ready" : "not_ready",
-               readiness->cache_ready ? "ready" : "not_ready",
-               readiness->degraded ? "degraded" : "ready",
-               strict_workers ? "strict" : "degraded",
-               readiness->configured_workers, readiness->healthy_workers);
+  written = snprintf(output, capacity,
+                     "{\"status\":\"%s\",\"runtime\":\"%s\",\"cache\":\"%s\","
+                     "\"workers\":\"%s\",\"budgets\":\"%s\",\"policy\":\"%s\","
+                     "\"configured_workers\":%u,"
+                     "\"healthy_workers\":%u}",
+                     readiness->runtime_ready && readiness->cache_ready &&
+                             readiness->workers_ready
+                         ? (readiness->degraded ? "degraded" : "ready")
+                         : "not_ready",
+                     readiness->runtime_ready ? "ready" : "not_ready",
+                     readiness->cache_ready ? "ready" : "not_ready",
+                     readiness->degraded ? "degraded" : "ready",
+                     readiness->budgets_ready ? "ready" : "unavailable",
+                     strict_workers ? "strict" : "degraded",
+                     readiness->configured_workers, readiness->healthy_workers);
   if (written < 0 || (size_t)written >= capacity) return false;
   *length = (size_t)written;
   return true;

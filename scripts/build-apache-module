@@ -30,6 +30,7 @@ cp "${REPO_ROOT}/libs/laghu-image/src/css.c" "${build_dir}/laghu_image_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/catalog.c" "${build_dir}/laghu_catalog.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/asset.c" "${build_dir}/laghu_asset.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/cache.c" "${build_dir}/laghu_cache.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/budget.c" "${build_dir}/laghu_budget.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/operational.c" "${build_dir}/laghu_operational.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/csp.c" "${build_dir}/laghu_csp.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/source.c" "${build_dir}/laghu_source.c"
@@ -78,6 +79,7 @@ cd "${build_dir}"
   laghu_catalog.c \
   laghu_asset.c \
   laghu_cache.c \
+  laghu_budget.c \
   laghu_operational.c \
   laghu_csp.c \
   laghu_source.c \

@@ -394,6 +394,9 @@ void laghu_config_init(laghu_config *config) {
   config->javascript_inline_limit = LAGHU_JAVASCRIPT_INLINE_LIMIT_UNSET;
   config->javascript_outline_threshold =
       LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET;
+  config->transform_memory_limit = LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET;
+  config->transform_deadline_ms = LAGHU_TRANSFORM_DEADLINE_MS_UNSET;
+  config->variants_per_source = LAGHU_VARIANTS_PER_SOURCE_UNSET;
   config->cache_mime_types[0] = '\0';
   config->respect_vary = LAGHU_MODE_UNSET;
   config->respect_x_forwarded_proto = LAGHU_MODE_UNSET;
@@ -426,6 +429,11 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT;
   unsigned int parent_javascript_outline_threshold =
       LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT;
+  unsigned int parent_transform_memory_limit =
+      LAGHU_TRANSFORM_MEMORY_LIMIT_DEFAULT;
+  unsigned int parent_transform_deadline_ms =
+      LAGHU_TRANSFORM_DEADLINE_MS_DEFAULT;
+  unsigned int parent_variants_per_source = LAGHU_VARIANTS_PER_SOURCE_DEFAULT;
   laghu_mode parent_respect_vary = LAGHU_MODE_ON;
   laghu_mode parent_respect_x_forwarded_proto = LAGHU_MODE_OFF;
   laghu_mode parent_query_filter_overrides = LAGHU_MODE_OFF;
@@ -488,6 +496,12 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       parent_javascript_outline_threshold =
           parent->javascript_outline_threshold;
     }
+    if (parent->transform_memory_limit != LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET)
+      parent_transform_memory_limit = parent->transform_memory_limit;
+    if (parent->transform_deadline_ms != LAGHU_TRANSFORM_DEADLINE_MS_UNSET)
+      parent_transform_deadline_ms = parent->transform_deadline_ms;
+    if (parent->variants_per_source != LAGHU_VARIANTS_PER_SOURCE_UNSET)
+      parent_variants_per_source = parent->variants_per_source;
     if (parent->respect_vary != LAGHU_MODE_UNSET)
       parent_respect_vary = parent->respect_vary;
     if (parent->respect_x_forwarded_proto != LAGHU_MODE_UNSET)
@@ -581,6 +595,21 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
                            LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_UNSET
           ? child->javascript_outline_threshold
           : parent_javascript_outline_threshold;
+  result->transform_memory_limit =
+      child != NULL && child->transform_memory_limit !=
+                           LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET
+          ? child->transform_memory_limit
+          : parent_transform_memory_limit;
+  result->transform_deadline_ms =
+      child != NULL &&
+              child->transform_deadline_ms != LAGHU_TRANSFORM_DEADLINE_MS_UNSET
+          ? child->transform_deadline_ms
+          : parent_transform_deadline_ms;
+  result->variants_per_source =
+      child != NULL &&
+              child->variants_per_source != LAGHU_VARIANTS_PER_SOURCE_UNSET
+          ? child->variants_per_source
+          : parent_variants_per_source;
   result->respect_vary =
       child != NULL && child->respect_vary != LAGHU_MODE_UNSET
           ? child->respect_vary
@@ -1140,6 +1169,16 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   if (config->instrumentation_sample_rate !=
           LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET &&
       config->instrumentation_sample_rate > 100U)
+    return false;
+  if ((config->transform_memory_limit != LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET &&
+       (config->transform_memory_limit < LAGHU_TRANSFORM_MEMORY_LIMIT_MIN ||
+        config->transform_memory_limit > LAGHU_TRANSFORM_MEMORY_LIMIT_MAX)) ||
+      (config->transform_deadline_ms != LAGHU_TRANSFORM_DEADLINE_MS_UNSET &&
+       (config->transform_deadline_ms < LAGHU_TRANSFORM_DEADLINE_MS_MIN ||
+        config->transform_deadline_ms > LAGHU_TRANSFORM_DEADLINE_MS_MAX)) ||
+      (config->variants_per_source != LAGHU_VARIANTS_PER_SOURCE_UNSET &&
+       (config->variants_per_source < LAGHU_VARIANTS_PER_SOURCE_MIN ||
+        config->variants_per_source > LAGHU_VARIANTS_PER_SOURCE_MAX)))
     return false;
 
   has_preset = config->preset != LAGHU_PRESET_UNSET;

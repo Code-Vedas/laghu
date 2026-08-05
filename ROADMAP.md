@@ -203,7 +203,7 @@ RUM-store evidence: every native NGINX, Apache, and standalone worker owns a bou
 - [ ] Keep modern image encoders and protocol behavior maintained.
 - [ ] Make Core Web Vitals first-class optimization targets.
 - [x] Avoid loopback image re-fetch by optimizing the response body already observed by the server adapter.
-- [ ] Bound and expose memory use, cache growth, and optimizer failure reasons.
+- [x] Bound and expose memory use, cache growth, and optimizer failure reasons.
 - [ ] Replace text-only operational surfaces with metrics, structured logs, and traces.
 - [ ] Keep configuration understandable through presets, validation, and explainability despite the complete filter surface.
 - [ ] Use Early Hints and modern resource hints instead of HTTP/2 push.
@@ -258,10 +258,12 @@ Completion evidence for the checked geometry features is shared with Section 3.2
 - [x] Respect `no-store` and `private` throughout every implemented cache and transform path.
 - [x] Bypass authenticated requests in the initial eligibility policy.
 - [x] Make all outbound resource fetching SSRF-safe with private and loopback access disabled by default.
-- [ ] Document and implement dark-mode-safe critical-CSS behavior.
-- [ ] Bound content size, memory, optimization time, cache growth, and variant fanout.
+- [x] Document and implement dark-mode-safe critical-CSS behavior.
+- [x] Bound content size, memory, optimization time, cache growth, and variant fanout.
 
 CSP safety evidence: the fixed-capacity shared runtime policy intersects all enforcing response headers and bounded HTML meta policies with first-directive precedence; supports element and attribute fallbacks, data images, same-origin schemes/hosts/wildcards, nonces, hashes, unsafe-inline/unsafe-hashes, and strict-dynamic; retains only fixed nonce hashes; and fails closed per transform on malformed, excessive, or uncertain input. All three surfaces preserve headers and original delivery, retain matching nonces on equivalent CSS/JavaScript elements, leave integrity-bearing and hash-only inline content unchanged, and authorize immutable CSS/JavaScript, instrumentation, beacon, font, image, and style-attribute rewrites through explicit policy queries. Runtime tests cover precedence, intersection, case, origin, wildcard/path conservatism, invalid input, capacity, redaction, and nonce preservation; standalone, NGINX stable/mainline, Apache, full `scripts/run-all`, and Windows x64 codec/no-codec, service, and matched-server lanes pass.
+
+Resource-governance evidence: shared configuration supplies inherited 4–256 MiB transform-memory, 5–1000 ms monotonic deadline, and 1–64 variants-per-source controls with conservative defaults. The request budget rejects oversized input, aggregate captured/generated memory, expired planner checkpoints, and fanout without waiting or affecting original delivery. File-cache publication reserves bounded slots before writing, accounts byte/inode/metadata ceilings, rejects excess variants, protects in-progress publications, and reclaims abandoned reservations through deterministic maintenance. Critical CSS uses versioned mobile/desktop × light/dark evidence, ignores inactive media rules, requires both theme buckets, fingerprints theme state without persisting raw values, and retains complete color-scheme media, custom-property, font/keyframe, and root-theme rules. Fixed-label metrics expose rejection reasons, current/peak/limit memory, rejected cache writes, and variant occupancy/limit without request-derived values; budget pressure remains readiness-safe. Runtime/HTTP tests, standalone, NGINX stable/mainline, Apache, full `scripts/run-all`, Windows x64 codec/no-codec, worker and asset service lifecycles, PowerShell validation, and matched NGINX/Apache smoke pass; ARM64 is accepted under the project x64-completion assumption.
 
 ### 4.5 Observability and Operations
 

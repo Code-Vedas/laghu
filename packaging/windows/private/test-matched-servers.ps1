@@ -255,6 +255,7 @@ http {
     root $nginxWeb;
     laghu on;
     laghu preset balanced;
+    laghu transform_deadline_ms 1000;
     laghu cache_mime_types image/png;
     laghu disallow /blocked*;
     laghu respect_vary on;
@@ -333,6 +334,7 @@ DocumentRoot "$apacheWeb"
   Require all granted
 </Directory>
 Laghu Preset balanced
+Laghu TransformDeadlineMs 1000
 Laghu CacheMimeTypes image/png
 Laghu Disallow "/blocked*"
 Laghu RespectVary On

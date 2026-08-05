@@ -33,6 +33,12 @@ Critical-image learning uses opaque viewport-bucket observations and can inform 
 The dependency-free tokenizer bounds input, tokens, URLs, nesting, and sprite inputs while preserving strings, custom properties, calculation spacing, legal comments, and source directives.
 CSS transformation covers safe minification, image URL rewriting, combination, inline/outline behavior, import planning, style attributes, placement, and learned critical CSS.
 
+Critical CSS learns four fixed evidence buckets: mobile/desktop crossed with light/dark. The beacon ignores inactive media queries and reports the active color-scheme bucket. Laghu unions proven light and dark rules for the selected viewport and always retains complete `prefers-color-scheme` blocks, custom-property and `color-scheme` declarations, font/keyframe dependencies, and recognized root theme selectors. HTML/body class, `data-theme`, and `data-color-scheme` state affects only the opaque template fingerprint; raw theme values are not persisted or exposed. Missing or conflicting theme evidence preserves the original stylesheet arrangement.
+
+Every request uses a non-blocking transform budget. Content ceilings, temporary memory, generated output, deterministic work, deadline checkpoints, dependencies, and variant fanout are bounded. Exhausting one budget skips the affected optimization and preserves response delivery. Cache publication reserves bounded metadata before writing, respects byte/inode/metadata limits, and refuses excess variants for a canonical source.
+
+Operational output classifies skips in `laghu_transform_rejections_total` with only the fixed `content`, `memory`, `deadline`, `cache`, and `variants` reasons. `laghu_transform_memory_bytes`, `laghu_transform_deadline_milliseconds`, `laghu_cache_rejected_writes_total`, `laghu_variant_occupancy`, and `laghu_variant_limit` expose bounded aggregate state without source URLs, selectors, paths, keys, or theme values. Budget pressure is diagnostic and does not make readiness fail.
+
 External font CSS uses a separate provider configuration and `laghu-resource-fetch` queue.
 The worker permits verified HTTPS GETs only, revalidates DNS and redirects, accepts font-only CSS, and never downloads or rewrites font binaries.
 

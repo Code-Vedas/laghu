@@ -64,6 +64,7 @@ static void test_config(laghu_config *config) {
   laghu_config_init(&child);
   child.mode = LAGHU_MODE_ON;
   child.preset = LAGHU_PRESET_BALANCED;
+  child.transform_deadline_ms = LAGHU_TRANSFORM_DEADLINE_MS_MAX;
   laghu_config_merge(config, NULL, &child);
 }
 

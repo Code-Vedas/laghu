@@ -165,6 +165,9 @@ http {
     root ${SMOKE_DIR}/html;
     laghu on;
     laghu preset balanced;
+    laghu transform_memory_limit 32m;
+    laghu transform_deadline_ms 50;
+    laghu variants_per_source 16;
     laghu allow_resources /*;
     laghu disallow /never-optimized/*;
     laghu respect_vary on;

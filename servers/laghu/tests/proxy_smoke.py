@@ -618,6 +618,8 @@ def main():
                 "8192",
                 "--rewrite-level",
                 "all",
+                "--transform-deadline-ms",
+                "1000",
                 "--allow-resources",
                 "/*",
                 "--disallow",

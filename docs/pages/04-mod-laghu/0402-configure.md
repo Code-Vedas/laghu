@@ -39,6 +39,9 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu CssOutlineThreshold BYTES` | inherited | `1024..1048576` | `8192` | Selects large inline CSS for outlining. |
 | `Laghu JavaScriptInlineLimit BYTES` | inherited | `0..65536` | `2048` | Caps external JavaScript inlining. |
 | `Laghu JavaScriptOutlineThreshold BYTES` | inherited | `1024..1048576` | `8192` | Selects inline JavaScript for outlining. |
+| `Laghu TransformMemoryLimit SIZE` | inherited | `4m..256m` | `32m` | Hard ceiling for temporary request-transform memory. |
+| `Laghu TransformDeadlineMs N` | inherited | `5..1000` | `50` | Monotonic request-transform deadline in milliseconds. |
+| `Laghu VariantsPerSource N` | inherited | `1..64` | `16` | Bounds cached variants for one canonical source. |
 | `Laghu WorkerQueue PATH` | inherited | bounded path | `/run/laghu/jobs.queue` | Selects the image queue. |
 | `Laghu AssetOffloadConfig PATH` | inherited | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `Laghu AssetUploadQueue PATH` | inherited | policy-matching path | unset | Selects the asynchronous asset spool. |

@@ -399,6 +399,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
   bool javascript_queue_seen = false, javascript_target_seen = false;
   bool javascript_inline_limit_seen = false;
   bool javascript_outline_threshold_seen = false;
+  bool transform_memory_seen = false, transform_deadline_seen = false;
+  bool variants_per_source_seen = false;
   bool instrumentation_sample_rate_seen = false;
   bool javascript_defer_suggestions_seen = false;
   bool javascript_observation_config_seen = false;
@@ -471,6 +473,33 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                                   &options->cache_limits.size_limit))
         return proxy_error(error, error_size, "invalid --file-cache-size");
       cache_size_seen = true;
+    } else if (strcmp(name, "--transform-memory-limit") == 0) {
+      uint64_t parsed;
+      NEED_VALUE();
+      if (transform_memory_seen ||
+          !laghu_cache_size_parse(value, LAGHU_TRANSFORM_MEMORY_LIMIT_MIN,
+                                  LAGHU_TRANSFORM_MEMORY_LIMIT_MAX, &parsed))
+        return proxy_error(error, error_size,
+                           "invalid --transform-memory-limit");
+      options->config.transform_memory_limit = (unsigned int)parsed;
+      transform_memory_seen = true;
+    } else if (strcmp(name, "--transform-deadline-ms") == 0) {
+      NEED_VALUE();
+      if (transform_deadline_seen ||
+          !proxy_uint(value, LAGHU_TRANSFORM_DEADLINE_MS_MIN,
+                      LAGHU_TRANSFORM_DEADLINE_MS_MAX,
+                      &options->config.transform_deadline_ms))
+        return proxy_error(error, error_size,
+                           "invalid --transform-deadline-ms");
+      transform_deadline_seen = true;
+    } else if (strcmp(name, "--variants-per-source") == 0) {
+      NEED_VALUE();
+      if (variants_per_source_seen ||
+          !proxy_uint(value, LAGHU_VARIANTS_PER_SOURCE_MIN,
+                      LAGHU_VARIANTS_PER_SOURCE_MAX,
+                      &options->config.variants_per_source))
+        return proxy_error(error, error_size, "invalid --variants-per-source");
+      variants_per_source_seen = true;
     } else if (strcmp(name, "--file-cache-inode-limit") == 0) {
       NEED_VALUE();
       if (cache_inode_seen ||
@@ -2301,7 +2330,7 @@ static void proxy_handle(const proxy_connection *connection,
   laghu_http_request normalized_request;
   laghu_http_response normalized_response;
   laghu_http_environment environment;
-  laghu_http_transaction transaction;
+  laghu_http_transaction transaction = {0};
   laghu_http_transaction_result prepared, finalized;
   proxy_access_log access;
   bool prepared_ok = false;
@@ -3060,9 +3089,16 @@ static void proxy_handle(const proxy_connection *connection,
              laghu_http_transaction_finalize(
                  &transaction, (laghu_buffer){origin_body, origin_body_length},
                  &finalized)) {
+    laghu_operational_registry_budget(
+        &worker->queue->operational, &transaction.budget,
+        transaction.environment.config.transform_deadline_ms);
     if (!proxy_send_result(client, &response, &finalized, finalized.selected))
       access.failure = "client_disconnect";
   } else {
+    if (prepared_ok)
+      laghu_operational_registry_budget(
+          &worker->queue->operational, &transaction.budget,
+          transaction.environment.config.transform_deadline_ms);
     if (!proxy_send_result(client, &response, &finalized,
                            (laghu_buffer){origin_body, origin_body_length}))
       access.failure = "client_disconnect";

@@ -55,6 +55,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_posix.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_win32.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/csp.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/budget.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/catalog.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/asset.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/source.c \

@@ -2216,6 +2216,9 @@ static ngx_int_t ngx_http_laghu_transaction_body_filter(
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
+    laghu_operational_registry_budget(
+        &ngx_http_laghu_operational, &context->transaction.budget,
+        context->transaction.environment.config.transform_deadline_ms);
     ngx_http_laghu_log_defer_recommendation(request, &result);
     if (context->header_deferred) {
       const unsigned char *selected = result.selected.data;
@@ -3563,6 +3566,35 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
              "to 1048576";
     }
     location->core.javascript_outline_threshold = (unsigned int)threshold;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "transform_memory_limit") == 0) {
+    ssize_t parsed = ngx_parse_size(&values[2]);
+    if (location->core.transform_memory_limit !=
+            LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET ||
+        parsed < (ssize_t)LAGHU_TRANSFORM_MEMORY_LIMIT_MIN ||
+        parsed > (ssize_t)LAGHU_TRANSFORM_MEMORY_LIMIT_MAX)
+      return "laghu transform_memory_limit expects 4m through 256m";
+    location->core.transform_memory_limit = (unsigned int)parsed;
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "transform_deadline_ms") == 0 ||
+      ngx_strcmp(values[1].data, "variants_per_source") == 0) {
+    ngx_int_t parsed = ngx_atoi(values[2].data, values[2].len);
+    unsigned int *target =
+        ngx_strcmp(values[1].data, "transform_deadline_ms") == 0
+            ? &location->core.transform_deadline_ms
+            : &location->core.variants_per_source;
+    unsigned int minimum = target == &location->core.transform_deadline_ms
+                               ? LAGHU_TRANSFORM_DEADLINE_MS_MIN
+                               : LAGHU_VARIANTS_PER_SOURCE_MIN;
+    unsigned int maximum = target == &location->core.transform_deadline_ms
+                               ? LAGHU_TRANSFORM_DEADLINE_MS_MAX
+                               : LAGHU_VARIANTS_PER_SOURCE_MAX;
+    if (*target != 0U || parsed < (ngx_int_t)minimum ||
+        parsed > (ngx_int_t)maximum)
+      return "invalid or duplicate transform budget setting";
+    *target = (unsigned int)parsed;
     return NGX_CONF_OK;
   }
 

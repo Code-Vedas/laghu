@@ -39,6 +39,9 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu css_outline_threshold BYTES;` | inherited | `1024..1048576` | `8192` | Selects large inline CSS for outlining. |
 | `laghu javascript_inline_limit BYTES;` | inherited | `0..65536` | `2048` | Caps external JavaScript inlining. |
 | `laghu javascript_outline_threshold BYTES;` | inherited | `1024..1048576` | `8192` | Selects inline JavaScript for outlining. |
+| `laghu transform_memory_limit SIZE;` | inherited | `4m..256m` | `32m` | Hard ceiling for temporary request-transform memory. |
+| `laghu transform_deadline_ms N;` | inherited | `5..1000` | `50` | Monotonic request-transform deadline in milliseconds. |
+| `laghu variants_per_source N;` | inherited | `1..64` | `16` | Bounds cached variants for one canonical source. |
 | `laghu worker_queue PATH;` | inherited | bounded path | `/run/laghu/jobs.queue` | Selects the image queue. |
 | `laghu asset_offload_config PATH;` | inherited | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `laghu asset_upload_queue PATH;` | inherited | policy-matching path | unset | Selects the asynchronous asset spool. |

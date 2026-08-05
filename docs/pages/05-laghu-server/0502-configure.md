@@ -19,6 +19,9 @@ The standalone server accepts command-line options only.
 | `--file-cache-inode-limit N` | `16..100000000` | `100000` | Bounds backend files. |
 | `--file-cache-clean-interval DURATION` | `1s..24h` | `60s` | Sets background approximate-LRU maintenance cadence. |
 | `--file-cache-metadata-size SIZE` | `16k..1g` | `16m` | Bounds shared metadata; it never stores payload bytes. |
+| `--transform-memory-limit SIZE` | `4m..256m` | `32m` | Hard ceiling for temporary request-transform memory. |
+| `--transform-deadline-ms N` | `5..1000` | `50` | Monotonic request-transform deadline in milliseconds. |
+| `--variants-per-source N` | `1..64` | `16` | Bounds cached variants for one canonical source. |
 | `--cache PATH` | bounded path | deprecated | Compatibility alias for a local file backend. |
 | `--worker-queue PATH` | bounded path | required | Selects the image queue. |
 | `--cache-mime-types LIST` | comma-separated MIME types | empty | Explicitly enables opaque media cache extension for matching response types. |

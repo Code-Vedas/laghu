@@ -21,7 +21,8 @@ static const char laghu_critical_script[] =
     "querySelector('script[data-laghu-critical]');if(!s)return;const out=[];"
     "for(const sh of document.styleSheets){let rs;try{rs=sh.cssRules}catch(e)"
     "{continue}if(!rs)continue;for(let i=0;i<rs.length&&i<512;i++){const r=rs"
-    "[i];let hit=false;const walk=x=>{if(hit)return;if(x.selectorText){try{for"
+    "[i];let hit=false;const walk=x=>{if(hit)return;if(x.media&&!x.media."
+    "matches)return;if(x.selectorText){try{for"
     "(const e of document.querySelectorAll(x.selectorText)){const b=e."
     "getBoundingClientRect();if(b.width>0&&b.height>0&&b.bottom>0&&b.top<"
     "innerHeight){hit=true;break}}}catch(e){}}else if(x.cssRules){for(const c "
@@ -29,7 +30,8 @@ static const char laghu_critical_script[] =
     "x.cssRules)walk(c)}};walk(r);if(hit)out.push(i)}}fetch('/.laghu/beacon/"
     "critical-css',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({template:s.dataset.laghuCritical,bucket:innerWidth<"
-    "768?0:1,rules:out.slice(0,512)}),keepalive:true})});";
+    "768?0:1,scheme:matchMedia('(prefers-color-scheme: dark)').matches?1:0,"
+    "rules:out.slice(0,512)}),keepalive:true})});";
 
 const char *laghu_runtime_critical_css_beacon_script(void) {
   return laghu_critical_script;
@@ -86,6 +88,7 @@ bool laghu_runtime_parse_critical_css_beacon(
   char *template_at;
   char *bucket_at;
   char *rules_at;
+  char *scheme_at;
   const char *cursor;
   size_t index = 0U;
   if (record == NULL || json.data == NULL || json.length == 0U ||
@@ -99,7 +102,10 @@ bool laghu_runtime_parse_critical_css_beacon(
   template_at = strstr(text, "\"template\":\"");
   bucket_at = strstr(text, "\"bucket\":");
   rules_at = strstr(text, "\"rules\":[");
-  if (template_at == NULL || bucket_at == NULL || rules_at == NULL) goto bad;
+  scheme_at = strstr(text, "\"scheme\":");
+  if (template_at == NULL || bucket_at == NULL || scheme_at == NULL ||
+      rules_at == NULL)
+    goto bad;
   template_at += sizeof("\"template\":\"") - 1U;
   if (strlen(template_at) < LAGHU_SHA256_HEX_LENGTH + 1U ||
       template_at[LAGHU_SHA256_HEX_LENGTH] != '"')
@@ -110,6 +116,10 @@ bool laghu_runtime_parse_critical_css_beacon(
   cursor = bucket_at + sizeof("\"bucket\":") - 1U;
   if (!laghu_critical_json_uint(&cursor, &record->viewport_bucket) ||
       record->viewport_bucket > 1U)
+    goto bad;
+  cursor = scheme_at + sizeof("\"scheme\":") - 1U;
+  if (!laghu_critical_json_uint(&cursor, &record->color_scheme_bucket) ||
+      record->color_scheme_bucket > 1U)
     goto bad;
   cursor = rules_at + sizeof("\"rules\":[") - 1U;
   while (*cursor != ']') {
@@ -150,7 +160,8 @@ static bool laghu_critical_merge(void *data, size_t length, void *opaque) {
       context->now < record->updated_at ||
       context->now - record->updated_at > context->ttl_seconds)
     return false;
-  bucket = context->beacon->viewport_bucket;
+  bucket = context->beacon->viewport_bucket * 2U +
+           context->beacon->color_scheme_bucket;
   for (index = 0U; index < context->beacon->rule_count; ++index) {
     unsigned int rule = context->beacon->rules[index];
     record->critical_rules[bucket][rule / 8U] |=
@@ -171,7 +182,8 @@ bool laghu_critical_css_apply_beacon(laghu_rum_engine *rum,
   laghu_critical_css_record record;
   laghu_critical_merge_context context;
   if (rum == NULL || cache_path == NULL || !laghu_critical_hash(policy_key) ||
-      beacon == NULL || beacon->viewport_bucket > 1U || ttl_seconds == 0U)
+      beacon == NULL || beacon->viewport_bucket > 1U ||
+      beacon->color_scheme_bucket > 1U || ttl_seconds == 0U)
     return false;
   if (!laghu_critical_read_record(rum, beacon->template_key, now, &record) ||
       strcmp(record.policy_key, policy_key) != 0 || now < record.updated_at ||
@@ -203,6 +215,18 @@ static const unsigned char *laghu_critical_find(const unsigned char *data,
   for (index = 0U; index + needle_length <= length; ++index)
     if (memcmp(data + index, needle, needle_length) == 0) return data + index;
   return NULL;
+}
+
+static bool laghu_critical_contains_ci(const unsigned char *data, size_t length,
+                                       const char *needle) {
+  size_t i, j, needle_length = strlen(needle);
+  if (needle_length == 0U || needle_length > length) return false;
+  for (i = 0U; i + needle_length <= length; ++i) {
+    for (j = 0U; j < needle_length; ++j)
+      if (tolower(data[i + j]) != tolower((unsigned char)needle[j])) break;
+    if (j == needle_length) return true;
+  }
+  return false;
 }
 
 static bool laghu_critical_attr(const unsigned char *tag, size_t length,
@@ -285,11 +309,23 @@ static bool laghu_critical_rules(laghu_buffer css, laghu_critical_rule *rules,
         rules[found].start = start;
         rules[found].end = p + 1U;
         rules[found].foundational =
-            lead < p && css.data[lead] == '@' &&
-            (strncmp((const char *)css.data + lead, "@font-face", 10U) == 0 ||
-             strncmp((const char *)css.data + lead, "@keyframes", 10U) == 0 ||
-             strncmp((const char *)css.data + lead, "@-webkit-keyframes",
-                     18U) == 0);
+            (lead < p && css.data[lead] == '@' &&
+             (laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                         "@font-face") ||
+              laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                         "@keyframes") ||
+              laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                         "@-webkit-keyframes") ||
+              laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                         "prefers-color-scheme"))) ||
+            laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                       "color-scheme") ||
+            laghu_critical_contains_ci(css.data + lead, p + 1U - lead, "--") ||
+            laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                       "[data-theme") ||
+            laghu_critical_contains_ci(css.data + lead, p + 1U - lead,
+                                       "[data-color-scheme") ||
+            laghu_critical_contains_ci(css.data + lead, p + 1U - lead, ":root");
         ++found;
         start = p + 1U;
       }
@@ -336,6 +372,20 @@ static bool laghu_critical_template_key(laghu_buffer html,
         memcpy(structure + used, attribute, attribute_length);
         used += attribute_length;
       }
+      if (tag_end != NULL) {
+        static const char *theme_attributes[] = {"data-theme",
+                                                 "data-color-scheme"};
+        unsigned int theme_index;
+        for (theme_index = 0U; theme_index < 2U; ++theme_index)
+          if (laghu_critical_attr(open, (size_t)(tag_end - open + 1U),
+                                  theme_attributes[theme_index], &attribute,
+                                  &attribute_length) &&
+              used + attribute_length + 2U < sizeof(structure)) {
+            structure[used++] = '@';
+            memcpy(structure + used, attribute, attribute_length);
+            used += attribute_length;
+          }
+      }
       if (tag_end != NULL &&
           laghu_critical_attr(open, (size_t)(tag_end - open + 1U), "class",
                               &attribute, &attribute_length) &&
@@ -377,7 +427,8 @@ bool laghu_runtime_prioritize_critical_css(
   unsigned char *css = NULL, *output = NULL;
   laghu_critical_rule rules[LAGHU_CRITICAL_CSS_MAX_RULES];
   unsigned int rule_count = 0U, i,
-               bucket = viewport_width && viewport_width < 768U ? 0U : 1U;
+               viewport_bucket =
+                   viewport_width && viewport_width < 768U ? 0U : 1U;
   size_t critical_length = 0U, output_length, cursor;
   static const char deferred_prefix[] = "/.laghu/css/";
   bool ready = false;
@@ -430,7 +481,10 @@ bool laghu_runtime_prioritize_critical_css(
       strcmp(learning.stylesheet_key, sheet.dependency_key) == 0 &&
       strcmp(learning.policy_key, policy_key) == 0 &&
       now >= learning.updated_at && now - learning.updated_at <= ttl_seconds)
-    ready = learning.observation_count[bucket] >= LAGHU_CRITICAL_CSS_QUORUM;
+    ready = learning.observation_count[viewport_bucket * 2U] >=
+                LAGHU_CRITICAL_CSS_QUORUM &&
+            learning.observation_count[viewport_bucket * 2U + 1U] >=
+                LAGHU_CRITICAL_CSS_QUORUM;
   else {
     learning.version = LAGHU_CRITICAL_CSS_VERSION;
     memcpy(learning.template_key, template_key, sizeof(template_key));
@@ -455,7 +509,10 @@ bool laghu_runtime_prioritize_critical_css(
       goto unchanged;
     for (i = 0U; i < rule_count; ++i)
       if (rules[i].foundational ||
-          (learning.critical_rules[bucket][i / 8U] & (1U << (i % 8U))))
+          (learning.critical_rules[viewport_bucket * 2U][i / 8U] &
+           (1U << (i % 8U))) ||
+          (learning.critical_rules[viewport_bucket * 2U + 1U][i / 8U] &
+           (1U << (i % 8U))))
         critical_length += rules[i].end - rules[i].start;
     if (critical_length == 0U || critical_length > inline_limit) goto unchanged;
     body = laghu_critical_find(html.data, html.length, "</body>");
@@ -489,7 +546,10 @@ bool laghu_runtime_prioritize_critical_css(
     APPEND(">", 1U);
     for (i = 0U; i < rule_count; ++i)
       if (rules[i].foundational ||
-          (learning.critical_rules[bucket][i / 8U] & (1U << (i % 8U))))
+          (learning.critical_rules[viewport_bucket * 2U][i / 8U] &
+           (1U << (i % 8U))) ||
+          (learning.critical_rules[viewport_bucket * 2U + 1U][i / 8U] &
+           (1U << (i % 8U))))
         APPEND(css + rules[i].start, rules[i].end - rules[i].start);
     APPEND("</style>", 8U);
     APPEND(html.data + link_end, (size_t)(body - html.data) - link_end);
@@ -506,9 +566,10 @@ bool laghu_runtime_prioritize_critical_css(
     result->rewritten = true;
     {
       char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 64U];
-      int n = snprintf(material, sizeof(material),
-                       "critical-v1\n%s\n%s\n%u\n%u", template_key,
-                       sheet.dependency_key, bucket, learning.generation);
+      int n =
+          snprintf(material, sizeof(material), "critical-v1\n%s\n%s\n%u\n%u",
+                   template_key, sheet.dependency_key, viewport_bucket,
+                   learning.generation);
       if (n <= 0 || (size_t)n >= sizeof(material) ||
           !laghu_sha256_hex(
               (laghu_buffer){(const unsigned char *)material, (size_t)n},
