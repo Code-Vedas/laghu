@@ -50,6 +50,9 @@ typedef struct {
   ngx_flag_t purge_method;
   ngx_flag_t purge_query;
   ngx_flag_t statistics;
+  ngx_flag_t metrics;
+  ngx_flag_t readiness;
+  ngx_flag_t readiness_strict;
   ngx_str_t purge_token_file;
   ngx_str_t cache_flush_file;
   ngx_array_t *purge_allow;
@@ -77,6 +80,7 @@ typedef struct {
   ngx_uint_t retry_limit;
   ngx_flag_t required;
   uint32_t set_mask;
+  ngx_str_t operational_cache;
 } ngx_http_laghu_main_conf_t;
 
 typedef struct {
@@ -117,6 +121,7 @@ static time_t ngx_http_laghu_last_defer_recommendation;
 static time_t ngx_http_laghu_beacon_window;
 static ngx_uint_t ngx_http_laghu_beacon_count;
 static laghu_rum_engine *ngx_http_laghu_rum;
+static laghu_operational_registry ngx_http_laghu_operational;
 
 static void ngx_http_laghu_log_defer_recommendation(
     ngx_http_request_t *request, const laghu_http_transaction_result *result) {
@@ -222,6 +227,14 @@ static ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
   int length;
   laghu_rum_options_init(&options);
   conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
+  laghu_operational_registry_init(&ngx_http_laghu_operational);
+  (void)laghu_operational_registry_open(
+      &ngx_http_laghu_operational,
+      conf != NULL && conf->operational_cache.len != 0U
+          ? (const char *)conf->operational_cache.data
+          : LAGHU_NGINX_DEFAULT_CACHE,
+      LAGHU_OPERATIONAL_SURFACE_NGINX, LAGHU_OPERATIONAL_PROCESS_ADAPTER, true,
+      (uint64_t)ngx_time());
   length = conf != NULL && conf->snapshot_path.len != 0U
                ? snprintf(snapshot, sizeof(snapshot), "%s",
                           (const char *)conf->snapshot_path.data)
@@ -277,6 +290,7 @@ static void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration) {
 
 static void ngx_http_laghu_exit_process(ngx_cycle_t *cycle) {
   (void)cycle;
+  laghu_operational_registry_close(&ngx_http_laghu_operational);
   laghu_rum_engine_destroy(ngx_http_laghu_rum);
   ngx_http_laghu_rum = NULL;
 }
@@ -393,6 +407,22 @@ static ngx_int_t ngx_http_laghu_add_status_header(ngx_http_request_t *request,
   const char *cache = "bypass";
   const char *transform = "pass";
   ngx_table_elt_t *header;
+  (void)laghu_operational_registry_heartbeat(
+      &ngx_http_laghu_operational, (uint64_t)ngx_time(), true, 0U, 0U);
+  laghu_operational_registry_record(
+      &ngx_http_laghu_operational,
+      decision == LAGHU_DECISION_IMAGE_HIT
+          ? LAGHU_OPERATIONAL_DECISION_CACHED
+          : (decision == LAGHU_DECISION_PASS
+                 ? LAGHU_OPERATIONAL_DECISION_ORIGINAL
+                 : LAGHU_OPERATIONAL_DECISION_BYPASS),
+      request->headers_out.content_length_n > 0
+          ? (size_t)request->headers_out.content_length_n
+          : 0U,
+      request->headers_out.content_length_n > 0
+          ? (size_t)request->headers_out.content_length_n
+          : 0U,
+      0U);
 
   header = ngx_list_push(&request->headers_out.headers);
   if (header == NULL) {
@@ -2377,6 +2407,33 @@ static ngx_int_t ngx_http_laghu_admin_json(ngx_http_request_t *request,
   return ngx_http_output_filter(request, &output);
 }
 
+static ngx_int_t ngx_http_laghu_admin_text(ngx_http_request_t *request,
+                                           const char *text, size_t length) {
+  ngx_buf_t *buffer;
+  ngx_chain_t output;
+  ngx_table_elt_t *header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  header->hash = 1U;
+  ngx_str_set(&header->key, "Cache-Control");
+  ngx_str_set(&header->value, "no-store");
+  request->headers_out.status = NGX_HTTP_OK;
+  ngx_str_set(&request->headers_out.content_type,
+              "text/plain; version=0.0.4; charset=utf-8");
+  request->headers_out.content_length_n = (off_t)length;
+  if (ngx_http_send_header(request) == NGX_ERROR ||
+      request->method == NGX_HTTP_HEAD)
+    return NGX_OK;
+  buffer = ngx_calloc_buf(request->pool);
+  if (buffer == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  buffer->pos = (u_char *)text;
+  buffer->last = (u_char *)text + length;
+  buffer->memory = 1U;
+  buffer->last_buf = 1U;
+  output.buf = buffer;
+  output.next = NULL;
+  return ngx_http_output_filter(request, &output);
+}
+
 static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
@@ -2421,6 +2478,8 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
     bool normalized_ok = request->unparsed_uri.len < sizeof(target);
     bool purge_request;
     bool stats_request;
+    bool metrics_request;
+    bool readiness_request;
     if (normalized_ok) {
       ngx_memcpy(target, request->unparsed_uri.data, request->unparsed_uri.len);
       target[request->unparsed_uri.len] = '\0';
@@ -2436,7 +2495,14 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
         purge_request || control ||
         (target[0] != '\0' && strstr(target, "laghu=purge") != NULL);
     stats_request = normalized_ok && strcmp(normalized, "/.laghu/stats") == 0;
-    if (purge_request || stats_request) {
+    metrics_request =
+        normalized_ok && strcmp(normalized, "/.laghu/metrics") == 0;
+    readiness_request =
+        normalized_ok && strcmp(normalized, "/.laghu/ready") == 0;
+    if ((metrics_request && !conf->metrics) ||
+        (readiness_request && !conf->readiness))
+      return NGX_HTTP_NOT_FOUND;
+    if (purge_request || stats_request || metrics_request || readiness_request) {
       ngx_table_elt_t *token = NULL;
       ngx_list_part_t *part = &request->headers_in.headers.part;
       ngx_table_elt_t *headers = part->elts;
@@ -2538,6 +2604,53 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
             (unsigned long long)stats.full_purges,
             (unsigned long long)stats.cache_generation);
         return ngx_http_laghu_admin_json(request, NGX_HTTP_OK, json);
+      }
+      if (metrics_request || readiness_request) {
+        laghu_operational_snapshot *snapshot;
+        char *rendered;
+        size_t length = 0U;
+        bool enabled = metrics_request ? conf->metrics : conf->readiness;
+        (void)laghu_operational_registry_heartbeat(
+            &ngx_http_laghu_operational, (uint64_t)ngx_time(), true, 0U, 0U);
+        if (!enabled || (request->method != NGX_HTTP_GET &&
+                         request->method != NGX_HTTP_HEAD))
+          return NGX_HTTP_NOT_ALLOWED;
+        snapshot = ngx_pcalloc(request->pool, sizeof(*snapshot));
+        rendered = ngx_pnalloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
+        if (snapshot == NULL || rendered == NULL)
+          return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        if (!laghu_operational_registry_snapshot(&ngx_http_laghu_operational,
+                                                 snapshot))
+          return ngx_http_laghu_admin_json(request,
+                                           NGX_HTTP_SERVICE_UNAVAILABLE,
+                                           "{\"status\":\"unavailable\"}");
+        if (metrics_request) {
+          if (!laghu_operational_render_prometheus(
+                  snapshot, (uint64_t)ngx_time(), rendered,
+                  LAGHU_OPERATIONAL_RENDER_SIZE, &length))
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+          return ngx_http_laghu_admin_text(request, rendered, length);
+        } else {
+          laghu_operational_readiness readiness;
+          laghu_cache_stats stats = {0};
+          bool cache_ready = laghu_cache_backend_health_path(
+              (char *)conf->image_cache.data, &stats);
+          ngx_uint_t status;
+          laghu_operational_registry_cache(&ngx_http_laghu_operational,
+                                           &stats);
+          if (!laghu_operational_readiness_evaluate(
+                  snapshot, (uint64_t)ngx_time(), true, cache_ready,
+                  conf->readiness_strict, &readiness) ||
+              !laghu_operational_render_readiness(
+                  &readiness, conf->readiness_strict, rendered,
+                  LAGHU_OPERATIONAL_RENDER_SIZE, &length))
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+          status = readiness.runtime_ready && readiness.cache_ready &&
+                           readiness.workers_ready
+                       ? NGX_HTTP_OK
+                       : NGX_HTTP_SERVICE_UNAVAILABLE;
+          return ngx_http_laghu_admin_json(request, status, rendered);
+        }
       }
       if ((!conf->purge_method && request->method_name.len == 5U) ||
           (!conf->purge_query && control))
@@ -2935,6 +3048,9 @@ static void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   conf->purge_method = NGX_CONF_UNSET;
   conf->purge_query = NGX_CONF_UNSET;
   conf->statistics = NGX_CONF_UNSET;
+  conf->metrics = NGX_CONF_UNSET;
+  conf->readiness = NGX_CONF_UNSET;
+  conf->readiness_strict = NGX_CONF_UNSET;
   cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
   if (cleanup == NULL) {
     return NULL;
@@ -2962,6 +3078,7 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   laghu_policy policy;
   laghu_source_policy source;
   char source_error[160U];
+  ngx_http_laghu_main_conf_t *main_conf;
 
   (void)configuration;
 
@@ -3028,6 +3145,21 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   ngx_conf_merge_value(child_conf->purge_method, parent_conf->purge_method, 0);
   ngx_conf_merge_value(child_conf->purge_query, parent_conf->purge_query, 0);
   ngx_conf_merge_value(child_conf->statistics, parent_conf->statistics, 0);
+  ngx_conf_merge_value(child_conf->metrics, parent_conf->metrics, 0);
+  ngx_conf_merge_value(child_conf->readiness, parent_conf->readiness, 0);
+  ngx_conf_merge_value(child_conf->readiness_strict,
+                       parent_conf->readiness_strict, 0);
+  main_conf = ngx_http_conf_get_module_main_conf(configuration,
+                                                 ngx_http_laghu_module);
+  if (child_conf->metrics || child_conf->readiness) {
+    if (main_conf->operational_cache.len == 0U)
+      main_conf->operational_cache = child_conf->image_cache;
+    else if (main_conf->operational_cache.len != child_conf->image_cache.len ||
+             ngx_strncmp(main_conf->operational_cache.data,
+                         child_conf->image_cache.data,
+                         child_conf->image_cache.len) != 0)
+      return "metrics and readiness locations must share one file cache";
+  }
   ngx_conf_merge_str_value(child_conf->purge_token_file,
                            parent_conf->purge_token_file, "");
   ngx_conf_merge_str_value(child_conf->cache_flush_file,
@@ -3035,7 +3167,8 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   if (child_conf->purge_allow == NULL)
     child_conf->purge_allow = parent_conf->purge_allow;
   if ((child_conf->purge_method || child_conf->purge_query ||
-       child_conf->statistics) &&
+       child_conf->statistics || child_conf->metrics ||
+       child_conf->readiness) &&
       (child_conf->purge_token_file.len == 0U ||
        child_conf->purge_allow == NULL || child_conf->purge_allow->nelts == 0U))
     return "network administration requires purge_token_file and purge_allow";
@@ -3697,10 +3830,17 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
     return NGX_CONF_OK;
   }
   if (ngx_strcmp(values[1].data, "purge_query") == 0 ||
-      ngx_strcmp(values[1].data, "statistics") == 0) {
-    ngx_flag_t *target = ngx_strcmp(values[1].data, "purge_query") == 0
-                             ? &location->purge_query
-                             : &location->statistics;
+      ngx_strcmp(values[1].data, "statistics") == 0 ||
+      ngx_strcmp(values[1].data, "metrics") == 0 ||
+      ngx_strcmp(values[1].data, "readiness") == 0) {
+    ngx_flag_t *target =
+        ngx_strcmp(values[1].data, "purge_query") == 0
+            ? &location->purge_query
+            : (ngx_strcmp(values[1].data, "statistics") == 0
+                   ? &location->statistics
+                   : (ngx_strcmp(values[1].data, "metrics") == 0
+                          ? &location->metrics
+                          : &location->readiness));
     if (*target != NGX_CONF_UNSET) return "is duplicate";
     if (ngx_strcmp(values[2].data, "on") == 0)
       *target = 1;
@@ -3708,6 +3848,17 @@ static char *ngx_http_laghu_command(ngx_conf_t *configuration,
       *target = 0;
     else
       return "expects on or off";
+    return NGX_CONF_OK;
+  }
+  if (ngx_strcmp(values[1].data, "readiness_policy") == 0) {
+    if (location->readiness_strict != NGX_CONF_UNSET)
+      return "readiness_policy is duplicate";
+    if (ngx_strcmp(values[2].data, "strict") == 0)
+      location->readiness_strict = 1;
+    else if (ngx_strcmp(values[2].data, "degraded") == 0)
+      location->readiness_strict = 0;
+    else
+      return "readiness_policy expects degraded or strict";
     return NGX_CONF_OK;
   }
   if (ngx_strcmp(values[1].data, "purge_token_file") == 0 ||

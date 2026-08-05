@@ -67,7 +67,7 @@ All products expose the same policy model, immutable routes, observability contr
 ## Operating Model
 
 Production installations include the selected adapter or server, `laghu-libvips`, `laghu-resource-fetch`, `laghu-js-optimize`, provider configuration, runtime directories, health probes, service lifecycle, and package-native upgrade handling.
-Operators can use `laghu status`, `laghu doctor`, `laghu purge`, `laghu explain`, `laghu bench`, and dry-run/query diagnostics to inspect behavior without editing application code.
+Operators can explicitly enable authenticated Prometheus metrics, aggregate readiness, cache statistics, and purge controls without editing application code.
 
 Start with [Architecture](/architecture/), then follow the installation and integration guide for your selected product.
 

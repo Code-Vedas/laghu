@@ -20,6 +20,7 @@ retry_limit=3
 timeout_seconds=10
 stale_ttl_seconds=86400
 catalog_path=/var/cache/laghu/assets
+operational_cache_path=/var/cache/laghu/images
 queue_path=/run/laghu/assets
 provider=s3
 endpoint=https://s3.example.com

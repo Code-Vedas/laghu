@@ -8,7 +8,7 @@ permalink: /mod-laghu/troubleshooting/transformations/
 
 # mod-laghu Filters and CSP
 
-Use `laghu explain` to distinguish cold state, parser rejection, unsupported attributes, CSP, integrity, learning quorum, dependency readiness, and transfer-size rejection.
+Use `X-Laghu`, response cache/CSP headers, and authenticated metrics to distinguish cold state and bounded failure classes.
 
 Check filter ordering with compression, proxying, SSI, application filters, and content generators.
 Laghu must receive a bounded complete representation in an eligible encoding and must update entity headers atomically with the body.

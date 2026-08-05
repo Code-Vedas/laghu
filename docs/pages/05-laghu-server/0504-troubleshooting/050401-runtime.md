@@ -10,7 +10,7 @@ permalink: /laghu-server/troubleshooting/runtime/
 
 ## Startup Refuses Configuration
 
-Run `laghu doctor` with the same environment and identity as the service.
+Run configuration and filesystem checks with the same environment and identity as the service.
 Check required listener/origin/cache/queue settings, duplicate options, cross-option requirements, provider files, CA paths, trusted-proxy CIDRs, Redis URI expansion, and filesystem access.
 
 ## Listener Is Unreachable

@@ -17,4 +17,4 @@ Readiness should fail only for dependencies required to serve correct traffic; o
 Scale request workers for concurrent client/origin work, scale optimization workers for queued CPU cost, and place immutable cache on persistent low-latency storage.
 Use Redis/Valkey to synchronize learning, not as a per-request cache lookup.
 
-Roll out a new package with a canary pool, warm representative templates, compare `laghu explain` output and Core Web Vitals, then perform a connection-draining rolling replacement.
+Roll out a new package with a canary pool, warm representative templates, compare response headers, metrics, and Core Web Vitals, then perform a connection-draining rolling replacement.

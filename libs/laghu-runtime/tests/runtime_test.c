@@ -25,8 +25,32 @@
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <unistd.h>
 #endif
+
+typedef struct {
+  laghu_operational_registry *registry;
+  unsigned int iterations;
+} operational_thread_context;
+
+#ifdef _WIN32
+static DWORD WINAPI operational_thread(void *data) {
+#else
+static void *operational_thread(void *data) {
+#endif
+  operational_thread_context *context = data;
+  unsigned int index;
+  for (index = 0U; index < context->iterations; ++index)
+    laghu_operational_registry_record(
+        context->registry, LAGHU_OPERATIONAL_DECISION_ORIGINAL, 10U, 10U,
+        1000U);
+#ifdef _WIN32
+  return 0U;
+#else
+  return NULL;
+#endif
+}
 
 static void assert_head_rewrite(const char *input, bool normalize, bool move,
                                 bool cross, const char *expected, bool added,
@@ -84,6 +108,97 @@ static void assert_html_plan(const char *input, laghu_html_planner_mask plan,
     assert(memcmp(result.data, expected, result.length) == 0);
   }
   laghu_runtime_head_result_release(&result);
+}
+
+static void test_operational_registry(const char *cache_path) {
+  laghu_operational_registry adapter, worker;
+  laghu_operational_snapshot *snapshot = calloc(1U, sizeof(*snapshot));
+  laghu_operational_readiness readiness;
+  laghu_cache_stats cache = {0};
+  char *output = calloc(LAGHU_OPERATIONAL_RENDER_SIZE, 1U);
+  size_t length = 0U;
+  uint64_t now = (uint64_t)time(NULL);
+  operational_thread_context thread_context;
+  unsigned int thread_index;
+#ifdef _WIN32
+  HANDLE threads[4];
+#else
+  pthread_t threads[4];
+#endif
+  assert(snapshot != NULL && output != NULL);
+  laghu_operational_registry_init(&adapter);
+  laghu_operational_registry_init(&worker);
+  assert(laghu_operational_registry_open(
+      &adapter, cache_path, LAGHU_OPERATIONAL_SURFACE_STANDALONE,
+      LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, now));
+  assert(laghu_operational_registry_open(
+      &worker, cache_path, LAGHU_OPERATIONAL_SURFACE_WORKER,
+      LAGHU_OPERATIONAL_PROCESS_LIBVIPS, true, now));
+  thread_context.registry = &adapter;
+  thread_context.iterations = 10000U;
+  for (thread_index = 0U; thread_index < 4U; ++thread_index) {
+#ifdef _WIN32
+    threads[thread_index] =
+        CreateThread(NULL, 0U, operational_thread, &thread_context, 0U, NULL);
+    assert(threads[thread_index] != NULL);
+#else
+    assert(pthread_create(&threads[thread_index], NULL, operational_thread,
+                          &thread_context) == 0);
+#endif
+  }
+  for (thread_index = 0U; thread_index < 4U; ++thread_index) {
+#ifdef _WIN32
+    assert(WaitForSingleObject(threads[thread_index], INFINITE) == WAIT_OBJECT_0);
+    CloseHandle(threads[thread_index]);
+#else
+    assert(pthread_join(threads[thread_index], NULL) == 0);
+#endif
+  }
+  laghu_operational_registry_record(&adapter,
+                                    LAGHU_OPERATIONAL_DECISION_OPTIMIZED,
+                                    1000U, 600U, 25000U);
+  laghu_operational_registry_record(&adapter,
+                                    LAGHU_OPERATIONAL_DECISION_BYPASS,
+                                    200U, 200U, 5000001U);
+  laghu_operational_registry_failure(&adapter,
+                                     LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
+  cache.hits = 4U;
+  cache.misses = 2U;
+  cache.publications = 3U;
+  cache.evictions = 1U;
+  cache.bytes = 4096U;
+  cache.files = 7U;
+  laghu_operational_registry_cache(&adapter, &cache);
+  assert(laghu_operational_registry_heartbeat(&worker, now, true, 64U, 3U));
+  assert(laghu_operational_registry_snapshot(&adapter, snapshot));
+  assert(snapshot->slots[adapter.slot].requests == 40002U);
+  assert(laghu_operational_render_prometheus(
+      snapshot, now, output, LAGHU_OPERATIONAL_RENDER_SIZE, &length));
+  assert(length != 0U && strstr(output, "laghu_requests_total") != NULL);
+  assert(strstr(output, "laghu_cache_bytes 4096") != NULL);
+  assert(strstr(output, "laghu_response_bytes_total{kind=\"saved\"} 400") !=
+         NULL);
+  assert(strstr(output, cache_path) == NULL);
+  assert(laghu_operational_readiness_evaluate(
+      snapshot, now, true, true, false, &readiness));
+  assert(readiness.workers_ready && !readiness.degraded &&
+         readiness.configured_workers == 1U &&
+         readiness.healthy_workers == 1U);
+  assert(laghu_operational_registry_heartbeat(&worker, now, false, 64U, 4U));
+  assert(laghu_operational_registry_snapshot(&adapter, snapshot));
+  assert(laghu_operational_readiness_evaluate(
+      snapshot, now, true, true, false, &readiness));
+  assert(readiness.workers_ready && readiness.degraded);
+  assert(laghu_operational_readiness_evaluate(
+      snapshot, now, true, true, true, &readiness));
+  assert(!readiness.workers_ready && readiness.degraded);
+  assert(laghu_operational_render_readiness(
+      &readiness, true, output, LAGHU_OPERATIONAL_RENDER_SIZE, &length));
+  assert(strstr(output, "\"status\":\"not_ready\"") != NULL);
+  laghu_operational_registry_close(&worker);
+  laghu_operational_registry_close(&adapter);
+  free(output);
+  free(snapshot);
 }
 
 static void assert_html_plan_at(const char *input, const char *page_path,
@@ -792,6 +907,7 @@ int main(void) {
   strcpy(temporary, "/tmp/laghu-runtime-XXXXXX");
   assert(mkdtemp(temporary) != NULL);
 #endif
+  test_operational_registry(temporary);
   {
     laghu_cache_backend *backend = calloc(1U, sizeof(*backend));
     laghu_cache_limits limits;

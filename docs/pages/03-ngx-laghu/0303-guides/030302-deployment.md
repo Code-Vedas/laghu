@@ -16,7 +16,7 @@ Do not put Redis, provider fetching, or codec work on the NGINX event loop.
 ## Safe Rollout
 
 1. Install the matched module and workers while Laghu remains off.
-2. Validate provider files, JavaScript targets, queue ownership, cache space, snapshot permissions, and TLS trust with `laghu doctor`.
+2. Validate provider files, JavaScript targets, queue ownership, cache space, snapshot permissions, and TLS trust before starting the service.
 3. Enable `safe` or `balanced` on a canary location.
 4. Warm representative pages through ordinary traffic and compare headers, bytes, visual output, CSP, and application behavior.
 5. Enable opt-in instrumentation and wait for template buckets to reach readiness.

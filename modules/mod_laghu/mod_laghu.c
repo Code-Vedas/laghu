@@ -37,6 +37,9 @@
 #define LAGHU_ADMIN_SET_STATS (1U << 2U)
 #define LAGHU_ADMIN_SET_TOKEN (1U << 3U)
 #define LAGHU_ADMIN_SET_FLUSH (1U << 4U)
+#define LAGHU_ADMIN_SET_METRICS (1U << 5U)
+#define LAGHU_ADMIN_SET_READINESS (1U << 6U)
+#define LAGHU_ADMIN_SET_READINESS_POLICY (1U << 7U)
 
 #ifdef _WIN32
 #define LAGHU_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
@@ -67,6 +70,9 @@ typedef struct {
   bool purge_method;
   bool purge_query;
   bool statistics;
+  bool metrics;
+  bool readiness;
+  bool readiness_strict;
   const char *purge_token_file;
   const char *cache_flush_file;
   apr_array_header_t *purge_allow;
@@ -138,6 +144,7 @@ static apr_time_t laghu_apache_beacon_window;
 static apr_time_t laghu_apache_last_defer_recommendation;
 static unsigned int laghu_apache_beacon_count;
 static laghu_rum_engine *laghu_apache_rum;
+static laghu_operational_registry laghu_apache_operational;
 
 static const char *laghu_apache_request_origin(request_rec *request) {
   const char *scheme = ap_http_scheme(request);
@@ -188,6 +195,7 @@ static apr_status_t laghu_apache_rum_cleanup(void *data) {
   (void)data;
   laghu_rum_engine_destroy(laghu_apache_rum);
   laghu_apache_rum = NULL;
+  laghu_operational_registry_close(&laghu_apache_operational);
   return APR_SUCCESS;
 }
 
@@ -199,6 +207,17 @@ static void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
   char error[160U];
   int length;
   laghu_rum_options_init(&options);
+  laghu_operational_registry_init(&laghu_apache_operational);
+  if (config != NULL && (config->metrics || config->readiness) &&
+      !laghu_operational_registry_open(
+          &laghu_apache_operational,
+          config != NULL && config->image_cache != NULL ? config->image_cache
+                                                        : LAGHU_DEFAULT_CACHE,
+          LAGHU_OPERATIONAL_SURFACE_APACHE,
+          LAGHU_OPERATIONAL_PROCESS_ADAPTER, true,
+          (uint64_t)apr_time_sec(apr_time_now())))
+    ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server,
+                 "Laghu operational registry unavailable; observability disabled");
   if (config != NULL && config->core.mode == LAGHU_MODE_ON &&
       !laghu_cache_backend_register_path(config->image_cache != NULL
                                              ? config->image_cache
@@ -378,6 +397,17 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   merged->statistics = (child->admin_set_mask & LAGHU_ADMIN_SET_STATS) != 0U
                            ? child->statistics
                            : parent->statistics;
+  merged->metrics = (child->admin_set_mask & LAGHU_ADMIN_SET_METRICS) != 0U
+                        ? child->metrics
+                        : parent->metrics;
+  merged->readiness =
+      (child->admin_set_mask & LAGHU_ADMIN_SET_READINESS) != 0U
+          ? child->readiness
+          : parent->readiness;
+  merged->readiness_strict =
+      (child->admin_set_mask & LAGHU_ADMIN_SET_READINESS_POLICY) != 0U
+          ? child->readiness_strict
+          : parent->readiness_strict;
   merged->purge_token_file = child->purge_token_file != NULL
                                  ? child->purge_token_file
                                  : parent->purge_token_file;
@@ -981,18 +1011,38 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
     return NULL;
   }
   if (ap_cstr_casecmp(name, "PurgeQuery") == 0 ||
-      ap_cstr_casecmp(name, "Statistics") == 0) {
+      ap_cstr_casecmp(name, "Statistics") == 0 ||
+      ap_cstr_casecmp(name, "Metrics") == 0 ||
+      ap_cstr_casecmp(name, "Readiness") == 0) {
     uint32_t bit = ap_cstr_casecmp(name, "PurgeQuery") == 0
                        ? LAGHU_ADMIN_SET_QUERY
-                       : LAGHU_ADMIN_SET_STATS;
-    bool *target = bit == LAGHU_ADMIN_SET_QUERY ? &config->purge_query
-                                                : &config->statistics;
+                       : (ap_cstr_casecmp(name, "Statistics") == 0
+                              ? LAGHU_ADMIN_SET_STATS
+                              : (ap_cstr_casecmp(name, "Metrics") == 0
+                                     ? LAGHU_ADMIN_SET_METRICS
+                                     : LAGHU_ADMIN_SET_READINESS));
+    bool *target = bit == LAGHU_ADMIN_SET_QUERY
+                       ? &config->purge_query
+                       : (bit == LAGHU_ADMIN_SET_STATS
+                              ? &config->statistics
+                              : (bit == LAGHU_ADMIN_SET_METRICS
+                                     ? &config->metrics
+                                     : &config->readiness));
     if ((config->admin_set_mask & bit) != 0U ||
         (ap_cstr_casecmp(parameter, "On") != 0 &&
          ap_cstr_casecmp(parameter, "Off") != 0))
       return "Laghu administration toggle expects On or Off once";
     *target = ap_cstr_casecmp(parameter, "On") == 0;
     config->admin_set_mask |= bit;
+    return NULL;
+  }
+  if (ap_cstr_casecmp(name, "ReadinessPolicy") == 0) {
+    if ((config->admin_set_mask & LAGHU_ADMIN_SET_READINESS_POLICY) != 0U ||
+        (ap_cstr_casecmp(parameter, "Degraded") != 0 &&
+         ap_cstr_casecmp(parameter, "Strict") != 0))
+      return "Laghu ReadinessPolicy expects Degraded or Strict once";
+    config->readiness_strict = ap_cstr_casecmp(parameter, "Strict") == 0;
+    config->admin_set_mask |= LAGHU_ADMIN_SET_READINESS_POLICY;
     return NULL;
   }
   if (ap_cstr_casecmp(name, "PurgeTokenFile") == 0 ||
@@ -1115,6 +1165,18 @@ static bool laghu_apache_backend_available(laghu_apache_config *config) {
 static void laghu_apache_status(request_rec *request, laghu_decision decision) {
   const char *cache = "bypass";
   const char *transform = "pass";
+  (void)laghu_operational_registry_heartbeat(
+      &laghu_apache_operational, (uint64_t)apr_time_sec(apr_time_now()), true,
+      0U, 0U);
+  laghu_operational_registry_record(
+      &laghu_apache_operational,
+      decision == LAGHU_DECISION_IMAGE_HIT
+          ? LAGHU_OPERATIONAL_DECISION_CACHED
+          : (decision == LAGHU_DECISION_PASS
+                 ? LAGHU_OPERATIONAL_DECISION_ORIGINAL
+                 : LAGHU_OPERATIONAL_DECISION_BYPASS),
+      request->bytes_sent > 0 ? (size_t)request->bytes_sent : 0U,
+      request->bytes_sent > 0 ? (size_t)request->bytes_sent : 0U, 0U);
   apr_table_setn(request->headers_out, "X-Laghu",
                  laghu_decision_name(decision));
   if (decision == LAGHU_DECISION_IMAGE_HIT) {
@@ -2109,7 +2171,10 @@ static int laghu_apache_variant_handler(request_rec *request) {
       strcmp(request->method, "PURGE") == 0 ||
       (request->unparsed_uri != NULL &&
        strstr(request->unparsed_uri, "laghu=purge") != NULL) ||
-      (request->uri != NULL && strcmp(request->uri, "/.laghu/stats") == 0);
+      (request->uri != NULL &&
+       (strcmp(request->uri, "/.laghu/stats") == 0 ||
+        strcmp(request->uri, "/.laghu/metrics") == 0 ||
+        strcmp(request->uri, "/.laghu/ready") == 0));
   if (request->uri == NULL ||
       (strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
        !administration_candidate)) {
@@ -2139,7 +2204,14 @@ static int laghu_apache_variant_handler(request_rec *request) {
                           strstr(request->unparsed_uri, "laghu=purge") != NULL);
     bool stats_request =
         normalized_ok && strcmp(normalized, "/.laghu/stats") == 0;
-    if (purge_request || stats_request) {
+    bool metrics_request =
+        normalized_ok && strcmp(normalized, "/.laghu/metrics") == 0;
+    bool readiness_request =
+        normalized_ok && strcmp(normalized, "/.laghu/ready") == 0;
+    if ((metrics_request && !config->metrics) ||
+        (readiness_request && !config->readiness))
+      return HTTP_NOT_FOUND;
+    if (purge_request || stats_request || metrics_request || readiness_request) {
       const char *provided =
           apr_table_get(request->headers_in, "X-Laghu-Purge-Token");
       bool peer_allowed = false, token_allowed = false;
@@ -2219,6 +2291,61 @@ static int laghu_apache_variant_handler(request_rec *request) {
             (unsigned long long)stats.full_purges,
             (unsigned long long)stats.cache_generation);
         return OK;
+      }
+      if (metrics_request || readiness_request) {
+        laghu_operational_snapshot *snapshot;
+        char *rendered;
+        size_t length = 0U;
+        bool enabled = metrics_request ? config->metrics : config->readiness;
+        (void)laghu_operational_registry_heartbeat(
+            &laghu_apache_operational,
+            (uint64_t)apr_time_sec(apr_time_now()), true, 0U, 0U);
+        if (!enabled ||
+            (request->method_number != M_GET && !request->header_only))
+          return HTTP_METHOD_NOT_ALLOWED;
+        snapshot = apr_pcalloc(request->pool, sizeof(*snapshot));
+        rendered = apr_palloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
+        if (snapshot == NULL || rendered == NULL)
+          return HTTP_INTERNAL_SERVER_ERROR;
+        if (!laghu_operational_registry_snapshot(&laghu_apache_operational,
+                                                 snapshot))
+          return HTTP_SERVICE_UNAVAILABLE;
+        if (metrics_request) {
+          if (!laghu_operational_render_prometheus(
+                  snapshot, (uint64_t)apr_time_sec(apr_time_now()), rendered,
+                  LAGHU_OPERATIONAL_RENDER_SIZE, &length))
+            return HTTP_INTERNAL_SERVER_ERROR;
+          ap_set_content_type(request,
+                              "text/plain; version=0.0.4; charset=utf-8");
+          ap_set_content_length(request, (apr_off_t)length);
+          request->status = HTTP_OK;
+          return request->header_only ||
+                         ap_rwrite(rendered, (int)length, request) >= 0
+                     ? OK
+                     : HTTP_INTERNAL_SERVER_ERROR;
+        } else {
+          laghu_operational_readiness readiness;
+          laghu_cache_stats stats = {0};
+          bool cache_ready =
+              laghu_cache_backend_health_path(config->image_cache, &stats);
+          laghu_operational_registry_cache(&laghu_apache_operational, &stats);
+          if (!laghu_operational_readiness_evaluate(
+                  snapshot, (uint64_t)apr_time_sec(apr_time_now()), true,
+                  cache_ready, config->readiness_strict, &readiness) ||
+              !laghu_operational_render_readiness(
+                  &readiness, config->readiness_strict, rendered,
+                  LAGHU_OPERATIONAL_RENDER_SIZE, &length))
+            return HTTP_INTERNAL_SERVER_ERROR;
+          request->status = readiness.runtime_ready && readiness.cache_ready &&
+                                    readiness.workers_ready
+                                ? HTTP_OK
+                                : HTTP_SERVICE_UNAVAILABLE;
+          ap_set_content_length(request, (apr_off_t)length);
+          return request->header_only ||
+                         ap_rwrite(rendered, (int)length, request) >= 0
+                     ? OK
+                     : HTTP_INTERNAL_SERVER_ERROR;
+        }
       }
       if ((strcmp(request->method, "PURGE") == 0 && !config->purge_method) ||
           (purge_control && !config->purge_query))

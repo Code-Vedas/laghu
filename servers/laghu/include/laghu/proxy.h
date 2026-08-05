@@ -87,6 +87,9 @@ typedef struct {
   bool purge_method;
   bool purge_query;
   bool statistics;
+  bool metrics;
+  bool readiness;
+  bool readiness_strict;
   bool origin_tls;
   bool font_providers_loaded;
   bool javascript_queue_enabled;

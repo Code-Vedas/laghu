@@ -636,12 +636,14 @@ static int laghu_libvips_submit_sprite(const char *queue_path,
 static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
                                bool once) {
   laghu_runtime_queue queue = {0};
+  laghu_operational_registry operational;
   laghu_runtime_job job;
   unsigned char *payload;
   int status = 0;
   time_t last_diagnostic = 0;
 
   laghu_runtime_queue_init(&queue);
+  laghu_operational_registry_init(&operational);
   if (!laghu_runtime_queue_open(&queue, queue_path)) {
     fprintf(stderr, "laghu-libvips: cannot open queue %s\n", queue_path);
     return 1;
@@ -657,17 +659,26 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     laghu_runtime_queue_close(&queue);
     return 1;
   }
+  (void)laghu_operational_registry_open(
+      &operational, cache_path, LAGHU_OPERATIONAL_SURFACE_WORKER,
+      LAGHU_OPERATIONAL_PROCESS_LIBVIPS, true, (uint64_t)time(NULL));
   for (;;) {
+    uint64_t capacity = 0U, occupied = 0U;
     if (laghu_libvips_stop_requested()) {
       break;
     }
     (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
+    (void)laghu_runtime_queue_status(&queue, &capacity, &occupied);
+    (void)laghu_operational_registry_heartbeat(
+        &operational, (uint64_t)time(NULL), true, capacity, occupied);
     (void)laghu_cache_backend_maintain_path(cache_path, (uint64_t)time(NULL));
     if (laghu_runtime_queue_try_take(&queue, &job, payload,
                                      queue.slot_payload_size)) {
       int job_status = laghu_libvips_run_isolated(&job, cache_path);
       if (job_status != 0) {
         laghu_libvips_job_diagnostic(&job, job_status, &last_diagnostic);
+        laghu_operational_registry_failure(
+            &operational, LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
       }
       status = job_status == 4 ? 0 : job_status;
       (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
@@ -681,6 +692,7 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
       laghu_libvips_pause(50U);
     }
   }
+  laghu_operational_registry_close(&operational);
   free(payload);
   laghu_runtime_queue_close(&queue);
   return status;

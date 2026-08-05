@@ -644,6 +644,12 @@ def main():
                 str(flush_file),
                 "--statistics",
                 "on",
+                "--metrics",
+                "on",
+                "--readiness",
+                "on",
+                "--readiness-policy",
+                "degraded",
             ],
             stdout=subprocess.DEVNULL,
             stderr=main_log,
@@ -784,13 +790,21 @@ def main():
             health_head, health_body = request(proxy_port, "/.laghu/health")
             assert b" 200 " in health_head.split(b"\r\n", 1)[0]
             assert health_body == b'{"status":"ok","state":"running"}'
-            ready_head, ready_body = request(proxy_port, "/.laghu/ready")
-            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
-            assert b'"optimizer":"degraded"' in ready_body
             forbidden_head, _ = request(proxy_port, "/.laghu/stats")
             assert b" 403 " in forbidden_head.split(b"\r\n", 1)[0]
             admin_headers = {"X-Laghu-Purge-Token":
                              "standalone-purge-token-0123456789"}
+            ready_head, ready_body = request(
+                proxy_port, "/.laghu/ready", headers=admin_headers
+            )
+            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
+            assert b'"status":"ready"' in ready_body
+            metrics_head, metrics_body = request(
+                proxy_port, "/.laghu/metrics", headers=admin_headers
+            )
+            assert b" 200 " in metrics_head.split(b"\r\n", 1)[0]
+            assert b"text/plain; version=0.0.4" in metrics_head
+            assert b"laghu_requests_total" in metrics_body
             stats_head, stats_body = request(
                 proxy_port, "/.laghu/stats", headers=admin_headers
             )
@@ -815,11 +829,14 @@ def main():
                 ],
                 check=True,
             )
-            ready_head, ready_body = request(proxy_port, "/.laghu/ready")
-            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
-            assert b'"optimizer":"ready"' in ready_body
             ready_head, ready_body = request(
-                proxy_port, "/.laghu/ready", method="HEAD"
+                proxy_port, "/.laghu/ready", headers=admin_headers
+            )
+            assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
+            assert b'"status":"ready"' in ready_body
+            ready_head, ready_body = request(
+                proxy_port, "/.laghu/ready", method="HEAD",
+                headers=admin_headers
             )
             assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
             assert ready_body == b""
@@ -829,18 +846,18 @@ def main():
                 cache_path.rename(unavailable_path)
                 try:
                     unavailable_head, unavailable_body = request(
-                        proxy_port, "/.laghu/ready"
+                        proxy_port, "/.laghu/ready", headers=admin_headers
                     )
                 finally:
                     unavailable_path.rename(cache_path)
             else:
                 cache_path.chmod(0o500)
                 unavailable_head, unavailable_body = request(
-                    proxy_port, "/.laghu/ready"
+                    proxy_port, "/.laghu/ready", headers=admin_headers
                 )
                 cache_path.chmod(0o700)
             assert b" 503 " in unavailable_head.split(b"\r\n", 1)[0]
-            assert b'"cache":"unavailable"' in unavailable_body
+            assert b'"cache":"not_ready"' in unavailable_body
             second_head, second_body = request(proxy_port, "/index.html")
             assert b"<!-- remove -->" not in second_body
             assert b"/.laghu/beacon/instrumentation.js" in second_body
@@ -1004,7 +1021,7 @@ def main():
             logs = main_log.read().decode()
             assert '"event":"startup"' in logs
             assert '"event":"transaction"' in logs
-            assert '"event":"readiness"' in logs
+            assert '"path":"/.laghu/ready"' in logs
             if sys.platform != "win32":
                 assert '"state":"draining"' in logs
                 assert '"state":"stopped"' in logs

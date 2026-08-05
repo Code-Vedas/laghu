@@ -62,6 +62,9 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu purge_allow CIDR;` | inherited, repeatable | IPv4/IPv6 CIDR | none | Restricts administration to matching direct peers. |
 | `laghu cache_flush_file PATH;` | inherited | absolute protected file | unset | Polls `laghu-cache-flush-v1 GENERATION` full-cache invalidations. |
 | `laghu statistics on\|off;` | inherited | boolean | `off` | Enables authenticated `GET`/`HEAD /.laghu/stats`. |
+| `laghu metrics on\|off;` | inherited | boolean | `off` | Enables authenticated Prometheus text at `GET`/`HEAD /.laghu/metrics`. |
+| `laghu readiness on\|off;` | inherited | boolean | `off` | Enables authenticated aggregate readiness JSON at `GET`/`HEAD /.laghu/ready`. |
+| `laghu readiness_policy degraded\|strict;` | inherited | readiness policy | `degraded` | Keeps fail-open worker loss ready but degraded, or makes required-worker loss return `503`. |
 | `laghu rum_store URI;` | `http` | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
 | `laghu rum_store_local_snapshot PATH;` | `http` | bounded path | `<file cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
 | `laghu rum_store_client_library PATH;` | `http` | hiredis library path | unset | Enables runtime-loaded Redis/Valkey support. |

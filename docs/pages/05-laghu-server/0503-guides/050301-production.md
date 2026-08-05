@@ -70,10 +70,8 @@ Configure graceful termination to allow at least the selected drain timeout and 
 ## Validation
 
 ```bash
-laghu doctor
-laghu status
 curl -sS -D- https://edge.example.com/ -o /dev/null
-laghu explain https://edge.example.com/
+curl -sS -H "X-Laghu-Purge-Token: $LAGHU_OPERATIONS_TOKEN" https://edge.example.com/.laghu/ready
 ```
 
-Warm representative traffic, compare application behavior and byte counts, then expand through the experiment framework rather than switching an entire fleet at once.
+Warm representative traffic, compare application behavior and byte counts, then expand one bounded deployment scope at a time.

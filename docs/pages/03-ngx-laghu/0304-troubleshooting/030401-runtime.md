@@ -22,7 +22,7 @@ The running workers retain the previous valid configuration when a reload is rej
 
 ## Requests Pass Through
 
-Use `laghu explain <url>` and inspect `X-Laghu` plus the response cache/CSP headers.
+Inspect `X-Laghu`, response cache/CSP headers, and authenticated metrics.
 Authorization, `private`, `no-store`, unsupported status/content type, excluded API paths, malformed bodies, size limits, unready dependencies, and never-larger rejection are expected passthrough reasons.
 Do not enable `allow_api` globally merely to hide an exclusion.
 
@@ -30,7 +30,7 @@ Do not enable `allow_api` globally merely to hide an exclusion.
 
 Laghu worker loss should not block the NGINX event loop.
 If latency rises, check body-capture limits, disk latency, cache contention, configuration loops, and unrelated upstream behavior, then compare a canary location with `laghu off;`.
-Capture `nginx -T`, `laghu status`, metrics, and a representative `laghu explain` result before escalation.
+Capture `nginx -T`, authenticated metrics/readiness output, and representative response headers before escalation.
 
 | Symptom | Check | Expected recovery |
 | --- | --- | --- |

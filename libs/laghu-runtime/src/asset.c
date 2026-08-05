@@ -386,6 +386,7 @@ static bool laghu_asset_config_value(laghu_asset_config *config,
   COPY_FIELD("deny_paths", config->policy.deny_paths);
   COPY_FIELD("catalog_path", config->catalog_path);
   COPY_FIELD("queue_path", config->queue_path);
+  COPY_FIELD("operational_cache_path", config->operational_cache_path);
   COPY_FIELD("provider", config->provider);
   COPY_FIELD("endpoint", config->endpoint);
   COPY_FIELD("region", config->region);
@@ -481,6 +482,8 @@ bool laghu_asset_config_load(const char *path, laghu_asset_config *config,
       !laghu_asset_policy_validate(&parsed.policy, error, error_size) ||
       !laghu_asset_safe_path(parsed.catalog_path) ||
       !laghu_asset_safe_path(parsed.queue_path) ||
+      (parsed.operational_cache_path[0] != '\0' &&
+       !laghu_asset_safe_path(parsed.operational_cache_path)) ||
       !laghu_asset_https_origin(parsed.endpoint) || parsed.region[0] == '\0' ||
       parsed.bucket[0] == '\0' || parsed.access_key_env[0] == '\0' ||
       parsed.secret_key_env[0] == '\0' ||

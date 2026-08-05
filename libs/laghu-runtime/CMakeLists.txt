@@ -9,7 +9,7 @@ else()
   set(LAGHU_RUNTIME_SOURCE src/runtime_posix.c)
 endif()
 
-add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/cache.c src/source.c src/asset.c src/rum.c src/catalog.c src/html.c src/html_head.c src/html_hints.c src/css_runtime.c src/css_catalog.c src/css_combine.c src/css_imports.c src/css_markup.c src/critical_css.c src/font_provider.c src/javascript.c src/javascript_defer.c src/instrumentation.c src/beacon.c)
+add_library(laghu_runtime STATIC ${LAGHU_RUNTIME_SOURCE} src/cache.c src/operational.c src/source.c src/asset.c src/rum.c src/catalog.c src/html.c src/html_head.c src/html_hints.c src/css_runtime.c src/css_catalog.c src/css_combine.c src/css_imports.c src/css_markup.c src/critical_css.c src/font_provider.c src/javascript.c src/javascript_defer.c src/instrumentation.c src/beacon.c)
 add_library(Laghu::Runtime ALIAS laghu_runtime)
 
 target_include_directories(laghu_runtime
@@ -38,10 +38,12 @@ if(LAGHU_BUILD_FUZZERS)
 endif()
 
 if(LAGHU_BUILD_TESTS)
+  find_package(Threads REQUIRED)
   add_executable(laghu_runtime_cache_fixture tests/cache_fixture.c)
   target_link_libraries(laghu_runtime_cache_fixture PRIVATE Laghu::Runtime)
   add_executable(laghu_runtime_test tests/runtime_test.c)
   target_link_libraries(laghu_runtime_test PRIVATE Laghu::Runtime)
+  target_link_libraries(laghu_runtime_test PRIVATE Threads::Threads)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(laghu_runtime_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()

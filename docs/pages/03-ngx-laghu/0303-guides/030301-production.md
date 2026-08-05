@@ -102,9 +102,8 @@ Laghu loads hiredis dynamically from `rum_store_client_library`, verifies TLS, a
 
 ```bash
 nginx -t
-laghu doctor
-laghu status
 curl -sS -D- https://www.example.com/ -o /dev/null
+curl -sS -H "X-Laghu-Purge-Token: $LAGHU_OPERATIONS_TOKEN" https://www.example.com/.laghu/ready
 ```
 
 Begin with one canary server or location, compare cold and warm responses, inspect `X-Laghu`, validators, cache metrics, worker health, and Core Web Vitals, then expand the rollout.

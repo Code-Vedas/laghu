@@ -605,6 +605,8 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   laghu_asset_provider provider;
   char error[256];
   bool serve;
+  laghu_operational_registry operational;
+  laghu_operational_registry_init(&operational);
   error[0] = '\0';
 #ifdef _WIN32
   WSADATA sockets;
@@ -625,16 +627,29 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   SSL_CTX_set_verify(s3.tls, SSL_VERIFY_PEER, NULL);
   provider = (laghu_asset_provider){laghu_s3_upload, laghu_s3_verify, NULL,
                                     laghu_s3_healthy, &s3};
+  if (s3.config.operational_cache_path[0] != '\0')
+    (void)laghu_operational_registry_open(
+        &operational, s3.config.operational_cache_path,
+        LAGHU_OPERATIONAL_SURFACE_WORKER,
+        LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD, true,
+        (uint64_t)time(NULL));
   (void)signal(SIGINT, laghu_asset_signal);
   (void)signal(SIGTERM, laghu_asset_signal);
   do {
     int status = laghu_asset_process(&s3, &provider);
+    (void)laghu_operational_registry_heartbeat(
+        &operational, (uint64_t)time(NULL), status == 0, 0U, 0U);
+    if (status != 0)
+      laghu_operational_registry_failure(
+          &operational, LAGHU_OPERATIONAL_FAILURE_WORKER);
     if (!serve) {
+      laghu_operational_registry_close(&operational);
       SSL_CTX_free(s3.tls);
       return status;
     }
     if (!laghu_asset_stop) laghu_sleep(1U);
   } while (!laghu_asset_stop);
+  laghu_operational_registry_close(&operational);
   SSL_CTX_free(s3.tls);
 #ifdef _WIN32
   WSACleanup();

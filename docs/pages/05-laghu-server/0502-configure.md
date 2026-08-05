@@ -66,6 +66,9 @@ The standalone server accepts command-line options only.
 | `--purge-allow CIDR` | canonical IPv4/IPv6 CIDR, repeatable to 64 | none | Restricts administration to matching direct peers. |
 | `--cache-flush-file PATH` | absolute protected file | unset | Polls `laghu-cache-flush-v1 GENERATION` full-cache invalidations. |
 | `--statistics on\|off` | boolean | `off` | Enables authenticated `GET`/`HEAD /.laghu/stats`. |
+| `--metrics on\|off` | boolean | `off` | Enables authenticated Prometheus text at `GET`/`HEAD /.laghu/metrics`. |
+| `--readiness on\|off` | boolean | `off` | Enables authenticated aggregate readiness JSON at `GET`/`HEAD /.laghu/ready`. |
+| `--readiness-policy degraded\|strict` | readiness policy | `degraded` | Keeps fail-open worker loss ready but degraded, or makes required-worker loss return `503`. |
 | `--rum-store URI` | `memory:`, `local:`, supported Redis URI | `local:` | Selects RUM persistence/synchronization. |
 | `--rum-store-local-snapshot PATH` | bounded path | `<cache>/rum.snapshot` | Selects last-known-good snapshot storage. |
 | `--rum-store-client-library PATH` | hiredis library path | unset | Enables Redis/Valkey support. |

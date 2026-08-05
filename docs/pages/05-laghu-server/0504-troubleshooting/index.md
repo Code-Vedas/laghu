@@ -8,7 +8,7 @@ permalink: /laghu-server/troubleshooting/
 
 # Troubleshoot the Laghu Server
 
-Preserve the failing transaction identifier, structured log interval, health output, and `laghu explain` result, then select a runbook.
+Preserve the failing transaction identifier, structured log interval, readiness output, metrics, and response headers, then select a runbook.
 
 - [Startup, listeners, and origins](/laghu-server/troubleshooting/runtime/)
 - [Workers, queues, and cache](/laghu-server/troubleshooting/workers-and-cache/)

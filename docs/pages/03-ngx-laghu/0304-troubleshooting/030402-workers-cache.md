@@ -21,7 +21,7 @@ Scale workers or reduce enabled high-cost filters; never place blocking publicat
 
 ## Cache Corruption or Unexpected 404
 
-Use `laghu explain` to identify the catalog and content hash, then verify the object exists, checksum matches, content type is correct, and the catalog version is supported.
+Use response headers and bounded operational metrics to identify the failure class, then verify the object exists, checksum matches, content type is correct, and the catalog version is supported.
 Purge the affected URL or hash through `laghu purge`; do not recursively delete a shared cache while workers are publishing.
 Ordinary origin traffic will republish missing derived content.
 

@@ -193,6 +193,9 @@ http {
     laghu purge_token_file ${SMOKE_DIR}/purge.token;
     laghu purge_allow 127.0.0.1/32;
     laghu statistics on;
+    laghu metrics on;
+    laghu readiness on;
+    laghu readiness_policy degraded;
 
     location = /site.css {
       default_type text/css;
@@ -653,6 +656,14 @@ curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/stats" | \
   grep 'laghu-cache-stats-v1' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/.laghu/metrics" | \
+  grep 'laghu_requests_total' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/.laghu/ready" | \
+  grep '"status":"ready"' >/dev/null
 curl --fail --silent --show-error --request PURGE \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/site.css" | grep 'accepted' >/dev/null

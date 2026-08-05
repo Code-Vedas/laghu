@@ -229,7 +229,13 @@ int main(void) {
                    "--purge-allow",
                    "127.0.0.0/8",
                    "--statistics",
-                   "on"};
+                   "on",
+                   "--metrics",
+                   "on",
+                   "--readiness",
+                   "on",
+                   "--readiness-policy",
+                   "strict"};
   char *rum[] = {"laghu",
                  "--listen",
                  "127.0.0.1:8080",

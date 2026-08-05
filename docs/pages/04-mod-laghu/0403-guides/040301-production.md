@@ -83,9 +83,8 @@ Ensure the final `RumStore` value reaches Laghu through an administrator-control
 
 ```bash
 apache2ctl configtest
-laghu doctor
-laghu status
 curl -sS -D- https://www.example.com/ -o /dev/null
+curl -sS -H "X-Laghu-Purge-Token: $LAGHU_OPERATIONS_TOKEN" https://www.example.com/.laghu/ready
 ```
 
 On RPM-family systems use `httpd -t` when that is the packaged command.

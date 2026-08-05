@@ -7,6 +7,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -39,10 +40,7 @@ use swc_core::{
 };
 
 #[cfg(windows)]
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
 const MAX_INPUT: usize = 2 * 1024 * 1024;
 const DEFAULT_TARGET: &str = "defaults and supports es6-module and not dead";
@@ -63,6 +61,120 @@ const FLAG_CONCAT_SAFE: u32 = 4;
 const FLAG_TOP_LEVEL_DECLARATION_FREE: u32 = 8;
 const FLAG_DEFER_SAFE: u32 = 16;
 const FILTER_MODULE: u64 = 1;
+const OPERATIONAL_MAGIC: u64 = 0x4c41_4748_554f_5053;
+const OPERATIONAL_VERSION: u32 = 1;
+const OPERATIONAL_SLOTS: usize = 64;
+const OPERATIONAL_HEADER: usize = 24;
+const OPERATIONAL_SLOT: usize = 352;
+const OPERATIONAL_SIZE: usize = OPERATIONAL_HEADER + OPERATIONAL_SLOTS * OPERATIONAL_SLOT;
+
+struct Operational {
+    map: MmapMut,
+    slot: usize,
+    generation: u64,
+}
+
+impl Operational {
+    fn open(cache: &Path) -> Result<Self> {
+        fs::create_dir_all(cache)?;
+        let mut path = cache.as_os_str().to_os_string();
+        path.push(".laghu-operations-v1");
+        let path = PathBuf::from(path);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
+        file.try_lock_exclusive()?;
+        if file.metadata()?.len() == 0 {
+            file.set_len(OPERATIONAL_SIZE as u64)?;
+        }
+        if file.metadata()?.len() != OPERATIONAL_SIZE as u64 {
+            FileExt::unlock(&file)?;
+            bail!("incompatible operational registry size");
+        }
+        let mut map = unsafe { MmapOptions::new().map_mut(&file)? };
+        if read_u64(&map, 0) == 0 {
+            map.fill(0);
+            write_u64(&mut map, 0, OPERATIONAL_MAGIC);
+            write_u32(&mut map, 8, OPERATIONAL_VERSION);
+            write_u32(&mut map, 12, OPERATIONAL_SLOTS as u32);
+            write_u64(&mut map, 16, epoch_seconds());
+        }
+        if read_u64(&map, 0) != OPERATIONAL_MAGIC
+            || read_u32(&map, 8) != OPERATIONAL_VERSION
+            || read_u32(&map, 12) as usize != OPERATIONAL_SLOTS
+        {
+            FileExt::unlock(&file)?;
+            bail!("incompatible operational registry");
+        }
+        let now = epoch_seconds();
+        let slot = (0..OPERATIONAL_SLOTS)
+            .find(|slot| {
+                let base = OPERATIONAL_HEADER + slot * OPERATIONAL_SLOT;
+                let active = read_u64(&map, base);
+                let heartbeat = read_u64(&map, base + 16);
+                active == 0 || heartbeat == 0 || heartbeat > now || now - heartbeat > 45
+            })
+            .context("operational registry has no free process slot")?;
+        let generation = read_u64(&map, 16).saturating_add(1);
+        write_u64(&mut map, 16, generation);
+        let base = OPERATIONAL_HEADER + slot * OPERATIONAL_SLOT;
+        map[base..base + OPERATIONAL_SLOT].fill(0);
+        write_u64(&mut map, base + 8, generation);
+        write_u64(&mut map, base + 16, now);
+        write_u64(&mut map, base + 24, 3); // worker surface
+        write_u64(&mut map, base + 32, 2); // javascript process
+        write_u64(&mut map, base + 40, 1);
+        write_u64(&mut map, base + 48, 1);
+        write_u64(&mut map, base, 1);
+        map.flush_async()?;
+        FileExt::unlock(&file)?;
+        Ok(Self {
+            map,
+            slot,
+            generation,
+        })
+    }
+
+    fn atomic(&self, offset: usize) -> &AtomicU64 {
+        let base = OPERATIONAL_HEADER + self.slot * OPERATIONAL_SLOT;
+        unsafe { &*(self.map.as_ptr().add(base + offset) as *const AtomicU64) }
+    }
+
+    fn heartbeat(&self, queue: &Queue) {
+        let occupied = (0..queue.slots)
+            .filter(|slot| {
+                let base = HEADER_SIZE + slot * (SLOT_SIZE + queue.payload_size);
+                read_u32(&queue.map, base) == SLOT_READY
+            })
+            .count();
+        self.atomic(48).store(1, Ordering::Relaxed);
+        self.atomic(56).store(queue.slots as u64, Ordering::Relaxed);
+        self.atomic(64).store(occupied as u64, Ordering::Relaxed);
+        self.atomic(16).store(epoch_seconds(), Ordering::Relaxed);
+    }
+
+    fn record(&self, success: bool) {
+        if !success {
+            self.atomic(216).fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for Operational {
+    fn drop(&mut self) {
+        if self.atomic(8).load(Ordering::Relaxed) == self.generation {
+            self.atomic(48).store(0, Ordering::Relaxed);
+        }
+    }
+}
+
+fn epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs())
+}
 const FILTER_SOURCE_MAP: u64 = 2;
 
 #[derive(Default)]
@@ -704,8 +816,20 @@ mod windows_worker_service {
         })?;
         let mut queue = Queue::open(&queue_path)?;
         fs::create_dir_all(&cache_path)?;
+        let operational = Operational::open(&cache_path).ok();
         while !stopped.load(Ordering::Acquire) {
-            if !process_one(&mut queue, &cache_path)? {
+            if let Some(registry) = &operational {
+                registry.heartbeat(&queue);
+            }
+            let processed = process_one(&mut queue, &cache_path);
+            if let Some(registry) = &operational {
+                if matches!(processed, Ok(true)) {
+                    registry.record(true);
+                } else if processed.is_err() {
+                    registry.record(false);
+                }
+            }
+            if !processed? {
                 let _ = receiver.recv_timeout(Duration::from_millis(25));
             }
         }
@@ -766,11 +890,35 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if action == "--once" {
-        let _ = process_one(&mut queue, &cache_path)?;
+        let operational = Operational::open(&cache_path).ok();
+        if let Some(registry) = &operational {
+            registry.heartbeat(&queue);
+        }
+        let processed = process_one(&mut queue, &cache_path);
+        if let Some(registry) = &operational {
+            if matches!(processed, Ok(true)) {
+                registry.record(true);
+            } else if processed.is_err() {
+                registry.record(false);
+            }
+        }
+        let _ = processed?;
         return Ok(());
     }
+    let operational = Operational::open(&cache_path).ok();
     loop {
-        if !process_one(&mut queue, &cache_path)? {
+        if let Some(registry) = &operational {
+            registry.heartbeat(&queue);
+        }
+        let processed = process_one(&mut queue, &cache_path);
+        if let Some(registry) = &operational {
+            if matches!(processed, Ok(true)) {
+                registry.record(true);
+            } else if processed.is_err() {
+                registry.record(false);
+            }
+        }
+        if !processed? {
             thread::sleep(Duration::from_millis(25));
         }
     }

@@ -408,6 +408,29 @@ bool laghu_runtime_queue_heartbeat(laghu_runtime_queue *queue,
   return true;
 }
 
+bool laghu_runtime_queue_status(laghu_runtime_queue *queue,
+                                uint64_t *capacity, uint64_t *occupied) {
+  laghu_queue_header *header;
+  unsigned int index;
+  uint64_t count = 0U;
+  if (queue == NULL || queue->mapping == NULL || capacity == NULL ||
+      occupied == NULL || !laghu_lock((HANDLE)(uintptr_t)queue->platform_file))
+    return false;
+  header = laghu_header(queue);
+  if (header->magic != LAGHU_QUEUE_MAGIC ||
+      header->version != LAGHU_QUEUE_VERSION ||
+      header->slot_count != queue->slot_count) {
+    laghu_unlock((HANDLE)(uintptr_t)queue->platform_file);
+    return false;
+  }
+  for (index = 0U; index < header->slot_count; ++index)
+    if (laghu_slot(queue, index)->state == LAGHU_SLOT_READY) ++count;
+  *capacity = header->slot_count;
+  *occupied = count;
+  laghu_unlock((HANDLE)(uintptr_t)queue->platform_file);
+  return true;
+}
+
 void laghu_runtime_queue_close(laghu_runtime_queue *queue) {
   if (queue == NULL) {
     return;

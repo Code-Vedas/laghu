@@ -81,8 +81,9 @@ function Copy-TestServerRoot([string] $Source, [string] $Destination) {
 }
 
 function Assert-CommonBehavior([int] $Port, $Cold) {
-  if ($Cold.StatusCode -ne 200 -or (Get-HeaderValue $Cold "X-Laghu") -ne "pass") {
-    throw "cold response did not pass through Laghu"
+  $laghu = Get-HeaderValue $Cold "X-Laghu"
+  if ($Cold.StatusCode -ne 200 -or $laghu -ne "pass") {
+    throw "cold response did not pass through Laghu (status=$($Cold.StatusCode), x-laghu=$laghu)"
   }
   if ((Get-HeaderValue $Cold "X-Laghu-Cache") -ne "miss" -or
       (Get-HeaderValue $Cold "X-Laghu-Transform") -ne "queued") {
