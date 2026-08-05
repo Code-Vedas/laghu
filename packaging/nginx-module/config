@@ -8,24 +8,25 @@ ngx_addon_name=ngx_http_laghu_module
 LAGHU_REPO_DIR="$ngx_addon_dir/../.."
 LAGHU_MODULE_DIR="$LAGHU_REPO_DIR/modules/ngx_http_laghu_module"
 LAGHU_CORE_DIR="$LAGHU_REPO_DIR/libs/laghu-core"
+LAGHU_BASE_DIR="$LAGHU_REPO_DIR/libs/laghu-base"
+LAGHU_MARKUP_DIR="$LAGHU_REPO_DIR/libs/laghu-markup"
 LAGHU_RUNTIME_DIR="$LAGHU_REPO_DIR/libs/laghu-runtime"
 LAGHU_IMAGE_DIR="$LAGHU_REPO_DIR/libs/laghu-image"
 LAGHU_HTTP_DIR="$LAGHU_REPO_DIR/libs/laghu-http"
-LAGHU_MODULE_SRCS="$LAGHU_MODULE_DIR/ngx_http_laghu_module.c $LAGHU_HTTP_DIR/src/http.c $LAGHU_CORE_DIR/src/core.c $LAGHU_IMAGE_DIR/src/image.c $LAGHU_IMAGE_DIR/src/markup.c $LAGHU_IMAGE_DIR/src/css.c $LAGHU_RUNTIME_DIR/src/runtime_posix.c $LAGHU_RUNTIME_DIR/src/cache.c $LAGHU_RUNTIME_DIR/src/csp.c $LAGHU_RUNTIME_DIR/src/source.c $LAGHU_RUNTIME_DIR/src/asset.c $LAGHU_RUNTIME_DIR/src/catalog.c $LAGHU_RUNTIME_DIR/src/html.c $LAGHU_RUNTIME_DIR/src/html_head.c $LAGHU_RUNTIME_DIR/src/html_hints.c $LAGHU_RUNTIME_DIR/src/css_runtime.c $LAGHU_RUNTIME_DIR/src/css_catalog.c $LAGHU_RUNTIME_DIR/src/css_combine.c $LAGHU_RUNTIME_DIR/src/css_imports.c $LAGHU_RUNTIME_DIR/src/css_markup.c $LAGHU_RUNTIME_DIR/src/critical_css.c $LAGHU_RUNTIME_DIR/src/font_provider.c $LAGHU_RUNTIME_DIR/src/javascript.c $LAGHU_RUNTIME_DIR/src/beacon.c"
-LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $LAGHU_RUNTIME_DIR/src/budget.c"
-LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $LAGHU_RUNTIME_DIR/src/javascript_defer.c $LAGHU_RUNTIME_DIR/src/instrumentation.c"
-LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $LAGHU_RUNTIME_DIR/src/lcp.c"
-LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $LAGHU_RUNTIME_DIR/src/rum.c"
+LAGHU_MODULE_SRCS="$LAGHU_MODULE_DIR/ngx_http_laghu_module.c $LAGHU_RUNTIME_DIR/src/runtime_posix.c"
+for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http)$/ { gsub(/\r/, "", $3); print $3 }' "$LAGHU_REPO_DIR/cmake/laghu-sources.list"); do
+    LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $LAGHU_REPO_DIR/$laghu_source"
+done
 
 if test -n "$ngx_module_link"; then
     ngx_module_type=HTTP_AUX_FILTER
     ngx_module_name=ngx_http_laghu_module
-    ngx_module_incs="$LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
+    ngx_module_incs="$LAGHU_BASE_DIR/include $LAGHU_MARKUP_DIR/include $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
     ngx_module_srcs="$LAGHU_MODULE_SRCS"
 
     . auto/module
 else
     HTTP_AUX_FILTER_MODULES="$HTTP_AUX_FILTER_MODULES ngx_http_laghu_module"
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS $LAGHU_MODULE_SRCS"
-    CORE_INCS="$CORE_INCS $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
+    CORE_INCS="$CORE_INCS $LAGHU_BASE_DIR/include $LAGHU_MARKUP_DIR/include $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
 fi

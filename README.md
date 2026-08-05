@@ -8,12 +8,14 @@ The image path uses an out-of-process libvips worker: a cold request serves the 
 
 ## Product Shape
 
-Laghu keeps ten deliberate ownership boundaries:
+Laghu keeps explicit ownership boundaries:
 
+- `laghu-base` owns dependency-free bounded builders, ASCII operations, hashing, numeric parsing, and URL resolution.
+- `laghu-markup` owns bounded HTML tags and attributes, `srcset`, and shared resource tokenization.
 - `laghu-core` owns server-independent configuration and optimization policy.
-- `laghu-image` owns explicit-codec image transforms and markup primitives.
-- `laghu-runtime` owns the bounded queue and atomic disk publication protocol.
-- `laghu-http` owns the bounded, server-neutral HTTP transaction contract and executable response orchestration.
+- `laghu-image` owns explicit-codec image transforms, probes, and image-markup decisions.
+- `laghu-runtime` owns caches, queues, catalogs, RUM, operational state, and transformation services.
+- `laghu-http` solely owns normalized transactions, transformation sequencing, cache selection, headers, publication, budgets, and fail-open results.
 - `laghu-libvips` owns isolated libvips execution and deadline enforcement.
 - `laghu-js-optimize` owns isolated SWC parsing, target lowering, compression, and local mangling.
 - `ngx_http_laghu_module` owns NGINX configuration, filter integration, and fail-open request handling.
@@ -24,6 +26,8 @@ Laghu keeps ten deliberate ownership boundaries:
 ## Repository Map
 
 - `libs/laghu-core/`: canonical native policy library and unit tests
+- `libs/laghu-base/`: dependency-free bounded primitives
+- `libs/laghu-markup/`: shared bounded markup tokenization
 - `libs/laghu-image/`: server-independent image and image-markup pipeline
 - `libs/laghu-runtime/`: shared queue and content-addressed cache protocol
 - `libs/laghu-http/`: shared HTTP transaction engine and conformance tests

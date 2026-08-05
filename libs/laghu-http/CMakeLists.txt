@@ -3,7 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-add_library(laghu_http STATIC src/http.c)
+laghu_manifest_sources(http LAGHU_HTTP_SOURCES)
+add_library(laghu_http STATIC ${LAGHU_HTTP_SOURCES})
 add_library(Laghu::Http ALIAS laghu_http)
 
 target_include_directories(laghu_http

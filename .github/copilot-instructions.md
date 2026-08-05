@@ -2,15 +2,18 @@
 
 ## Placement
 
-- `libs/laghu-core` owns server-independent policy and direct C tests.
-- `libs/laghu-image` owns explicit-loader image transforms and image-markup primitives; libvips remains private to this library and its worker consumer.
-- `libs/laghu-runtime` owns the server-independent queue/cache protocol.
+- `libs/laghu-base` owns dependency-free bounded primitives; `libs/laghu-markup` owns shared bounded tokenization.
+- `libs/laghu-core` owns the shared configuration schema, resolved policy, eligibility, selection, and direct C tests.
+- `libs/laghu-image` owns explicit-loader image transforms, probes, and image-markup decisions; libvips remains private to this library and its worker consumer.
+- `libs/laghu-runtime` owns caches, queues, catalogs, RUM, operational state, and transformation services.
+- `libs/laghu-http` owns normalized transactions, sequencing, cache selection, headers, publications, budgets, and fail-open results.
 - `workers/laghu-libvips` owns codec probing, isolated execution, and atomic publication. Server adapters must never link codec libraries or invoke codec commands.
 - `modules/ngx_http_laghu_module` owns NGINX types, directives, lifecycle, and response-filter integration.
 - `modules/mod_laghu` owns Apache types, directives, lifecycle, APR pools, and bucket-brigade integration.
 - `ngx-laghu` and `mod-laghu` are equal product surfaces. Shared filters belong in libraries; never implement a filter only inside one module.
 - `docs/` owns supported public product behavior.
 - `scripts/` owns repository-wide local and CI entrypoints.
+- `cmake/laghu-sources.list` is the canonical native source inventory for build and packaging consumers.
 
 ## Planning and Progress Tracking
 

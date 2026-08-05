@@ -95,15 +95,21 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
                                      bool required, uint64_t now) {
   laghu_operational_header *header;
   char path[LAGHU_RUNTIME_PATH_SIZE];
-  unsigned int index, selected = LAGHU_OPERATIONAL_MAX_SLOTS;
+  unsigned int index, lock_attempt;
+  unsigned int selected = LAGHU_OPERATIONAL_MAX_SLOTS;
   if (registry == NULL || surface >= LAGHU_OPERATIONAL_SURFACE_COUNT ||
       kind >= LAGHU_OPERATIONAL_PROCESS_COUNT || now == 0U ||
       !laghu_path(cache_path, path, sizeof(path)))
     return false;
   laghu_operational_registry_init(registry);
   if (!laghu_runtime_shared_mapping_open(&registry->mapping, path,
-                                         sizeof(laghu_operational_header)) ||
-      !laghu_runtime_shared_mapping_try_lock(&registry->mapping)) {
+                                         sizeof(laghu_operational_header))) {
+    laghu_runtime_shared_mapping_close(&registry->mapping);
+    return false;
+  }
+  for (lock_attempt = 0U; lock_attempt < 64U; ++lock_attempt)
+    if (laghu_runtime_shared_mapping_try_lock(&registry->mapping)) break;
+  if (lock_attempt == 64U) {
     laghu_runtime_shared_mapping_close(&registry->mapping);
     return false;
   }

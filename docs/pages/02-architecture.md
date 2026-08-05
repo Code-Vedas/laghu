@@ -57,6 +57,8 @@ flowchart TB
   end
 
   subgraph libraries[Shared native libraries]
+    base[laghu-base<br/>bounded primitives]
+    markup[laghu-markup<br/>shared tokenization]
     http[laghu-http<br/>bounded transaction ABI]
     core[laghu-core<br/>policy, eligibility, keys]
     runtime[laghu-runtime<br/>planners, catalogs, RUM]
@@ -74,20 +76,27 @@ flowchart TB
   proxy --> http
   http --> core
   http --> runtime
+  core --> base
+  markup --> base
+  runtime --> markup
   runtime --> image
   runtime -. image queue .-> vips
   runtime -. font queue .-> fetch
   runtime -. JavaScript queue .-> swc
 ```
 
+### `laghu-base` and `laghu-markup`
+
+`laghu-base` is the only owner of dependency-free bounded buffers, builders, ASCII operations, SHA-256, numeric parsing, and same-origin URL resolution. `laghu-markup` builds on it and is the only owner of bounded HTML tag and attribute iteration, `srcset` parsing, and shared resource tokenization. Grammar-specific planners visit these tokens instead of maintaining independent scanners.
+
 ### `laghu-core`
 
-`laghu-core` owns configuration merge, presets, rewrite levels, response eligibility, filter masks, policy keys, SHA-256 variant keys, and final acceptance gates.
+`laghu-core` owns the shared setting schema, configuration merge, presets, rewrite levels, response eligibility, filter masks, policy keys, variant keys, and final acceptance gates. Native directives and standalone arguments translate into the same schema and semantic validation.
 It is the source of truth for cross-product policy semantics.
 
 ### `laghu-http`
 
-`laghu-http` defines the server-neutral transaction ABI.
+`laghu-http` defines the server-neutral transaction ABI and is the sole owner of request validation, preparation, cache selection, transformation finalization, header planning, job publication, budgets, and result ownership.
 Inputs contain bounded normalized request, response, environment, cache, policy, and capability data; outputs contain an action, selected body, dependency validator, diagnostics, and bounded header operations.
 No NGINX, APR, socket, TLS, or event-loop type crosses this boundary.
 

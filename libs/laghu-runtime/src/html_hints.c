@@ -178,46 +178,12 @@ static bool laghu_hint_normalize_url(const char *page_path,
                                      const unsigned char *url, size_t length,
                                      char output[LAGHU_RUNTIME_PATH_SIZE],
                                      bool *same_origin) {
-  size_t origin_length = page_origin == NULL ? 0U : strlen(page_origin);
-  size_t prefix = 0U;
   *same_origin = false;
-  if (length == 0U || length >= LAGHU_RUNTIME_PATH_SIZE || url[0] == '#' ||
-      (length >= 2U && url[0] == '/' && url[1] == '/')) {
-    return false;
-  }
-  if ((length >= 7U && memcmp(url, "http://", 7U) == 0) ||
-      (length >= 8U && memcmp(url, "https://", 8U) == 0)) {
-    if (origin_length == 0U || length <= origin_length ||
-        memcmp(url, page_origin, origin_length) != 0 ||
-        url[origin_length] != '/') {
-      return false;
-    }
-    url += origin_length;
-    length -= origin_length;
-  }
-  if (url[0] != '/') {
-    const char *slash = page_path == NULL ? NULL : strrchr(page_path, '/');
-    prefix = slash == NULL ? 1U : (size_t)(slash - page_path + 1U);
-    if (prefix + length >= LAGHU_RUNTIME_PATH_SIZE) {
-      return false;
-    }
-    if (slash == NULL) {
-      output[0] = '/';
-    } else {
-      memcpy(output, page_path, prefix);
-    }
-  }
-  memcpy(output + prefix, url, length);
-  output[prefix + length] = '\0';
-  if (strstr(output, "..") != NULL ||
-      (strncmp(output, "/api", 4U) == 0 &&
-       (output[4] == '\0' || output[4] == '/')) ||
-      (strncmp(output, "/graphql", 8U) == 0 &&
-       (output[8] == '\0' || output[8] == '/'))) {
-    return false;
-  }
-  *same_origin = true;
-  return true;
+  *same_origin = laghu_base_url_resolve_same_origin(
+      page_path, page_origin, (laghu_buffer){url, length},
+      LAGHU_URL_REJECT_TRAVERSAL | LAGHU_URL_REJECT_API, output,
+      LAGHU_RUNTIME_PATH_SIZE);
+  return *same_origin;
 }
 
 static bool laghu_hint_origin(const unsigned char *url, size_t length,

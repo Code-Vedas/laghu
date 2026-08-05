@@ -8,6 +8,7 @@ cmake_minimum_required(VERSION 3.20)
 project(laghu VERSION 0.1.0 LANGUAGES C)
 
 include(CTest)
+include(cmake/LaghuSources.cmake)
 
 option(LAGHU_BUILD_TESTS "Build the Laghu core test suite" ${BUILD_TESTING})
 option(LAGHU_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
@@ -29,6 +30,8 @@ if(LAGHU_ENABLE_SANITIZERS)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
+add_subdirectory(libs/laghu-base)
+add_subdirectory(libs/laghu-markup)
 add_subdirectory(libs/laghu-core)
 add_subdirectory(libs/laghu-image)
 if(LAGHU_BUILD_SERVICE)

@@ -1264,7 +1264,7 @@ int main(void) {
         "# administrator approvals\n"
         "defer /assets/analytics.js\n"
         "defer /assets/checkout.js template=/checkout/\n";
-    laghu_javascript_defer_set defer;
+    static laghu_javascript_defer_set defer;
     laghu_rum_instrumentation_record baseline = {0}, current = {0};
     char path[LAGHU_RUNTIME_PATH_SIZE], error[128];
     FILE *file;
@@ -1319,7 +1319,7 @@ int main(void) {
         "roboto/v1/a.woff2) format('woff2')}";
     static const unsigned char hostile_css[] =
         "@font-face{src:url(https://example.test/a.woff2)}";
-    laghu_font_provider_set providers;
+    static laghu_font_provider_set providers;
     const laghu_font_provider *google;
     const laghu_font_provider *fontsource;
     char error[128];
@@ -1751,7 +1751,7 @@ int main(void) {
         "src=\"/assets/deferred.js\"></script></body></html>";
     static const char template_key[] =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    laghu_javascript_defer_set defer = {0};
+    static laghu_javascript_defer_set defer;
     laghu_rum_instrumentation_record record = {0};
     laghu_runtime_html_result page;
     char absolute[] = "https://example.test/assets/deferred.js";

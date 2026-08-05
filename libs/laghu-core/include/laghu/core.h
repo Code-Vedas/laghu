@@ -6,17 +6,13 @@
 #ifndef LAGHU_CORE_H
 #define LAGHU_CORE_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+#include "laghu/base.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define LAGHU_VERSION "0.1.0"
-#define LAGHU_SHA256_HEX_LENGTH 64U
-#define LAGHU_SHA256_HEX_SIZE (LAGHU_SHA256_HEX_LENGTH + 1U)
 #define LAGHU_MIME_ALLOWLIST_SIZE 2048U
 #define LAGHU_VARIANT_KEY_VERSION 9U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
@@ -197,12 +193,6 @@ typedef enum {
   LAGHU_DECISION_BYPASS_ERROR
 } laghu_decision;
 
-typedef struct {
-  /* Borrowed storage. The caller keeps data alive while a view is in use. */
-  const unsigned char *data;
-  size_t length;
-} laghu_buffer;
-
 typedef enum {
   LAGHU_CANDIDATE_ACCEPTED = 0,
   LAGHU_CANDIDATE_REJECTED_FAILED,
@@ -255,10 +245,6 @@ laghu_candidate_result laghu_finalize_candidate(laghu_buffer original,
                                                 laghu_buffer candidate,
                                                 bool candidate_valid);
 
-/* Hash output may overlap input storage when the output allocation is large
- * enough for LAGHU_SHA256_HEX_SIZE bytes. */
-bool laghu_sha256_hex(laghu_buffer input, char output[LAGHU_SHA256_HEX_SIZE]);
-/* Variant-key output has the same overlap allowance as laghu_sha256_hex. */
 bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
                        char output[LAGHU_SHA256_HEX_SIZE]);
 

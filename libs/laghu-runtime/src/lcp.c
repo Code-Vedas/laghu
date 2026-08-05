@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "laghu/markup.h"
 #include "laghu/runtime.h"
 
 #define LAGHU_LCP_KIND_IMAGE 1U
@@ -100,23 +101,13 @@ static bool laghu_lcp_add_srcset(laghu_lcp_candidate *candidate,
                                  size_t srcset_length,
                                  const unsigned char *sizes,
                                  size_t sizes_length) {
+  laghu_buffer input = {srcset, srcset_length};
+  laghu_srcset_candidate item;
   size_t cursor = 0U;
-  while (cursor < srcset_length) {
-    size_t start, end;
+  while (laghu_srcset_next(input, &cursor, &item)) {
     char normalized[LAGHU_RUNTIME_PATH_SIZE];
-    while (cursor < srcset_length &&
-           (isspace(srcset[cursor]) || srcset[cursor] == ','))
-      ++cursor;
-    start = cursor;
-    while (cursor < srcset_length && !isspace(srcset[cursor]) &&
-           srcset[cursor] != ',')
-      ++cursor;
-    end = cursor;
-    while (cursor < srcset_length && srcset[cursor] != ',') ++cursor;
-    if (cursor < srcset_length) ++cursor;
-    if (end == start ||
-        !laghu_lcp_normalize(page_path, page_origin, srcset + start,
-                             end - start, normalized) ||
+    if (!laghu_lcp_normalize(page_path, page_origin, item.url.data,
+                             item.url.length, normalized) ||
         !laghu_lcp_add_resource(candidate, normalized, srcset, srcset_length,
                                 sizes, sizes_length))
       return false;
@@ -126,90 +117,32 @@ static bool laghu_lcp_add_srcset(laghu_lcp_candidate *candidate,
 
 static bool laghu_lcp_equal(const unsigned char *value, size_t length,
                             const char *expected) {
-  size_t index;
-  if (strlen(expected) != length) return false;
-  for (index = 0U; index < length; ++index)
-    if (tolower(value[index]) != tolower((unsigned char)expected[index]))
-      return false;
-  return true;
+  return laghu_base_ascii_equal((laghu_buffer){value, length}, expected);
 }
 
 static bool laghu_lcp_attr(const unsigned char *tag, size_t length,
                            const char *name, const unsigned char **value,
                            size_t *value_length, size_t *attribute_start,
                            size_t *attribute_end) {
-  size_t cursor = 1U;
-  while (cursor < length) {
-    size_t start, name_end, value_start;
-    unsigned char quote = 0U;
-    while (cursor < length &&
-           (isspace(tag[cursor]) || tag[cursor] == '/' || tag[cursor] == '>'))
-      ++cursor;
-    start = cursor;
-    while (cursor < length && !isspace(tag[cursor]) && tag[cursor] != '=' &&
-           tag[cursor] != '/' && tag[cursor] != '>')
-      ++cursor;
-    name_end = cursor;
-    while (cursor < length && isspace(tag[cursor])) ++cursor;
-    if (cursor >= length || tag[cursor] != '=') continue;
-    ++cursor;
-    while (cursor < length && isspace(tag[cursor])) ++cursor;
-    if (cursor < length && (tag[cursor] == '\'' || tag[cursor] == '"'))
-      quote = tag[cursor++];
-    value_start = cursor;
-    while (cursor < length &&
-           (quote != 0U ? tag[cursor] != quote
-                        : !isspace(tag[cursor]) && tag[cursor] != '>'))
-      ++cursor;
-    if (laghu_lcp_equal(tag + start, name_end - start, name)) {
-      if (value != NULL) *value = tag + value_start;
-      if (value_length != NULL) *value_length = cursor - value_start;
-      if (attribute_start != NULL) *attribute_start = start;
-      if (quote != 0U && cursor < length) ++cursor;
-      if (attribute_end != NULL) *attribute_end = cursor;
-      return true;
-    }
-    if (quote != 0U && cursor < length) ++cursor;
-  }
-  return false;
+  laghu_html_tag parsed = {.source = {tag, length}};
+  laghu_html_attribute attribute;
+  if (!laghu_html_tag_attribute(&parsed, name, &attribute) ||
+      !attribute.has_value)
+    return false;
+  if (value != NULL) *value = attribute.value.data;
+  if (value_length != NULL) *value_length = attribute.value.length;
+  if (attribute_start != NULL) *attribute_start = attribute.start;
+  if (attribute_end != NULL) *attribute_end = attribute.end;
+  return true;
 }
 
 static bool laghu_lcp_normalize(const char *page_path, const char *page_origin,
                                 const unsigned char *value, size_t length,
                                 char output[LAGHU_RUNTIME_PATH_SIZE]) {
-  size_t origin_length = page_origin == NULL ? 0U : strlen(page_origin);
-  size_t prefix = 0U, index;
-  if (value == NULL || length == 0U || length >= LAGHU_RUNTIME_PATH_SIZE ||
-      value[0] == '#' || (length > 1U && value[0] == '/' && value[1] == '/') ||
-      (length >= 5U && memcmp(value, "data:", 5U) == 0) ||
-      (length >= 5U && memcmp(value, "blob:", 5U) == 0))
-    return false;
-  if ((length >= 7U && memcmp(value, "http://", 7U) == 0) ||
-      (length >= 8U && memcmp(value, "https://", 8U) == 0)) {
-    if (origin_length == 0U || length <= origin_length ||
-        memcmp(value, page_origin, origin_length) != 0 ||
-        value[origin_length] != '/')
-      return false;
-    value += origin_length;
-    length -= origin_length;
-  }
-  if (value[0] != '/') {
-    const char *slash = page_path == NULL ? NULL : strrchr(page_path, '/');
-    prefix = slash == NULL ? 1U : (size_t)(slash - page_path + 1U);
-    if (prefix + length >= LAGHU_RUNTIME_PATH_SIZE) return false;
-    if (slash == NULL)
-      output[0] = '/';
-    else
-      memcpy(output, page_path, prefix);
-  }
-  memcpy(output + prefix, value, length);
-  output[prefix + length] = '\0';
-  if (strstr(output, "..") != NULL) return false;
-  for (index = 0U; output[index] != '\0'; ++index)
-    if ((unsigned char)output[index] < 0x21U || output[index] == '>' ||
-        output[index] == '"' || output[index] == '\\')
-      return false;
-  return true;
+  return laghu_base_url_resolve_same_origin(
+      page_path, page_origin, (laghu_buffer){value, length},
+      LAGHU_URL_REJECT_TRAVERSAL | LAGHU_URL_REJECT_UNSAFE_BYTES, output,
+      LAGHU_RUNTIME_PATH_SIZE);
 }
 
 static unsigned int laghu_lcp_uint(const unsigned char *value, size_t length) {
@@ -226,18 +159,8 @@ static unsigned int laghu_lcp_uint(const unsigned char *value, size_t length) {
 
 static bool laghu_lcp_flag(const unsigned char *tag, size_t length,
                            const char *name) {
-  size_t cursor = 1U, name_length = strlen(name);
-  while (cursor + name_length <= length) {
-    if ((cursor == 0U || isspace(tag[cursor - 1U]) ||
-         tag[cursor - 1U] == '<') &&
-        cursor + name_length <= length &&
-        laghu_lcp_equal(tag + cursor, name_length, name) &&
-        (cursor + name_length == length || isspace(tag[cursor + name_length]) ||
-         tag[cursor + name_length] == '>' || tag[cursor + name_length] == '/'))
-      return true;
-    ++cursor;
-  }
-  return false;
+  laghu_html_tag parsed = {.source = {tag, length}};
+  return laghu_html_tag_has_attribute(&parsed, name);
 }
 
 static bool laghu_lcp_hash(const char *origin, const char *url,
@@ -256,10 +179,8 @@ static bool laghu_lcp_hash(const char *origin, const char *url,
     unsigned int high, low;
     unsigned char a = (unsigned char)hex[index * 2U];
     unsigned char b = (unsigned char)hex[index * 2U + 1U];
-    high = isdigit(a) ? (unsigned int)(a - '0')
-                      : (unsigned int)(tolower(a) - 'a' + 10);
-    low = isdigit(b) ? (unsigned int)(b - '0')
-                     : (unsigned int)(tolower(b) - 'a' + 10);
+    high = (unsigned int)laghu_base_hex_value(a);
+    low = (unsigned int)laghu_base_hex_value(b);
     output[index] = (unsigned char)((high << 4U) | low);
   }
   return true;

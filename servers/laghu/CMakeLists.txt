@@ -6,7 +6,8 @@
 find_package(Threads REQUIRED)
 find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
 
-add_library(laghu_proxy STATIC src/proxy.c)
+laghu_manifest_sources(standalone LAGHU_STANDALONE_SOURCES)
+add_library(laghu_proxy STATIC ${LAGHU_STANDALONE_SOURCES})
 target_include_directories(laghu_proxy PUBLIC include)
 target_compile_features(laghu_proxy PUBLIC c_std_11)
 target_link_libraries(laghu_proxy PUBLIC Laghu::Http Threads::Threads OpenSSL::SSL

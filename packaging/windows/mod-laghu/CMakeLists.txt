@@ -14,46 +14,30 @@ find_library(HTTPD_LIBRARY NAMES libhttpd PATHS "${APACHE_ROOT}/lib" REQUIRED NO
 find_library(APR_LIBRARY NAMES libapr-1 PATHS "${APACHE_ROOT}/lib" REQUIRED NO_DEFAULT_PATH)
 find_library(APRUTIL_LIBRARY NAMES libaprutil-1 PATHS "${APACHE_ROOT}/lib" REQUIRED NO_DEFAULT_PATH)
 
+file(STRINGS "${LAGHU_SOURCE}/cmake/laghu-sources.list" LAGHU_MANIFEST)
+set(LAGHU_SHARED_SOURCES)
+foreach(entry IN LISTS LAGHU_MANIFEST)
+  if(entry MATCHES "^(base|markup|core|image|runtime|http)\\|[^|]+\\|(.+)$")
+    list(APPEND LAGHU_SHARED_SOURCES "${LAGHU_SOURCE}/${CMAKE_MATCH_2}")
+  endif()
+endforeach()
 add_library(mod_laghu MODULE
   "${LAGHU_SOURCE}/modules/mod_laghu/mod_laghu.c"
-  "${LAGHU_SOURCE}/libs/laghu-http/src/http.c"
-  "${LAGHU_SOURCE}/libs/laghu-core/src/core.c"
-  "${LAGHU_SOURCE}/libs/laghu-image/src/image.c"
-  "${LAGHU_SOURCE}/libs/laghu-image/src/markup.c"
-  "${LAGHU_SOURCE}/libs/laghu-image/src/css.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/runtime_win32.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/cache.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/budget.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/operational.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/csp.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/source.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/catalog.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/asset.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/html.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/html_head.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/html_hints.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/css_runtime.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/css_catalog.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/css_combine.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/css_imports.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/css_markup.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/critical_css.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/instrumentation.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/lcp.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/rum.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/font_provider.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/javascript.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/javascript_defer.c"
-  "${LAGHU_SOURCE}/libs/laghu-runtime/src/beacon.c"
+  ${LAGHU_SHARED_SOURCES}
 )
 target_compile_features(mod_laghu PRIVATE c_std_11)
 target_compile_definitions(mod_laghu PRIVATE LAGHU_HAVE_VIPS=0)
 target_include_directories(mod_laghu PRIVATE
   "${APACHE_ROOT}/include"
   "${LAGHU_SOURCE}/libs/laghu-http/include"
+  "${LAGHU_SOURCE}/libs/laghu-http/src"
+  "${LAGHU_SOURCE}/libs/laghu-base/include"
+  "${LAGHU_SOURCE}/libs/laghu-markup/include"
   "${LAGHU_SOURCE}/libs/laghu-core/include"
   "${LAGHU_SOURCE}/libs/laghu-image/include"
   "${LAGHU_SOURCE}/libs/laghu-runtime/include"
+  "${LAGHU_SOURCE}/libs/laghu-runtime/src"
 )
 target_link_libraries(mod_laghu PRIVATE
   "${HTTPD_LIBRARY}" "${APR_LIBRARY}" "${APRUTIL_LIBRARY}" ws2_32

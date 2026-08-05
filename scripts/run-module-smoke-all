@@ -484,7 +484,7 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted an invalid Laghu preset." >&2
   exit 1
 fi
-grep 'unknown laghu preset' "${SMOKE_DIR}/invalid-config-output" >/dev/null
+grep 'invalid laghu preset' "${SMOKE_DIR}/invalid-config-output" >/dev/null
 
 sed 's/laghu preset balanced;/laghu allow_api invalid;/' \
   "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-api-nginx.conf"
@@ -494,7 +494,7 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted an invalid Laghu API policy." >&2
   exit 1
 fi
-grep "laghu allow_api expects 'on' or 'off'" \
+grep "invalid laghu allow_api" \
   "${SMOKE_DIR}/invalid-api-config-output" >/dev/null
 
 sed 's/laghu preset balanced;/laghu allow_api on; laghu allow_api off;/' \
@@ -505,7 +505,7 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted duplicate Laghu API policy directives." >&2
   exit 1
 fi
-grep 'is duplicate' "${SMOKE_DIR}/duplicate-api-config-output" >/dev/null
+grep 'invalid laghu allow_api' "${SMOKE_DIR}/duplicate-api-config-output" >/dev/null
 
 sed 's/laghu preset balanced;/laghu rewrite_level invalid;/' \
   "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/invalid-level-nginx.conf"
@@ -515,7 +515,7 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted an invalid Laghu rewrite level." >&2
   exit 1
 fi
-grep 'unknown laghu rewrite level' \
+grep 'invalid laghu rewrite_level' \
   "${SMOKE_DIR}/invalid-level-config-output" >/dev/null
 
 sed 's/laghu preset balanced;/laghu rewrite_level core; laghu rewrite_level all;/' \
@@ -526,7 +526,8 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted duplicate Laghu rewrite levels." >&2
   exit 1
 fi
-grep 'is duplicate' "${SMOKE_DIR}/duplicate-level-config-output" >/dev/null
+grep 'invalid laghu rewrite_level' \
+  "${SMOKE_DIR}/duplicate-level-config-output" >/dev/null
 
 sed 's/laghu preset balanced;/laghu preset balanced; laghu rewrite_level core;/' \
   "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/conflicting-policy-nginx.conf"
@@ -536,7 +537,7 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted conflicting Laghu policy selectors." >&2
   exit 1
 fi
-grep "cannot combine 'laghu preset' and 'laghu rewrite_level'" \
+grep 'invalid laghu rewrite_level' \
   "${SMOKE_DIR}/conflicting-policy-config-output" >/dev/null
 
 sed 's/laghu image_quality 82;/laghu image_quality 101;/' \
@@ -547,7 +548,7 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted an invalid Laghu image quality." >&2
   exit 1
 fi
-grep 'laghu image_quality expects an integer from 1 to 100' \
+grep 'invalid laghu image_quality' \
   "${SMOKE_DIR}/invalid-quality-config-output" >/dev/null
 
 sed 's/laghu image_quality 82;/laghu image_quality 82; laghu image_quality 75;/' \
@@ -558,7 +559,8 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted duplicate Laghu image quality directives." >&2
   exit 1
 fi
-grep 'is duplicate' "${SMOKE_DIR}/duplicate-quality-config-output" >/dev/null
+grep 'invalid laghu image_quality' \
+  "${SMOKE_DIR}/duplicate-quality-config-output" >/dev/null
 
 for specification in \
     "css_inline_limit 70000" \

@@ -218,7 +218,10 @@ function Build-Nginx {
   }
   $laghuSnapshot = Join-Path $source "laghu"
   Remove-Item -Recurse -Force $laghuSnapshot -ErrorAction SilentlyContinue
-  New-Item -ItemType Directory -Force -Path "$laghuSnapshot\libs", "$laghuSnapshot\modules" | Out-Null
+  New-Item -ItemType Directory -Force -Path "$laghuSnapshot\cmake", "$laghuSnapshot\libs", "$laghuSnapshot\modules" | Out-Null
+  Copy-Item "$repo\cmake\laghu-sources.list" "$laghuSnapshot\cmake\laghu-sources.list"
+  Copy-Item -Recurse "$repo\libs\laghu-base" "$laghuSnapshot\libs\laghu-base"
+  Copy-Item -Recurse "$repo\libs\laghu-markup" "$laghuSnapshot\libs\laghu-markup"
   Copy-Item -Recurse "$repo\libs\laghu-core" "$laghuSnapshot\libs\laghu-core"
   Copy-Item -Recurse "$repo\libs\laghu-http" "$laghuSnapshot\libs\laghu-http"
   Copy-Item -Recurse "$repo\libs\laghu-image" "$laghuSnapshot\libs\laghu-image"
@@ -251,7 +254,7 @@ function Build-Nginx {
     "--with-openssl=$librariesBuildPath/openssl-$($sources.OpenSsl.Version) --with-openssl-opt='no-asm no-tests'",
     "--with-http_ssl_module --add-module='$moduleMsys'"
   ) -join " "
-  $configurationIdentity = Get-TextSha256 "$configurationArguments`n$([IO.File]::ReadAllText((Join-Path $repo 'modules/ngx_http_laghu_module/config')))"
+  $configurationIdentity = Get-TextSha256 "$configurationArguments`n$([IO.File]::ReadAllText((Join-Path $repo 'modules/ngx_http_laghu_module/config')))`n$([IO.File]::ReadAllText((Join-Path $repo 'cmake/laghu-sources.list')))"
   $configurationMarker = Join-Path $source ".laghu-nginx-config.sha256"
   $makefile = Join-Path $source "objs\Makefile"
   $moduleConfiguration = Join-Path $repo "modules\ngx_http_laghu_module\config"

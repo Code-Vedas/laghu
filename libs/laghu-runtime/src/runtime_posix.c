@@ -912,6 +912,7 @@ bool laghu_runtime_file_size(const char *path, uint64_t *size) {
 bool laghu_runtime_shared_mapping_open(laghu_runtime_shared_mapping *mapping,
                                        const char *path, size_t size) {
   int file;
+  unsigned int lock_attempt;
   struct stat status;
   void *address;
   if (mapping == NULL || path == NULL || size < 4096U ||
@@ -919,7 +920,10 @@ bool laghu_runtime_shared_mapping_open(laghu_runtime_shared_mapping *mapping,
     return false;
   laghu_runtime_shared_mapping_init(mapping);
   file = open(path, O_RDWR | O_CREAT, 0640);
-  if (file < 0 || !laghu_lock(file, F_WRLCK) || fstat(file, &status) != 0) {
+  if (file < 0) return false;
+  for (lock_attempt = 0U; lock_attempt < 64U; ++lock_attempt)
+    if (laghu_lock(file, F_WRLCK)) break;
+  if (lock_attempt == 64U || fstat(file, &status) != 0) {
     if (file >= 0) close(file);
     return false;
   }

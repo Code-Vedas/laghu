@@ -42,7 +42,8 @@ if(NOT LAGHU_WITH_VIPS STREQUAL "OFF")
   endif()
 endif()
 
-add_library(laghu_image STATIC src/image.c src/markup.c src/css.c)
+laghu_manifest_sources(image LAGHU_IMAGE_SOURCES)
+add_library(laghu_image STATIC ${LAGHU_IMAGE_SOURCES})
 add_library(Laghu::Image ALIAS laghu_image)
 
 target_include_directories(laghu_image
@@ -51,7 +52,7 @@ target_include_directories(laghu_image
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(laghu_image PUBLIC c_std_11)
-target_link_libraries(laghu_image PUBLIC Laghu::Core)
+target_link_libraries(laghu_image PUBLIC Laghu::Core Laghu::Markup)
 target_compile_definitions(laghu_image PUBLIC LAGHU_HAVE_VIPS=$<BOOL:${LAGHU_HAVE_VIPS}>)
 set_target_properties(laghu_image PROPERTIES C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
 

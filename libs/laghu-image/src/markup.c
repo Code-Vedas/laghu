@@ -477,47 +477,9 @@ static bool laghu_normalize_image_url(const unsigned char *url, size_t length,
                                       const char *page_path,
                                       const char *page_origin,
                                       char output[LAGHU_IMAGE_URL_SIZE]) {
-  const char *base;
-  const char *slash;
-  size_t prefix = 0U;
-  size_t origin_length = page_origin == NULL ? 0U : strlen(page_origin);
-  size_t index;
-  if (length == 0U || length >= LAGHU_IMAGE_URL_SIZE || url[0] == '#' ||
-      (length >= 2U && url[0] == '/' && url[1] == '/') ||
-      (length >= 5U && laghu_ascii_equal(url, 5U, "data:")) ||
-      (length >= 5U && laghu_ascii_equal(url, 5U, "blob:"))) {
-    return false;
-  }
-  for (index = 0U; index + 2U < length; ++index) {
-    if (url[index] == ':' && url[index + 1U] == '/' && url[index + 2U] == '/') {
-      if (origin_length == 0U || length <= origin_length ||
-          memcmp(url, page_origin, origin_length) != 0 ||
-          url[origin_length] != '/') {
-        return false;
-      }
-      url += origin_length;
-      length -= origin_length;
-      break;
-    }
-  }
-  if (url[0] != '/') {
-    base = page_path != NULL && page_path[0] == '/' ? page_path : "/";
-    slash = strrchr(base, '/');
-    prefix = slash == NULL ? 1U : (size_t)(slash - base + 1U);
-    if (prefix + length >= LAGHU_IMAGE_URL_SIZE) {
-      return false;
-    }
-    memcpy(output, base, prefix);
-  }
-  memcpy(output + prefix, url, length);
-  output[prefix + length] = '\0';
-  if ((strncmp(output, "/api", 4U) == 0 &&
-       (output[4] == '\0' || output[4] == '/')) ||
-      (strncmp(output, "/graphql", 8U) == 0 &&
-       (output[8] == '\0' || output[8] == '/'))) {
-    return false;
-  }
-  return true;
+  return laghu_base_url_resolve_same_origin(
+      page_path, page_origin, (laghu_buffer){url, length}, LAGHU_URL_REJECT_API,
+      output, LAGHU_IMAGE_URL_SIZE);
 }
 
 bool laghu_image_discover_html(laghu_buffer input, const char *page_path,

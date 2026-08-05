@@ -737,7 +737,14 @@ def main():
                         break
                     time.sleep(0.05)
                 else:
-                    raise AssertionError(f"standalone dependency {asset} did not become warm")
+                    worker_status = javascript_process.poll()
+                    worker_error = b""
+                    if worker_status is not None and javascript_process.stderr is not None:
+                        worker_error = javascript_process.stderr.read()
+                    raise AssertionError(
+                        f"standalone dependency {asset} did not become warm; "
+                        f"worker_status={worker_status}; worker_error={worker_error!r}"
+                    )
             for _ in range(warm_attempts):
                 _, combine_warm = request(proxy_port, "/javascript-combine.html")
                 combine_match = re.search(

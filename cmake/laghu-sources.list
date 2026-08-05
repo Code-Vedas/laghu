@@ -1,0 +1,41 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+base|laghu_base.c|libs/laghu-base/src/base.c
+markup|laghu_markup_tokenizer.c|libs/laghu-markup/src/tokenizer.c
+core|laghu_core.c|libs/laghu-core/src/core.c
+core|laghu_config.c|libs/laghu-core/src/config.c
+image|laghu_image.c|libs/laghu-image/src/image.c
+image|laghu_image_markup.c|libs/laghu-image/src/markup.c
+image|laghu_image_css.c|libs/laghu-image/src/css.c
+runtime|laghu_budget.c|libs/laghu-runtime/src/budget.c
+runtime|laghu_cache.c|libs/laghu-runtime/src/cache.c
+runtime|laghu_operational.c|libs/laghu-runtime/src/operational.c
+runtime|laghu_csp.c|libs/laghu-runtime/src/csp.c
+runtime|laghu_source.c|libs/laghu-runtime/src/source.c
+runtime|laghu_asset.c|libs/laghu-runtime/src/asset.c
+runtime|laghu_rum.c|libs/laghu-runtime/src/rum.c
+runtime|laghu_rum_codec.c|libs/laghu-runtime/src/rum_codec.c
+runtime|laghu_catalog.c|libs/laghu-runtime/src/catalog.c
+runtime|laghu_html.c|libs/laghu-runtime/src/html.c
+runtime|laghu_html_head.c|libs/laghu-runtime/src/html_head.c
+runtime|laghu_html_lexical.c|libs/laghu-runtime/src/html_lexical.c
+runtime|laghu_html_hints.c|libs/laghu-runtime/src/html_hints.c
+runtime|laghu_css_runtime.c|libs/laghu-runtime/src/css_runtime.c
+runtime|laghu_css_catalog.c|libs/laghu-runtime/src/css_catalog.c
+runtime|laghu_css_combine.c|libs/laghu-runtime/src/css_combine.c
+runtime|laghu_css_imports.c|libs/laghu-runtime/src/css_imports.c
+runtime|laghu_css_markup.c|libs/laghu-runtime/src/css_markup.c
+runtime|laghu_critical_css.c|libs/laghu-runtime/src/critical_css.c
+runtime|laghu_font_provider.c|libs/laghu-runtime/src/font_provider.c
+runtime|laghu_javascript.c|libs/laghu-runtime/src/javascript.c
+runtime|laghu_javascript_defer.c|libs/laghu-runtime/src/javascript_defer.c
+runtime|laghu_instrumentation.c|libs/laghu-runtime/src/instrumentation.c
+runtime|laghu_lcp.c|libs/laghu-runtime/src/lcp.c
+runtime|laghu_beacon.c|libs/laghu-runtime/src/beacon.c
+http|laghu_http.c|libs/laghu-http/src/http.c
+http|laghu_http_finalize.c|libs/laghu-http/src/finalize.c
+standalone|laghu_standalone_config.c|servers/laghu/src/config.c
+standalone|laghu_standalone_proxy.c|servers/laghu/src/proxy.c
