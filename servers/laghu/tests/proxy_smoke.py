@@ -63,6 +63,13 @@ class Origin(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/data":
             body = b'{"ok":true}'
             content_type = "application/json"
+        elif self.path == "/lcp.html":
+            body = (
+                b'<html><body><nav><img src="/logo.png" width="40" '
+                b'height="40"></nav><img src="/image.png" width="320" '
+                b'height="240"></body></html>'
+            )
+            content_type = "text/html"
         elif self.path == "/site.css":
             body = b"body { color: red; }"
             content_type = "text/css"
@@ -687,6 +694,10 @@ def main():
             assert b"/.laghu/beacon/instrumentation.js" in first_body
             assert b'data-laghu-sample="100"' in first_body
             assert b"x-laghu: pass" in first_head, first_head
+            lcp_head, lcp_body = request(proxy_port, "/lcp.html")
+            assert b'fetchpriority="high"' in lcp_body
+            assert b'</image.png>; rel=preload; as=image' in lcp_head
+            assert b'/logo.png>; rel=preload' not in lcp_head
             for _ in range(warm_attempts):
                 trim_head, trim_body = request(proxy_port, "/trim-urls.html")
                 if (

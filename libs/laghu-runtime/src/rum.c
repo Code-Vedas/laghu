@@ -350,6 +350,20 @@ static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record,
         U64(r->script_long_tasks[i][j]);
       }
     }
+    U32(r->media_count);
+    BYTES(r->media_kind);
+    BYTES(r->media_keys);
+    BYTES(r->media_resource_count);
+    BYTES(r->media_resource_keys);
+    for (i = 0U; i < 4U; ++i) {
+      U16(r->lcp_observations[i]);
+      U16(r->lcp_unresolved[i]);
+      for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j)
+        U16(r->lcp_candidates[i][j]);
+      for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j)
+        for (k = 0U; k < LAGHU_LCP_MAX_RESOURCES; ++k)
+          U16(r->lcp_resources[i][j][k]);
+    }
   } else {
     return laghu_rum_codec_bytes(codec, record, codec->capacity, write);
   }
@@ -416,7 +430,15 @@ static bool laghu_rum_same_identity(laghu_rum_record_type type,
            strcmp(a->provider_digest, b->provider_digest) == 0 &&
            strcmp(a->policy_key, b->policy_key) == 0 &&
            a->script_count == b->script_count &&
-           memcmp(a->script_keys, b->script_keys, sizeof(a->script_keys)) == 0;
+           memcmp(a->script_keys, b->script_keys, sizeof(a->script_keys)) ==
+               0 &&
+           a->media_count == b->media_count &&
+           memcmp(a->media_kind, b->media_kind, sizeof(a->media_kind)) == 0 &&
+           memcmp(a->media_keys, b->media_keys, sizeof(a->media_keys)) == 0 &&
+           memcmp(a->media_resource_count, b->media_resource_count,
+                  sizeof(a->media_resource_count)) == 0 &&
+           memcmp(a->media_resource_keys, b->media_resource_keys,
+                  sizeof(a->media_resource_keys)) == 0;
   }
   if (type == LAGHU_RUM_RECORD_DECISION)
     return memcmp(left, right, length) == 0;
@@ -486,6 +508,22 @@ bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
         SAT_ADD(a->script_long_tasks[i][j], b->script_long_tasks[i][j]);
       }
 #undef SAT_ADD
+    }
+    for (i = 0U; i < 4U; ++i) {
+      unsigned int sum = a->lcp_observations[i] + b->lcp_observations[i];
+      a->lcp_observations[i] = (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
+      sum = a->lcp_unresolved[i] + b->lcp_unresolved[i];
+      a->lcp_unresolved[i] = (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
+      for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j) {
+        sum = a->lcp_candidates[i][j] + b->lcp_candidates[i][j];
+        a->lcp_candidates[i][j] =
+            (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
+        for (k = 0U; k < LAGHU_LCP_MAX_RESOURCES; ++k) {
+          sum = a->lcp_resources[i][j][k] + b->lcp_resources[i][j][k];
+          a->lcp_resources[i][j][k] =
+              (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
+        }
+      }
     }
     return true;
   }

@@ -4,6 +4,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,12 +17,14 @@ typedef laghu_rum_instrumentation_record laghu_rum_record;
 
 static const char laghu_rum_script[] =
     "(()=>{const s=document.currentScript;if(!s||Math.random()*100>=+s.dataset."
-    "laghuSample)return;let lcp=0,cls=0,inp=0,er=0,rj=0,sent=false,lt=new "
+    "laghuSample)return;let "
+    "lcp=0,le=null,cls=0,inp=0,er=0,rj=0,sent=false,lt=new "
     "Map;const po=(t,"
     "f,o={buffered:true})=>{try{new PerformanceObserver(x=>x.getEntries()."
     "forEach(f)).observe({type:t,...o})}catch(_){}};po('largest-contentful-"
     "paint'"
-    ",e=>lcp=Math.max(lcp,e.startTime));po('layout-shift',e=>{if(!e."
+    ",e=>{if(e.startTime>=lcp){lcp=e.startTime;le=e.element}});po('layout-"
+    "shift',e=>{if(!e."
     "hadRecentInput)"
     "cls+=e.value});po('event',e=>inp=Math.max(inp,e.duration),{"
     "durationThreshold:"
@@ -42,13 +45,20 @@ static const char laghu_rum_script[] =
     "URL(e.name,location.href).href),before_dcl:e.responseEnd<=d?1:0,long_"
     "tasks:"
     "Math.min(1000,lt.get(e.name)||0)})"
-    "}catch(_){}}const "
-    "b=JSON.stringify({version:1,template:s.dataset.laghuTemplate,"
+    "}catch(_){}}let lk=0,lo=0,lr='';if(le){const m=[...document."
+    "querySelectorAll('img,video[poster]')],i=m.indexOf(le);if(i>=0&&i<32){"
+    "lo=i;if(le.tagName==='IMG'){lk=1;lr=le.currentSrc||le.getAttribute('src')|"
+    "|''}else if("
+    "le.tagName==='VIDEO'){lk=2;lr=le.getAttribute('poster')||''}if(lr){try{"
+    "lr=await hex(new URL(lr,location.href).href)}catch(_){lk=0;lr=''}}}}const "
+    "b=JSON.stringify({version:2,template:s.dataset.laghuTemplate,"
     "bucket:innerWidth<768?0:1,lcp_ms:Math.round(lcp),inp_ms:Math.round(inp),"
     "cls_milli:Math.round(cls*1000),dcl_ms:Math.round(d||0),load_ms:Math.round("
     "n?"
     "n.loadEventEnd:0),errors:Math.min(er,1000),rejections:Math.min(rj,1000),"
-    "candidates:a});if(!navigator.sendBeacon('/.laghu/beacon/"
+    "candidates:a,lcp_kind:lk,lcp_ordinal:lo,lcp_resource:lr,scheme:"
+    "matchMedia('(prefers-color-scheme: "
+    "dark)').matches?1:0});if(!navigator.sendBeacon('/.laghu/beacon/"
     "instrumentation',new "
     "Blob([b],{type:'application/json'})))fetch('/.laghu/beacon/"
     "instrumentation',"
@@ -66,6 +76,21 @@ static bool laghu_rum_hash(const char *value) {
   for (i = 0U; i < LAGHU_SHA256_HEX_LENGTH; ++i)
     if (!isxdigit((unsigned char)value[i]) || isupper((unsigned char)value[i]))
       return false;
+  return true;
+}
+
+static bool laghu_rum_hash_bytes(
+    const char *value, unsigned char output[LAGHU_SHA256_DIGEST_SIZE]) {
+  size_t index;
+  if (!laghu_rum_hash(value)) return false;
+  for (index = 0U; index < LAGHU_SHA256_DIGEST_SIZE; ++index) {
+    unsigned char high = (unsigned char)value[index * 2U];
+    unsigned char low = (unsigned char)value[index * 2U + 1U];
+    high =
+        (unsigned char)(isdigit(high) ? high - '0' : tolower(high) - 'a' + 10);
+    low = (unsigned char)(isdigit(low) ? low - '0' : tolower(low) - 'a' + 10);
+    output[index] = (unsigned char)((high << 4U) | low);
+  }
   return true;
 }
 
@@ -237,6 +262,7 @@ bool laghu_runtime_add_instrumentation(
   laghu_rum_record record;
   const unsigned char *body, *scan;
   char material[16384U], key[LAGHU_RUNTIME_KEY_SIZE];
+  char media_digest[LAGHU_RUNTIME_KEY_SIZE];
   size_t used, at, output_length;
   unsigned char *output;
   const char *digest = providers == NULL ? "none" : providers->digest;
@@ -250,10 +276,13 @@ bool laghu_runtime_add_instrumentation(
       (body = laghu_rum_find(html.data, html.length, "</body>")) == NULL)
     return true;
   memset(&record, 0, sizeof(record));
+  if (!laghu_lcp_inventory_record(html, page_path, page_origin, &record,
+                                  media_digest))
+    return true;
   record.version = LAGHU_INSTRUMENTATION_VERSION;
-  used = (size_t)snprintf(material, sizeof(material),
-                          "rum-v1\n%s\n%s\n%s\n%s\n%u\n", page_path, policy_key,
-                          digest, page_origin, sample_rate);
+  used = (size_t)snprintf(
+      material, sizeof(material), "rum-v2\n%s\n%s\n%s\n%s\n%s\n%u\n", page_path,
+      policy_key, digest, page_origin, media_digest, sample_rate);
   scan = html.data;
   {
     unsigned int tokens = 0U;
@@ -335,10 +364,13 @@ bool laghu_runtime_add_instrumentation(
                         key))
     return false;
   {
-    laghu_rum_record existing;
-    if (!(laghu_rum_read(rum, key, now, &existing) &&
-          now >= existing.updated_at &&
-          now - existing.updated_at <= ttl_seconds)) {
+    laghu_rum_record *existing = malloc(sizeof(*existing));
+    bool current = existing != NULL &&
+                   laghu_rum_read(rum, key, now, existing) &&
+                   now >= existing->updated_at &&
+                   now - existing->updated_at <= ttl_seconds;
+    free(existing);
+    if (!current) {
       strcpy(record.template_key, key);
       strcpy(record.provider_digest, digest);
       strcpy(record.policy_key, policy_key);
@@ -441,12 +473,13 @@ bool laghu_runtime_parse_instrumentation_beacon(
   text[json.length] = '\0';
   memset(record, 0, sizeof(*record));
   p = laghu_rum_field(text, "template");
-  if (!laghu_rum_uint(text, "version", 1U, &version) || version != 1U ||
+  if (!laghu_rum_uint(text, "version", 2U, &version) || version < 1U ||
       p == NULL || *p++ != '"' || (end = strchr(p, '"')) == NULL ||
       (size_t)(end - p) != LAGHU_SHA256_HEX_LENGTH)
     goto failed;
   memcpy(record->template_key, p, LAGHU_SHA256_HEX_LENGTH);
   record->template_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+  record->version = version;
   if (!laghu_rum_hash(record->template_key) ||
       !laghu_rum_uint(text, "bucket", 1U, &record->bucket) ||
       !laghu_rum_uint(text, "lcp_ms", 600000U, &record->lcp_ms) ||
@@ -457,6 +490,23 @@ bool laghu_runtime_parse_instrumentation_beacon(
       !laghu_rum_uint(text, "errors", 1000U, &record->errors) ||
       !laghu_rum_uint(text, "rejections", 1000U, &record->rejections))
     goto failed;
+  if (version == 2U) {
+    if (!laghu_rum_uint(text, "scheme", 1U, &record->color_scheme_bucket) ||
+        !laghu_rum_uint(text, "lcp_kind", 2U, &record->lcp_kind) ||
+        !laghu_rum_uint(text, "lcp_ordinal", LAGHU_LCP_MAX_CANDIDATES - 1U,
+                        &record->lcp_ordinal))
+      goto failed;
+    p = laghu_rum_field(text, "lcp_resource");
+    if (p == NULL || *p++ != '"' || (end = strchr(p, '"')) == NULL) goto failed;
+    if (record->lcp_kind == 0U) {
+      if (end != p) goto failed;
+    } else {
+      if ((size_t)(end - p) != LAGHU_SHA256_HEX_LENGTH) goto failed;
+      memcpy(record->lcp_resource_key, p, LAGHU_SHA256_HEX_LENGTH);
+      record->lcp_resource_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
+      if (!laghu_rum_hash(record->lcp_resource_key)) goto failed;
+    }
+  }
   p = laghu_rum_field(text, "candidates");
   if (p == NULL || *p++ != '[') goto failed;
   while ((p = strstr(p, "\"key\"")) != NULL &&
@@ -521,6 +571,8 @@ static bool laghu_rum_merge(void *data, size_t length, void *opaque) {
   const laghu_instrumentation_beacon *beacon = context->beacon;
   laghu_rum_record *record = data;
   unsigned int b, i, metrics[5];
+  unsigned int lcp_bucket;
+  unsigned int lcp_resource = UINT_MAX;
   if (length != sizeof(*record) ||
       record->version != LAGHU_INSTRUMENTATION_VERSION ||
       strcmp(record->template_key, beacon->template_key) != 0 ||
@@ -533,8 +585,39 @@ static bool laghu_rum_merge(void *data, size_t length, void *opaque) {
       if (strcmp(beacon->candidates[i].key, record->script_keys[j]) == 0) break;
     if (j == record->script_count) return false;
   }
+  if (beacon->version == 2U && beacon->lcp_kind != 0U) {
+    unsigned char resource_key[LAGHU_SHA256_DIGEST_SIZE];
+    if (beacon->lcp_ordinal >= record->media_count ||
+        record->media_kind[beacon->lcp_ordinal] != beacon->lcp_kind ||
+        !laghu_rum_hash_bytes(beacon->lcp_resource_key, resource_key))
+      return false;
+    for (lcp_resource = 0U;
+         lcp_resource < record->media_resource_count[beacon->lcp_ordinal];
+         ++lcp_resource)
+      if (memcmp(resource_key,
+                 record->media_resource_keys[beacon->lcp_ordinal][lcp_resource],
+                 sizeof(resource_key)) == 0)
+        break;
+    if (lcp_resource == record->media_resource_count[beacon->lcp_ordinal])
+      return false;
+  }
   b = beacon->bucket;
   ++record->observations[b];
+  if (beacon->version == 2U) {
+    lcp_bucket = beacon->bucket * 2U + beacon->color_scheme_bucket;
+    if (record->lcp_observations[lcp_bucket] != UINT16_MAX)
+      ++record->lcp_observations[lcp_bucket];
+    if (beacon->lcp_kind == 0U) {
+      if (record->lcp_unresolved[lcp_bucket] != UINT16_MAX)
+        ++record->lcp_unresolved[lcp_bucket];
+    } else if (record->lcp_candidates[lcp_bucket][beacon->lcp_ordinal] !=
+               UINT16_MAX) {
+      ++record->lcp_candidates[lcp_bucket][beacon->lcp_ordinal];
+      if (record->lcp_resources[lcp_bucket][beacon->lcp_ordinal]
+                               [lcp_resource] != UINT16_MAX)
+        ++record->lcp_resources[lcp_bucket][beacon->lcp_ordinal][lcp_resource];
+    }
+  }
   metrics[0] = beacon->lcp_ms;
   metrics[1] = beacon->inp_ms;
   metrics[2] = beacon->cls_milli;

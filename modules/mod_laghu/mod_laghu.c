@@ -2095,6 +2095,9 @@ static apr_status_t laghu_apache_transaction_filter(
     laghu_operational_registry_budget(
         &laghu_apache_operational, &context->transaction.budget,
         context->transaction.environment.config.transform_deadline_ms);
+    laghu_operational_registry_lcp(
+        &laghu_apache_operational, result.lcp_decision, result.lcp_applied,
+        result.lcp_profile_observations, result.lcp_profile_ready);
     laghu_apache_log_defer_recommendation(request, &result);
     if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
         context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||

@@ -44,6 +44,7 @@ cp "${REPO_ROOT}/libs/laghu-runtime/src/css_imports.c" "${build_dir}/laghu_css_i
 cp "${REPO_ROOT}/libs/laghu-runtime/src/css_markup.c" "${build_dir}/laghu_css_markup.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/critical_css.c" "${build_dir}/laghu_critical_css.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/instrumentation.c" "${build_dir}/laghu_instrumentation.c"
+cp "${REPO_ROOT}/libs/laghu-runtime/src/lcp.c" "${build_dir}/laghu_lcp.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/rum.c" "${build_dir}/laghu_rum.c"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/rum_redis_merge.h" \
   "${build_dir}/rum_redis_merge.h"
@@ -93,6 +94,7 @@ cd "${build_dir}"
   laghu_css_markup.c \
   laghu_critical_css.c \
   laghu_instrumentation.c \
+  laghu_lcp.c \
   laghu_rum.c \
   laghu_font_provider.c \
   laghu_javascript.c \

@@ -57,9 +57,14 @@ struct sockaddr;
 #define LAGHU_JAVASCRIPT_TARGET_SIZE 512U
 #define LAGHU_JAVASCRIPT_MAX_SCRIPTS 64U
 #define LAGHU_JAVASCRIPT_DERIVATION_VERSION 2U
-#define LAGHU_INSTRUMENTATION_VERSION 1U
+#define LAGHU_INSTRUMENTATION_VERSION 2U
 #define LAGHU_INSTRUMENTATION_MAX_PROVIDERS 32U
 #define LAGHU_INSTRUMENTATION_MAX_SCRIPTS 64U
+#define LAGHU_LCP_MAX_CANDIDATES 32U
+#define LAGHU_LCP_MAX_RESOURCES 4U
+#define LAGHU_LCP_QUORUM 3U
+#define LAGHU_LCP_DOMINANCE_PERCENT 80U
+#define LAGHU_SHA256_DIGEST_SIZE 32U
 #define LAGHU_JAVASCRIPT_DEFER_MAX_RULES 64U
 #define LAGHU_RUM_MAX_RECORDS 4096U
 #define LAGHU_RUM_MAX_RECORD_BYTES 16384U
@@ -424,7 +429,7 @@ typedef struct {
   size_t mapping_length;
 } laghu_runtime_shared_mapping;
 
-#define LAGHU_OPERATIONAL_VERSION 2U
+#define LAGHU_OPERATIONAL_VERSION 3U
 #define LAGHU_OPERATIONAL_MAX_SLOTS 64U
 #define LAGHU_OPERATIONAL_LATENCY_BUCKETS 12U
 #define LAGHU_OPERATIONAL_RENDER_SIZE 65536U
@@ -533,6 +538,10 @@ typedef struct {
   uint64_t cache_rejected_writes;
   uint64_t variant_occupancy;
   uint64_t variant_limit;
+  uint64_t lcp_decisions[6];
+  uint64_t lcp_applied;
+  uint64_t lcp_profile_observations[4];
+  uint64_t lcp_profile_ready[4];
   uint64_t latency_buckets[LAGHU_OPERATIONAL_LATENCY_BUCKETS];
   uint64_t latency_count;
   uint64_t latency_sum_microseconds;
@@ -711,6 +720,13 @@ typedef struct {
   uint64_t updated_at;
   unsigned int script_count;
   char script_keys[LAGHU_INSTRUMENTATION_MAX_SCRIPTS][LAGHU_RUNTIME_KEY_SIZE];
+  uint32_t media_count;
+  unsigned char media_kind[LAGHU_LCP_MAX_CANDIDATES];
+  unsigned char media_keys[LAGHU_LCP_MAX_CANDIDATES][LAGHU_SHA256_DIGEST_SIZE];
+  unsigned char media_resource_count[LAGHU_LCP_MAX_CANDIDATES];
+  unsigned char media_resource_keys[LAGHU_LCP_MAX_CANDIDATES]
+                                   [LAGHU_LCP_MAX_RESOURCES]
+                                   [LAGHU_SHA256_DIGEST_SIZE];
   uint64_t observations[2];
   uint64_t metric_sums[2][5];
   unsigned int metric_maxima[2][5];
@@ -720,6 +736,10 @@ typedef struct {
   uint64_t script_observations[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
   uint64_t script_before_dcl[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
   uint64_t script_long_tasks[2][LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
+  uint16_t lcp_observations[4];
+  uint16_t lcp_unresolved[4];
+  uint16_t lcp_candidates[4][LAGHU_LCP_MAX_CANDIDATES];
+  uint16_t lcp_resources[4][LAGHU_LCP_MAX_CANDIDATES][LAGHU_LCP_MAX_RESOURCES];
 } laghu_rum_instrumentation_record;
 
 typedef struct {
@@ -859,7 +879,34 @@ typedef struct {
   unsigned int rejections;
   laghu_instrumentation_candidate candidates[LAGHU_INSTRUMENTATION_MAX_SCRIPTS];
   unsigned int candidate_count;
+  unsigned int version;
+  unsigned int color_scheme_bucket;
+  unsigned int lcp_kind;
+  unsigned int lcp_ordinal;
+  char lcp_resource_key[LAGHU_RUNTIME_KEY_SIZE];
 } laghu_instrumentation_beacon;
+
+typedef enum {
+  LAGHU_LCP_DECISION_NONE = 0,
+  LAGHU_LCP_DECISION_LEARNED,
+  LAGHU_LCP_DECISION_HEURISTIC,
+  LAGHU_LCP_DECISION_UNRESOLVED,
+  LAGHU_LCP_DECISION_STALE,
+  LAGHU_LCP_DECISION_CONFLICT
+} laghu_lcp_decision;
+
+typedef struct {
+  unsigned char *data;
+  size_t length;
+  char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  char *link_header;
+  laghu_lcp_decision decision;
+  unsigned int observations;
+  unsigned int profile_observations[4];
+  bool profile_ready[4];
+  bool rewritten;
+  bool applied;
+} laghu_lcp_result;
 
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
@@ -1014,6 +1061,10 @@ void laghu_operational_registry_cache(laghu_operational_registry *registry,
 void laghu_operational_registry_budget(laghu_operational_registry *registry,
                                        const laghu_transform_budget *budget,
                                        unsigned int deadline_limit_ms);
+void laghu_operational_registry_lcp(laghu_operational_registry *registry,
+                                    laghu_lcp_decision decision, bool applied,
+                                    const unsigned int observations[4],
+                                    const bool ready[4]);
 bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
                                          laghu_operational_snapshot *snapshot);
 bool laghu_operational_render_prometheus(
@@ -1186,6 +1237,7 @@ bool laghu_csp_policy_add(laghu_csp_policy *policy, const char *value,
                           size_t length);
 bool laghu_csp_policy_add_meta(laghu_csp_policy *policy, laghu_buffer html);
 bool laghu_csp_allows_data_image(const laghu_csp_policy *policy);
+bool laghu_csp_allows_external_image(const laghu_csp_policy *policy);
 bool laghu_csp_allows_inline_style(const laghu_csp_policy *policy,
                                    const unsigned char *nonce,
                                    size_t nonce_length);
@@ -1281,6 +1333,17 @@ bool laghu_runtime_parse_instrumentation_beacon(
 bool laghu_instrumentation_apply_beacon(
     laghu_rum_engine *rum, const char *cache_path, uint64_t now,
     unsigned int ttl_seconds, const laghu_instrumentation_beacon *beacon);
+bool laghu_lcp_inventory_record(laghu_buffer html, const char *page_path,
+                                const char *page_origin,
+                                laghu_rum_instrumentation_record *record,
+                                char digest[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_runtime_prioritize_lcp(
+    laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *template_key,
+    uint64_t now, unsigned int ttl_seconds, unsigned int viewport_width,
+    bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
+    laghu_lcp_result *result);
+void laghu_lcp_result_release(laghu_lcp_result *result);
 
 #ifdef __cplusplus
 }

@@ -126,6 +126,10 @@ typedef struct {
   char javascript_defer_template[LAGHU_RUNTIME_KEY_SIZE];
   unsigned int javascript_defer_bucket;
   uint64_t javascript_defer_observations;
+  laghu_lcp_decision lcp_decision;
+  unsigned int lcp_profile_observations[4];
+  bool lcp_profile_ready[4];
+  bool lcp_applied;
 } laghu_http_transaction_result;
 
 typedef struct {

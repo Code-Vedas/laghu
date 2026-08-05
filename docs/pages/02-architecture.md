@@ -99,6 +99,8 @@ It never owns a codec process or fetches an image from the network.
 ### `laghu-runtime`
 
 `laghu-runtime` owns HTML/CSS/JavaScript planners, checksummed catalogs, immutable routes, queue publication, critical-resource learning, instrumentation endpoints, local snapshots, Redis/Valkey synchronization, cache administration, and operational decision records.
+Its LCP planner shares one fixed 32-candidate template inventory across all adapters. Browser v2 evidence is accepted only for server-owned opaque resource hashes; profile reads and heuristic fallback are bounded memory operations, while exact hint and markup changes remain atomic with the enclosing HTML transaction.
+Operational snapshots export `laghu_lcp_decisions_total{decision}`, `laghu_lcp_applied_total`, `laghu_lcp_profile_observations{viewport,theme}`, and `laghu_lcp_profile_ready{viewport,theme}`. Every label value comes from a fixed enum; media ordinals, resource identities, template keys, and request-derived values are never metric labels.
 
 It also owns the fixed-capacity CSP policy engine used by every delivery surface. All enforcing `Content-Security-Policy` headers are parsed as intersecting policies; bounded HTML meta policies add further restrictions. Directive lookup follows `script-src-elem`/`script-src-attr`, `style-src-elem`/`style-src-attr`, and `img-src` precedence over their fallback directives. Missing CSP is permissive, while malformed, excessive, or unsupported input disables the affected rewrite without affecting delivery.
 

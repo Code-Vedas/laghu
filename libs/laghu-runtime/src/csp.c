@@ -428,6 +428,9 @@ static bool laghu_csp_all(const laghu_csp_policy *policy,
 bool laghu_csp_allows_data_image(const laghu_csp_policy *policy) {
   return laghu_csp_all(policy, LAGHU_CSP_IMAGE, NULL, 0U, 0U);
 }
+bool laghu_csp_allows_external_image(const laghu_csp_policy *policy) {
+  return laghu_csp_all(policy, LAGHU_CSP_IMAGE, NULL, 0U, 2U);
+}
 bool laghu_csp_allows_inline_style(const laghu_csp_policy *policy,
                                    const unsigned char *nonce,
                                    size_t nonce_length) {

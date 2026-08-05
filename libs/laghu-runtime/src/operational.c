@@ -76,9 +76,9 @@ static bool laghu_path(const char *cache_path, char *output, size_t capacity) {
   size_t length;
   if (cache_path == NULL || output == NULL || capacity == 0U) return false;
   length = strlen(cache_path);
-  if (length == 0U || length + sizeof(".laghu-operations-v2") > capacity)
+  if (length == 0U || length + sizeof(".laghu-operations-v3") > capacity)
     return false;
-  return snprintf(output, capacity, "%s.laghu-operations-v2", cache_path) > 0;
+  return snprintf(output, capacity, "%s.laghu-operations-v3", cache_path) > 0;
 }
 
 void laghu_operational_registry_init(laghu_operational_registry *registry) {
@@ -241,6 +241,22 @@ void laghu_operational_registry_budget(laghu_operational_registry *registry,
     laghu_add(&slot->budget_rejections[budget->rejection], 1U);
 }
 
+void laghu_operational_registry_lcp(laghu_operational_registry *registry,
+                                    laghu_lcp_decision decision, bool applied,
+                                    const unsigned int observations[4],
+                                    const bool ready[4]) {
+  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
+  unsigned int bucket;
+  if (slot == NULL || decision > LAGHU_LCP_DECISION_CONFLICT) return;
+  laghu_add(&slot->lcp_decisions[decision], 1U);
+  if (applied) laghu_add(&slot->lcp_applied, 1U);
+  if (observations == NULL || ready == NULL) return;
+  for (bucket = 0U; bucket < 4U; ++bucket) {
+    laghu_store(&slot->lcp_profile_observations[bucket], observations[bucket]);
+    laghu_store(&slot->lcp_profile_ready[bucket], ready[bucket] ? 1U : 0U);
+  }
+}
+
 bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
                                          laghu_operational_snapshot *snapshot) {
   laghu_operational_header *header = registry != NULL ? registry->header : NULL;
@@ -302,12 +318,19 @@ bool laghu_operational_render_prometheus(
   uint64_t transform_current = 0U, transform_peak = 0U, transform_limit = 0U,
            deadline_limit = 0U, cache_rejected = 0U, variant_occupancy = 0U,
            variant_limit = 0U;
+  uint64_t lcp_decisions[6] = {0}, lcp_applied = 0U, lcp_observations[4] = {0},
+           lcp_ready[4] = {0};
   static const char *decision_names[] = {"bypass", "original", "optimized",
                                          "cached", "queued"};
   static const char *failure_names[] = {"runtime", "cache",     "queue",
                                         "worker",  "transform", "transport"};
   static const char *rejection_names[] = {"none",     "content", "memory",
                                           "deadline", "cache",   "variants"};
+  static const char *lcp_names[] = {"none",       "learned", "heuristic",
+                                    "unresolved", "stale",   "conflict"};
+  static const char *viewport_names[] = {"mobile", "mobile", "desktop",
+                                         "desktop"};
+  static const char *theme_names[] = {"light", "dark", "light", "dark"};
   static const char *bucket_names[] = {"0.001", "0.005", "0.010", "0.025",
                                        "0.050", "0.100", "0.250", "0.500",
                                        "1.000", "2.500", "5.000", "+Inf"};
@@ -347,6 +370,15 @@ bool laghu_operational_render_prometheus(
       cache_rejected = slot->cache_rejected_writes;
     variant_occupancy += slot->variant_occupancy;
     variant_limit += slot->variant_limit;
+    lcp_applied += slot->lcp_applied;
+    for (index = 0U; index < 6U; ++index)
+      lcp_decisions[index] += slot->lcp_decisions[index];
+    for (index = 0U; index < 4U; ++index) {
+      if (slot->lcp_profile_observations[index] > lcp_observations[index])
+        lcp_observations[index] = slot->lcp_profile_observations[index];
+      if (slot->lcp_profile_ready[index] > lcp_ready[index])
+        lcp_ready[index] = slot->lcp_profile_ready[index];
+    }
     {
       unsigned int metric;
       for (metric = 0U; metric < LAGHU_OPERATIONAL_DECISION_COUNT; ++metric)
@@ -428,6 +460,32 @@ bool laghu_operational_render_prometheus(
           transform_current, transform_peak, transform_limit, deadline_limit,
           cache_rejected, variant_occupancy, variant_limit))
     return false;
+  if (!laghu_append(output, capacity, &used,
+                    "# TYPE laghu_lcp_decisions_total counter\n"))
+    return false;
+  for (index = 0U; index < 6U; ++index)
+    if (!laghu_append(output, capacity, &used,
+                      "laghu_lcp_decisions_total{decision=\"%s\"} %" PRIu64
+                      "\n",
+                      lcp_names[index], lcp_decisions[index]))
+      return false;
+  if (!laghu_append(output, capacity, &used,
+                    "# TYPE laghu_lcp_applied_total counter\n"
+                    "laghu_lcp_applied_total %" PRIu64 "\n"
+                    "# TYPE laghu_lcp_profile_observations gauge\n"
+                    "# TYPE laghu_lcp_profile_ready gauge\n",
+                    lcp_applied))
+    return false;
+  for (index = 0U; index < 4U; ++index)
+    if (!laghu_append(
+            output, capacity, &used,
+            "laghu_lcp_profile_observations{viewport=\"%s\",theme=\"%s\"} "
+            "%" PRIu64 "\n"
+            "laghu_lcp_profile_ready{viewport=\"%s\",theme=\"%s\"} %" PRIu64
+            "\n",
+            viewport_names[index], theme_names[index], lcp_observations[index],
+            viewport_names[index], theme_names[index], lcp_ready[index]))
+      return false;
   if (!laghu_append(output, capacity, &used,
                     "# TYPE laghu_request_duration_seconds histogram\n"))
     return false;

@@ -50,6 +50,8 @@ printf '%s\n' 'nginx-purge-token-0123456789' >"${SMOKE_DIR}/purge.token"
 chmod 600 "${SMOKE_DIR}/purge.token"
 printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
   >"${SMOKE_DIR}/html/index.html"
+printf '%s\n' '<!doctype html><body><nav><img src="/logo.png" width="40" height="40"></nav><img src="/hero.jpg" width="800" height="600"><img src="/later.jpg" loading="lazy"></body>' \
+  >"${SMOKE_DIR}/html/lcp.html"
 
 image_smoke=0
 optimizer_pid=""
@@ -669,6 +671,12 @@ curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/ready" | \
   grep '"status":"ready"' >/dev/null
+curl --fail --silent --show-error --dump-header "${SMOKE_DIR}/lcp-headers" \
+  --output "${SMOKE_DIR}/lcp-body" "http://127.0.0.1:${PORT}/lcp.html"
+grep 'fetchpriority=\("\)\?high\("\)\?' "${SMOKE_DIR}/lcp-body" >/dev/null
+grep 'later.jpg.*loading=.*lazy' "${SMOKE_DIR}/lcp-body" >/dev/null
+tr -d '\r' <"${SMOKE_DIR}/lcp-headers" | \
+  grep -i -E -x 'Link: </hero.jpg>; rel=preload; as=image' >/dev/null
 curl --fail --silent --show-error --request PURGE \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/site.css" | grep 'accepted' >/dev/null
@@ -766,6 +774,7 @@ if [ "${image_smoke}" -eq 1 ]; then
   grep ' 320w' "${SMOKE_DIR}/image-page-warm" >/dev/null
   grep ' 512w' "${SMOKE_DIR}/image-page-warm" >/dev/null
   grep 'loading=lazy' "${SMOKE_DIR}/image-page-warm" >/dev/null
+  [ "$(grep -o 'loading=lazy' "${SMOKE_DIR}/image-page-warm" | wc -l | tr -d ' ')" -eq 1 ]
   grep '/.laghu/beacon/images.js' "${SMOKE_DIR}/image-page-warm" >/dev/null
   tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
     grep -i -E -x 'ETag: "laghu-html-[0-9a-f]{64}"' >/dev/null

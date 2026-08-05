@@ -39,6 +39,7 @@ add_library(mod_laghu MODULE
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/css_markup.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/critical_css.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/instrumentation.c"
+  "${LAGHU_SOURCE}/libs/laghu-runtime/src/lcp.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/rum.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/font_provider.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/javascript.c"

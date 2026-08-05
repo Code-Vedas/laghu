@@ -1067,11 +1067,13 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   laghu_runtime_html_result critical = {0};
   laghu_runtime_html_result javascript = {0};
   laghu_runtime_html_result instrumentation = {0};
+  laghu_lcp_result lcp = {0};
   laghu_runtime_html_result hinted;
   laghu_runtime_html_result finalized;
   char csp_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char language[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char links[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
+  char effective_links[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   const unsigned char *selected = body.data;
   size_t selected_length = body.length;
   bool base_rewritten;
@@ -1079,6 +1081,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   char base_dependency[LAGHU_RUNTIME_KEY_SIZE];
   char dependency[LAGHU_RUNTIME_KEY_SIZE];
   char javascript_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
+  char lcp_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
   laghu_javascript_observation_set decision_observations;
   const laghu_javascript_observation_set *instrumentation_observations =
       transaction->environment.javascript_observations;
@@ -1099,9 +1102,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
        !laghu_csp_policy_add(&csp_policy, csp_value, strlen(csp_value))) ||
       !laghu_csp_policy_add_meta(&csp_policy, body))
     csp_policy.invalid = true;
-  if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON &&
-      transaction->environment.config.javascript_defer_suggestions ==
-          LAGHU_MODE_ON)
+  if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
     (void)laghu_runtime_instrumentation_template_key(
         transaction->environment.rum, transaction->environment.cache_path,
         transaction->environment.javascript_observations, body,
@@ -1286,13 +1287,71 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
           javascript.javascript_defer_observations;
     }
   }
+  if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
+    (void)laghu_runtime_instrumentation_template_key(
+        transaction->environment.rum, transaction->environment.cache_path,
+        instrumentation_observations, (laghu_buffer){selected, selected_length},
+        transaction->path, transaction->origin, transaction->policy_key,
+        transaction->environment.now,
+        transaction->environment.config.image_metadata_ttl,
+        transaction->environment.config.instrumentation_sample_rate,
+        lcp_template_key);
+  if (!laghu_runtime_prioritize_lcp(
+          transaction->environment.rum, body,
+          (laghu_buffer){selected, selected_length}, transaction->path,
+          transaction->origin,
+          lcp_template_key[0] == '\0' ? NULL : lcp_template_key,
+          transaction->environment.now,
+          transaction->environment.config.image_metadata_ttl,
+          transaction->viewport_width,
+          (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
+          (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U,
+          &csp_policy, &lcp)) {
+    laghu_runtime_html_result_release(&critical);
+    laghu_runtime_html_result_release(&font);
+    laghu_runtime_html_result_release(&rewritten);
+    laghu_runtime_html_result_release(&javascript);
+    return false;
+  }
+  result->lcp_decision = lcp.decision;
+  result->lcp_applied = lcp.applied;
+  memcpy(result->lcp_profile_observations, lcp.profile_observations,
+         sizeof(result->lcp_profile_observations));
+  memcpy(result->lcp_profile_ready, lcp.profile_ready,
+         sizeof(result->lcp_profile_ready));
+  if (lcp.rewritten) {
+    char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
+    int length = snprintf(material, sizeof(material), "%s\n%s", dependency,
+                          lcp.dependency_key);
+    selected = lcp.data;
+    selected_length = lcp.length;
+    base_rewritten = true;
+    if (length > 0 && (size_t)length < sizeof(material))
+      (void)laghu_sha256_hex(
+          (laghu_buffer){(const unsigned char *)material, (size_t)length},
+          dependency);
+  }
+  if (lcp.link_header != NULL && lcp.link_header[0] != '\0') {
+    int combined = snprintf(effective_links, sizeof(effective_links), "%s\n%s",
+                            links, lcp.link_header);
+    if (combined < 0 || (size_t)combined >= sizeof(effective_links)) {
+      laghu_lcp_result_release(&lcp);
+      laghu_runtime_html_result_release(&critical);
+      laghu_runtime_html_result_release(&font);
+      laghu_runtime_html_result_release(&rewritten);
+      laghu_runtime_html_result_release(&javascript);
+      return false;
+    }
+  } else {
+    memcpy(effective_links, links, sizeof(effective_links));
+  }
   if (!laghu_runtime_finalize_html_headers(
           transaction->environment.cache_path, body, transaction->path,
           transaction->origin, transaction->policy_key,
           transaction->capability_mask, transaction->environment.now,
           transaction->environment.config.image_metadata_ttl,
           transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS, language,
-          links, transaction->environment.config.css_inline_limit,
+          effective_links, transaction->environment.config.css_inline_limit,
           transaction->environment.config.css_outline_threshold, base_rewritten,
           &hinted) ||
       !laghu_runtime_finalize_html_headers(
@@ -1302,12 +1361,13 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
           transaction->capability_mask, transaction->environment.now,
           transaction->environment.config.image_metadata_ttl,
           transaction->html_plan & ~LAGHU_HTML_PLAN_RESOURCE_HINTS, language,
-          links, transaction->environment.config.css_inline_limit,
+          effective_links, transaction->environment.config.css_inline_limit,
           transaction->environment.config.css_outline_threshold, base_rewritten,
           &finalized)) {
     laghu_runtime_html_result_release(&critical);
     laghu_runtime_html_result_release(&rewritten);
     laghu_runtime_html_result_release(&font);
+    laghu_lcp_result_release(&lcp);
     return false;
   }
   if (hinted.invalid || hinted.dependencies_pending || finalized.invalid ||
@@ -1337,6 +1397,19 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
         laghu_runtime_html_result_release(&font);
+        laghu_lcp_result_release(&lcp);
+        return false;
+      }
+      header_changed = true;
+    }
+    if (lcp.link_header != NULL && lcp.link_header[0] != '\0') {
+      if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_APPEND,
+                                           "Link", lcp.link_header)) {
+        laghu_runtime_html_result_release(&hinted);
+        laghu_runtime_html_result_release(&finalized);
+        laghu_runtime_html_result_release(&rewritten);
+        laghu_runtime_html_result_release(&font);
+        laghu_lcp_result_release(&lcp);
         return false;
       }
       header_changed = true;
@@ -1349,6 +1422,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
         laghu_runtime_html_result_release(&font);
+        laghu_lcp_result_release(&lcp);
         return false;
       }
       header_changed = true;
@@ -1370,26 +1444,29 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
             transaction->environment.config.image_metadata_ttl,
             transaction->environment.config.instrumentation_sample_rate,
             decision_template_key)) {
-      laghu_rum_instrumentation_record baseline, current;
+      laghu_rum_instrumentation_record *baseline =
+          calloc(1U, sizeof(*baseline));
+      laghu_rum_instrumentation_record *current = calloc(1U, sizeof(*current));
       laghu_rum_value baseline_value, current_value;
       unsigned int bucket = transaction->viewport_width != 0U &&
                                     transaction->viewport_width < 768U
                                 ? 0U
                                 : 1U;
-      if (laghu_rum_engine_read(
-              transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
-              javascript_template_key, transaction->environment.now, &baseline,
-              sizeof(baseline), &baseline_value) &&
+      if (baseline != NULL && current != NULL &&
           laghu_rum_engine_read(
               transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
-              decision_template_key, transaction->environment.now, &current,
-              sizeof(current), &current_value) &&
-          laghu_javascript_defer_rollback_recommended(&baseline, &current,
+              javascript_template_key, transaction->environment.now, baseline,
+              sizeof(*baseline), &baseline_value) &&
+          laghu_rum_engine_read(
+              transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+              decision_template_key, transaction->environment.now, current,
+              sizeof(*current), &current_value) &&
+          laghu_javascript_defer_rollback_recommended(baseline, current,
                                                       bucket)) {
         unsigned int rule;
         result->javascript_defer_rollback_recommended = true;
         result->javascript_defer_bucket = bucket;
-        result->javascript_defer_observations = current.observations[bucket];
+        result->javascript_defer_observations = current->observations[bucket];
         (void)snprintf(result->javascript_defer_template,
                        sizeof(result->javascript_defer_template), "%s",
                        decision_template_key);
@@ -1406,6 +1483,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
           }
         }
       }
+      free(baseline);
+      free(current);
     }
     if (!laghu_runtime_add_instrumentation(
             transaction->environment.rum, transaction->environment.cache_path,
@@ -1422,6 +1501,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       laghu_runtime_html_result_release(&font);
       laghu_runtime_html_result_release(&critical);
       laghu_runtime_html_result_release(&javascript);
+      laghu_lcp_result_release(&lcp);
       return false;
     }
     if (instrumentation.rewritten) {
@@ -1442,6 +1522,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     laghu_runtime_html_result_release(&finalized);
     laghu_runtime_html_result_release(&rewritten);
     laghu_runtime_html_result_release(&font);
+    laghu_lcp_result_release(&lcp);
     return false;
   }
   laghu_runtime_html_result_release(&hinted);
@@ -1451,6 +1532,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   laghu_runtime_html_result_release(&critical);
   laghu_runtime_html_result_release(&javascript);
   laghu_runtime_html_result_release(&instrumentation);
+  laghu_lcp_result_release(&lcp);
   if (!base_rewritten && !header_changed) {
     return true;
   }

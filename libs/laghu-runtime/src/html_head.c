@@ -1462,18 +1462,20 @@ static bool laghu_html_effective_base(laghu_buffer html,
                                       const char *page_origin,
                                       laghu_html_url_base *base) {
   size_t index;
+  laghu_html_attribute *attributes =
+      calloc(LAGHU_HTML_MAX_ATTRIBUTES, sizeof(*attributes));
+  if (attributes == NULL) return false;
   memset(base, 0, sizeof(*base));
   if (page_path == NULL || page_origin == NULL || page_path[0] != '/' ||
       page_origin[0] == '\0' || strlen(page_path) >= sizeof(base->path) ||
       strlen(page_origin) >= sizeof(base->origin))
-    return true;
+    goto finished;
   strcpy(base->origin, page_origin);
   strcpy(base->page_origin, page_origin);
   if (!laghu_html_url_normalize_path(page_path, base->path, sizeof(base->path)))
-    return true;
+    goto finished;
   base->enabled = true;
   for (index = 0U; index < token_count; ++index) {
-    laghu_html_attribute attributes[LAGHU_HTML_MAX_ATTRIBUTES];
     size_t count = 0U;
     char name[16U];
     bool closing;
@@ -1489,7 +1491,7 @@ static bool laghu_html_effective_base(laghu_buffer html,
                               name, &closing, &self_closing, attributes,
                               &count)) {
       base->enabled = false;
-      return true;
+      goto finished;
     }
     href = laghu_html_find_attribute(attributes, count, "href");
     if (href == NULL) continue;
@@ -1498,12 +1500,14 @@ static bool laghu_html_effective_base(laghu_buffer html,
                                 href->value_end - href->value_start,
                                 resolved_origin, resolved_path)) {
       base->enabled = false;
-      return true;
+      goto finished;
     }
     strcpy(base->origin, resolved_origin);
     strcpy(base->path, resolved_path);
-    return true;
+    goto finished;
   }
+finished:
+  free(attributes);
   return true;
 }
 
@@ -1518,12 +1522,19 @@ static bool laghu_html_trim_resource_urls(laghu_buffer html,
   size_t cursor = 0U;
   size_t index;
   bool changed = false;
+  laghu_html_attribute *attributes =
+      calloc(LAGHU_HTML_MAX_ATTRIBUTES, sizeof(*attributes));
+  if (attributes == NULL) return false;
   if (!laghu_html_effective_base(html, tokens, token_count, page_path,
-                                 page_origin, &base))
+                                 page_origin, &base)) {
+    free(attributes);
     return false;
-  if (!base.enabled) return true;
+  }
+  if (!base.enabled) {
+    free(attributes);
+    return true;
+  }
   for (index = 0U; index < token_count; ++index) {
-    laghu_html_attribute attributes[LAGHU_HTML_MAX_ATTRIBUTES];
     size_t count = 0U;
     size_t attribute_index;
     char name[16U];
@@ -1577,6 +1588,7 @@ static bool laghu_html_trim_resource_urls(laghu_buffer html,
   }
   if (!changed) {
     free(builder.data);
+    free(attributes);
     return true;
   }
   if (!laghu_head_append(&builder, html.data + cursor, html.length - cursor) ||
@@ -1586,9 +1598,11 @@ static bool laghu_html_trim_resource_urls(laghu_buffer html,
   result->length = builder.length;
   result->rewritten = true;
   result->lexical_changed = true;
+  free(attributes);
   return true;
 failed:
   free(builder.data);
+  free(attributes);
   return false;
 }
 

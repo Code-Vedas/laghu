@@ -3092,6 +3092,10 @@ static void proxy_handle(const proxy_connection *connection,
     laghu_operational_registry_budget(
         &worker->queue->operational, &transaction.budget,
         transaction.environment.config.transform_deadline_ms);
+    laghu_operational_registry_lcp(
+        &worker->queue->operational, finalized.lcp_decision,
+        finalized.lcp_applied, finalized.lcp_profile_observations,
+        finalized.lcp_profile_ready);
     if (!proxy_send_result(client, &response, &finalized, finalized.selected))
       access.failure = "client_disconnect";
   } else {

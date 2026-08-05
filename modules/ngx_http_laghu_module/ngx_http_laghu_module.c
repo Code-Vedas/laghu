@@ -2219,6 +2219,9 @@ static ngx_int_t ngx_http_laghu_transaction_body_filter(
     laghu_operational_registry_budget(
         &ngx_http_laghu_operational, &context->transaction.budget,
         context->transaction.environment.config.transform_deadline_ms);
+    laghu_operational_registry_lcp(
+        &ngx_http_laghu_operational, result.lcp_decision, result.lcp_applied,
+        result.lcp_profile_observations, result.lcp_profile_ready);
     ngx_http_laghu_log_defer_recommendation(request, &result);
     if (context->header_deferred) {
       const unsigned char *selected = result.selected.data;

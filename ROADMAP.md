@@ -225,21 +225,23 @@ RUM-store evidence: every native NGINX, Apache, and standalone worker owns a bou
 - [ ] SVG optimization and optional simple raster-to-vector conversion.
 - [x] LQIP and blur-placeholder generation.
 - [x] Automatic width and height injection.
-- [ ] LCP-image `fetchpriority=high` with safe below-fold lazy loading.
+- [x] LCP-image `fetchpriority=high` with safe below-fold lazy loading.
 - [ ] Large animated GIF conversion to MP4/WebM video markup.
 
 Completion evidence for the checked geometry features is shared with Section 3.2. Queue protocol v5 carries exact 1x/2x targets, catalogs retain natural dimensions and ready variants, and the bounded HTML rewrite injects exact `srcset`, `sizes`, missing width/height attributes, and 24-pixel previews only after every dependency is ready. Unit tests and NGINX, Apache, and standalone cold/warm smoke paths cover the content-addressed variants and original-preserving fallback. Aspect-ratio injection remains unimplemented and is not claimed by the completed dimension item.
 
+LCP prioritization evidence: instrumentation v2 retains v1 aggregate-CWV compatibility while validating fixed media kind, ordinal, theme, and opaque SHA-256 resource identity against a server-owned inventory of at most 32 candidates. Mobile/desktop light/dark profiles use saturating counters and require three observations, 80-percent dominance, and candidate/resource agreement across themes. The shared bounded planner applies atomic same-origin CSP-authorized priority, lazy exclusion, and exact image, responsive-picture, or poster preloads; explicit low priority and ambiguous evidence fail open. Its no-I/O heuristic excludes navigation, ancillary, template, hidden/inert, explicit lazy/low, tracking-sized, data/blob, cross-origin, and ambiguous-picture candidates. Runtime/HTTP tests, standalone, NGINX, Apache, full `scripts/run-all`, and Windows x64 codec/no-codec, service lifecycle, and matched NGINX/Apache lanes pass.
+
 ### 4.2 Core Web Vitals
 
-- [ ] Detect, preload, prioritize, and exclude the LCP element from lazy loading.
+- [x] Detect, preload, prioritize, and exclude the LCP element from lazy loading.
 - [ ] Reserve layout space for images, ads, embeds, and fonts to reduce CLS.
 - [ ] Add appropriate font-display behavior and font preloads.
 - [ ] Defer non-critical JavaScript, safely split long tasks, and delay eligible third-party scripts until interaction to improve INP.
 - [ ] Add HTML micro-caching, conditional revalidation (`304`), and stale-while-revalidate to improve TTFB.
 - [ ] Learn and apply optimization profiles by DOM-template hash.
 - [ ] Add an optional headless-Chrome analysis tier for critical CSS, viewport state, LCP, and rendered image dimensions.
-- [ ] Provide a non-blocking heuristic fallback when browser analysis is absent or fails.
+- [x] Provide a non-blocking heuristic fallback when browser analysis is absent or fails.
 
 ### 4.3 Delivery and Protocols
 

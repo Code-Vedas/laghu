@@ -130,6 +130,172 @@ static void test_transform_budget(void) {
   assert(budget.rejection == LAGHU_BUDGET_REJECTION_VARIANTS);
 }
 
+static void test_lcp_prioritization(laghu_rum_engine *rum) {
+  static const unsigned char evidence_html[] =
+      "<html><body><nav><img src=/logo.png width=40 height=40></nav>"
+      "<img src=/hero.jpg width=800 height=600><img src=/later.jpg>"
+      "</body></html>";
+  static const unsigned char selected_html[] =
+      "<html><body><nav><img src=/logo.png width=40 height=40 loading=lazy>"
+      "</nav><img src=/hero.jpg width=800 height=600 loading=lazy>"
+      "<img src=/later.jpg loading=lazy></body></html>";
+  static const unsigned char responsive_html[] =
+      "<html><body><nav><img src=/logo.png width=40 height=40 loading=lazy>"
+      "</nav><img src=.laghu/image/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "aaaaaaaaaaaaaaaaaaaaaaaa width=800 height=600 "
+      "srcset=\".laghu/image/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "aaaaaaaaaaaaaaaaaaaa 800w, .laghu/image/bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1200w\" sizes=100vw "
+      "loading=lazy><img src=/later.jpg loading=lazy></body></html>";
+  static const char template_key[] =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  laghu_rum_instrumentation_record record = {0};
+  laghu_lcp_result result;
+  char digest[LAGHU_RUNTIME_KEY_SIZE];
+  unsigned int bucket;
+  laghu_csp_policy csp;
+  laghu_csp_policy_init(&csp, "https://example.test");
+  assert(laghu_lcp_inventory_record(
+      (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U}, "/index.html",
+      "https://example.test", &record, digest));
+  assert(record.media_count == 3U && record.media_kind[0] == 0U &&
+         record.media_kind[1] == 1U && strlen(digest) == 64U);
+  assert(laghu_runtime_prioritize_lcp(
+      rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
+      (laghu_buffer){selected_html, sizeof(selected_html) - 1U}, "/index.html",
+      "https://example.test", NULL, 100U, 60U, 640U, true, true, &csp,
+      &result));
+  assert(result.decision == LAGHU_LCP_DECISION_HEURISTIC && result.applied &&
+         result.rewritten);
+  assert(strstr((const char *)result.data, "src=/hero.jpg") != NULL);
+  assert(strstr((const char *)result.data, "fetchpriority=\"high\"") != NULL);
+  assert(strstr((const char *)result.data,
+                "src=/hero.jpg width=800 height=600 loading=lazy") == NULL);
+  assert(strcmp(result.link_header, "</hero.jpg>; rel=preload; as=image") == 0);
+  laghu_lcp_result_release(&result);
+  assert(laghu_runtime_prioritize_lcp(
+      rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
+      (laghu_buffer){responsive_html, sizeof(responsive_html) - 1U},
+      "/index.html", "https://example.test", NULL, 100U, 60U, 640U, true, true,
+      &csp, &result));
+  assert(result.decision == LAGHU_LCP_DECISION_UNRESOLVED && !result.applied);
+  laghu_lcp_result_release(&result);
+
+  record.version = LAGHU_INSTRUMENTATION_VERSION;
+  strcpy(record.template_key, template_key);
+  record.updated_at = 100U;
+  for (bucket = 0U; bucket < 2U; ++bucket) {
+    record.lcp_observations[bucket] = 3U;
+    record.lcp_candidates[bucket][1] = 3U;
+    record.lcp_resources[bucket][1][0] = 3U;
+  }
+  assert(laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                  template_key, 100U, &record, sizeof(record),
+                                  NULL));
+  assert(laghu_runtime_prioritize_lcp(
+      rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
+      (laghu_buffer){selected_html, sizeof(selected_html) - 1U}, "/index.html",
+      "https://example.test", template_key, 101U, 60U, 640U, true, true, &csp,
+      &result));
+  assert(result.decision == LAGHU_LCP_DECISION_LEARNED && result.applied &&
+         result.observations == 6U && result.profile_ready[0] &&
+         result.profile_ready[1]);
+  laghu_lcp_result_release(&result);
+  record.lcp_candidates[1][1] = 0U;
+  record.lcp_candidates[1][2] = 3U;
+  assert(laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                  template_key, 102U, &record, sizeof(record),
+                                  NULL));
+  assert(laghu_runtime_prioritize_lcp(
+      rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
+      (laghu_buffer){selected_html, sizeof(selected_html) - 1U}, "/index.html",
+      "https://example.test", template_key, 103U, 60U, 640U, true, true, &csp,
+      &result));
+  assert(result.decision == LAGHU_LCP_DECISION_HEURISTIC);
+  laghu_lcp_result_release(&result);
+
+  {
+    static const unsigned char picture_html[] =
+        "<html><body><picture><source srcset=\"/hero-1.webp 1x, "
+        "/hero-2.webp 2x\" sizes=\"100vw\"><img src=/hero.jpg "
+        "width=800 height=600 loading=lazy></picture></body></html>";
+    static const char picture_key[] =
+        "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    memset(&record, 0, sizeof(record));
+    assert(laghu_lcp_inventory_record(
+        (laghu_buffer){picture_html, sizeof(picture_html) - 1U}, "/picture",
+        "https://example.test", &record, digest));
+    assert(record.media_count == 1U && record.media_resource_count[0] == 3U);
+    record.version = LAGHU_INSTRUMENTATION_VERSION;
+    strcpy(record.template_key, picture_key);
+    record.updated_at = 200U;
+    for (bucket = 0U; bucket < 2U; ++bucket) {
+      record.lcp_observations[bucket] = 3U;
+      record.lcp_candidates[bucket][0] = 3U;
+      record.lcp_resources[bucket][0][1] = 3U;
+    }
+    assert(laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                    picture_key, 200U, &record, sizeof(record),
+                                    NULL));
+    assert(laghu_runtime_prioritize_lcp(
+        rum, (laghu_buffer){picture_html, sizeof(picture_html) - 1U},
+        (laghu_buffer){picture_html, sizeof(picture_html) - 1U}, "/picture",
+        "https://example.test", picture_key, 201U, 60U, 640U, true, true, &csp,
+        &result));
+    assert(result.decision == LAGHU_LCP_DECISION_LEARNED && result.applied);
+    assert(strstr(result.link_header, "</hero-2.webp>") != NULL &&
+           strstr(result.link_header,
+                  "imagesrcset=\"/hero-1.webp 1x, "
+                  "/hero-2.webp 2x\"") != NULL);
+    assert(strstr((const char *)result.data, "fetchpriority=\"high\"") != NULL);
+    laghu_lcp_result_release(&result);
+  }
+
+  {
+    static const unsigned char video_html[] =
+        "<html><body><video poster=/poster.jpg></video></body></html>";
+    static const char video_key[] =
+        "2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    memset(&record, 0, sizeof(record));
+    assert(laghu_lcp_inventory_record(
+        (laghu_buffer){video_html, sizeof(video_html) - 1U}, "/video",
+        "https://example.test", &record, digest));
+    record.version = LAGHU_INSTRUMENTATION_VERSION;
+    strcpy(record.template_key, video_key);
+    record.updated_at = 300U;
+    for (bucket = 0U; bucket < 2U; ++bucket) {
+      record.lcp_observations[bucket] = 3U;
+      record.lcp_candidates[bucket][0] = 3U;
+      record.lcp_resources[bucket][0][0] = 3U;
+    }
+    assert(laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
+                                    video_key, 300U, &record, sizeof(record),
+                                    NULL));
+    assert(laghu_runtime_prioritize_lcp(
+        rum, (laghu_buffer){video_html, sizeof(video_html) - 1U},
+        (laghu_buffer){video_html, sizeof(video_html) - 1U}, "/video",
+        "https://example.test", video_key, 301U, 60U, 640U, true, true, &csp,
+        &result));
+    assert(result.decision == LAGHU_LCP_DECISION_LEARNED && result.applied &&
+           !result.rewritten &&
+           strcmp(result.link_header, "</poster.jpg>; rel=preload; as=image") ==
+               0);
+    laghu_lcp_result_release(&result);
+  }
+
+  laghu_csp_policy_init(&csp, "https://example.test");
+  assert(laghu_csp_policy_add(&csp, "img-src 'none'",
+                              sizeof("img-src 'none'") - 1U));
+  assert(laghu_runtime_prioritize_lcp(
+      rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
+      (laghu_buffer){selected_html, sizeof(selected_html) - 1U}, "/index.html",
+      "https://example.test", NULL, 400U, 60U, 640U, true, true, &csp,
+      &result));
+  assert(result.decision == LAGHU_LCP_DECISION_CONFLICT && !result.applied &&
+         result.link_header == NULL);
+  laghu_lcp_result_release(&result);
+}
+
 static void test_operational_registry(const char *cache_path) {
   laghu_operational_registry adapter, worker;
   laghu_operational_snapshot *snapshot = calloc(1U, sizeof(*snapshot));
@@ -195,6 +361,12 @@ static void test_operational_registry(const char *cache_path) {
   assert(laghu_transform_budget_reserve(&budget, 4096U));
   budget.rejection = LAGHU_BUDGET_REJECTION_DEADLINE;
   laghu_operational_registry_budget(&adapter, &budget, 50U);
+  {
+    unsigned int observations[4] = {3U, 4U, 0U, 0U};
+    bool ready[4] = {true, true, false, false};
+    laghu_operational_registry_lcp(&adapter, LAGHU_LCP_DECISION_LEARNED, true,
+                                   observations, ready);
+  }
   assert(laghu_operational_registry_heartbeat(&worker, now, true, 64U, 3U));
   assert(laghu_operational_registry_snapshot(&adapter, snapshot));
   assert(snapshot->slots[adapter.slot].requests == 40002U);
@@ -204,6 +376,11 @@ static void test_operational_registry(const char *cache_path) {
   assert(strstr(output, "laghu_cache_bytes 4096") != NULL);
   assert(strstr(output, "laghu_cache_rejected_writes_total 2") != NULL);
   assert(strstr(output, "laghu_variant_occupancy 3") != NULL);
+  assert(strstr(output, "laghu_lcp_decisions_total{decision=\"learned\"} 1") !=
+         NULL);
+  assert(strstr(output,
+                "laghu_lcp_profile_ready{viewport=\"mobile\",theme=\"dark\"} "
+                "1") != NULL);
   assert(strstr(output,
                 "laghu_transform_rejections_total{reason=\"deadline\"} 1") !=
          NULL);
@@ -1123,6 +1300,7 @@ int main(void) {
     rum_engine = laghu_rum_engine_create(&rum_options, NULL, 0U);
     assert(rum_engine != NULL);
   }
+  test_lcp_prioritization(rum_engine);
   {
     static const char config[] =
         "provider google_fonts\n"
@@ -2437,6 +2615,20 @@ int main(void) {
         (laghu_buffer){(const unsigned char *)json, strlen(json)}, &rum));
     assert(rum.candidate_count == 1U && rum.lcp_ms == 2200U);
     assert(laghu_instrumentation_apply_beacon(rum_engine, temporary, 3001U,
+                                              604800U, &rum));
+    assert(snprintf(json, sizeof(json),
+                    "{\"version\":2,\"template\":\"%s\",\"bucket\":0,"
+                    "\"scheme\":1,\"lcp_ms\":1200,\"inp_ms\":80,"
+                    "\"cls_milli\":20,\"dcl_ms\":700,\"load_ms\":900,"
+                    "\"errors\":0,\"rejections\":0,\"candidates\":[],"
+                    "\"lcp_kind\":0,\"lcp_ordinal\":0,"
+                    "\"lcp_resource\":\"\"}",
+                    rum.template_key) > 0);
+    assert(laghu_runtime_parse_instrumentation_beacon(
+        (laghu_buffer){(const unsigned char *)json, strlen(json)}, &rum));
+    assert(rum.version == 2U && rum.color_scheme_bucket == 1U &&
+           rum.lcp_kind == 0U);
+    assert(laghu_instrumentation_apply_beacon(rum_engine, temporary, 3002U,
                                               604800U, &rum));
     assert(strstr(laghu_runtime_instrumentation_script(),
                   "largest-contentful-paint") != NULL);
