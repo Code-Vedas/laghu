@@ -509,20 +509,20 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                strcmp(name, "--statistics") == 0 ||
                strcmp(name, "--metrics") == 0 ||
                strcmp(name, "--readiness") == 0) {
-      bool *target = strcmp(name, "--purge-query") == 0
-                         ? &options->purge_query
-                         : (strcmp(name, "--statistics") == 0
-                                ? &options->statistics
-                                : (strcmp(name, "--metrics") == 0
-                                       ? &options->metrics
-                                       : &options->readiness));
-      bool *seen = strcmp(name, "--purge-query") == 0
-                       ? &purge_query_seen
-                       : (strcmp(name, "--statistics") == 0
-                              ? &statistics_seen
-                              : (strcmp(name, "--metrics") == 0
-                                     ? &metrics_seen
-                                     : &readiness_seen));
+      bool *target =
+          strcmp(name, "--purge-query") == 0
+              ? &options->purge_query
+              : (strcmp(name, "--statistics") == 0
+                     ? &options->statistics
+                     : (strcmp(name, "--metrics") == 0 ? &options->metrics
+                                                       : &options->readiness));
+      bool *seen =
+          strcmp(name, "--purge-query") == 0
+              ? &purge_query_seen
+              : (strcmp(name, "--statistics") == 0
+                     ? &statistics_seen
+                     : (strcmp(name, "--metrics") == 0 ? &metrics_seen
+                                                       : &readiness_seen));
       NEED_VALUE();
       if (*seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
         return proxy_error(error, error_size,
@@ -2121,12 +2121,12 @@ static void proxy_send_admin_json(laghu_socket client, unsigned int status,
 static void proxy_send_metrics(laghu_socket client, const char *body,
                                size_t length, bool head) {
   char headers[512];
-  int count = snprintf(
-      headers, sizeof(headers),
-      "HTTP/1.1 200 OK\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\n"
-      "Cache-Control: no-store\r\nContent-Length: %zu\r\n"
-      "Connection: close\r\n\r\n",
-      length);
+  int count = snprintf(headers, sizeof(headers),
+                       "HTTP/1.1 200 OK\r\nContent-Type: text/plain; "
+                       "version=0.0.4; charset=utf-8\r\n"
+                       "Cache-Control: no-store\r\nContent-Length: %zu\r\n"
+                       "Connection: close\r\n\r\n",
+                       length);
   if (count > 0 && (size_t)count < sizeof(headers)) {
     (void)proxy_send_all(client, headers, (size_t)count);
     if (!head) (void)proxy_send_all(client, body, length);
@@ -2241,10 +2241,10 @@ static void proxy_access_write(proxy_queue *queue,
     operational_decision = LAGHU_OPERATIONAL_DECISION_CACHED;
   else if (access->job_published)
     operational_decision = LAGHU_OPERATIONAL_DECISION_QUEUED;
-  laghu_operational_registry_record(
-      &queue->operational, operational_decision,
-      access->original_response_bytes,
-      access->output_bytes, elapsed * UINT64_C(1000));
+  laghu_operational_registry_record(&queue->operational, operational_decision,
+                                    access->original_response_bytes,
+                                    access->output_bytes,
+                                    elapsed * UINT64_C(1000));
   if (strcmp(access->failure, "none") != 0)
     laghu_operational_registry_failure(&queue->operational,
                                        LAGHU_OPERATIONAL_FAILURE_TRANSPORT);
@@ -2383,7 +2383,8 @@ static void proxy_handle(const proxy_connection *connection,
       PROXY_FAIL(404U, "Not Found", "request_limit");
       goto done;
     }
-    if (purge_request || stats_request || metrics_request || readiness_request) {
+    if (purge_request || stats_request || metrics_request ||
+        readiness_request) {
       bool head = strcmp(request.method, "HEAD") == 0;
       bool authorized = proxy_peer_in_cidrs(connection, options->purge_allow,
                                             options->purge_allow_count) &&
@@ -2433,9 +2434,9 @@ static void proxy_handle(const proxy_connection *connection,
           access.output_bytes = head ? 0U : output_length;
         } else if (readiness_request) {
           laghu_operational_readiness readiness;
-          bool cache_ready = proxy_cache_probe(options->cache_path) &&
-                             laghu_cache_backend_health_path(
-                                 options->cache_path, &stats);
+          bool cache_ready =
+              proxy_cache_probe(options->cache_path) &&
+              laghu_cache_backend_health_path(options->cache_path, &stats);
           laghu_operational_registry_cache(&worker->queue->operational, &stats);
           if (!laghu_operational_readiness_evaluate(
                   &operational->snapshot, (uint64_t)time(NULL),
@@ -3544,10 +3545,10 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     goto cleanup;
   }
   if ((options->metrics || options->readiness) &&
-      !laghu_operational_registry_open(
-          &queue.operational, options->cache_path,
-          LAGHU_OPERATIONAL_SURFACE_STANDALONE,
-          LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)time(NULL))) {
+      !laghu_operational_registry_open(&queue.operational, options->cache_path,
+                                       LAGHU_OPERATIONAL_SURFACE_STANDALONE,
+                                       LAGHU_OPERATIONAL_PROCESS_ADAPTER, true,
+                                       (uint64_t)time(NULL))) {
     proxy_log_event(&queue, "observability", "unavailable");
   }
   if (options->origin_tls &&

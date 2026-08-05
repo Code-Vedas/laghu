@@ -677,8 +677,8 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
       int job_status = laghu_libvips_run_isolated(&job, cache_path);
       if (job_status != 0) {
         laghu_libvips_job_diagnostic(&job, job_status, &last_diagnostic);
-        laghu_operational_registry_failure(
-            &operational, LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
+        laghu_operational_registry_failure(&operational,
+                                           LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
       }
       status = job_status == 4 ? 0 : job_status;
       (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));

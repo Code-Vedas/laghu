@@ -145,6 +145,8 @@ static apr_time_t laghu_apache_last_defer_recommendation;
 static unsigned int laghu_apache_beacon_count;
 static laghu_rum_engine *laghu_apache_rum;
 static laghu_operational_registry laghu_apache_operational;
+static const char *laghu_apache_operational_cache;
+static bool laghu_apache_operational_enabled;
 
 static const char *laghu_apache_request_origin(request_rec *request) {
   const char *scheme = ap_http_scheme(request);
@@ -208,16 +210,14 @@ static void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
   int length;
   laghu_rum_options_init(&options);
   laghu_operational_registry_init(&laghu_apache_operational);
-  if (config != NULL && (config->metrics || config->readiness) &&
+  if (laghu_apache_operational_enabled &&
       !laghu_operational_registry_open(
-          &laghu_apache_operational,
-          config != NULL && config->image_cache != NULL ? config->image_cache
-                                                        : LAGHU_DEFAULT_CACHE,
-          LAGHU_OPERATIONAL_SURFACE_APACHE,
-          LAGHU_OPERATIONAL_PROCESS_ADAPTER, true,
-          (uint64_t)apr_time_sec(apr_time_now())))
-    ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server,
-                 "Laghu operational registry unavailable; observability disabled");
+          &laghu_apache_operational, laghu_apache_operational_cache,
+          LAGHU_OPERATIONAL_SURFACE_APACHE, LAGHU_OPERATIONAL_PROCESS_ADAPTER,
+          true, (uint64_t)apr_time_sec(apr_time_now())))
+    ap_log_error(
+        APLOG_MARK, APLOG_WARNING, 0, server,
+        "Laghu operational registry unavailable; observability disabled");
   if (config != NULL && config->core.mode == LAGHU_MODE_ON &&
       !laghu_cache_backend_register_path(config->image_cache != NULL
                                              ? config->image_cache
@@ -400,10 +400,9 @@ static void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   merged->metrics = (child->admin_set_mask & LAGHU_ADMIN_SET_METRICS) != 0U
                         ? child->metrics
                         : parent->metrics;
-  merged->readiness =
-      (child->admin_set_mask & LAGHU_ADMIN_SET_READINESS) != 0U
-          ? child->readiness
-          : parent->readiness;
+  merged->readiness = (child->admin_set_mask & LAGHU_ADMIN_SET_READINESS) != 0U
+                          ? child->readiness
+                          : parent->readiness;
   merged->readiness_strict =
       (child->admin_set_mask & LAGHU_ADMIN_SET_READINESS_POLICY) != 0U
           ? child->readiness_strict
@@ -1021,13 +1020,13 @@ static const char *laghu_apache_command(cmd_parms *command, void *value,
                               : (ap_cstr_casecmp(name, "Metrics") == 0
                                      ? LAGHU_ADMIN_SET_METRICS
                                      : LAGHU_ADMIN_SET_READINESS));
-    bool *target = bit == LAGHU_ADMIN_SET_QUERY
-                       ? &config->purge_query
-                       : (bit == LAGHU_ADMIN_SET_STATS
-                              ? &config->statistics
-                              : (bit == LAGHU_ADMIN_SET_METRICS
-                                     ? &config->metrics
-                                     : &config->readiness));
+    bool *target =
+        bit == LAGHU_ADMIN_SET_QUERY
+            ? &config->purge_query
+            : (bit == LAGHU_ADMIN_SET_STATS
+                   ? &config->statistics
+                   : (bit == LAGHU_ADMIN_SET_METRICS ? &config->metrics
+                                                     : &config->readiness));
     if ((config->admin_set_mask & bit) != 0U ||
         (ap_cstr_casecmp(parameter, "On") != 0 &&
          ap_cstr_casecmp(parameter, "Off") != 0))
@@ -2171,10 +2170,9 @@ static int laghu_apache_variant_handler(request_rec *request) {
       strcmp(request->method, "PURGE") == 0 ||
       (request->unparsed_uri != NULL &&
        strstr(request->unparsed_uri, "laghu=purge") != NULL) ||
-      (request->uri != NULL &&
-       (strcmp(request->uri, "/.laghu/stats") == 0 ||
-        strcmp(request->uri, "/.laghu/metrics") == 0 ||
-        strcmp(request->uri, "/.laghu/ready") == 0));
+      (request->uri != NULL && (strcmp(request->uri, "/.laghu/stats") == 0 ||
+                                strcmp(request->uri, "/.laghu/metrics") == 0 ||
+                                strcmp(request->uri, "/.laghu/ready") == 0));
   if (request->uri == NULL ||
       (strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
        !administration_candidate)) {
@@ -2211,7 +2209,8 @@ static int laghu_apache_variant_handler(request_rec *request) {
     if ((metrics_request && !config->metrics) ||
         (readiness_request && !config->readiness))
       return HTTP_NOT_FOUND;
-    if (purge_request || stats_request || metrics_request || readiness_request) {
+    if (purge_request || stats_request || metrics_request ||
+        readiness_request) {
       const char *provided =
           apr_table_get(request->headers_in, "X-Laghu-Purge-Token");
       bool peer_allowed = false, token_allowed = false;
@@ -2298,8 +2297,8 @@ static int laghu_apache_variant_handler(request_rec *request) {
         size_t length = 0U;
         bool enabled = metrics_request ? config->metrics : config->readiness;
         (void)laghu_operational_registry_heartbeat(
-            &laghu_apache_operational,
-            (uint64_t)apr_time_sec(apr_time_now()), true, 0U, 0U);
+            &laghu_apache_operational, (uint64_t)apr_time_sec(apr_time_now()),
+            true, 0U, 0U);
         if (!enabled ||
             (request->method_number != M_GET && !request->header_only))
           return HTTP_METHOD_NOT_ALLOWED;
@@ -2660,6 +2659,23 @@ static int laghu_apache_post_config(apr_pool_t *configuration_pool,
                                     server_rec *server) {
   (void)log_pool;
   (void)temporary_pool;
+  {
+    laghu_apache_config *server_config =
+        ap_get_module_config(server->module_config, &laghu_module);
+    laghu_apache_config *default_config =
+        ap_get_module_config(server->lookup_defaults, &laghu_module);
+    laghu_apache_config *operational_config =
+        default_config != NULL ? default_config : server_config;
+    laghu_apache_operational_enabled =
+        operational_config != NULL &&
+        (operational_config->metrics || operational_config->readiness);
+    laghu_apache_operational_cache =
+        operational_config != NULL && operational_config->image_cache != NULL
+            ? operational_config->image_cache
+            : (server_config != NULL && server_config->image_cache != NULL
+                   ? server_config->image_cache
+                   : LAGHU_DEFAULT_CACHE);
+  }
   {
     server_rec *item;
     for (item = server; item != NULL; item = item->next) {

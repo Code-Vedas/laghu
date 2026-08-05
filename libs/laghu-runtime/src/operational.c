@@ -3,12 +3,12 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include "laghu/runtime.h"
-
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "laghu/runtime.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -25,8 +25,8 @@ typedef struct {
 } laghu_operational_header;
 
 static const uint64_t laghu_latency_limits[] = {
-    1000U,    5000U,    10000U,   25000U,   50000U,   100000U,
-    250000U,  500000U,  1000000U, 2500000U, 5000000U};
+    1000U,   5000U,   10000U,   25000U,   50000U,  100000U,
+    250000U, 500000U, 1000000U, 2500000U, 5000000U};
 
 static uint64_t laghu_load(const uint64_t *value) {
 #ifdef _WIN32
@@ -49,11 +49,11 @@ static void laghu_add(uint64_t *value, uint64_t increment) {
   uint64_t current, replacement;
   do {
     current = laghu_load(value);
-    replacement = UINT64_MAX - current < increment ? UINT64_MAX
-                                                   : current + increment;
-  } while ((uint64_t)InterlockedCompareExchange64(
-               (volatile LONG64 *)value, (LONG64)replacement,
-               (LONG64)current) != current);
+    replacement =
+        UINT64_MAX - current < increment ? UINT64_MAX : current + increment;
+  } while ((uint64_t)InterlockedCompareExchange64((volatile LONG64 *)value,
+                                                  (LONG64)replacement,
+                                                  (LONG64)current) != current);
 #else
   uint64_t current = laghu_load(value);
   while (!__atomic_compare_exchange_n(
@@ -88,10 +88,11 @@ void laghu_operational_registry_init(laghu_operational_registry *registry) {
   registry->slot = LAGHU_OPERATIONAL_MAX_SLOTS;
 }
 
-bool laghu_operational_registry_open(
-    laghu_operational_registry *registry, const char *cache_path,
-    laghu_operational_surface surface, laghu_operational_process_kind kind,
-    bool required, uint64_t now) {
+bool laghu_operational_registry_open(laghu_operational_registry *registry,
+                                     const char *cache_path,
+                                     laghu_operational_surface surface,
+                                     laghu_operational_process_kind kind,
+                                     bool required, uint64_t now) {
   laghu_operational_header *header;
   char path[LAGHU_RUNTIME_PATH_SIZE];
   unsigned int index, selected = LAGHU_OPERATIONAL_MAX_SLOTS;
@@ -154,8 +155,7 @@ void laghu_operational_registry_close(laghu_operational_registry *registry) {
   laghu_operational_slot_snapshot *slot = laghu_slot(registry);
   if (slot != NULL && laghu_load(&slot->generation) == registry->generation) {
     laghu_store(&slot->healthy, 0U);
-    if (laghu_load(&slot->process_kind) ==
-        LAGHU_OPERATIONAL_PROCESS_ADAPTER)
+    if (laghu_load(&slot->process_kind) == LAGHU_OPERATIONAL_PROCESS_ADAPTER)
       laghu_store(&slot->active, 0U);
   }
   if (registry != NULL) {
@@ -175,17 +175,18 @@ bool laghu_operational_registry_heartbeat(laghu_operational_registry *registry,
     return false;
   laghu_store(&slot->healthy, healthy ? 1U : 0U);
   laghu_store(&slot->queue_capacity, queue_capacity);
-  laghu_store(&slot->queue_occupied,
-              queue_occupied > queue_capacity ? queue_capacity
-                                              : queue_occupied);
+  laghu_store(&slot->queue_occupied, queue_occupied > queue_capacity
+                                         ? queue_capacity
+                                         : queue_occupied);
   laghu_store(&slot->heartbeat, now);
   return true;
 }
 
-void laghu_operational_registry_record(
-    laghu_operational_registry *registry, laghu_operational_decision decision,
-    size_t original_bytes, size_t selected_bytes,
-    uint64_t elapsed_microseconds) {
+void laghu_operational_registry_record(laghu_operational_registry *registry,
+                                       laghu_operational_decision decision,
+                                       size_t original_bytes,
+                                       size_t selected_bytes,
+                                       uint64_t elapsed_microseconds) {
   laghu_operational_slot_snapshot *slot = laghu_slot(registry);
   size_t index;
   if (slot == NULL || decision >= LAGHU_OPERATIONAL_DECISION_COUNT) return;
@@ -228,7 +229,8 @@ bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
   unsigned int slot, field;
   if (header == NULL || snapshot == NULL ||
       header->magic != LAGHU_OPERATIONAL_MAGIC ||
-      header->version != LAGHU_OPERATIONAL_VERSION) return false;
+      header->version != LAGHU_OPERATIONAL_VERSION)
+    return false;
   memset(snapshot, 0, sizeof(*snapshot));
   snapshot->version = header->version;
   snapshot->slot_count = header->slot_count;
@@ -280,8 +282,8 @@ bool laghu_operational_render_prometheus(
   uint64_t latency_count = 0U, latency_sum = 0U;
   static const char *decision_names[] = {"bypass", "original", "optimized",
                                          "cached", "queued"};
-  static const char *failure_names[] = {"runtime", "cache", "queue",
-                                        "worker", "transform", "transport"};
+  static const char *failure_names[] = {"runtime", "cache",     "queue",
+                                        "worker",  "transform", "transport"};
   static const char *bucket_names[] = {"0.001", "0.005", "0.010", "0.025",
                                        "0.050", "0.100", "0.250", "0.500",
                                        "1.000", "2.500", "5.000", "+Inf"};
@@ -289,10 +291,12 @@ bool laghu_operational_render_prometheus(
   size_t used = 0U;
   if (snapshot == NULL || output == NULL || length == NULL || now == 0U ||
       snapshot->version != LAGHU_OPERATIONAL_VERSION ||
-      snapshot->slot_count > LAGHU_OPERATIONAL_MAX_SLOTS) return false;
+      snapshot->slot_count > LAGHU_OPERATIONAL_MAX_SLOTS)
+    return false;
   if (!laghu_append(output, capacity, &used,
                     "# HELP laghu_requests_total Requests handled by Laghu.\n"
-                    "# TYPE laghu_requests_total counter\n")) return false;
+                    "# TYPE laghu_requests_total counter\n"))
+    return false;
   for (index = 0U; index < snapshot->slot_count; ++index) {
     const laghu_operational_slot_snapshot *slot = &snapshot->slots[index];
     bool current = slot->active != 0U && slot->heartbeat != 0U &&
@@ -320,74 +324,85 @@ bool laghu_operational_render_prometheus(
       latency_count += slot->latency_count;
       latency_sum += slot->latency_sum_microseconds;
     }
-    if (!laghu_append(
-            output, capacity, &used,
-            "laghu_requests_total{scope=\"process\",surface=\"%s\",process_kind=\"%s\",worker_slot=\"%u\"} %" PRIu64 "\n",
-            laghu_surface_name(slot->surface),
-            laghu_process_name(slot->process_kind), index, slot->requests))
+    if (!laghu_append(output, capacity, &used,
+                      "laghu_requests_total{scope=\"process\",surface=\"%s\","
+                      "process_kind=\"%s\",worker_slot=\"%u\"} %" PRIu64 "\n",
+                      laghu_surface_name(slot->surface),
+                      laghu_process_name(slot->process_kind), index,
+                      slot->requests))
       return false;
   }
+  if (!laghu_append(
+          output, capacity, &used,
+          "laghu_requests_total{scope=\"instance\"} %" PRIu64 "\n"
+          "# TYPE laghu_cache_requests_total counter\n"
+          "laghu_cache_requests_total{result=\"hit\"} %" PRIu64 "\n"
+          "laghu_cache_requests_total{result=\"miss\"} %" PRIu64 "\n"
+          "# TYPE laghu_cache_publications_total counter\n"
+          "laghu_cache_publications_total %" PRIu64 "\n"
+          "# TYPE laghu_cache_evictions_total counter\n"
+          "laghu_cache_evictions_total %" PRIu64 "\n"
+          "# TYPE laghu_cache_bytes gauge\nlaghu_cache_bytes %" PRIu64 "\n"
+          "# TYPE laghu_cache_files gauge\nlaghu_cache_files %" PRIu64 "\n"
+          "# TYPE laghu_response_bytes_total counter\n"
+          "laghu_response_bytes_total{kind=\"original\"} %" PRIu64 "\n"
+          "laghu_response_bytes_total{kind=\"selected\"} %" PRIu64 "\n"
+          "laghu_response_bytes_total{kind=\"saved\"} %" PRIu64 "\n",
+          requests, cache_hits, cache_misses, cache_publications,
+          cache_evictions, cache_bytes, cache_files, original, selected, saved))
+    return false;
   if (!laghu_append(output, capacity, &used,
-                    "laghu_requests_total{scope=\"instance\"} %" PRIu64 "\n"
-                    "# TYPE laghu_cache_requests_total counter\n"
-                    "laghu_cache_requests_total{result=\"hit\"} %" PRIu64 "\n"
-                    "laghu_cache_requests_total{result=\"miss\"} %" PRIu64 "\n"
-                    "# TYPE laghu_cache_publications_total counter\n"
-                    "laghu_cache_publications_total %" PRIu64 "\n"
-                    "# TYPE laghu_cache_evictions_total counter\n"
-                    "laghu_cache_evictions_total %" PRIu64 "\n"
-                    "# TYPE laghu_cache_bytes gauge\nlaghu_cache_bytes %" PRIu64 "\n"
-                    "# TYPE laghu_cache_files gauge\nlaghu_cache_files %" PRIu64 "\n"
-                    "# TYPE laghu_response_bytes_total counter\n"
-                    "laghu_response_bytes_total{kind=\"original\"} %" PRIu64 "\n"
-                    "laghu_response_bytes_total{kind=\"selected\"} %" PRIu64 "\n"
-                    "laghu_response_bytes_total{kind=\"saved\"} %" PRIu64 "\n",
-                    requests, cache_hits, cache_misses, cache_publications,
-                    cache_evictions, cache_bytes, cache_files, original,
-                    selected, saved)) return false;
-  if (!laghu_append(output, capacity, &used,
-                    "# TYPE laghu_decisions_total counter\n")) return false;
+                    "# TYPE laghu_decisions_total counter\n"))
+    return false;
   for (index = 0U; index < LAGHU_OPERATIONAL_DECISION_COUNT; ++index)
     if (!laghu_append(output, capacity, &used,
                       "laghu_decisions_total{decision=\"%s\"} %" PRIu64 "\n",
-                      decision_names[index], decisions[index])) return false;
+                      decision_names[index], decisions[index]))
+      return false;
   if (!laghu_append(output, capacity, &used,
-                    "# TYPE laghu_failures_total counter\n")) return false;
+                    "# TYPE laghu_failures_total counter\n"))
+    return false;
   for (index = 0U; index < LAGHU_OPERATIONAL_FAILURE_COUNT; ++index)
     if (!laghu_append(output, capacity, &used,
                       "laghu_failures_total{subsystem=\"%s\"} %" PRIu64 "\n",
-                      failure_names[index], failures[index])) return false;
+                      failure_names[index], failures[index]))
+      return false;
   if (!laghu_append(output, capacity, &used,
                     "# TYPE laghu_request_duration_seconds histogram\n"))
     return false;
   for (index = 0U; index < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++index)
-    if (!laghu_append(output, capacity, &used,
-                      "laghu_request_duration_seconds_bucket{le=\"%s\"} %" PRIu64 "\n",
-                      bucket_names[index], latency[index])) return false;
+    if (!laghu_append(
+            output, capacity, &used,
+            "laghu_request_duration_seconds_bucket{le=\"%s\"} %" PRIu64 "\n",
+            bucket_names[index], latency[index]))
+      return false;
   if (!laghu_append(output, capacity, &used,
                     "laghu_request_duration_seconds_sum %.6f\n"
                     "laghu_request_duration_seconds_count %" PRIu64 "\n",
-                    (double)latency_sum / 1000000.0, latency_count)) return false;
+                    (double)latency_sum / 1000000.0, latency_count))
+    return false;
   for (index = 0U; index < snapshot->slot_count; ++index) {
     const laghu_operational_slot_snapshot *slot = &snapshot->slots[index];
     if (slot->active == 0U || slot->heartbeat == 0U ||
         slot->process_kind == LAGHU_OPERATIONAL_PROCESS_ADAPTER)
       continue;
-    if (!laghu_append(output, capacity, &used,
-                      "laghu_worker_up{process_kind=\"%s\",worker_slot=\"%u\"} %u\n"
-                      "laghu_queue_capacity{process_kind=\"%s\",worker_slot=\"%u\"} %" PRIu64 "\n"
-                      "laghu_queue_occupied{process_kind=\"%s\",worker_slot=\"%u\"} %" PRIu64 "\n",
-                      laghu_process_name(slot->process_kind), index,
-                      slot->heartbeat <= now &&
-                              now - slot->heartbeat <=
-                                  LAGHU_OPERATIONAL_STALE_SECONDS &&
-                              slot->healthy != 0U
-                          ? 1U
-                          : 0U,
-                      laghu_process_name(slot->process_kind), index,
-                      slot->queue_capacity,
-                      laghu_process_name(slot->process_kind), index,
-                      slot->queue_occupied)) return false;
+    if (!laghu_append(
+            output, capacity, &used,
+            "laghu_worker_up{process_kind=\"%s\",worker_slot=\"%u\"} %u\n"
+            "laghu_queue_capacity{process_kind=\"%s\",worker_slot=\"%u\"} "
+            "%" PRIu64 "\n"
+            "laghu_queue_occupied{process_kind=\"%s\",worker_slot=\"%u\"} "
+            "%" PRIu64 "\n",
+            laghu_process_name(slot->process_kind), index,
+            slot->heartbeat <= now &&
+                    now - slot->heartbeat <= LAGHU_OPERATIONAL_STALE_SECONDS &&
+                    slot->healthy != 0U
+                ? 1U
+                : 0U,
+            laghu_process_name(slot->process_kind), index, slot->queue_capacity,
+            laghu_process_name(slot->process_kind), index,
+            slot->queue_occupied))
+      return false;
   }
   *length = used;
   return true;
@@ -399,7 +414,8 @@ bool laghu_operational_readiness_evaluate(
     laghu_operational_readiness *readiness) {
   unsigned int index;
   if (snapshot == NULL || readiness == NULL || now == 0U ||
-      snapshot->version != LAGHU_OPERATIONAL_VERSION) return false;
+      snapshot->version != LAGHU_OPERATIONAL_VERSION)
+    return false;
   memset(readiness, 0, sizeof(*readiness));
   readiness->runtime_ready = runtime_ready;
   readiness->cache_ready = cache_ready;
@@ -407,7 +423,8 @@ bool laghu_operational_readiness_evaluate(
   for (index = 0U; index < snapshot->slot_count; ++index) {
     const laghu_operational_slot_snapshot *slot = &snapshot->slots[index];
     bool healthy;
-    if (slot->active == 0U || slot->process_kind == LAGHU_OPERATIONAL_PROCESS_ADAPTER)
+    if (slot->active == 0U ||
+        slot->process_kind == LAGHU_OPERATIONAL_PROCESS_ADAPTER)
       continue;
     ++readiness->configured_workers;
     healthy = slot->healthy != 0U && slot->heartbeat != 0U &&
@@ -426,20 +443,20 @@ bool laghu_operational_render_readiness(
     char *output, size_t capacity, size_t *length) {
   int written;
   if (readiness == NULL || output == NULL || length == NULL) return false;
-  written = snprintf(
-      output, capacity,
-      "{\"status\":\"%s\",\"runtime\":\"%s\",\"cache\":\"%s\","
-      "\"workers\":\"%s\",\"policy\":\"%s\",\"configured_workers\":%u,"
-      "\"healthy_workers\":%u}",
-      readiness->runtime_ready && readiness->cache_ready &&
-              readiness->workers_ready
-          ? (readiness->degraded ? "degraded" : "ready")
-          : "not_ready",
-      readiness->runtime_ready ? "ready" : "not_ready",
-      readiness->cache_ready ? "ready" : "not_ready",
-      readiness->degraded ? "degraded" : "ready",
-      strict_workers ? "strict" : "degraded", readiness->configured_workers,
-      readiness->healthy_workers);
+  written =
+      snprintf(output, capacity,
+               "{\"status\":\"%s\",\"runtime\":\"%s\",\"cache\":\"%s\","
+               "\"workers\":\"%s\",\"policy\":\"%s\",\"configured_workers\":%u,"
+               "\"healthy_workers\":%u}",
+               readiness->runtime_ready && readiness->cache_ready &&
+                       readiness->workers_ready
+                   ? (readiness->degraded ? "degraded" : "ready")
+                   : "not_ready",
+               readiness->runtime_ready ? "ready" : "not_ready",
+               readiness->cache_ready ? "ready" : "not_ready",
+               readiness->degraded ? "degraded" : "ready",
+               strict_workers ? "strict" : "degraded",
+               readiness->configured_workers, readiness->healthy_workers);
   if (written < 0 || (size_t)written >= capacity) return false;
   *length = (size_t)written;
   return true;

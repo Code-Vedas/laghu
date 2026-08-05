@@ -745,14 +745,28 @@ if [ "${service_pid}" != "" ]; then
 fi
 if [ "${javascript_pid}" != "" ]; then
   kill "${javascript_pid}" 2>/dev/null || true
+  wait "${javascript_pid}" 2>/dev/null || true
+  javascript_pid=
 fi
 
-curl --fail --silent \
+metrics_status=$(curl --silent --output "${work}/metrics.txt" --write-out '%{http_code}' \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/.laghu/metrics | grep 'laghu_requests_total' >/dev/null
-curl --fail --silent \
+  http://127.0.0.1:18081/.laghu/metrics)
+if [ "${metrics_status}" != 200 ] || \
+    ! grep 'laghu_requests_total' "${work}/metrics.txt" >/dev/null; then
+  echo "Apache metrics endpoint failed with status ${metrics_status}:" >&2
+  cat "${work}/metrics.txt" >&2
+  exit 1
+fi
+readiness_status=$(curl --silent --output "${work}/readiness.json" --write-out '%{http_code}' \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/.laghu/ready | grep '"status":"ready"' >/dev/null
+  http://127.0.0.1:18081/.laghu/ready)
+if [ "${readiness_status}" != 200 ] || \
+    ! grep '"status":"ready"' "${work}/readiness.json" >/dev/null; then
+  echo "Apache readiness endpoint failed with status ${readiness_status}:" >&2
+  cat "${work}/readiness.json" >&2
+  exit 1
+fi
 
 trap - EXIT
 kill -WINCH "${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true

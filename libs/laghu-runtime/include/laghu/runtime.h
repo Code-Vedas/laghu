@@ -787,8 +787,8 @@ bool laghu_runtime_queue_set_backend(laghu_runtime_queue *queue,
                                      const char *backend_id);
 bool laghu_runtime_queue_heartbeat(laghu_runtime_queue *queue,
                                    uint64_t epoch_seconds);
-bool laghu_runtime_queue_status(laghu_runtime_queue *queue,
-                                uint64_t *capacity, uint64_t *occupied);
+bool laghu_runtime_queue_status(laghu_runtime_queue *queue, uint64_t *capacity,
+                                uint64_t *occupied);
 void laghu_runtime_queue_close(laghu_runtime_queue *queue);
 void laghu_asset_policy_init(laghu_asset_policy *policy);
 bool laghu_asset_policy_validate(const laghu_asset_policy *policy, char *error,
@@ -907,18 +907,21 @@ void laghu_runtime_shared_mapping_unlock(laghu_runtime_shared_mapping *mapping);
 bool laghu_runtime_shared_mapping_sync(laghu_runtime_shared_mapping *mapping);
 void laghu_runtime_shared_mapping_close(laghu_runtime_shared_mapping *mapping);
 void laghu_operational_registry_init(laghu_operational_registry *registry);
-bool laghu_operational_registry_open(
-    laghu_operational_registry *registry, const char *cache_path,
-    laghu_operational_surface surface, laghu_operational_process_kind kind,
-    bool required, uint64_t now);
+bool laghu_operational_registry_open(laghu_operational_registry *registry,
+                                     const char *cache_path,
+                                     laghu_operational_surface surface,
+                                     laghu_operational_process_kind kind,
+                                     bool required, uint64_t now);
 void laghu_operational_registry_close(laghu_operational_registry *registry);
 bool laghu_operational_registry_heartbeat(laghu_operational_registry *registry,
                                           uint64_t now, bool healthy,
                                           uint64_t queue_capacity,
                                           uint64_t queue_occupied);
-void laghu_operational_registry_record(
-    laghu_operational_registry *registry, laghu_operational_decision decision,
-    size_t original_bytes, size_t selected_bytes, uint64_t elapsed_microseconds);
+void laghu_operational_registry_record(laghu_operational_registry *registry,
+                                       laghu_operational_decision decision,
+                                       size_t original_bytes,
+                                       size_t selected_bytes,
+                                       uint64_t elapsed_microseconds);
 void laghu_operational_registry_failure(laghu_operational_registry *registry,
                                         laghu_operational_failure failure);
 void laghu_operational_registry_cache(laghu_operational_registry *registry,

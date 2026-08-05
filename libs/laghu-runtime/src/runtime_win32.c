@@ -408,8 +408,8 @@ bool laghu_runtime_queue_heartbeat(laghu_runtime_queue *queue,
   return true;
 }
 
-bool laghu_runtime_queue_status(laghu_runtime_queue *queue,
-                                uint64_t *capacity, uint64_t *occupied) {
+bool laghu_runtime_queue_status(laghu_runtime_queue *queue, uint64_t *capacity,
+                                uint64_t *occupied) {
   laghu_queue_header *header;
   unsigned int index;
   uint64_t count = 0U;

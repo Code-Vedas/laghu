@@ -2502,7 +2502,8 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
     if ((metrics_request && !conf->metrics) ||
         (readiness_request && !conf->readiness))
       return NGX_HTTP_NOT_FOUND;
-    if (purge_request || stats_request || metrics_request || readiness_request) {
+    if (purge_request || stats_request || metrics_request ||
+        readiness_request) {
       ngx_table_elt_t *token = NULL;
       ngx_list_part_t *part = &request->headers_in.headers.part;
       ngx_table_elt_t *headers = part->elts;
@@ -2636,8 +2637,7 @@ static ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
           bool cache_ready = laghu_cache_backend_health_path(
               (char *)conf->image_cache.data, &stats);
           ngx_uint_t status;
-          laghu_operational_registry_cache(&ngx_http_laghu_operational,
-                                           &stats);
+          laghu_operational_registry_cache(&ngx_http_laghu_operational, &stats);
           if (!laghu_operational_readiness_evaluate(
                   snapshot, (uint64_t)ngx_time(), true, cache_ready,
                   conf->readiness_strict, &readiness) ||
@@ -3149,8 +3149,8 @@ static char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration,
   ngx_conf_merge_value(child_conf->readiness, parent_conf->readiness, 0);
   ngx_conf_merge_value(child_conf->readiness_strict,
                        parent_conf->readiness_strict, 0);
-  main_conf = ngx_http_conf_get_module_main_conf(configuration,
-                                                 ngx_http_laghu_module);
+  main_conf =
+      ngx_http_conf_get_module_main_conf(configuration, ngx_http_laghu_module);
   if (child_conf->metrics || child_conf->readiness) {
     if (main_conf->operational_cache.len == 0U)
       main_conf->operational_cache = child_conf->image_cache;

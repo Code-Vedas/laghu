@@ -631,8 +631,7 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
     (void)laghu_operational_registry_open(
         &operational, s3.config.operational_cache_path,
         LAGHU_OPERATIONAL_SURFACE_WORKER,
-        LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD, true,
-        (uint64_t)time(NULL));
+        LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD, true, (uint64_t)time(NULL));
   (void)signal(SIGINT, laghu_asset_signal);
   (void)signal(SIGTERM, laghu_asset_signal);
   do {
@@ -640,8 +639,8 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
     (void)laghu_operational_registry_heartbeat(
         &operational, (uint64_t)time(NULL), status == 0, 0U, 0U);
     if (status != 0)
-      laghu_operational_registry_failure(
-          &operational, LAGHU_OPERATIONAL_FAILURE_WORKER);
+      laghu_operational_registry_failure(&operational,
+                                         LAGHU_OPERATIONAL_FAILURE_WORKER);
     if (!serve) {
       laghu_operational_registry_close(&operational);
       SSL_CTX_free(s3.tls);

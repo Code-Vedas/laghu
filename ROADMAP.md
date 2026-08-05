@@ -263,10 +263,10 @@ Completion evidence for the checked geometry features is shared with Section 3.2
 
 ### 4.5 Observability and Operations
 
-- [ ] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
+- [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
 - [ ] Emit the standalone JSON transaction schema from NGINX, Apache, and `laghu-libvips` so every process has one operational log contract.
 - [ ] Emit OpenTelemetry traces across the optimization path.
-- [ ] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
+- [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
 - [ ] Ship a Grafana dashboard.
 - [ ] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.

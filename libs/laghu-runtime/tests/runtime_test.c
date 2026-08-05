@@ -42,9 +42,9 @@ static void *operational_thread(void *data) {
   operational_thread_context *context = data;
   unsigned int index;
   for (index = 0U; index < context->iterations; ++index)
-    laghu_operational_registry_record(
-        context->registry, LAGHU_OPERATIONAL_DECISION_ORIGINAL, 10U, 10U,
-        1000U);
+    laghu_operational_registry_record(context->registry,
+                                      LAGHU_OPERATIONAL_DECISION_ORIGINAL, 10U,
+                                      10U, 1000U);
 #ifdef _WIN32
   return 0U;
 #else
@@ -148,17 +148,16 @@ static void test_operational_registry(const char *cache_path) {
   }
   for (thread_index = 0U; thread_index < 4U; ++thread_index) {
 #ifdef _WIN32
-    assert(WaitForSingleObject(threads[thread_index], INFINITE) == WAIT_OBJECT_0);
+    assert(WaitForSingleObject(threads[thread_index], INFINITE) ==
+           WAIT_OBJECT_0);
     CloseHandle(threads[thread_index]);
 #else
     assert(pthread_join(threads[thread_index], NULL) == 0);
 #endif
   }
-  laghu_operational_registry_record(&adapter,
-                                    LAGHU_OPERATIONAL_DECISION_OPTIMIZED,
-                                    1000U, 600U, 25000U);
-  laghu_operational_registry_record(&adapter,
-                                    LAGHU_OPERATIONAL_DECISION_BYPASS,
+  laghu_operational_registry_record(
+      &adapter, LAGHU_OPERATIONAL_DECISION_OPTIMIZED, 1000U, 600U, 25000U);
+  laghu_operational_registry_record(&adapter, LAGHU_OPERATIONAL_DECISION_BYPASS,
                                     200U, 200U, 5000001U);
   laghu_operational_registry_failure(&adapter,
                                      LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
@@ -179,18 +178,17 @@ static void test_operational_registry(const char *cache_path) {
   assert(strstr(output, "laghu_response_bytes_total{kind=\"saved\"} 400") !=
          NULL);
   assert(strstr(output, cache_path) == NULL);
-  assert(laghu_operational_readiness_evaluate(
-      snapshot, now, true, true, false, &readiness));
+  assert(laghu_operational_readiness_evaluate(snapshot, now, true, true, false,
+                                              &readiness));
   assert(readiness.workers_ready && !readiness.degraded &&
-         readiness.configured_workers == 1U &&
-         readiness.healthy_workers == 1U);
+         readiness.configured_workers == 1U && readiness.healthy_workers == 1U);
   assert(laghu_operational_registry_heartbeat(&worker, now, false, 64U, 4U));
   assert(laghu_operational_registry_snapshot(&adapter, snapshot));
-  assert(laghu_operational_readiness_evaluate(
-      snapshot, now, true, true, false, &readiness));
+  assert(laghu_operational_readiness_evaluate(snapshot, now, true, true, false,
+                                              &readiness));
   assert(readiness.workers_ready && readiness.degraded);
-  assert(laghu_operational_readiness_evaluate(
-      snapshot, now, true, true, true, &readiness));
+  assert(laghu_operational_readiness_evaluate(snapshot, now, true, true, true,
+                                              &readiness));
   assert(!readiness.workers_ready && readiness.degraded);
   assert(laghu_operational_render_readiness(
       &readiness, true, output, LAGHU_OPERATIONAL_RENDER_SIZE, &length));

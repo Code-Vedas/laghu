@@ -519,8 +519,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   }
   (void)laghu_operational_registry_open(
       &operational, cache_path, LAGHU_OPERATIONAL_SURFACE_WORKER,
-      LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH, true,
-      (uint64_t)time(NULL));
+      LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH, true, (uint64_t)time(NULL));
   {
     unsigned int attempt;
     for (attempt = 0U; attempt < 100U; ++attempt) {
@@ -547,11 +546,11 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
         &operational, (uint64_t)time(NULL), true, capacity, occupied);
     if (laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload))) {
       if (job.kind == LAGHU_RUNTIME_JOB_FONT_CSS) {
-        bool success = laghu_fetch_process(context, &providers, cache_path,
-                                           &job);
+        bool success =
+            laghu_fetch_process(context, &providers, cache_path, &job);
         if (!success)
-          laghu_operational_registry_failure(
-              &operational, LAGHU_OPERATIONAL_FAILURE_WORKER);
+          laghu_operational_registry_failure(&operational,
+                                             LAGHU_OPERATIONAL_FAILURE_WORKER);
       }
     } else {
       laghu_sleep_ms(100U);
