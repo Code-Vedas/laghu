@@ -8,6 +8,8 @@
 #include <string.h>
 
 #include "html_internal.h"
+#include "laghu/html.h"
+#include "laghu/types.h"
 
 static bool laghu_html_comment_preserved(const unsigned char *data,
                                          size_t length) {

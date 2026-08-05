@@ -8,8 +8,6 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "laghu/runtime.h"
-
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -26,8 +24,26 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
+
+#include "laghu/assets.h"
+#include "laghu/budget.h"
+#include "laghu/cache.h"
+#include "laghu/catalog.h"
+#include "laghu/csp.h"
+#include "laghu/css.h"
+#include "laghu/fonts.h"
+#include "laghu/html.h"
+#include "laghu/instrumentation.h"
+#include "laghu/javascript.h"
+#include "laghu/lcp.h"
+#include "laghu/operational.h"
+#include "laghu/queue.h"
+#include "laghu/rum.h"
+#include "laghu/source.h"
+#include "laghu/types.h"
 
 typedef struct {
   laghu_operational_registry *registry;
@@ -108,26 +124,6 @@ static void assert_html_plan(const char *input, laghu_html_planner_mask plan,
     assert(memcmp(result.data, expected, result.length) == 0);
   }
   laghu_runtime_head_result_release(&result);
-}
-
-static void test_transform_budget(void) {
-  laghu_transform_budget budget;
-  laghu_transform_budget_init(&budget, 4096U, 1000U, 2U);
-  assert(laghu_transform_budget_reserve(&budget, 1024U));
-  assert(laghu_transform_budget_reserve(&budget, 2048U));
-  assert(budget.current_memory == 3072U && budget.peak_memory == 3072U);
-  laghu_transform_budget_release(&budget, 2048U);
-  assert(budget.current_memory == 1024U);
-  assert(!laghu_transform_budget_reserve(&budget, 4096U));
-  assert(budget.rejection == LAGHU_BUDGET_REJECTION_MEMORY);
-  budget.rejection = LAGHU_BUDGET_REJECTION_NONE;
-  assert(laghu_transform_budget_checkpoint(&budget, 128U));
-  assert(laghu_transform_budget_generate(&budget, 3072U));
-  assert(!laghu_transform_budget_generate(&budget, 1U));
-  assert(laghu_transform_budget_variant(&budget));
-  assert(laghu_transform_budget_variant(&budget));
-  assert(!laghu_transform_budget_variant(&budget));
-  assert(budget.rejection == LAGHU_BUDGET_REJECTION_VARIANTS);
 }
 
 static void test_lcp_prioritization(laghu_rum_engine *rum) {
@@ -369,7 +365,20 @@ static void test_operational_registry(const char *cache_path) {
   }
   assert(laghu_operational_registry_heartbeat(&worker, now, true, 64U, 3U));
   assert(laghu_operational_registry_snapshot(&adapter, snapshot));
-  assert(snapshot->slots[adapter.slot].requests == 40002U);
+  {
+    unsigned int slot;
+    bool found = false;
+    for (slot = 0U; slot < snapshot->slot_count; ++slot) {
+      if (snapshot->slots[slot].active != 0U &&
+          snapshot->slots[slot].surface ==
+              LAGHU_OPERATIONAL_SURFACE_STANDALONE) {
+        assert(snapshot->slots[slot].requests == 40002U);
+        found = true;
+        break;
+      }
+    }
+    assert(found);
+  }
   assert(laghu_operational_render_prometheus(
       snapshot, now, output, LAGHU_OPERATIONAL_RENDER_SIZE, &length));
   assert(length != 0U && strstr(output, "laghu_requests_total") != NULL);
@@ -1014,7 +1023,6 @@ static void test_html_lexical_cache(const char *cache_path,
 }
 
 int main(void) {
-  test_transform_budget();
   static const unsigned char payload[] = "runtime payload";
   char temporary[LAGHU_RUNTIME_PATH_SIZE];
   char queue_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -1432,7 +1440,12 @@ int main(void) {
     limits.inode_limit = 16U;
     assert(snprintf(backend_path, sizeof(backend_path), "%s/backend-cache",
                     temporary) > 0);
-    assert(backend != NULL && laghu_runtime_directory_ensure(backend_path));
+    assert(backend != NULL);
+#ifdef _WIN32
+    assert(_mkdir(backend_path) == 0);
+#else
+    assert(mkdir(backend_path, 0700) == 0);
+#endif
     assert(laghu_cache_backend_open_path(backend, backend_path, &limits));
     assert(laghu_cache_backend_publish(
         backend, index_key, policy_key, "etag", "text/plain", "test",

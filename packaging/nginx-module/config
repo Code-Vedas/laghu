@@ -13,8 +13,8 @@ LAGHU_MARKUP_DIR="$LAGHU_REPO_DIR/libs/laghu-markup"
 LAGHU_RUNTIME_DIR="$LAGHU_REPO_DIR/libs/laghu-runtime"
 LAGHU_IMAGE_DIR="$LAGHU_REPO_DIR/libs/laghu-image"
 LAGHU_HTTP_DIR="$LAGHU_REPO_DIR/libs/laghu-http"
-LAGHU_MODULE_SRCS="$LAGHU_MODULE_DIR/ngx_http_laghu_module.c $LAGHU_RUNTIME_DIR/src/runtime_posix.c"
-for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http)$/ { gsub(/\r/, "", $3); print $3 }' "$LAGHU_REPO_DIR/cmake/laghu-sources.list"); do
+LAGHU_MODULE_SRCS="$LAGHU_RUNTIME_DIR/src/runtime_posix.c"
+for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http|nginx)$/ { gsub(/\r/, "", $3); print $3 }' "$LAGHU_REPO_DIR/cmake/laghu-sources.list"); do
     LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $LAGHU_REPO_DIR/$laghu_source"
 done
 

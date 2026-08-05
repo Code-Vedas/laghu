@@ -9,7 +9,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "laghu/assets.h"
+#include "laghu/cache.h"
+#include "laghu/fonts.h"
 #include "laghu/http.h"
+#include "laghu/javascript.h"
+#include "laghu/source.h"
+#include "laghu/types.h"
 
 #ifdef __cplusplus
 extern "C" {

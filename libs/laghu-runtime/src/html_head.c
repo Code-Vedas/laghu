@@ -8,7 +8,7 @@
 #include <string.h>
 
 #include "html_internal.h"
-#include "laghu/runtime.h"
+#include "laghu/html.h"
 
 bool laghu_head_append(laghu_head_builder *builder, const void *data,
                        size_t length) {

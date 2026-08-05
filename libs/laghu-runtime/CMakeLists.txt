@@ -40,13 +40,29 @@ endif()
 
 if(LAGHU_BUILD_TESTS)
   find_package(Threads REQUIRED)
+  add_library(laghu_runtime_test_fixture STATIC tests/test_fixture.c)
+  target_include_directories(laghu_runtime_test_fixture PUBLIC tests)
+  foreach(subsystem IN ITEMS budget queue cache operational rum source_asset
+                            catalog html css javascript instrumentation lcp worker)
+    add_executable(laghu_runtime_${subsystem}_test tests/${subsystem}_test.c)
+    target_link_libraries(laghu_runtime_${subsystem}_test
+                          PRIVATE Laghu::Runtime laghu_runtime_test_fixture)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(laghu_runtime_${subsystem}_test
+                             PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME laghu_runtime_${subsystem}_test
+             COMMAND laghu_runtime_${subsystem}_test)
+  endforeach()
   add_executable(laghu_runtime_cache_fixture tests/cache_fixture.c)
   target_link_libraries(laghu_runtime_cache_fixture PRIVATE Laghu::Runtime)
-  add_executable(laghu_runtime_test tests/runtime_test.c)
-  target_link_libraries(laghu_runtime_test PRIVATE Laghu::Runtime)
-  target_link_libraries(laghu_runtime_test PRIVATE Threads::Threads)
+  add_executable(laghu_runtime_integration_test tests/integration_test.c)
+  target_link_libraries(laghu_runtime_integration_test
+                        PRIVATE Laghu::Runtime Threads::Threads)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(laghu_runtime_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(laghu_runtime_integration_test
+                           PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
-  add_test(NAME laghu_runtime_test COMMAND laghu_runtime_test)
+  add_test(NAME laghu_runtime_integration_test
+           COMMAND laghu_runtime_integration_test)
 endif()

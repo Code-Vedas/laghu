@@ -7,7 +7,10 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/instrumentation.h"
+#include "laghu/javascript.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 static bool laghu_defer_path(const char *value) {
   size_t i;

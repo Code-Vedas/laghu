@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/fonts.h"
+#include "laghu/types.h"
 
 #define LAGHU_FONT_CONFIG_LINE 2048U
 #define LAGHU_FONT_TTL_MAX 604800U

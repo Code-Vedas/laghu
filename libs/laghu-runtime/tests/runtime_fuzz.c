@@ -7,7 +7,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/html.h"
+#include "laghu/source.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   laghu_runtime_html_result result;

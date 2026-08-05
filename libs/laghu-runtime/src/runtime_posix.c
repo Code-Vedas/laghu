@@ -16,7 +16,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/fonts.h"
+#include "laghu/javascript.h"
+#include "laghu/queue.h"
+#include "laghu/types.h"
+#include "runtime_platform.h"
 
 #define LAGHU_QUEUE_MAGIC UINT64_C(0x4c41474855515545)
 #define LAGHU_SLOT_EMPTY 0U

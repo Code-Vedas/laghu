@@ -8,7 +8,10 @@
 #include <string.h>
 #include <time.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/fonts.h"
+#include "laghu/queue.h"
+#include "laghu/types.h"
 
 static unsigned char *read_file(const char *path, size_t *length) {
   FILE *file = fopen(path, "rb");

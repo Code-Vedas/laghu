@@ -3,11 +3,13 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/csp.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/types.h"
 
 static bool laghu_csp_equal(const char *value, size_t length,
                             const char *expected) {

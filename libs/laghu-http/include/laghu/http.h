@@ -10,7 +10,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "laghu/runtime.h"
+#include "laghu/assets.h"
+#include "laghu/budget.h"
+#include "laghu/fonts.h"
+#include "laghu/html.h"
+#include "laghu/javascript.h"
+#include "laghu/lcp.h"
+#include "laghu/queue.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 #ifdef __cplusplus
 extern "C" {

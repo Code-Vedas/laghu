@@ -12,7 +12,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "laghu/assets.h"
+#include "laghu/cache.h"
+#include "laghu/fonts.h"
+#include "laghu/javascript.h"
 #include "laghu/proxy.h"
+#include "laghu/rum.h"
+#include "laghu/source.h"
+#include "laghu/types.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -21,6 +28,7 @@
 #else
 #include <arpa/inet.h>
 #include <sys/socket.h>
+
 #endif
 
 static bool proxy_uint(const char *value, unsigned int minimum,

@@ -17,12 +17,11 @@ find_library(APRUTIL_LIBRARY NAMES libaprutil-1 PATHS "${APACHE_ROOT}/lib" REQUI
 file(STRINGS "${LAGHU_SOURCE}/cmake/laghu-sources.list" LAGHU_MANIFEST)
 set(LAGHU_SHARED_SOURCES)
 foreach(entry IN LISTS LAGHU_MANIFEST)
-  if(entry MATCHES "^(base|markup|core|image|runtime|http)\\|[^|]+\\|(.+)$")
+  if(entry MATCHES "^(base|markup|core|image|runtime|http|apache)\\|[^|]+\\|(.+)$")
     list(APPEND LAGHU_SHARED_SOURCES "${LAGHU_SOURCE}/${CMAKE_MATCH_2}")
   endif()
 endforeach()
 add_library(mod_laghu MODULE
-  "${LAGHU_SOURCE}/modules/mod_laghu/mod_laghu.c"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src/runtime_win32.c"
   ${LAGHU_SHARED_SOURCES}
 )
@@ -38,6 +37,7 @@ target_include_directories(mod_laghu PRIVATE
   "${LAGHU_SOURCE}/libs/laghu-image/include"
   "${LAGHU_SOURCE}/libs/laghu-runtime/include"
   "${LAGHU_SOURCE}/libs/laghu-runtime/src"
+  "${LAGHU_SOURCE}/modules/mod_laghu"
 )
 target_link_libraries(mod_laghu PRIVATE
   "${HTTPD_LIBRARY}" "${APR_LIBRARY}" "${APRUTIL_LIBRARY}" ws2_32

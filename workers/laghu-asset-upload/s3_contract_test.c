@@ -15,6 +15,9 @@
 #endif
 
 #define main laghu_asset_worker_entry
+#include "laghu/assets.h"
+#include "laghu/source.h"
+#include "laghu/types.h"
 #include "main.c"
 #undef main
 

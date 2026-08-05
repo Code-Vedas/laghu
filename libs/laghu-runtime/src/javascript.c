@@ -3,12 +3,20 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/javascript.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/csp.h"
+#include "laghu/html.h"
+#include "laghu/instrumentation.h"
+#include "laghu/queue.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 #define LAGHU_JAVASCRIPT_DEFAULT_TARGET \
   "defaults and supports es6-module and not dead"

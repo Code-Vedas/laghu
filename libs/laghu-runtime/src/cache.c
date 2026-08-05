@@ -19,7 +19,9 @@
 #include <windows.h>
 #endif
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/types.h"
+#include "runtime_platform.h"
 
 #define LAGHU_CACHE_INDEX_MAGIC UINT64_C(0x4c414748554c5255)
 #define LAGHU_CACHE_INDEX_VERSION 2U

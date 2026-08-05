@@ -10,6 +10,15 @@
 #include <string.h>
 
 #include "http_internal.h"
+#include "laghu/assets.h"
+#include "laghu/budget.h"
+#include "laghu/cache.h"
+#include "laghu/catalog.h"
+#include "laghu/css.h"
+#include "laghu/html.h"
+#include "laghu/javascript.h"
+#include "laghu/queue.h"
+#include "laghu/types.h"
 
 static unsigned char laghu_http_ascii_lower(unsigned char value) {
   return value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))

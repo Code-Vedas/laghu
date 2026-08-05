@@ -112,7 +112,11 @@ static void laghu_rum_backend_lock_release(laghu_rum_backend_lock lock) {
 }
 #endif
 
-#include "laghu/runtime.h"
+#include "laghu/catalog.h"
+#include "laghu/css.h"
+#include "laghu/instrumentation.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 #include "rum_internal.h"
 #include "rum_redis_merge.h"
 

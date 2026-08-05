@@ -6,7 +6,10 @@
 #ifndef LAGHU_RUM_INTERNAL_H
 #define LAGHU_RUM_INTERNAL_H
 
-#include "laghu/runtime.h"
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "laghu/rum.h"
 
 bool laghu_rum_encode(laghu_rum_record_type type, const void *record,
                       size_t length, unsigned char *data, size_t capacity,

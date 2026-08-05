@@ -3,12 +3,19 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/operational.h"
+
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/budget.h"
+#include "laghu/cache.h"
+#include "laghu/lcp.h"
+#include "laghu/types.h"
+#include "runtime_platform.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,6 +30,26 @@ typedef struct {
   uint64_t generation;
   laghu_operational_slot_snapshot slots[LAGHU_OPERATIONAL_MAX_SLOTS];
 } laghu_operational_header;
+
+typedef struct {
+  laghu_runtime_shared_mapping mapping;
+  laghu_operational_header *header;
+  unsigned int slot;
+  uint64_t generation;
+} laghu_operational_state;
+
+#define LAGHU_OPERATIONAL_STATE(registry) \
+  ((laghu_operational_state *)(registry)->implementation)
+
+static void laghu_operational_state_release(
+    laghu_operational_registry *registry) {
+  laghu_operational_state *state;
+  if (registry == NULL || registry->implementation == NULL) return;
+  state = LAGHU_OPERATIONAL_STATE(registry);
+  laghu_runtime_shared_mapping_close(&state->mapping);
+  free(state);
+  registry->implementation = NULL;
+}
 
 static const uint64_t laghu_latency_limits[] = {
     1000U,   5000U,   10000U,   25000U,   50000U,  100000U,
@@ -66,9 +93,11 @@ static void laghu_add(uint64_t *value, uint64_t increment) {
 
 static laghu_operational_slot_snapshot *laghu_slot(
     laghu_operational_registry *registry) {
-  laghu_operational_header *header = registry != NULL ? registry->header : NULL;
-  return header != NULL && registry->slot < LAGHU_OPERATIONAL_MAX_SLOTS
-             ? &header->slots[registry->slot]
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  return state != NULL && state->header != NULL &&
+                 state->slot < LAGHU_OPERATIONAL_MAX_SLOTS
+             ? &state->header->slots[state->slot]
              : NULL;
 }
 
@@ -84,8 +113,6 @@ static bool laghu_path(const char *cache_path, char *output, size_t capacity) {
 void laghu_operational_registry_init(laghu_operational_registry *registry) {
   if (registry == NULL) return;
   memset(registry, 0, sizeof(*registry));
-  laghu_runtime_shared_mapping_init(&registry->mapping);
-  registry->slot = LAGHU_OPERATIONAL_MAX_SLOTS;
 }
 
 bool laghu_operational_registry_open(laghu_operational_registry *registry,
@@ -102,18 +129,26 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
       !laghu_path(cache_path, path, sizeof(path)))
     return false;
   laghu_operational_registry_init(registry);
-  if (!laghu_runtime_shared_mapping_open(&registry->mapping, path,
-                                         sizeof(laghu_operational_header))) {
-    laghu_runtime_shared_mapping_close(&registry->mapping);
+  registry->implementation = calloc(1U, sizeof(laghu_operational_state));
+  if (registry->implementation == NULL) return false;
+  laghu_runtime_shared_mapping_init(
+      &LAGHU_OPERATIONAL_STATE(registry)->mapping);
+  LAGHU_OPERATIONAL_STATE(registry)->slot = LAGHU_OPERATIONAL_MAX_SLOTS;
+  if (!laghu_runtime_shared_mapping_open(
+          &LAGHU_OPERATIONAL_STATE(registry)->mapping, path,
+          sizeof(laghu_operational_header))) {
+    laghu_operational_state_release(registry);
     return false;
   }
   for (lock_attempt = 0U; lock_attempt < 64U; ++lock_attempt)
-    if (laghu_runtime_shared_mapping_try_lock(&registry->mapping)) break;
+    if (laghu_runtime_shared_mapping_try_lock(
+            &LAGHU_OPERATIONAL_STATE(registry)->mapping))
+      break;
   if (lock_attempt == 64U) {
-    laghu_runtime_shared_mapping_close(&registry->mapping);
+    laghu_operational_state_release(registry);
     return false;
   }
-  header = registry->mapping.mapping;
+  header = LAGHU_OPERATIONAL_STATE(registry)->mapping.mapping;
   if (header->magic == 0U) {
     memset(header, 0, sizeof(*header));
     header->magic = LAGHU_OPERATIONAL_MAGIC;
@@ -124,8 +159,9 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
   if (header->magic != LAGHU_OPERATIONAL_MAGIC ||
       header->version != LAGHU_OPERATIONAL_VERSION ||
       header->slot_count != LAGHU_OPERATIONAL_MAX_SLOTS) {
-    laghu_runtime_shared_mapping_unlock(&registry->mapping);
-    laghu_runtime_shared_mapping_close(&registry->mapping);
+    laghu_runtime_shared_mapping_unlock(
+        &LAGHU_OPERATIONAL_STATE(registry)->mapping);
+    laghu_operational_state_release(registry);
     return false;
   }
   for (index = 0U; index < LAGHU_OPERATIONAL_MAX_SLOTS; ++index) {
@@ -137,8 +173,9 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
     }
   }
   if (selected == LAGHU_OPERATIONAL_MAX_SLOTS) {
-    laghu_runtime_shared_mapping_unlock(&registry->mapping);
-    laghu_runtime_shared_mapping_close(&registry->mapping);
+    laghu_runtime_shared_mapping_unlock(
+        &LAGHU_OPERATIONAL_STATE(registry)->mapping);
+    laghu_operational_state_release(registry);
     return false;
   }
   memset(&header->slots[selected], 0, sizeof(header->slots[selected]));
@@ -149,23 +186,26 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
   header->slots[selected].healthy = 1U;
   header->slots[selected].heartbeat = now;
   header->slots[selected].active = 1U;
-  registry->header = header;
-  registry->slot = selected;
-  registry->generation = header->slots[selected].generation;
-  (void)laghu_runtime_shared_mapping_sync(&registry->mapping);
-  laghu_runtime_shared_mapping_unlock(&registry->mapping);
+  LAGHU_OPERATIONAL_STATE(registry)->header = header;
+  LAGHU_OPERATIONAL_STATE(registry)->slot = selected;
+  LAGHU_OPERATIONAL_STATE(registry)->generation =
+      header->slots[selected].generation;
+  (void)laghu_runtime_shared_mapping_sync(
+      &LAGHU_OPERATIONAL_STATE(registry)->mapping);
+  laghu_runtime_shared_mapping_unlock(
+      &LAGHU_OPERATIONAL_STATE(registry)->mapping);
   return true;
 }
 
 void laghu_operational_registry_close(laghu_operational_registry *registry) {
   laghu_operational_slot_snapshot *slot = laghu_slot(registry);
-  if (slot != NULL && laghu_load(&slot->generation) == registry->generation) {
+  if (slot != NULL && laghu_load(&slot->generation) ==
+                          LAGHU_OPERATIONAL_STATE(registry)->generation) {
     laghu_store(&slot->healthy, 0U);
-    if (laghu_load(&slot->process_kind) == LAGHU_OPERATIONAL_PROCESS_ADAPTER)
-      laghu_store(&slot->active, 0U);
+    laghu_store(&slot->active, 0U);
   }
   if (registry != NULL) {
-    laghu_runtime_shared_mapping_close(&registry->mapping);
+    laghu_operational_state_release(registry);
     laghu_operational_registry_init(registry);
   }
 }
@@ -176,7 +216,8 @@ bool laghu_operational_registry_heartbeat(laghu_operational_registry *registry,
                                           uint64_t queue_occupied) {
   laghu_operational_slot_snapshot *slot = laghu_slot(registry);
   if (slot == NULL || now == 0U ||
-      laghu_load(&slot->generation) != registry->generation ||
+      laghu_load(&slot->generation) !=
+          LAGHU_OPERATIONAL_STATE(registry)->generation ||
       laghu_load(&slot->active) == 0U)
     return false;
   laghu_store(&slot->healthy, healthy ? 1U : 0U);
@@ -214,6 +255,23 @@ void laghu_operational_registry_failure(laghu_operational_registry *registry,
                                         laghu_operational_failure failure) {
   laghu_operational_slot_snapshot *slot = laghu_slot(registry);
   if (slot != NULL && failure < LAGHU_OPERATIONAL_FAILURE_COUNT)
+    laghu_add(&slot->failures[failure], 1U);
+}
+
+void laghu_operational_registry_worker_job(laghu_operational_registry *registry,
+                                           bool success,
+                                           uint64_t elapsed_microseconds,
+                                           laghu_operational_failure failure) {
+  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
+  size_t index;
+  if (slot == NULL) return;
+  for (index = 0U; index + 1U < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++index)
+    if (elapsed_microseconds <= laghu_latency_limits[index])
+      laghu_add(&slot->latency_buckets[index], 1U);
+  laghu_add(&slot->latency_buckets[LAGHU_OPERATIONAL_LATENCY_BUCKETS - 1U], 1U);
+  laghu_add(&slot->latency_count, 1U);
+  laghu_add(&slot->latency_sum_microseconds, elapsed_microseconds);
+  if (!success && failure < LAGHU_OPERATIONAL_FAILURE_COUNT)
     laghu_add(&slot->failures[failure], 1U);
 }
 
@@ -265,7 +323,9 @@ void laghu_operational_registry_lcp(laghu_operational_registry *registry,
 
 bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
                                          laghu_operational_snapshot *snapshot) {
-  laghu_operational_header *header = registry != NULL ? registry->header : NULL;
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  laghu_operational_header *header = state != NULL ? state->header : NULL;
   unsigned int slot, field;
   if (header == NULL || snapshot == NULL ||
       header->magic != LAGHU_OPERATIONAL_MAGIC ||

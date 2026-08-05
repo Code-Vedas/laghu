@@ -7,7 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/catalog.h"
+#include "laghu/css.h"
+#include "laghu/queue.h"
+#include "laghu/types.h"
 
 typedef struct {
   char optimized[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];

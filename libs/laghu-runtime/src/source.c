@@ -3,13 +3,15 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/source.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/types.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -27,6 +29,7 @@
 #include <netinet/in.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #define laghu_source_stat stat
 #define laghu_source_stat_t struct stat
 #define laghu_source_unlink unlink

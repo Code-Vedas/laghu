@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "laghu/catalog.h"
+#include "laghu/css.h"
+#include "laghu/instrumentation.h"
+#include "laghu/lcp.h"
+#include "laghu/rum.h"
 #include "rum_internal.h"
 
 typedef struct {

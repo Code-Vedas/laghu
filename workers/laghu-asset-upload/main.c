@@ -39,7 +39,10 @@
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
-#include "laghu/runtime.h"
+#include "laghu/assets.h"
+#include "laghu/source.h"
+#include "laghu/types.h"
+#include "laghu/worker.h"
 
 static volatile sig_atomic_t laghu_asset_stop;
 
@@ -605,8 +608,8 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   laghu_asset_provider provider;
   char error[256];
   bool serve;
-  laghu_operational_registry operational;
-  laghu_operational_registry_init(&operational);
+  laghu_worker_lifecycle lifecycle;
+  laghu_worker_lifecycle_init(&lifecycle);
   error[0] = '\0';
 #ifdef _WIN32
   WSADATA sockets;
@@ -628,27 +631,28 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   provider = (laghu_asset_provider){laghu_s3_upload, laghu_s3_verify, NULL,
                                     laghu_s3_healthy, &s3};
   if (s3.config.operational_cache_path[0] != '\0')
-    (void)laghu_operational_registry_open(
-        &operational, s3.config.operational_cache_path,
-        LAGHU_OPERATIONAL_SURFACE_WORKER,
-        LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD, true, (uint64_t)time(NULL));
+    (void)laghu_worker_lifecycle_start(&lifecycle,
+                                       s3.config.operational_cache_path,
+                                       LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD,
+                                       NULL, true, (uint64_t)time(NULL));
   (void)signal(SIGINT, laghu_asset_signal);
   (void)signal(SIGTERM, laghu_asset_signal);
   do {
+    uint64_t started = laghu_worker_lifecycle_clock();
     int status = laghu_asset_process(&s3, &provider);
-    (void)laghu_operational_registry_heartbeat(
-        &operational, (uint64_t)time(NULL), status == 0, 0U, 0U);
-    if (status != 0)
-      laghu_operational_registry_failure(&operational,
-                                         LAGHU_OPERATIONAL_FAILURE_WORKER);
+    laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL),
+                                     status == 0);
+    laghu_worker_lifecycle_job(&lifecycle, status == 0,
+                               laghu_worker_lifecycle_clock() - started,
+                               LAGHU_OPERATIONAL_FAILURE_WORKER);
     if (!serve) {
-      laghu_operational_registry_close(&operational);
+      laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
       SSL_CTX_free(s3.tls);
       return status;
     }
     if (!laghu_asset_stop) laghu_sleep(1U);
   } while (!laghu_asset_stop);
-  laghu_operational_registry_close(&operational);
+  laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
   SSL_CTX_free(s3.tls);
 #ifdef _WIN32
   WSACleanup();

@@ -8,7 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/catalog.h"
+#include "laghu/css.h"
+#include "laghu/html.h"
+#include "laghu/types.h"
 
 typedef struct {
   unsigned char *data;

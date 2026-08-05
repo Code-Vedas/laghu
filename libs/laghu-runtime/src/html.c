@@ -3,11 +3,18 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/html.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/catalog.h"
+#include "laghu/csp.h"
+#include "laghu/css.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 typedef struct {
   char optimized[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];

@@ -10,7 +10,8 @@
 #include <string.h>
 #include <time.h>
 
-#include "laghu/runtime.h"
+#include "laghu/assets.h"
+#include "laghu/types.h"
 
 #ifdef _WIN32
 #include <direct.h>
@@ -25,6 +26,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #define laghu_asset_mkdir(path) mkdir((path), 0750)
 #define laghu_asset_unlink(path) unlink(path)
 #define laghu_asset_pid() getpid()

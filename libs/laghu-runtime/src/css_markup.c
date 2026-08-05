@@ -8,7 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/csp.h"
+#include "laghu/css.h"
+#include "laghu/fonts.h"
+#include "laghu/html.h"
+#include "laghu/queue.h"
+#include "laghu/types.h"
 
 #define LAGHU_CSS_MARKUP_MAX_ITEMS 64U
 

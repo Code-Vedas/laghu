@@ -3,15 +3,16 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <string.h>
+#include "laghu/budget.h"
 
-#include "laghu/runtime.h"
+#include <string.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <time.h>
+
 #endif
 
 uint64_t laghu_runtime_monotonic_ms(void) {

@@ -21,15 +21,19 @@ fi
 build_dir=${APACHE_BUILD_DIR:-"${REPO_ROOT}/tmp/apache-module"}
 rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
-cp "${REPO_ROOT}/modules/mod_laghu/mod_laghu.c" "${build_dir}/mod_laghu.c"
+cp "${REPO_ROOT}/modules/mod_laghu/mod_laghu_internal.h" \
+  "${build_dir}/mod_laghu_internal.h"
 set --
 while IFS='|' read -r group alias source; do
   case "${group}" in ''|'#'*) continue ;; esac
   case "${group}" in
-    base|markup|core|image|runtime|http) ;;
+    base|markup|core|image|runtime|http|apache) ;;
     *) continue ;;
   esac
   cp "${REPO_ROOT}/${source}" "${build_dir}/${alias}"
+  if [ "${alias}" = mod_laghu.c ]; then
+    continue
+  fi
   set -- "$@" "${alias}"
 done < "${REPO_ROOT}/cmake/laghu-sources.list"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/rum_redis_merge.h" \

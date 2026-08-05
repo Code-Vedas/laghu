@@ -3,13 +3,20 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/instrumentation.h"
+
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/csp.h"
+#include "laghu/html.h"
+#include "laghu/javascript.h"
+#include "laghu/lcp.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 #define LAGHU_RUM_MAX_HTML (10U * 1024U * 1024U)
 #define LAGHU_RUM_MAX_JSON 16384U

@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/css.h"
+#include "laghu/types.h"
 
 #define LAGHU_CSS_COMBINE_VERSION 1U
 #define LAGHU_CSS_COMBINE_MAX_INPUTS 32U

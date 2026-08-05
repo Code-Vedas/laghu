@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/catalog.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 static const char *laghu_beacon_field(const char *json, const char *name) {
   char needle[64U];

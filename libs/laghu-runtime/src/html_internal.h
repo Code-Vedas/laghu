@@ -6,7 +6,11 @@
 #ifndef LAGHU_HTML_INTERNAL_H
 #define LAGHU_HTML_INTERNAL_H
 
-#include "laghu/runtime.h"
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "laghu/html.h"
+#include "laghu/types.h"
 
 #define LAGHU_HEAD_MAX_CSS_NODES 64U
 #define LAGHU_HTML_MAX_ATTRIBUTES 128U

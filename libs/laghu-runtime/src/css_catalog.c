@@ -7,7 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/css.h"
+#include "laghu/types.h"
 
 static bool laghu_stylesheet_key(const char *normalized_url,
                                  const char *policy_key,

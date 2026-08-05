@@ -8,6 +8,18 @@
 #include <string.h>
 
 #include "http_internal.h"
+#include "laghu/assets.h"
+#include "laghu/budget.h"
+#include "laghu/cache.h"
+#include "laghu/csp.h"
+#include "laghu/css.h"
+#include "laghu/html.h"
+#include "laghu/instrumentation.h"
+#include "laghu/javascript.h"
+#include "laghu/lcp.h"
+#include "laghu/queue.h"
+#include "laghu/rum.h"
+#include "laghu/types.h"
 
 static bool laghu_http_select_owned(laghu_http_transaction_result *result,
                                     const unsigned char *data, size_t length) {

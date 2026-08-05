@@ -43,7 +43,12 @@ static void laghu_sleep_ms(unsigned int value) {
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
-#include "laghu/runtime.h"
+#include "laghu/cache.h"
+#include "laghu/fonts.h"
+#include "laghu/queue.h"
+#include "laghu/source.h"
+#include "laghu/types.h"
+#include "laghu/worker.h"
 
 #define LAGHU_FETCH_HEADER_MAX 65536U
 #define LAGHU_FETCH_REDIRECT_MAX 3U
@@ -481,7 +486,7 @@ static bool laghu_fetch_process(SSL_CTX *context,
 static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
                              const char *provider_path) {
   laghu_runtime_queue queue;
-  laghu_operational_registry operational;
+  laghu_worker_lifecycle lifecycle;
   laghu_font_provider_set providers;
   SSL_CTX *context;
   char error[256];
@@ -512,14 +517,14 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   laghu_runtime_queue_init(&queue);
-  laghu_operational_registry_init(&operational);
+  laghu_worker_lifecycle_init(&lifecycle);
   if (!laghu_runtime_queue_open(&queue, queue_path)) {
     SSL_CTX_free(context);
     return 1;
   }
-  (void)laghu_operational_registry_open(
-      &operational, cache_path, LAGHU_OPERATIONAL_SURFACE_WORKER,
-      LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH, true, (uint64_t)time(NULL));
+  (void)laghu_worker_lifecycle_start(&lifecycle, cache_path,
+                                     LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH,
+                                     &queue, true, (uint64_t)time(NULL));
   {
     unsigned int attempt;
     for (attempt = 0U; attempt < 100U; ++attempt) {
@@ -539,24 +544,21 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
 #endif
   while (!laghu_fetch_stop) {
     laghu_runtime_job job;
-    uint64_t capacity = 0U, occupied = 0U;
-    (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
-    (void)laghu_runtime_queue_status(&queue, &capacity, &occupied);
-    (void)laghu_operational_registry_heartbeat(
-        &operational, (uint64_t)time(NULL), true, capacity, occupied);
+    laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), true);
     if (laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload))) {
       if (job.kind == LAGHU_RUNTIME_JOB_FONT_CSS) {
+        uint64_t started = laghu_worker_lifecycle_clock();
         bool success =
             laghu_fetch_process(context, &providers, cache_path, &job);
-        if (!success)
-          laghu_operational_registry_failure(&operational,
-                                             LAGHU_OPERATIONAL_FAILURE_WORKER);
+        laghu_worker_lifecycle_job(&lifecycle, success,
+                                   laghu_worker_lifecycle_clock() - started,
+                                   LAGHU_OPERATIONAL_FAILURE_WORKER);
       }
     } else {
       laghu_sleep_ms(100U);
     }
   }
-  laghu_operational_registry_close(&operational);
+  laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
   laghu_runtime_queue_close(&queue);
   SSL_CTX_free(context);
 #ifdef _WIN32

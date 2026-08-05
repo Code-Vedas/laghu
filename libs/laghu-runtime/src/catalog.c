@@ -3,12 +3,15 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/catalog.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/runtime.h"
+#include "laghu/types.h"
+
 #ifdef _WIN32
 #include <direct.h>
 #include <process.h>
@@ -27,6 +30,7 @@ typedef HANDLE laghu_catalog_lock;
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #define laghu_catalog_mkdir(path) mkdir(path, 0750)
 #define laghu_catalog_pid() getpid()
 #define laghu_catalog_replace(from, to) rename((from), (to))

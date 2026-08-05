@@ -22,8 +22,8 @@ case "${NGX_PLATFORM:-}" in
         ;;
 esac
 
-LAGHU_MODULE_SRCS="$ngx_addon_dir/ngx_http_laghu_module.c $LAGHU_RUNTIME_PLATFORM"
-for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http)$/ { gsub(/\r/, "", $3); print $3 }' "$ngx_addon_dir/../../cmake/laghu-sources.list"); do
+LAGHU_MODULE_SRCS="$LAGHU_RUNTIME_PLATFORM"
+for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http|nginx)$/ { gsub(/\r/, "", $3); print $3 }' "$ngx_addon_dir/../../cmake/laghu-sources.list"); do
     LAGHU_MODULE_SRCS="$LAGHU_MODULE_SRCS $ngx_addon_dir/../../$laghu_source"
 done
 
