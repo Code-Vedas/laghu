@@ -94,6 +94,8 @@ printf '%s\n' 'function publicName(longLocal) { return longLocal + 1; }' \
   >"${work}/htdocs/app.js"
 printf '%s\n' '<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>' \
   >"${work}/htdocs/javascript-inline.html"
+printf '%s\n' '<html><head><meta http-equiv="Content-Security-Policy" content="script-src '\''sha256-YWJjZA=='\''"></head><body><script>function cspProtected(longLocal) { return longLocal + 1; }</script></body></html>' \
+  >"${work}/htdocs/javascript-csp-hash.html"
 printf '%s\n' '<html><body><script src="/app.js"></script><script>function externalPageHelper(veryLongLocalArgument) { return veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument + veryLongLocalArgument; }</script></body></html>' \
   >"${work}/htdocs/javascript-external.html"
 printf '%s\n' '<html><body>rum<script src="/app.js"></script></body></html>' \
@@ -419,6 +421,18 @@ if [ -x "${javascript_service}" ]; then
   [ "${attempt}" -lt 50 ]
   grep 'function inlinePublic(n){return n+1;}' \
     "${work}/javascript-inline-warm" >/dev/null
+  attempt=0
+  while [ "${attempt}" -lt 10 ]; do
+    curl --fail --silent http://127.0.0.1:18081/javascript-csp-hash.html \
+      >"${work}/javascript-csp-hash"
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  grep 'cspProtected(longLocal)' "${work}/javascript-csp-hash" >/dev/null
+  if grep 'cspProtected(n)' "${work}/javascript-csp-hash" >/dev/null; then
+    echo "Hash-authorized inline JavaScript was modified." >&2
+    exit 1
+  fi
   curl --fail --silent http://127.0.0.1:18081/javascript-outline.html >"${work}/javascript-outline-cold"
   attempt=0
   while [ "${attempt}" -lt 50 ]; do

@@ -1146,6 +1146,15 @@ static bool laghu_apache_accepts_webp(request_rec *request) {
   return match != NULL && ap_strcasestr(match, "q=0") == NULL;
 }
 
+static int laghu_apache_csp_header(void *data, const char *name,
+                                   const char *value) {
+  laghu_csp_policy *policy = data;
+  (void)name;
+  if (value == NULL || !laghu_csp_policy_add(policy, value, strlen(value)))
+    policy->invalid = true;
+  return 1;
+}
+
 static bool laghu_apache_backend_available(laghu_apache_config *config) {
   uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
   if (config->queue.mapping == NULL &&
@@ -1706,15 +1715,19 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
     if (context->capture_enabled) {
       laghu_runtime_html_result rewritten;
       const char *origin = laghu_apache_request_origin(request);
-      const char *csp =
-          apr_table_get(request->headers_out, "Content-Security-Policy");
-      bool csp_allows_data = csp == NULL || ap_strcasestr(csp, "data:") != NULL;
-      bool csp_allows_inline =
-          csp == NULL || ap_strcasestr(csp, "'unsafe-inline'") != NULL;
-      bool csp_allows_self = laghu_runtime_csp_allows_self_styles(csp, origin);
+      laghu_csp_policy csp;
       unsigned char *selected = context->capture;
       size_t selected_length = context->capture_length;
       apr_bucket_brigade *replacement;
+      laghu_csp_policy_init(&csp, origin);
+      (void)apr_table_do(laghu_apache_csp_header, &csp, request->headers_out,
+                         "Content-Security-Policy", NULL);
+      (void)apr_table_do(laghu_apache_csp_header, &csp,
+                         request->err_headers_out, "Content-Security-Policy",
+                         NULL);
+      if (!laghu_csp_policy_add_meta(
+              &csp, (laghu_buffer){context->capture, context->capture_length}))
+        csp.invalid = true;
       if (laghu_runtime_rewrite_html(
               laghu_apache_rum,
               context->config->image_cache != NULL
@@ -1733,8 +1746,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                       0U &&
                   context->policy.allow_structural_rewrite,
-              laghu_apache_html_plan(&context->policy), csp_allows_data,
-              csp_allows_inline, csp_allows_self,
+              laghu_apache_html_plan(&context->policy), &csp,
               context->config->core.image_beacon == LAGHU_MODE_ON,
               context->config->core.image_inline_limit,
               context->config->core.css_inline_limit,
@@ -1772,9 +1784,7 @@ apr_status_t laghu_apache_filter(ap_filter_t *filter,
                 context->config->core.css_outline_threshold,
                 laghu_apache_viewport_header(request),
                 context->config->core.critical_css_beacon == LAGHU_MODE_ON,
-                csp_allows_inline, csp_allows_self,
-                laghu_runtime_csp_allows_self_scripts(csp, origin),
-                &critical) &&
+                &csp, &critical) &&
             critical.rewritten) {
           selected = apr_pmemdup(request->pool, critical.data, critical.length);
           if (selected != NULL) {

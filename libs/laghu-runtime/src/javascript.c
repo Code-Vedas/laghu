@@ -298,36 +298,31 @@ static bool laghu_tag_attribute_span(const unsigned char *tag,
   return true;
 }
 
-static bool laghu_javascript_csp_accepts_nonce(const char *csp,
-                                               const unsigned char *tag,
-                                               const unsigned char *tag_end) {
-  const unsigned char *nonce = NULL;
-  size_t nonce_length = 0U;
-  if (csp == NULL || tag == NULL || tag_end == NULL) return false;
-  if (laghu_tag_attribute(tag, tag_end, "nonce", &nonce, &nonce_length) &&
-      nonce != NULL && nonce_length > 0U && nonce_length <= 128U) {
-    char token[160U];
-    int length = snprintf(token, sizeof(token), "'nonce-%.*s'",
-                          (int)nonce_length, (const char *)nonce);
-    return length > 0 && (size_t)length < sizeof(token) &&
-           strstr(csp, token) != NULL;
-  }
-  return false;
+static void laghu_javascript_nonce(const unsigned char *tag,
+                                   const unsigned char *tag_end,
+                                   const unsigned char **nonce,
+                                   size_t *nonce_length) {
+  *nonce = NULL;
+  *nonce_length = 0U;
+  (void)laghu_tag_attribute(tag, tag_end, "nonce", nonce, nonce_length);
 }
 
-static bool laghu_javascript_csp_allows_inline(const char *csp,
+static bool laghu_javascript_csp_allows_inline(const laghu_csp_policy *csp,
                                                const unsigned char *tag,
                                                const unsigned char *tag_end) {
-  if (csp == NULL || *csp == '\0') return true;
-  return strstr(csp, "'unsafe-inline'") != NULL ||
-         laghu_javascript_csp_accepts_nonce(csp, tag, tag_end);
+  const unsigned char *nonce;
+  size_t nonce_length;
+  laghu_javascript_nonce(tag, tag_end, &nonce, &nonce_length);
+  return laghu_csp_allows_inline_script(csp, nonce, nonce_length);
 }
 
-static bool laghu_javascript_csp_allows_external(const char *csp,
+static bool laghu_javascript_csp_allows_external(const laghu_csp_policy *csp,
                                                  const unsigned char *tag,
                                                  const unsigned char *tag_end) {
-  return laghu_runtime_csp_allows_self_scripts(csp, NULL) ||
-         laghu_javascript_csp_accepts_nonce(csp, tag, tag_end);
+  const unsigned char *nonce;
+  size_t nonce_length;
+  laghu_javascript_nonce(tag, tag_end, &nonce, &nonce_length);
+  return laghu_csp_allows_external_script(csp, nonce, nonce_length);
 }
 
 static bool laghu_javascript_external_lookup(
@@ -877,7 +872,7 @@ static bool laghu_javascript_defer_suffix_ready(
 bool laghu_runtime_rewrite_javascript_html(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html,
     const char *page_path, const char *policy_key, const char *target,
-    const char *content_security_policy, uint64_t now, unsigned int ttl_seconds,
+    const laghu_csp_policy *csp, uint64_t now, unsigned int ttl_seconds,
     laghu_rum_engine *rum, const char *template_key, const char *page_origin,
     unsigned int viewport_bucket, const laghu_javascript_defer_set *defer_set,
     bool allow_defer, bool allow_defer_suggestions, bool allow_combine,
@@ -903,7 +898,7 @@ bool laghu_runtime_rewrite_javascript_html(
   if (!laghu_javascript_target_normalize(target, normalized_target))
     return true;
   memset(&combined, 0, sizeof(combined));
-  if (allow_combine) {
+  if (allow_combine && laghu_csp_allows_external_script(csp, NULL, 0U)) {
     if (!laghu_javascript_combine(cache_path, html, policy_key,
                                   normalized_target, now, ttl_seconds,
                                   include_source_maps, &combined))
@@ -960,12 +955,8 @@ bool laghu_runtime_rewrite_javascript_html(
                                "application/javascript") == attribute))
           accepted = false;
       }
-      if (content_security_policy != NULL &&
-          (strstr(content_security_policy, "sha256-") != NULL ||
-           strstr(content_security_policy, "sha384-") != NULL ||
-           strstr(content_security_policy, "sha512-") != NULL) &&
-          !laghu_tag_attribute(cursor + 7U, open_end, "nonce", &attribute,
-                               &attribute_length))
+      if (!external &&
+          !laghu_javascript_csp_allows_inline(csp, cursor + 7U, open_end))
         accepted = false;
       if (laghu_find_ascii(open_end + 1U, close, "sourcemappingurl") != NULL ||
           laghu_find_ascii(open_end + 1U, close, "sourceurl") != NULL)
@@ -1069,8 +1060,8 @@ bool laghu_runtime_rewrite_javascript_html(
                 !laghu_tag_attribute(cursor + 7U, open_end, "nomodule",
                                      &attribute, &attribute_length) &&
                 (record.flags & LAGHU_JAVASCRIPT_FLAG_URL_INDEPENDENT) != 0U &&
-                laghu_javascript_csp_allows_inline(content_security_policy,
-                                                   cursor + 7U, open_end) &&
+                laghu_javascript_csp_allows_inline(csp, cursor + 7U,
+                                                   open_end) &&
                 laghu_runtime_cache_lookup_variant(cache_path, record.variant,
                                                    &entry) &&
                 entry.length == record.derived_length) {
@@ -1156,16 +1147,9 @@ bool laghu_runtime_rewrite_javascript_html(
       if (javascript.rewritten) {
         laghu_javascript_catalog_record inline_record;
         size_t source_length = (size_t)(close - open_end - 1U);
-        bool hash_policy =
-            content_security_policy != NULL &&
-            (strstr(content_security_policy, "sha256-") != NULL ||
-             strstr(content_security_policy, "sha384-") != NULL ||
-             strstr(content_security_policy, "sha512-") != NULL);
         if (allow_outline && source_length >= outline_threshold &&
-            !hash_policy &&
             laghu_tag_attributes_allowed(cursor + 7U, open_end, false) &&
-            laghu_javascript_csp_allows_external(content_security_policy,
-                                                 cursor + 7U, open_end) &&
+            laghu_javascript_csp_allows_external(csp, cursor + 7U, open_end) &&
             laghu_javascript_external_lookup(cache_path, location, policy_key,
                                              normalized_target, module, now,
                                              ttl_seconds, &inline_record) &&

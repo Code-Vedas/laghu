@@ -392,6 +392,43 @@ typedef struct {
 #define LAGHU_OPERATIONAL_LATENCY_BUCKETS 12U
 #define LAGHU_OPERATIONAL_RENDER_SIZE 65536U
 #define LAGHU_OPERATIONAL_STALE_SECONDS 45U
+#define LAGHU_CSP_MAX_POLICIES 4U
+#define LAGHU_CSP_MAX_NONCES 4U
+#define LAGHU_CSP_ORIGIN_SIZE 512U
+
+typedef enum {
+  LAGHU_CSP_SCRIPT_ELEMENT = 0,
+  LAGHU_CSP_SCRIPT_ATTRIBUTE,
+  LAGHU_CSP_STYLE_ELEMENT,
+  LAGHU_CSP_STYLE_ATTRIBUTE,
+  LAGHU_CSP_IMAGE,
+  LAGHU_CSP_CONTEXT_COUNT
+} laghu_csp_context;
+
+typedef struct {
+  bool present;
+  bool invalid;
+  bool allows_self;
+  bool allows_data;
+  bool unsafe_inline;
+  bool unsafe_hashes;
+  bool strict_dynamic;
+  bool has_hash;
+  unsigned int nonce_mask;
+} laghu_csp_source_list;
+
+typedef struct {
+  laghu_csp_source_list contexts[LAGHU_CSP_CONTEXT_COUNT];
+  unsigned int nonce_count;
+  unsigned char nonce_hashes[LAGHU_CSP_MAX_NONCES][32U];
+} laghu_csp_entry;
+
+typedef struct {
+  laghu_csp_entry policies[LAGHU_CSP_MAX_POLICIES];
+  unsigned int policy_count;
+  bool invalid;
+  char origin[LAGHU_CSP_ORIGIN_SIZE];
+} laghu_csp_policy;
 
 typedef enum {
   LAGHU_OPERATIONAL_SURFACE_NGINX = 0,
@@ -1010,7 +1047,7 @@ bool laghu_runtime_rewrite_javascript(
 bool laghu_runtime_rewrite_javascript_html(
     laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html,
     const char *page_path, const char *policy_key, const char *target,
-    const char *content_security_policy, uint64_t now, unsigned int ttl_seconds,
+    const laghu_csp_policy *csp, uint64_t now, unsigned int ttl_seconds,
     laghu_rum_engine *rum, const char *template_key, const char *page_origin,
     unsigned int viewport_bucket, const laghu_javascript_defer_set *defer_set,
     bool allow_defer, bool allow_defer_suggestions, bool allow_combine,
@@ -1044,8 +1081,7 @@ bool laghu_runtime_rewrite_html(
     uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
     laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline,
     bool allow_css_outline, bool allow_css_combine,
-    laghu_html_planner_mask html_plan, bool csp_allows_data,
-    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    laghu_html_planner_mask html_plan, const laghu_csp_policy *csp,
     bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
     unsigned int css_outline_threshold, unsigned int viewport_width,
     unsigned int dpr_hundredths, laghu_runtime_html_result *result);
@@ -1074,10 +1110,17 @@ bool laghu_runtime_rewrite_css_markup(
     bool csp_allows_inline_styles, bool csp_allows_self_styles,
     unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result);
+bool laghu_runtime_rewrite_css_markup_csp(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, bool allow_inline,
+    bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
+    const laghu_csp_policy *csp, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_html_result *result);
 bool laghu_runtime_rewrite_font_css(
     laghu_runtime_queue *fetch_queue, const char *cache_path,
     const laghu_font_provider_set *providers, laghu_buffer html, uint64_t now,
-    bool allow_inline, bool csp_allows_inline_styles, unsigned int inline_limit,
+    bool allow_inline, const laghu_csp_policy *csp, unsigned int inline_limit,
     laghu_runtime_html_result *result);
 bool laghu_runtime_combine_css_markup(
     const char *cache_path, laghu_buffer html, const char *page_path,
@@ -1086,10 +1129,24 @@ bool laghu_runtime_combine_css_markup(
     unsigned int outline_threshold, laghu_runtime_css_combine_result *result);
 void laghu_runtime_css_combine_result_release(
     laghu_runtime_css_combine_result *result);
-bool laghu_runtime_csp_allows_self_styles(const char *csp,
-                                          const char *page_origin);
-bool laghu_runtime_csp_allows_self_scripts(const char *csp,
-                                           const char *page_origin);
+void laghu_csp_policy_init(laghu_csp_policy *policy, const char *page_origin);
+bool laghu_csp_policy_add(laghu_csp_policy *policy, const char *value,
+                          size_t length);
+bool laghu_csp_policy_add_meta(laghu_csp_policy *policy, laghu_buffer html);
+bool laghu_csp_allows_data_image(const laghu_csp_policy *policy);
+bool laghu_csp_allows_inline_style(const laghu_csp_policy *policy,
+                                   const unsigned char *nonce,
+                                   size_t nonce_length);
+bool laghu_csp_allows_external_style(const laghu_csp_policy *policy,
+                                     const unsigned char *nonce,
+                                     size_t nonce_length);
+bool laghu_csp_allows_style_attribute(const laghu_csp_policy *policy);
+bool laghu_csp_allows_inline_script(const laghu_csp_policy *policy,
+                                    const unsigned char *nonce,
+                                    size_t nonce_length);
+bool laghu_csp_allows_external_script(const laghu_csp_policy *policy,
+                                      const unsigned char *nonce,
+                                      size_t nonce_length);
 bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue,
                                const char *cache_path, laghu_buffer css,
                                const char *stylesheet_path,
@@ -1130,8 +1187,7 @@ bool laghu_runtime_prioritize_critical_css(
     uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
     unsigned int inline_limit, unsigned int outline_threshold,
     unsigned int viewport_width, bool beacon_enabled,
-    bool csp_allows_inline_styles, bool csp_allows_self_styles,
-    bool csp_allows_self_scripts, laghu_runtime_html_result *result);
+    const laghu_csp_policy *csp, laghu_runtime_html_result *result);
 bool laghu_runtime_parse_critical_css_beacon(laghu_buffer json,
                                              laghu_critical_css_beacon *record);
 bool laghu_critical_css_apply_beacon(laghu_rum_engine *rum,
@@ -1160,7 +1216,7 @@ bool laghu_runtime_add_instrumentation(
     const laghu_javascript_observation_set *providers, laghu_buffer html,
     const char *page_path, const char *page_origin, const char *policy_key,
     uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
-    bool csp_allows_self_scripts, laghu_runtime_html_result *result);
+    const laghu_csp_policy *csp, laghu_runtime_html_result *result);
 bool laghu_runtime_instrumentation_template_key(
     laghu_rum_engine *rum, const char *cache_path,
     const laghu_javascript_observation_set *providers, laghu_buffer html,

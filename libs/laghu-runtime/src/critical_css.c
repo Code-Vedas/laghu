@@ -364,12 +364,12 @@ bool laghu_runtime_prioritize_critical_css(
     uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
     unsigned int inline_limit, unsigned int outline_threshold,
     unsigned int viewport_width, bool beacon_enabled,
-    bool csp_allows_inline_styles, bool csp_allows_self_styles,
-    bool csp_allows_self_scripts, laghu_runtime_html_result *result) {
+    const laghu_csp_policy *csp, laghu_runtime_html_result *result) {
   const unsigned char *link = NULL, *body = NULL, *scan;
   size_t link_start = 0U, link_end = 0U, href_length = 0U, rel_length = 0U;
   const unsigned char *href = NULL, *rel = NULL, *media = NULL;
-  size_t media_length = 0U;
+  const unsigned char *nonce = NULL;
+  size_t media_length = 0U, nonce_length = 0U;
   char url[LAGHU_RUNTIME_PATH_SIZE], template_key[LAGHU_RUNTIME_KEY_SIZE];
   laghu_stylesheet_record sheet;
   laghu_critical_css_record learning;
@@ -411,10 +411,11 @@ bool laghu_runtime_prioritize_critical_css(
       href_length == 0U || href[0] != '/' || href_length >= sizeof(url))
     return true;
   if (laghu_critical_find(link, link_end - link_start, "integrity") ||
-      laghu_critical_find(link, link_end - link_start, "nonce") ||
       laghu_critical_find(link, link_end - link_start, "disabled") ||
       laghu_critical_find(link, link_end - link_start, "alternate"))
     return true;
+  (void)laghu_critical_attr(link, link_end - link_start, "nonce", &nonce,
+                            &nonce_length);
   memcpy(url, href, href_length);
   url[href_length] = '\0';
   if (!laghu_stylesheet_lookup(cache_path, url, policy_key, capability_mask,
@@ -441,7 +442,8 @@ bool laghu_runtime_prioritize_critical_css(
     if (!laghu_critical_write_record(rum, &learning)) return true;
     created = true;
   }
-  if (ready && csp_allows_inline_styles && csp_allows_self_styles &&
+  if (ready && laghu_csp_allows_inline_style(csp, nonce, nonce_length) &&
+      laghu_csp_allows_external_style(csp, NULL, 0U) &&
       laghu_runtime_cache_lookup_variant(cache_path, sheet.derived_key,
                                          &entry)) {
     css = malloc(entry.length + 1U);
@@ -458,10 +460,11 @@ bool laghu_runtime_prioritize_critical_css(
     if (critical_length == 0U || critical_length > inline_limit) goto unchanged;
     body = laghu_critical_find(html.data, html.length, "</body>");
     if (body == NULL || (size_t)(body - html.data) < link_end) goto unchanged;
-    output_length = html.length - (link_end - link_start) + critical_length +
-                    sizeof("<style></style>") - 1U + (link_end - link_start) -
-                    href_length + sizeof(deferred_prefix) - 1U +
-                    LAGHU_SHA256_HEX_LENGTH;
+    output_length =
+        html.length - (link_end - link_start) + critical_length +
+        sizeof("<style></style>") - 1U + (link_end - link_start) - href_length +
+        sizeof(deferred_prefix) - 1U + LAGHU_SHA256_HEX_LENGTH +
+        (nonce != NULL ? nonce_length + sizeof(" nonce=\"\"") - 1U : 0U);
     output = malloc(output_length + 1U);
     if (output == NULL) goto fail;
     cursor = 0U;
@@ -476,6 +479,11 @@ bool laghu_runtime_prioritize_critical_css(
                             &media_length)) {
       APPEND(" media=\"", 8U);
       APPEND(media, media_length);
+      APPEND("\"", 1U);
+    }
+    if (nonce != NULL) {
+      APPEND(" nonce=\"", 8U);
+      APPEND(nonce, nonce_length);
       APPEND("\"", 1U);
     }
     APPEND(">", 1U);
@@ -513,7 +521,7 @@ bool laghu_runtime_prioritize_critical_css(
 unchanged:
   free(css);
   if (created) return true;
-  if (beacon_enabled && csp_allows_self_scripts) {
+  if (beacon_enabled && laghu_csp_allows_external_script(csp, NULL, 0U)) {
     body = laghu_critical_find(html.data, html.length, "</body>");
     if (body != NULL) {
       const char before[] =

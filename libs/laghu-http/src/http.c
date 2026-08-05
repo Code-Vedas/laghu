@@ -128,29 +128,6 @@ static bool laghu_http_join_response_headers(
     const laghu_http_response *response, const char *name, char *output,
     size_t capacity);
 
-static bool laghu_http_header_contains(const laghu_http_header *header,
-                                       const char *needle) {
-  size_t index;
-  size_t needle_length = strlen(needle);
-  if (header == NULL || needle_length == 0U ||
-      header->value.length < needle_length) {
-    return false;
-  }
-  for (index = 0U; index + needle_length <= header->value.length; ++index) {
-    size_t offset;
-    for (offset = 0U; offset < needle_length; ++offset) {
-      if (laghu_http_ascii_lower(header->value.data[index + offset]) !=
-          laghu_http_ascii_lower((unsigned char)needle[offset])) {
-        break;
-      }
-    }
-    if (offset == needle_length) {
-      return true;
-    }
-  }
-  return false;
-}
-
 static bool laghu_http_content_type_is(const char *content_type,
                                        const char *prefix) {
   size_t index;
@@ -1086,9 +1063,6 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   laghu_runtime_html_result instrumentation = {0};
   laghu_runtime_html_result hinted;
   laghu_runtime_html_result finalized;
-  const laghu_http_header *csp = laghu_http_find_header(
-      transaction->response->headers, transaction->response->header_count,
-      "Content-Security-Policy");
   char csp_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char language[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char links[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
@@ -1102,12 +1076,11 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   laghu_javascript_observation_set decision_observations;
   const laghu_javascript_observation_set *instrumentation_observations =
       transaction->environment.javascript_observations;
-  bool csp_data;
-  bool csp_inline;
-  bool csp_self;
-  bool csp_script_self;
+  laghu_csp_policy csp_policy;
   unsigned int index;
-  if (!laghu_http_copy_header(csp, csp_value, sizeof(csp_value)) ||
+  if (!laghu_http_join_response_headers(transaction->response,
+                                        "Content-Security-Policy", csp_value,
+                                        sizeof(csp_value)) ||
       !laghu_http_join_response_headers(transaction->response,
                                         "Content-Language", language,
                                         sizeof(language)) ||
@@ -1115,13 +1088,11 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
                                         sizeof(links))) {
     return false;
   }
-  csp_data = csp == NULL || laghu_http_header_contains(csp, "data:");
-  csp_inline =
-      csp == NULL || laghu_http_header_contains(csp, "'unsafe-inline'");
-  csp_self = laghu_runtime_csp_allows_self_styles(
-      csp == NULL ? NULL : csp_value, transaction->origin);
-  csp_script_self = laghu_runtime_csp_allows_self_scripts(
-      csp == NULL ? NULL : csp_value, transaction->origin);
+  laghu_csp_policy_init(&csp_policy, transaction->origin);
+  if ((csp_value[0] != '\0' &&
+       !laghu_csp_policy_add(&csp_policy, csp_value, strlen(csp_value))) ||
+      !laghu_csp_policy_add_meta(&csp_policy, body))
+    csp_policy.invalid = true;
   if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON &&
       transaction->environment.config.javascript_defer_suggestions ==
           LAGHU_MODE_ON)
@@ -1166,7 +1137,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
           (transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                   0U &&
               transaction->policy.allow_structural_rewrite,
-          transaction->html_plan, csp_data, csp_inline, csp_self,
+          transaction->html_plan, &csp_policy,
           transaction->environment.config.image_beacon == LAGHU_MODE_ON,
           transaction->environment.config.image_inline_limit,
           transaction->environment.config.css_inline_limit,
@@ -1192,7 +1163,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
             (transaction->policy.filter_families &
              LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
                 transaction->policy.allow_resource_inlining,
-            csp_inline, transaction->environment.config.css_inline_limit,
+            &csp_policy, transaction->environment.config.css_inline_limit,
             &font)) {
       laghu_runtime_html_result_release(&rewritten);
       return false;
@@ -1229,7 +1200,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
             transaction->viewport_width,
             transaction->environment.config.critical_css_beacon ==
                 LAGHU_MODE_ON,
-            csp_inline, csp_self, csp_script_self, &critical)) {
+            &csp_policy, &critical)) {
       laghu_runtime_html_result_release(&font);
       laghu_runtime_html_result_release(&rewritten);
       return false;
@@ -1255,7 +1226,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
             transaction->environment.cache_path,
             (laghu_buffer){selected, selected_length}, transaction->path,
             transaction->policy_key, transaction->environment.javascript_target,
-            csp == NULL ? NULL : csp_value, transaction->environment.now,
+            &csp_policy, transaction->environment.now,
             transaction->environment.config.image_metadata_ttl,
             transaction->environment.rum,
             javascript_template_key[0] == '\0' ? NULL : javascript_template_key,
@@ -1438,9 +1409,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
             transaction->environment.now,
             transaction->environment.config.image_metadata_ttl,
             transaction->environment.config.instrumentation_sample_rate,
-            csp_script_self && (csp == NULL || !laghu_http_header_contains(
-                                                   csp, "'strict-dynamic'")),
-            &instrumentation)) {
+            &csp_policy, &instrumentation)) {
       laghu_runtime_html_result_release(&hinted);
       laghu_runtime_html_result_release(&finalized);
       laghu_runtime_html_result_release(&rewritten);

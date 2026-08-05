@@ -736,14 +736,18 @@ static bool ngx_http_laghu_is_css_type(const ngx_str_t *content_type) {
              0;
 }
 
-static bool ngx_http_laghu_csp_allows_data(ngx_http_request_t *request) {
+static void ngx_http_laghu_csp_policy(ngx_http_request_t *request,
+                                      const char *page_origin,
+                                      laghu_buffer html,
+                                      laghu_csp_policy *policy) {
   ngx_list_part_t *part = &request->headers_out.headers.part;
   ngx_table_elt_t *headers = part->elts;
   ngx_uint_t index;
+  laghu_csp_policy_init(policy, page_origin);
   for (index = 0U;; ++index) {
     if (index >= part->nelts) {
       if (part->next == NULL) {
-        return true;
+        break;
       }
       part = part->next;
       headers = part->elts;
@@ -754,108 +758,12 @@ static bool ngx_http_laghu_csp_allows_data(ngx_http_request_t *request) {
         ngx_strncasecmp(headers[index].key.data,
                         (u_char *)"Content-Security-Policy",
                         sizeof("Content-Security-Policy") - 1U) == 0) {
-      size_t offset;
-      for (offset = 0U;
-           offset + sizeof("data:") - 1U <= headers[index].value.len;
-           ++offset) {
-        if (ngx_strncasecmp(headers[index].value.data + offset,
-                            (u_char *)"data:", sizeof("data:") - 1U) == 0) {
-          return true;
-        }
-      }
-      return false;
+      if (!laghu_csp_policy_add(policy, (const char *)headers[index].value.data,
+                                headers[index].value.len))
+        policy->invalid = true;
     }
   }
-}
-
-static bool ngx_http_laghu_csp_allows_inline_style(
-    ngx_http_request_t *request) {
-  ngx_list_part_t *part = &request->headers_out.headers.part;
-  ngx_table_elt_t *headers = part->elts;
-  ngx_uint_t index;
-  for (index = 0U;; ++index) {
-    if (index >= part->nelts) {
-      if (part->next == NULL) {
-        return true;
-      }
-      part = part->next;
-      headers = part->elts;
-      index = 0U;
-    }
-    if (headers[index].hash != 0U &&
-        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
-        ngx_strncasecmp(headers[index].key.data,
-                        (u_char *)"Content-Security-Policy",
-                        sizeof("Content-Security-Policy") - 1U) == 0) {
-      size_t offset;
-      for (offset = 0U;
-           offset + sizeof("'unsafe-inline'") - 1U <= headers[index].value.len;
-           ++offset) {
-        if (ngx_strncasecmp(headers[index].value.data + offset,
-                            (u_char *)"'unsafe-inline'",
-                            sizeof("'unsafe-inline'") - 1U) == 0) {
-          return true;
-        }
-      }
-      return false;
-    }
-  }
-}
-
-static bool ngx_http_laghu_csp_allows_self_style(ngx_http_request_t *request,
-                                                 const char *page_origin) {
-  ngx_list_part_t *part = &request->headers_out.headers.part;
-  ngx_table_elt_t *headers = part->elts;
-  ngx_uint_t index;
-  for (index = 0U;; ++index) {
-    if (index >= part->nelts) {
-      if (part->next == NULL) {
-        return true;
-      }
-      part = part->next;
-      headers = part->elts;
-      index = 0U;
-    }
-    if (headers[index].hash != 0U &&
-        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
-        ngx_strncasecmp(headers[index].key.data,
-                        (u_char *)"Content-Security-Policy",
-                        sizeof("Content-Security-Policy") - 1U) == 0) {
-      char *value = ngx_pnalloc(request->pool, headers[index].value.len + 1U);
-      if (value == NULL) {
-        return false;
-      }
-      ngx_memcpy(value, headers[index].value.data, headers[index].value.len);
-      value[headers[index].value.len] = '\0';
-      return laghu_runtime_csp_allows_self_styles(value, page_origin);
-    }
-  }
-}
-
-static bool ngx_http_laghu_csp_allows_self_script(ngx_http_request_t *request,
-                                                  const char *page_origin) {
-  ngx_list_part_t *part = &request->headers_out.headers.part;
-  ngx_table_elt_t *headers = part->elts;
-  ngx_uint_t index;
-  for (index = 0U;; ++index) {
-    if (index >= part->nelts) {
-      if (part->next == NULL) return true;
-      part = part->next;
-      headers = part->elts;
-      index = 0U;
-    }
-    if (headers[index].hash != 0U &&
-        headers[index].key.len == sizeof("Content-Security-Policy") - 1U &&
-        ngx_strncasecmp(headers[index].key.data,
-                        (u_char *)"Content-Security-Policy",
-                        sizeof("Content-Security-Policy") - 1U) == 0) {
-      char *value = ngx_pnalloc(request->pool, headers[index].value.len + 1U);
-      if (value == NULL) return false;
-      ngx_memcpy(value, headers[index].value.data, headers[index].value.len);
-      value[headers[index].value.len] = '\0';
-      return laghu_runtime_csp_allows_self_scripts(value, page_origin);
-    }
-  }
+  if (!laghu_csp_policy_add_meta(policy, html)) policy->invalid = true;
 }
 
 static bool ngx_http_laghu_same_origin(ngx_http_request_t *request) {
@@ -1870,6 +1778,7 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
       ngx_table_elt_t *etag;
       char existing_language[LAGHU_HTML_LANGUAGE_SIZE];
       char existing_links[8192U];
+      laghu_csp_policy csp;
       conf = ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
       if (request->uri.len < sizeof(page_path)) {
         ngx_memcpy(page_path, request->uri.data, request->uri.len);
@@ -1895,6 +1804,9 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                                             sizeof(existing_language));
       ngx_http_laghu_response_header_values(request, "Link", existing_links,
                                             sizeof(existing_links));
+      ngx_http_laghu_csp_policy(
+          request, origin_value,
+          (laghu_buffer){context->capture, context->capture_length}, &csp);
       if (laghu_runtime_rewrite_html(
               ngx_http_laghu_rum, (const char *)conf->image_cache.data,
               (laghu_buffer){context->capture, context->capture_length},
@@ -1909,10 +1821,7 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
               (context->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
                       0U &&
                   context->policy.allow_structural_rewrite,
-              ngx_http_laghu_html_plan(&context->policy),
-              ngx_http_laghu_csp_allows_data(request),
-              ngx_http_laghu_csp_allows_inline_style(request),
-              ngx_http_laghu_csp_allows_self_style(request, origin_value),
+              ngx_http_laghu_html_plan(&context->policy), &csp,
               conf->core.image_beacon == LAGHU_MODE_ON,
               conf->core.image_inline_limit, conf->core.css_inline_limit,
               conf->core.css_outline_threshold,
@@ -1944,10 +1853,7 @@ ngx_int_t ngx_http_laghu_body_filter(ngx_http_request_t *request,
                 conf->core.image_metadata_ttl, conf->core.css_inline_limit,
                 conf->core.css_outline_threshold,
                 ngx_http_laghu_viewport_header(request),
-                conf->core.critical_css_beacon == LAGHU_MODE_ON,
-                ngx_http_laghu_csp_allows_inline_style(request),
-                ngx_http_laghu_csp_allows_self_style(request, origin_value),
-                ngx_http_laghu_csp_allows_self_script(request, origin_value),
+                conf->core.critical_css_beacon == LAGHU_MODE_ON, &csp,
                 &critical) &&
             critical.rewritten) {
           unsigned char *copy = ngx_pnalloc(request->pool, critical.length);

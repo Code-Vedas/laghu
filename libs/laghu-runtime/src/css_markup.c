@@ -205,14 +205,14 @@ static bool laghu_css_markup_read(const char *cache_path, const char *key,
   return true;
 }
 
-bool laghu_runtime_rewrite_css_markup(
+static bool laghu_runtime_rewrite_css_markup_impl(
     const char *cache_path, laghu_buffer html, const char *page_path,
     const char *page_origin, const char *policy_key, uint32_t capability_mask,
     uint64_t now, unsigned int ttl_seconds, bool allow_inline,
     bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
     bool csp_allows_inline_styles, bool csp_allows_self_styles,
-    unsigned int inline_limit, unsigned int outline_threshold,
-    laghu_runtime_html_result *result) {
+    const laghu_csp_policy *csp, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_html_result *result) {
   laghu_buffer source_html = html;
   laghu_css_markup_builder builder = {0};
   size_t cursor = 0U;
@@ -262,16 +262,18 @@ bool laghu_runtime_rewrite_css_markup(
     if (end == html.length || ++item_count > LAGHU_CSS_MARKUP_MAX_ITEMS) {
       goto unchanged;
     }
-    if (allow_inline && csp_allows_inline_styles && start + 5U <= end &&
+    if (allow_inline && start + 5U <= end &&
         laghu_css_markup_equal(html.data + start + 1U, 4U, "link")) {
       const unsigned char *rel = NULL;
       const unsigned char *href = NULL;
       const unsigned char *media = NULL;
       const unsigned char *type = NULL;
+      const unsigned char *nonce = NULL;
       size_t rel_length = 0U;
       size_t href_length = 0U;
       size_t media_length = 0U;
       size_t type_length = 0U;
+      size_t nonce_length = 0U;
       char normalized[LAGHU_RUNTIME_PATH_SIZE];
       laghu_stylesheet_record record;
       unsigned char *css = NULL;
@@ -284,11 +286,15 @@ bool laghu_runtime_rewrite_css_markup(
                                      "href", &href, &href_length) &&
           !laghu_css_markup_has(html.data + start, end - start + 1U,
                                 "integrity") &&
-          !laghu_css_markup_has(html.data + start, end - start + 1U, "nonce") &&
           !laghu_css_markup_has(html.data + start, end - start + 1U,
                                 "disabled") &&
           !laghu_css_markup_has(html.data + start, end - start + 1U,
                                 "alternate");
+      (void)laghu_css_markup_attribute(html.data + start, end - start + 1U,
+                                       "nonce", &nonce, &nonce_length);
+      eligible = eligible && (csp != NULL ? laghu_csp_allows_inline_style(
+                                                csp, nonce, nonce_length)
+                                          : csp_allows_inline_styles);
       if (eligible &&
           laghu_css_markup_attribute(html.data + start, end - start + 1U,
                                      "media", &media, &media_length)) {
@@ -316,7 +322,12 @@ bool laghu_runtime_rewrite_css_markup(
                 &css_length) &&
             strstr((const char *)css, "@import") == NULL &&
             strstr((const char *)css, "@font-face") == NULL) {
-          if (!laghu_css_markup_append(&builder, "<style>", 7U) ||
+          if (!laghu_css_markup_append(&builder, "<style", 6U) ||
+              (nonce != NULL &&
+               (!laghu_css_markup_append(&builder, " nonce=\"", 8U) ||
+                !laghu_css_markup_append(&builder, nonce, nonce_length) ||
+                !laghu_css_markup_append(&builder, "\"", 1U))) ||
+              !laghu_css_markup_append(&builder, ">", 1U) ||
               !laghu_css_markup_append(&builder, css, css_length) ||
               !laghu_css_markup_append(&builder, "</style>", 8U)) {
             free(css);
@@ -623,10 +634,40 @@ failed:
   return false;
 }
 
+bool laghu_runtime_rewrite_css_markup_csp(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, bool allow_inline,
+    bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
+    const laghu_csp_policy *csp, unsigned int inline_limit,
+    unsigned int outline_threshold, laghu_runtime_html_result *result) {
+  return laghu_runtime_rewrite_css_markup_impl(
+      cache_path, html, page_path, page_origin, policy_key, capability_mask,
+      now, ttl_seconds, allow_inline, allow_outline, allow_combine, html_plan,
+      laghu_csp_allows_inline_style(csp, NULL, 0U),
+      laghu_csp_allows_external_style(csp, NULL, 0U), csp, inline_limit,
+      outline_threshold, result);
+}
+
+bool laghu_runtime_rewrite_css_markup(
+    const char *cache_path, laghu_buffer html, const char *page_path,
+    const char *page_origin, const char *policy_key, uint32_t capability_mask,
+    uint64_t now, unsigned int ttl_seconds, bool allow_inline,
+    bool allow_outline, bool allow_combine, laghu_html_planner_mask html_plan,
+    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    unsigned int inline_limit, unsigned int outline_threshold,
+    laghu_runtime_html_result *result) {
+  return laghu_runtime_rewrite_css_markup_impl(
+      cache_path, html, page_path, page_origin, policy_key, capability_mask,
+      now, ttl_seconds, allow_inline, allow_outline, allow_combine, html_plan,
+      csp_allows_inline_styles, csp_allows_self_styles, NULL, inline_limit,
+      outline_threshold, result);
+}
+
 bool laghu_runtime_rewrite_font_css(
     laghu_runtime_queue *fetch_queue, const char *cache_path,
     const laghu_font_provider_set *providers, laghu_buffer html, uint64_t now,
-    bool allow_inline, bool csp_allows_inline_styles, unsigned int inline_limit,
+    bool allow_inline, const laghu_csp_policy *csp, unsigned int inline_limit,
     laghu_runtime_html_result *result) {
   laghu_css_markup_builder builder = {0};
   size_t cursor = 0U;
@@ -637,7 +678,8 @@ bool laghu_runtime_rewrite_font_css(
     return false;
   }
   memset(result, 0, sizeof(*result));
-  if (!allow_inline || !csp_allows_inline_styles || inline_limit == 0U) {
+  if (!allow_inline || !laghu_csp_allows_inline_style(csp, NULL, 0U) ||
+      inline_limit == 0U) {
     return true;
   }
   while (cursor < html.length) {

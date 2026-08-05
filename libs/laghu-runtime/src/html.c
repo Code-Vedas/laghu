@@ -144,8 +144,7 @@ bool laghu_runtime_rewrite_html(
     uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
     laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline,
     bool allow_css_outline, bool allow_css_combine,
-    laghu_html_planner_mask html_plan, bool csp_allows_data,
-    bool csp_allows_inline_styles, bool csp_allows_self_styles,
+    laghu_html_planner_mask html_plan, const laghu_csp_policy *csp,
     bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
     unsigned int css_outline_threshold, unsigned int viewport_width,
     unsigned int dpr_hundredths, laghu_runtime_html_result *result) {
@@ -157,6 +156,8 @@ bool laghu_runtime_rewrite_html(
   size_t index;
   bool pending = false;
   bool success = false;
+  bool csp_allows_data = laghu_csp_allows_data_image(csp);
+  bool csp_allows_style_attributes = laghu_csp_allows_style_attribute(csp);
   if (result == NULL || rum == NULL || cache_path == NULL ||
       policy_key == NULL || ttl_seconds == 0U) {
     return false;
@@ -386,7 +387,8 @@ bool laghu_runtime_rewrite_html(
   options.enforce_bundle_gate = true;
   if (laghu_image_rewrite_html(html, &options, &rewritten)) {
     laghu_image_markup_result styled;
-    if (laghu_css_rewrite_style_attributes(
+    if (csp_allows_style_attributes &&
+        laghu_css_rewrite_style_attributes(
             (laghu_buffer){rewritten.data, rewritten.length}, page_path,
             page_origin, &options, &styled)) {
       if (styled.applied_filters != 0U && styled.length <= rewritten.length) {
@@ -399,13 +401,12 @@ bool laghu_runtime_rewrite_html(
     if (allow_css_inline || allow_css_outline || allow_css_combine ||
         html_plan != 0U) {
       laghu_runtime_html_result css_markup;
-      if (!laghu_runtime_rewrite_css_markup(
+      if (!laghu_runtime_rewrite_css_markup_csp(
               cache_path, (laghu_buffer){rewritten.data, rewritten.length},
               page_path, page_origin, policy_key, capability_mask, now,
               ttl_seconds, allow_css_inline, allow_css_outline,
-              allow_css_combine, html_plan, csp_allows_inline_styles,
-              csp_allows_self_styles, css_inline_limit, css_outline_threshold,
-              &css_markup)) {
+              allow_css_combine, html_plan, csp, css_inline_limit,
+              css_outline_threshold, &css_markup)) {
         laghu_image_markup_result_release(&rewritten);
         goto finished;
       }

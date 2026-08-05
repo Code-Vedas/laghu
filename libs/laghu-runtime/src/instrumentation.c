@@ -233,7 +233,7 @@ bool laghu_runtime_add_instrumentation(
     const laghu_javascript_observation_set *providers, laghu_buffer html,
     const char *page_path, const char *page_origin, const char *policy_key,
     uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
-    bool csp_allows_self_scripts, laghu_runtime_html_result *result) {
+    const laghu_csp_policy *csp, laghu_runtime_html_result *result) {
   laghu_rum_record record;
   const unsigned char *body, *scan;
   char material[16384U], key[LAGHU_RUNTIME_KEY_SIZE];
@@ -246,7 +246,7 @@ bool laghu_runtime_add_instrumentation(
       sample_rate > 100U)
     return false;
   memset(result, 0, sizeof(*result));
-  if (!csp_allows_self_scripts || sample_rate == 0U ||
+  if (!laghu_csp_allows_external_script(csp, NULL, 0U) || sample_rate == 0U ||
       (body = laghu_rum_find(html.data, html.length, "</body>")) == NULL)
     return true;
   memset(&record, 0, sizeof(record));
@@ -386,7 +386,7 @@ bool laghu_runtime_instrumentation_template_key(
   output[0] = '\0';
   if (!laghu_runtime_add_instrumentation(
           rum, cache_path, providers, html, page_path, page_origin, policy_key,
-          now, ttl_seconds, sample_rate, true, &result))
+          now, ttl_seconds, sample_rate, NULL, &result))
     return false;
   if (result.rewritten &&
       (found = laghu_rum_find(result.data, result.length, marker)) != NULL) {

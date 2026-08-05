@@ -26,7 +26,7 @@ flowchart LR
     memory[(Memory-native catalogs and RUM)]
     cache[(Immutable content cache)]
     workers[Native optimization workers]
-    ops[Doctor / status / explain / purge / metrics]
+    ops[Metrics / readiness / explain / purge]
   end
 
   user <--> entry
@@ -100,6 +100,8 @@ It never owns a codec process or fetches an image from the network.
 
 `laghu-runtime` owns HTML/CSS/JavaScript planners, checksummed catalogs, immutable routes, queue publication, critical-resource learning, instrumentation endpoints, local snapshots, Redis/Valkey synchronization, cache administration, and operational decision records.
 
+It also owns the fixed-capacity CSP policy engine used by every delivery surface. All enforcing `Content-Security-Policy` headers are parsed as intersecting policies; bounded HTML meta policies add further restrictions. Directive lookup follows `script-src-elem`/`script-src-attr`, `style-src-elem`/`style-src-attr`, and `img-src` precedence over their fallback directives. Missing CSP is permissive, while malformed, excessive, or unsupported input disables the affected rewrite without affecting delivery.
+
 ### `ngx-laghu` and `mod-laghu`
 
 The native modules translate server configuration and response streams into the shared transaction contract.
@@ -161,6 +163,7 @@ A background thread restores state, rotates bounded deltas, performs backend I/O
 - `laghu-resource-fetch` contacts configured font providers, while `laghu-asset-upload` contacts the configured S3-compatible endpoint. Both require verified HTTPS and administrator-owned allowlists; neither exposes credentials to request workers.
 - The standalone server verifies origin and downstream TLS according to administrator-owned trust configuration.
 - Beacon endpoints require same-origin bounded JSON and store opaque aggregates rather than raw browser reports.
+- Laghu never changes an application's CSP headers, generates a nonce, or adds an unsafe source. Existing nonces are compared through fixed-size hashes and preserved only on the element being transformed; raw nonce values never enter shared state, cache keys, metrics, or diagnostics.
 - Redis/Valkey credentials remain administrator-owned and never enter policy keys, snapshots, browser content, or normal diagnostics.
 
 ## Failure Domains

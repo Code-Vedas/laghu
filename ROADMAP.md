@@ -254,12 +254,14 @@ Completion evidence for the checked geometry features is shared with Section 3.2
 
 ### 4.4 Safety and Security
 
-- [ ] Make transforms Content-Security-Policy-safe, including nonce and `strict-dynamic` detection and unsafe-transform auto-disable.
+- [x] Make transforms Content-Security-Policy-safe, including nonce and `strict-dynamic` detection and unsafe-transform auto-disable.
 - [x] Respect `no-store` and `private` throughout every implemented cache and transform path.
 - [x] Bypass authenticated requests in the initial eligibility policy.
 - [x] Make all outbound resource fetching SSRF-safe with private and loopback access disabled by default.
 - [ ] Document and implement dark-mode-safe critical-CSS behavior.
 - [ ] Bound content size, memory, optimization time, cache growth, and variant fanout.
+
+CSP safety evidence: the fixed-capacity shared runtime policy intersects all enforcing response headers and bounded HTML meta policies with first-directive precedence; supports element and attribute fallbacks, data images, same-origin schemes/hosts/wildcards, nonces, hashes, unsafe-inline/unsafe-hashes, and strict-dynamic; retains only fixed nonce hashes; and fails closed per transform on malformed, excessive, or uncertain input. All three surfaces preserve headers and original delivery, retain matching nonces on equivalent CSS/JavaScript elements, leave integrity-bearing and hash-only inline content unchanged, and authorize immutable CSS/JavaScript, instrumentation, beacon, font, image, and style-attribute rewrites through explicit policy queries. Runtime tests cover precedence, intersection, case, origin, wildcard/path conservatism, invalid input, capacity, redaction, and nonce preservation; standalone, NGINX stable/mainline, Apache, full `scripts/run-all`, and Windows x64 codec/no-codec, service, and matched-server lanes pass.
 
 ### 4.5 Observability and Operations
 

@@ -84,6 +84,14 @@ class Origin(http.server.BaseHTTPRequestHandler):
         elif self.path == "/javascript-inline.html":
             body = b"<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>"
             content_type = "text/html"
+        elif self.path == "/javascript-csp-hash.html":
+            body = (
+                b'<html><head><meta http-equiv="Content-Security-Policy" '
+                b'content="script-src \'sha256-YWJjZA==\'"></head><body>'
+                b'<script>function cspProtected(longLocal) { return longLocal + 1; }</script>'
+                b'</body></html>'
+            )
+            content_type = "text/html"
         elif self.path == "/javascript-external.html":
             body = (
                 b'<html><body><script src="/app.js"></script><script>'
@@ -743,6 +751,11 @@ def main():
             else:
                 raise AssertionError("standalone inline JavaScript did not become warm")
             assert b"inlinePublic(n){return n+1;}" in inline_warm
+            for _ in range(10):
+                _, csp_hash_body = request(proxy_port, "/javascript-csp-hash.html")
+                time.sleep(0.05)
+            assert b"cspProtected(longLocal)" in csp_hash_body
+            assert b"cspProtected(n)" not in csp_hash_body
             _, outline_cold = request(proxy_port, "/javascript-outline.html")
             assert b"outlinePublic" in outline_cold
             for _ in range(warm_attempts):
