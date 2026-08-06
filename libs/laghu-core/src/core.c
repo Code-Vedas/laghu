@@ -818,17 +818,17 @@ bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent,
   for (index = 0U; index < parent->group_count; ++index) {
     unsigned int shard;
     for (shard = 0U; shard < parent->groups[index].shard_count; ++shard)
-      if (!laghu_domain_policy_add_shard(
-              &merged, parent->groups[index].public_origin,
-              parent->groups[index].shards[shard]))
+      if (!laghu_domain_policy_add_shard(&merged,
+                                         parent->groups[index].public_origin,
+                                         parent->groups[index].shards[shard]))
         return false;
   }
   for (index = 0U; index < child->group_count; ++index) {
     unsigned int shard;
     for (shard = 0U; shard < child->groups[index].shard_count; ++shard)
-      if (!laghu_domain_policy_add_shard(
-              &merged, child->groups[index].public_origin,
-              child->groups[index].shards[shard]))
+      if (!laghu_domain_policy_add_shard(&merged,
+                                         child->groups[index].public_origin,
+                                         child->groups[index].shards[shard]))
         return false;
   }
   return laghu_domain_policy_validate(&merged);
@@ -1389,8 +1389,8 @@ bool laghu_resolve_config_policy(const laghu_config *config,
           (const unsigned char *)config->domain_policy.groups[index]
               .public_origin,
           strlen(config->domain_policy.groups[index].public_origin) + 1U);
-      for (shard = 0U;
-           shard < config->domain_policy.groups[index].shard_count; ++shard) {
+      for (shard = 0U; shard < config->domain_policy.groups[index].shard_count;
+           ++shard) {
         static const unsigned char shard_marker = 'S';
         laghu_sha256_update(&resource_context, &shard_marker, 1U);
         laghu_sha256_update(

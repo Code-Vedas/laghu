@@ -241,7 +241,7 @@ static void test_domain_policy(void) {
                                   sizeof(output)));
   assert(strncmp(output, "https://b-one.example/", 22U) == 0);
   assert(!laghu_domain_url_rewrite(&merged.domain_policy,
-                                   "https://unknown.example/assets/a.js", output,
+                                   "https://unknown.example", output,
                                    sizeof(output)));
   assert(!laghu_domain_policy_add_domain(&parent, "http://insecure.example"));
   assert(!laghu_domain_policy_add_domain(&parent, "https://user@bad.example"));
