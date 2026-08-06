@@ -195,7 +195,6 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
     SSL_free(tls); close(socket); return -2;
   }
   header_end = next;
-  *header_end = '\0';
   if (sscanf(header, "HTTP/1.1 %u", &status) != 1 || status < 100U || status > 599U) {
     SSL_free(tls); close(socket); return -2;
   }

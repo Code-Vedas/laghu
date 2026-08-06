@@ -239,6 +239,53 @@ def free_port():
     return port
 
 
+class StatusOrigin(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        assert self.headers.get("X-Laghu-Purge-Token") == "0123456789abcdef"
+        if self.path == "/.laghu/ready":
+            body = b'{"status":"ready","runtime":"ready"}'
+        elif self.path == "/.laghu/stats":
+            body = b'{"schema":"laghu-cache-stats-v1","requests":{"hits":1,"misses":2}}'
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
+    def log_message(self, *_args):
+        pass
+
+
+def status_smoke(executable, root):
+    token = root / "status.token"
+    token.write_text("0123456789abcdef\n")
+    token.chmod(0o600)
+    server = QuietThreadingHTTPServer(("127.0.0.1", 0), StatusOrigin)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = subprocess.run(
+            [str(executable), "status", f"http://127.0.0.1:{server.server_port}",
+             "--token-file", str(token), "--json"],
+            capture_output=True, text=True, check=True,
+        )
+        payload = json.loads(result.stdout)
+        assert payload["schema"] == "laghu-status-v1"
+        assert payload["ready"]["status"] == "ready"
+        assert payload["stats"]["requests"] == {"hits": 1, "misses": 2}
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def create_tls_certificate(root):
     ca_key = root / "ca.key"
     ca_file = root / "ca.pem"
@@ -378,6 +425,7 @@ def main():
     thread.start()
     with tempfile.TemporaryDirectory(prefix="laghu-proxy-") as directory:
         root = pathlib.Path(directory)
+        status_smoke(executable, root)
         (root / "cache").mkdir()
         subprocess.run(
             [str(javascript_worker), "--init", str(root / "javascript.queue"),
