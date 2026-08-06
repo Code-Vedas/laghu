@@ -285,9 +285,9 @@ def status_smoke(executable, root):
     token = root / "status.token"
     token.write_text("0123456789abcdef\n")
     token.chmod(0o600)
-    def run(port, *options):
+    def run(port, *options, scheme="http"):
         return subprocess.run(
-            [str(executable), "status", f"http://127.0.0.1:{port}",
+            [str(executable), "status", f"{scheme}://127.0.0.1:{port}",
              "--token-file", str(token), *options],
             capture_output=True, text=True,
         )
@@ -322,7 +322,7 @@ def status_smoke(executable, root):
         server.shutdown()
         server.server_close()
 
-    for code in (403, 503):
+    for code in (403, 503, 418):
         handler = type("StatusFailure", (StatusOrigin,), {
             "ready_status": code, "stats_status": code,
             "ready_body": b"{}", "stats_body": b"{}",
@@ -331,7 +331,7 @@ def status_smoke(executable, root):
         server = serve(handler)
         try:
             result = run(server.server_port, "--json")
-            assert result.returncode == (3 if code == 403 else 6)
+            assert result.returncode == {403: 3, 503: 6, 418: 7}[code]
             if code == 503:
                 assert handler.paths == ["/.laghu/ready", "/.laghu/stats"]
             assert "0123456789abcdef" not in result.stdout + result.stderr
@@ -359,11 +359,38 @@ def status_smoke(executable, root):
     result = run(free_port(), "--json")
     assert result.returncode == 2
     token.chmod(0o600)
+    token.write_text("a" * 256 + "\n")
+    result = run(free_port(), "--json")
+    assert result.returncode == 4
+    token.write_text("0123456789abcdef\n")
     result = subprocess.run(
         [str(executable), "status", "http://127.0.0.1/path", "--token-file", str(token)],
         capture_output=True, text=True,
     )
     assert result.returncode == 2
+    token_link = root / "status-link"
+    token_link.symlink_to(token)
+    result = subprocess.run(
+        [str(executable), "status", "http://127.0.0.1", "--token-file", str(token_link)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    result = subprocess.run(
+        [str(executable), "status", "http://[::1]:9", "--token-file", str(token)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 4
+    ca_file, server_file, server_key = create_tls_certificate(root)
+    server = serve(StatusOrigin)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(server_file, server_key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    try:
+        result = run(server.server_port, "--ca-file", str(ca_file), "--json", scheme="https")
+        assert result.returncode == 0
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def create_tls_certificate(root):

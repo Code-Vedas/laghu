@@ -7,6 +7,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 #include <stdio.h>
@@ -44,6 +45,7 @@ static bool status_origin_parse(const char *value, status_origin *origin) {
   const char *authority, *colon;
   unsigned int port;
   size_t host_length, index;
+  bool ipv6 = false;
   memset(origin, 0, sizeof(*origin));
   if (value != NULL && strncmp(value, "http://", 7U) == 0) {
     origin->tls = false;
@@ -62,10 +64,13 @@ static bool status_origin_parse(const char *value, status_origin *origin) {
     const char *end = strchr(authority, ']');
     if (end == NULL || (end[1] != '\0' && end[1] != ':')) return false;
     host_length = (size_t)(end - authority - 1U);
-    if (host_length == 0U || host_length >= sizeof(origin->host) ||
-        inet_pton(AF_INET6, authority + 1, (unsigned char[16]){0}) != 1)
+    if (host_length == 0U || host_length >= sizeof(origin->host))
       return false;
     memcpy(origin->host, authority + 1, host_length);
+    origin->host[host_length] = '\0';
+    if (inet_pton(AF_INET6, origin->host, (unsigned char[16]){0}) != 1)
+      return false;
+    ipv6 = true;
     if (end[1] == ':' && !status_uint(end + 2U, 1U, 65535U, &port)) return false;
   } else {
     colon = strrchr(authority, ':');
@@ -83,7 +88,7 @@ static bool status_origin_parse(const char *value, status_origin *origin) {
   for (index = 0U; origin->host[index] != '\0'; ++index)
     if (!(isalnum((unsigned char)origin->host[index]) || origin->host[index] ==
                                                        '.' ||
-          origin->host[index] == '-'))
+          origin->host[index] == '-' || (ipv6 && origin->host[index] == ':')))
       return false;
   if (snprintf(origin->port, sizeof(origin->port), "%u", port) < 1 ||
       snprintf(origin->authority, sizeof(origin->authority),
@@ -96,26 +101,31 @@ static bool status_origin_parse(const char *value, status_origin *origin) {
 static bool status_token(const char *path, char token[257]) {
   struct stat information;
   FILE *file;
+  char input[259];
+  int descriptor;
   size_t length;
-  if (path == NULL || path[0] != '/' || lstat(path, &information) != 0 ||
-      S_ISLNK(information.st_mode) || !S_ISREG(information.st_mode) ||
+  if (path == NULL || path[0] != '/') return false;
+  descriptor = open(path, O_RDONLY | O_NOFOLLOW);
+  if (descriptor < 0 || fstat(descriptor, &information) != 0 ||
+      !S_ISREG(information.st_mode) ||
       information.st_uid != getuid() || (information.st_mode & 0077U) != 0)
-    return false;
-  file = fopen(path, "rb");
-  if (file == NULL) return false;
-  length = fread(token, 1U, 256U, file);
+    { if (descriptor >= 0) close(descriptor); return false; }
+  file = fdopen(descriptor, "rb");
+  if (file == NULL) { close(descriptor); return false; }
+  length = fread(input, 1U, sizeof(input) - 1U, file);
   if (ferror(file) || fgetc(file) != EOF) {
     fclose(file);
     return false;
   }
   fclose(file);
-  while (length != 0U && (token[length - 1U] == '\r' ||
-                          token[length - 1U] == '\n'))
+  while (length != 0U && (input[length - 1U] == '\r' ||
+                          input[length - 1U] == '\n'))
     --length;
-  if (length < 16U) return false;
+  if (length < 16U || length > 256U) return false;
   for (size_t index = 0U; index < length; ++index)
-    if ((unsigned char)token[index] < 33U || (unsigned char)token[index] > 126U)
+    if ((unsigned char)input[index] < 33U || (unsigned char)input[index] > 126U)
       return false;
+  memcpy(token, input, length);
   token[length] = '\0';
   return true;
 }
@@ -123,12 +133,14 @@ static bool status_token(const char *path, char token[257]) {
 static SSL *status_tls(SSL_CTX *context, int socket, const status_origin *origin) {
   SSL *tls = SSL_new(context);
   X509_VERIFY_PARAM *parameters;
+  bool address;
   if (tls == NULL) return NULL;
   parameters = SSL_get0_param(tls);
-  if ((inet_pton(AF_INET, origin->host, (unsigned char[4]){0}) == 1 &&
-       !X509_VERIFY_PARAM_set1_ip_asc(parameters, origin->host)) ||
-      (inet_pton(AF_INET, origin->host, (unsigned char[4]){0}) != 1 &&
-       !SSL_set_tlsext_host_name(tls, origin->host)) || !SSL_set1_host(tls, origin->host) ||
+  address = inet_pton(AF_INET, origin->host, (unsigned char[4]){0}) == 1 ||
+            inet_pton(AF_INET6, origin->host, (unsigned char[16]){0}) == 1;
+  if ((address && !X509_VERIFY_PARAM_set1_ip_asc(parameters, origin->host)) ||
+      (!address && (!SSL_set_tlsext_host_name(tls, origin->host) ||
+                    !SSL_set1_host(tls, origin->host))) ||
       !SSL_set_fd(tls, socket) || SSL_connect(tls) != 1) {
     SSL_free(tls);
     return NULL;
@@ -143,6 +155,7 @@ static int status_connect(const status_origin *origin, unsigned int timeout) {
   hints.ai_family = AF_UNSPEC;
   if (getaddrinfo(origin->host, origin->port, &hints, &addresses) != 0) return -1;
   for (item = addresses; item != NULL; item = item->ai_next) {
+    int flags, connect_result;
     status_socket = (int)socket(item->ai_family, item->ai_socktype, item->ai_protocol);
     if (status_socket < 0) continue;
     {
@@ -150,7 +163,27 @@ static int status_connect(const status_origin *origin, unsigned int timeout) {
       (void)setsockopt(status_socket, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value));
       (void)setsockopt(status_socket, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value));
     }
-    if (connect(status_socket, item->ai_addr, item->ai_addrlen) == 0) break;
+    flags = fcntl(status_socket, F_GETFL, 0);
+    if (flags < 0 || fcntl(status_socket, F_SETFL, flags | O_NONBLOCK) != 0) {
+      close(status_socket); status_socket = -1; continue;
+    }
+    connect_result = connect(status_socket, item->ai_addr, item->ai_addrlen);
+    if (connect_result == 0) {
+      (void)fcntl(status_socket, F_SETFL, flags);
+      break;
+    }
+    if (errno == EINPROGRESS) {
+      fd_set writable;
+      struct timeval value = {(time_t)timeout, 0};
+      int error = 0; socklen_t error_length = sizeof(error);
+      FD_ZERO(&writable); FD_SET(status_socket, &writable);
+      if (select(status_socket + 1, NULL, &writable, NULL, &value) > 0 &&
+          getsockopt(status_socket, SOL_SOCKET, SO_ERROR, &error, &error_length) == 0 &&
+          error == 0) {
+        (void)fcntl(status_socket, F_SETFL, flags);
+        break;
+      }
+    }
     close(status_socket);
     status_socket = -1;
   }
