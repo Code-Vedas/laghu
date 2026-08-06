@@ -270,11 +270,10 @@ Resource-governance evidence: shared configuration supplies inherited 4–256 Mi
 ### 4.5 Observability and Operations
 
 - [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
-- [x] Emit the standalone JSON transaction schema from NGINX, Apache, and `laghu-libvips` so every process has one operational log contract.
+- [x] Emit the versioned `laghu-log-v1` schema across standalone, NGINX, Apache, and workers.
 - [ ] Emit OpenTelemetry traces across the optimization path.
 - [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
-- [ ] Ship a Grafana dashboard.
 - [ ] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.
 
 ### 4.6 CLI and Usability
@@ -363,7 +362,6 @@ Resource-governance evidence: shared configuration supplies inherited 4–256 Mi
 - [ ] Report target, content dimensions, scenario, bytes, TTFB, p95, throughput, CPU, RSS, quality, CWV delta, and verdict.
 - [ ] Produce machine-readable JSON results.
 - [ ] Produce a rendered HTML report.
-- [ ] Produce Grafana snapshots.
 - [ ] Fail CI when Laghu regresses beyond tolerance against plain NGINX.
 - [ ] Fail CI when a core filter regresses against the legacy baseline.
 
