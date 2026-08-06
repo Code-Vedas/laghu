@@ -20,6 +20,10 @@ Most settings are inherited through `http`, `server`, and `location`; RUM-store 
 | `laghu forbid_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |
 | `laghu allow_resources PATTERN;` | inherited, repeatable to 8 | bounded URL glob | none | Restricts optimization to matching resources when any allow rule exists. |
 | `laghu disallow PATTERN;` | inherited, repeatable to 8 | bounded URL glob | none | Excludes matching resources; deny rules always win. |
+| `laghu domain HTTPS_ORIGIN;` | inherited, repeatable to 8 | exact HTTPS origin | none | Authorizes a public rewrite or shard origin. |
+| `laghu map_rewrite_domain HTTPS_PUBLIC HTTPS_SOURCE;` | inherited, repeatable to 8 | exact HTTPS origins | none | Rewrites matching resource URLs from source to public. |
+| `laghu shard_domain HTTPS_PUBLIC HTTPS_SHARDS;` | inherited, repeatable to 8 | public origin and comma-separated exact HTTPS origins | none | Deterministically selects an authorized shard for mapped resource paths. |
+| `laghu map_proxy_domain HTTPS_PUBLIC HTTPS_SOURCE;` | inherited, repeatable to 8 | exact HTTPS origins | none | Migration-compatible public proxy mapping; rewrites source resource URLs to the public proxy origin. |
 | `laghu respect_vary on\|off;` | inherited | boolean | `on` | Bypasses unsupported `Vary` dimensions; unsafe variants are never published. |
 | `laghu respect_x_forwarded_proto on\|off;` | inherited | boolean | `off` | Uses a valid forwarded scheme only from a trusted direct peer. |
 | `laghu trusted_proxy CIDR;` | inherited, repeatable | IPv4/IPv6 CIDR | none | Defines direct peers trusted for forwarded scheme handling. |

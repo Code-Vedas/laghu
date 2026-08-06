@@ -15,7 +15,7 @@ use fs2::FileExt;
 use memmap2::{MmapMut, MmapOptions};
 
 use crate::persisted_state::*;
-use crate::{read_u32, read_u64, write_u32, write_u64};
+use crate::wire::{read_u32, read_u64, write_u32, write_u64};
 
 pub(crate) const FAILURE_CACHE: usize = 1;
 pub(crate) const FAILURE_QUEUE: usize = 2;

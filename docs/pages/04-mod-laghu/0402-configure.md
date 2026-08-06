@@ -20,6 +20,10 @@ Optimization settings inherit through main server, virtual host, directory, and 
 | `Laghu ForbidFilter NAME` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |
 | `Laghu AllowResources PATTERN` | inherited, repeatable to 8 | bounded URL glob | none | Restricts optimization to matching resources when any allow rule exists. |
 | `Laghu Disallow PATTERN` | inherited, repeatable to 8 | bounded URL glob | none | Excludes matching resources; deny rules always win. |
+| `Laghu Domain HTTPS_ORIGIN` | inherited, repeatable to 8 | exact HTTPS origin | none | Authorizes a public rewrite or shard origin. |
+| `Laghu MapRewriteDomain HTTPS_PUBLIC HTTPS_SOURCE` | inherited, repeatable to 8 | exact HTTPS origins | none | Rewrites matching resource URLs from source to public. |
+| `Laghu ShardDomain HTTPS_PUBLIC HTTPS_SHARDS` | inherited, repeatable to 8 | public origin and comma-separated exact HTTPS origins | none | Deterministically selects an authorized shard for mapped resource paths. |
+| `Laghu MapProxyDomain HTTPS_PUBLIC HTTPS_SOURCE` | inherited, repeatable to 8 | exact HTTPS origins | none | Migration-compatible public proxy mapping; rewrites source resource URLs to the public proxy origin. |
 | `Laghu RespectVary On\|Off` | inherited | boolean | `On` | Bypasses unsupported `Vary` dimensions; unsafe variants are never published. |
 | `Laghu RespectXForwardedProto On\|Off` | inherited | boolean | `Off` | Uses a valid forwarded scheme only from a trusted direct peer. |
 | `Laghu TrustedProxy CIDR` | inherited, repeatable | IPv4/IPv6 CIDR | none | Defines direct peers trusted for forwarded scheme handling. |

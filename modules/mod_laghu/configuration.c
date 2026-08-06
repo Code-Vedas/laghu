@@ -89,7 +89,9 @@ void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
   laghu_apache_config *merged = apr_pcalloc(pool, sizeof(*merged));
   laghu_service_diagnostic diagnostic = {0};
   if (merged == NULL || parent == NULL || child == NULL ||
-      !laghu_resource_rules_merge_valid(&parent->core, &child->core))
+      !laghu_resource_rules_merge_valid(&parent->core, &child->core) ||
+      !laghu_domain_policy_merge_valid(&parent->core.domain_policy,
+                                       &child->core.domain_policy))
     return NULL;
   laghu_config_merge(&merged->core, &parent->core, &child->core);
   if (!laghu_apache_service_resolve(&merged->service, &parent->service,
@@ -144,7 +146,6 @@ const char *laghu_apache_command(cmd_parms *command, void *value,
     config->core.mode = mode;
     return NULL;
   }
-  if (extra[0] != '\0') return "Laghu expects one setting and one value";
   if (service_setting != LAGHU_SERVICE_SETTING_UNKNOWN) {
     const core_server_config *core_server;
     if (laghu_apache_rum_setting(service_setting) &&
@@ -186,6 +187,16 @@ const char *laghu_apache_command(cmd_parms *command, void *value,
   core_setting = laghu_config_setting_find(name);
   if (core_setting == LAGHU_CONFIG_SETTING_UNKNOWN)
     return "unknown Laghu setting";
+  if (core_setting == LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN ||
+      core_setting == LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN ||
+      core_setting == LAGHU_CONFIG_SETTING_SHARD_DOMAIN) {
+    if (parameter[0] == '\0' || extra[0] == '\0' || *cursor != '\0' ||
+        !laghu_config_setting_apply_pair(&config->core, core_setting, parameter,
+                                         extra, core_error, sizeof(core_error)))
+      return apr_pstrdup(command->pool, core_error);
+    return NULL;
+  }
+  if (extra[0] != '\0') return "Laghu expects one setting and one value";
   if (!laghu_config_setting_apply(&config->core, core_setting, parameter,
                                   core_error, sizeof(core_error)))
     return apr_pstrdup(command->pool, core_error);

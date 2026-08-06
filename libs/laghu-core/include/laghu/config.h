@@ -38,12 +38,22 @@ typedef enum {
   LAGHU_CONFIG_SETTING_TRANSFORM_MEMORY_LIMIT,
   LAGHU_CONFIG_SETTING_TRANSFORM_DEADLINE_MS,
   LAGHU_CONFIG_SETTING_VARIANTS_PER_SOURCE,
-  LAGHU_CONFIG_SETTING_CACHE_MIME_TYPES
+  LAGHU_CONFIG_SETTING_CACHE_MIME_TYPES,
+  LAGHU_CONFIG_SETTING_DOMAIN,
+  LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN,
+  LAGHU_CONFIG_SETTING_SHARD_DOMAIN,
+  LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN
 } laghu_config_setting;
 
 laghu_config_setting laghu_config_setting_find(const char *name);
 bool laghu_config_setting_apply(laghu_config *config,
                                 laghu_config_setting setting, const char *value,
                                 char *error, size_t error_size);
+/* MapRewriteDomain and MapProxyDomain retain their two migration arguments.
+ * Single-value settings must use laghu_config_setting_apply instead. */
+bool laghu_config_setting_apply_pair(laghu_config *config,
+                                     laghu_config_setting setting,
+                                     const char *first, const char *second,
+                                     char *error, size_t error_size);
 
 #endif

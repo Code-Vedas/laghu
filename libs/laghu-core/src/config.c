@@ -62,7 +62,13 @@ static const laghu_config_name laghu_config_names[] = {
     {LAGHU_CONFIG_SETTING_VARIANTS_PER_SOURCE, "variants_per_source",
      "VariantsPerSource"},
     {LAGHU_CONFIG_SETTING_CACHE_MIME_TYPES, "cache_mime_types",
-     "CacheMimeTypes"}};
+     "CacheMimeTypes"},
+    {LAGHU_CONFIG_SETTING_DOMAIN, "domain", "Domain"},
+    {LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN, "map_rewrite_domain",
+     "MapRewriteDomain"},
+    {LAGHU_CONFIG_SETTING_SHARD_DOMAIN, "shard_domain", "ShardDomain"},
+    {LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN, "map_proxy_domain",
+     "MapProxyDomain"}};
 
 static bool laghu_config_name_equal(const char *left, const char *right) {
   if (left[0] == '-' && left[1] == '-') left += 2;
@@ -74,6 +80,14 @@ static bool laghu_config_name_equal(const char *left, const char *right) {
     if (tolower(left_value) != tolower(right_value)) return false;
   }
   return *left == '\0' && *right == '\0';
+}
+
+static bool laghu_config_domain_present(const laghu_domain_policy *policy,
+                                        const char *origin) {
+  unsigned int index;
+  for (index = 0U; index < policy->domain_count; ++index)
+    if (strcmp(policy->domains[index], origin) == 0) return true;
+  return false;
 }
 
 static bool laghu_config_fail(char *error, size_t size, const char *message) {
@@ -306,6 +320,16 @@ bool laghu_config_setting_apply(laghu_config *config,
       (void)laghu_base_string_copy(config->cache_mime_types,
                                    sizeof(config->cache_mime_types), value);
       return true;
+    case LAGHU_CONFIG_SETTING_DOMAIN:
+      if (!laghu_domain_policy_add_domain(&config->domain_policy, value))
+        return laghu_config_fail(error, error_size,
+                                 "invalid or duplicate domain");
+      return true;
+    case LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN:
+    case LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN:
+    case LAGHU_CONFIG_SETTING_SHARD_DOMAIN:
+      return laghu_config_fail(error, error_size,
+                               "domain mapping requires two values");
     default:
       return laghu_config_fail(error, error_size,
                                "unknown configuration setting");
@@ -333,4 +357,52 @@ bool laghu_config_setting_apply(laghu_config *config,
     return true;
   }
   return false;
+}
+
+bool laghu_config_setting_apply_pair(laghu_config *config,
+                                     laghu_config_setting setting,
+                                     const char *first, const char *second,
+                                     char *error, size_t error_size) {
+  const char *source;
+  const char *public_origin;
+  if (config == NULL || first == NULL || second == NULL || first[0] == '\0' ||
+      second[0] == '\0')
+    return laghu_config_fail(error, error_size, "missing domain mapping");
+  if (setting == LAGHU_CONFIG_SETTING_SHARD_DOMAIN) {
+    char shards[LAGHU_DOMAIN_ORIGIN_SIZE * LAGHU_DOMAIN_POLICY_MAX_DOMAINS];
+    char *cursor;
+    if (strlen(second) >= sizeof(shards) ||
+        (!laghu_config_domain_present(&config->domain_policy, first) &&
+         !laghu_domain_policy_add_domain(&config->domain_policy, first)))
+      return laghu_config_fail(error, error_size,
+                               "invalid, duplicate, or conflicting shard");
+    (void)snprintf(shards, sizeof(shards), "%s", second);
+    cursor = shards;
+    while (cursor != NULL) {
+      char *next = strchr(cursor, ',');
+      if (next != NULL) *next++ = '\0';
+      if (cursor[0] == '\0' ||
+          (!laghu_config_domain_present(&config->domain_policy, cursor) &&
+           !laghu_domain_policy_add_domain(&config->domain_policy, cursor)) ||
+          !laghu_domain_policy_add_shard(&config->domain_policy, cursor))
+        return laghu_config_fail(error, error_size,
+                                 "invalid, duplicate, or conflicting shard");
+      cursor = next;
+    }
+    return true;
+  }
+  if (setting != LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN &&
+      setting != LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN)
+    return laghu_config_fail(error, error_size, "unknown domain mapping");
+  /* Migration syntax is target then source.  The shared policy deliberately
+   * stores the operational direction: source URL to public URL. */
+  public_origin = first;
+  source = second;
+  if ((!laghu_config_domain_present(&config->domain_policy, public_origin) &&
+       !laghu_domain_policy_add_domain(&config->domain_policy, public_origin)) ||
+      !laghu_domain_policy_add_mapping(&config->domain_policy, source,
+                                       public_origin))
+    return laghu_config_fail(error, error_size,
+                             "invalid, duplicate, or conflicting domain map");
+  return true;
 }

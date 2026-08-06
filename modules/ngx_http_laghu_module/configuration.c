@@ -98,6 +98,10 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
   if (!laghu_resource_rules_merge_valid(&parent_conf->core, &child_conf->core))
     return "invalid, duplicate, conflicting, or excessive inherited resource "
            "rules";
+  if (!laghu_domain_policy_merge_valid(&parent_conf->core.domain_policy,
+                                       &child_conf->core.domain_policy))
+    return "invalid, duplicate, conflicting, or excessive inherited domain "
+           "policy";
   laghu_config_merge(&merged, &parent_conf->core, &child_conf->core);
   if (!laghu_resolve_config_policy(&merged, &policy))
     return "invalid or conflicting inherited laghu filter policy";
@@ -194,6 +198,20 @@ char *ngx_http_laghu_command(ngx_conf_t *configuration, ngx_command_t *command,
       return ngx_http_laghu_service_error(configuration, &values[1], &error);
     return NGX_CONF_OK;
   }
+  core_setting = laghu_config_setting_find((const char *)values[1].data);
+  if (core_setting == LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN ||
+      core_setting == LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN ||
+      core_setting == LAGHU_CONFIG_SETTING_SHARD_DOMAIN) {
+    if (configuration->args->nelts != 4U ||
+        !laghu_config_setting_apply_pair(
+            &location->core, core_setting, (const char *)values[2].data,
+            (const char *)values[3].data, core_error, sizeof(core_error))) {
+      ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                         "invalid laghu %V: %s", &values[1], core_error);
+      return NGX_CONF_ERROR;
+    }
+    return NGX_CONF_OK;
+  }
   if (configuration->args->nelts != 3U)
     return "laghu setting expects one value";
   if (service_setting != LAGHU_SERVICE_SETTING_UNKNOWN) {
@@ -208,9 +226,10 @@ char *ngx_http_laghu_command(ngx_conf_t *configuration, ngx_command_t *command,
       return ngx_http_laghu_service_error(configuration, &values[1], &error);
     return NGX_CONF_OK;
   }
-  core_setting = laghu_config_setting_find((const char *)values[1].data);
   if (core_setting == LAGHU_CONFIG_SETTING_UNKNOWN)
     return "unsupported laghu command";
+  if (configuration->args->nelts != 3U)
+    return "laghu setting expects one value";
   if (!laghu_config_setting_apply(&location->core, core_setting,
                                   (const char *)values[2].data, core_error,
                                   sizeof(core_error))) {

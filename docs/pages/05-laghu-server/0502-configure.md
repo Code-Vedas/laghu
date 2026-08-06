@@ -32,6 +32,10 @@ The standalone server accepts command-line options only.
 | `--forbid-filter NAME` | filter name, repeatable | none | Permanently disables one filter for configuration parity. |
 | `--allow-resources PATTERN` | bounded URL glob, repeatable to 8 | none | Restricts optimization to matching resources when configured. |
 | `--disallow PATTERN` | bounded URL glob, repeatable to 8 | none | Excludes matching resources; deny rules win. |
+| `--domain HTTPS_ORIGIN` | exact HTTPS origin, repeatable to 8 | none | Authorizes a public rewrite or shard origin. |
+| `--map-rewrite-domain HTTPS_PUBLIC HTTPS_SOURCE` | exact HTTPS origins, repeatable to 8 | none | Rewrites matching resource URLs from source to public. |
+| `--shard-domain HTTPS_PUBLIC HTTPS_SHARDS` | public origin and comma-separated exact HTTPS origins, repeatable to 8 | none | Deterministically selects an authorized shard for mapped resource paths. |
+| `--map-proxy-domain HTTPS_PUBLIC HTTPS_SOURCE` | exact HTTPS origins, repeatable to 8 | none | Migration-compatible public proxy mapping; rewrites source resource URLs to the public proxy origin. |
 | `--respect-vary on\|off` | boolean | `on` | Bypasses unsupported response variation dimensions. |
 | `--respect-x-forwarded-proto on\|off` | boolean | `off` | Uses a valid forwarded scheme only from a trusted direct peer. |
 | `--query-filter-overrides on\|off` | boolean | `off` | Enables bounded `laghuFilters=+name,-name` request overrides. |

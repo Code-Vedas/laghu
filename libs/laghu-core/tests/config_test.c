@@ -45,5 +45,23 @@ int main(void) {
   assert(!laghu_config_setting_apply(&config,
                                      LAGHU_CONFIG_SETTING_DISALLOW_RESOURCES,
                                      "/assets/*", error, sizeof(error)));
+
+  laghu_config_init(&config);
+  assert(laghu_config_setting_apply(&config, LAGHU_CONFIG_SETTING_DOMAIN,
+                                    "https://cdn.example", error,
+                                    sizeof(error)));
+  assert(laghu_config_setting_apply_pair(
+      &config, LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN,
+      "https://cdn.example", "https://origin.example", error,
+      sizeof(error)));
+  assert(laghu_config_setting_apply_pair(
+      &config, LAGHU_CONFIG_SETTING_SHARD_DOMAIN, "https://cdn.example",
+      "https://one.example,https://two.example", error, sizeof(error)));
+  assert(config.domain_policy.mapping_count == 1U);
+  assert(config.domain_policy.shard_count == 2U);
+  assert(laghu_domain_policy_validate(&config.domain_policy));
+  assert(!laghu_config_setting_apply_pair(
+      &config, LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN, "https://cdn.example",
+      "https://origin.example", error, sizeof(error)));
   return 0;
 }

@@ -16,7 +16,6 @@ use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result, anyhow, bail};
 use browserslist::{Opts, resolve};
-use sha2::{Digest, Sha256};
 use swc_core::{
     common::{
         FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments,
@@ -48,9 +47,10 @@ use persisted_state::*;
 
 mod publication;
 mod queue;
-#[cfg(test)]
-use publication::write_fixed;
+mod wire;
 use publication::{publish, publish_catalog};
+#[cfg(test)]
+use publication::{sha256, write_fixed};
 use queue::Queue;
 #[cfg(test)]
 use queue::{FILTER_SOURCE_MAP, JOB_JAVASCRIPT, queue_slot_base};
@@ -62,6 +62,8 @@ use operational::{
     FAILURE_CACHE as OPERATIONAL_FAILURE_CACHE, FAILURE_QUEUE as OPERATIONAL_FAILURE_QUEUE,
     FAILURE_TRANSFORM as OPERATIONAL_FAILURE_TRANSFORM, Operational,
 };
+#[cfg(test)]
+use wire::{write_u32, write_u64};
 
 const MAX_INPUT: usize = 2 * 1024 * 1024;
 const DEFAULT_TARGET: &str = "defaults and supports es6-module and not dead";
@@ -164,42 +166,6 @@ fn eligibility(program: &Program, module: bool) -> u32 {
         | (u32::from(result.concat_safe) * FLAG_CONCAT_SAFE)
         | (u32::from(top_level_declaration_free) * FLAG_TOP_LEVEL_DECLARATION_FREE)
         | (u32::from(result.defer_safe) * FLAG_DEFER_SAFE)
-}
-
-pub(crate) fn c_string(bytes: &[u8]) -> Result<&str> {
-    let end = bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .context("unterminated queue string")?;
-    std::str::from_utf8(&bytes[..end]).context("queue string is not UTF-8")
-}
-
-pub(crate) fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(
-        bytes[offset..offset + 4]
-            .try_into()
-            .expect("fixed queue layout"),
-    )
-}
-
-pub(crate) fn read_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(
-        bytes[offset..offset + 8]
-            .try_into()
-            .expect("fixed queue layout"),
-    )
-}
-
-pub(crate) fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
-    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-pub(crate) fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
-    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
-}
-
-pub(crate) fn sha256(data: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(data))
 }
 
 fn resolved_target(target: &str) -> Result<String> {

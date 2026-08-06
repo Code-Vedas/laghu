@@ -315,12 +315,12 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(
       strcmp(
           transaction.policy_key,
-          "64d1c9bd266aa148203dcc16c2b1a9df4e83b448ba86347af976380781b1b7b9") ==
+          "fb86eb2e5a58c372f5e4d4d6d7810c0dc6b0d53e9cabdceebf65dd6675301985") ==
       0);
   CHECK(
       strcmp(
           result.cache_key,
-          "a235a40c90c727a526ebbe07596508ec0de92b3ca9176602314e6ef7d05d7f6e") ==
+          "758dc74d49132fa64ff98a20f75fb41d33d8a6c2978207ae74c0857c7cfb0eed") ==
       0);
   laghu_http_transaction_result_release(&result);
   CHECK(laghu_http_transaction_finalize(

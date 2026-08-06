@@ -186,6 +186,18 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     if (strcmp(name, "--help") == 0) return LAGHU_PROXY_PARSE_HELP;
     if (strcmp(name, "--version") == 0) return LAGHU_PROXY_PARSE_VERSION;
     if (shared_setting != LAGHU_CONFIG_SETTING_UNKNOWN) {
+      if (shared_setting == LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN ||
+          shared_setting == LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN ||
+          shared_setting == LAGHU_CONFIG_SETTING_SHARD_DOMAIN) {
+        const char *second = index + 2 < argc ? argv[index + 2] : NULL;
+        if (value == NULL || second == NULL || value[0] == '-' ||
+            second[0] == '-' ||
+            !laghu_config_setting_apply_pair(&shared_config, shared_setting,
+                                             value, second, error, error_size))
+          return LAGHU_PROXY_PARSE_ERROR;
+        index += 2;
+        continue;
+      }
       bool implicit_on =
           shared_setting == LAGHU_CONFIG_SETTING_ALLOW_API ||
           shared_setting == LAGHU_CONFIG_SETTING_IMAGE_BEACON ||

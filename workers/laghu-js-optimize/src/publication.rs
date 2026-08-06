@@ -5,8 +5,10 @@
 
 use crate::persisted_state::*;
 use crate::queue::Job;
-use crate::{BACKEND, MAX_INPUT, sha256, write_u32, write_u64};
+use crate::wire::{write_u32, write_u64};
+use crate::{BACKEND, MAX_INPUT};
 use anyhow::{Result, bail};
+use sha2::{Digest, Sha256};
 
 const CATALOG_MAGIC: u64 = 0x4c41_4748_554a_5343;
 const CATALOG_SIZE: usize = 1_908;
@@ -16,6 +18,10 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+pub(crate) fn sha256(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
+}
 
 pub(crate) fn write_fixed(target: &mut [u8], value: &str) -> Result<()> {
     if value.len() >= target.len() {
@@ -215,4 +221,17 @@ pub(crate) fn publish_catalog(
         &cache.join(format!("javascript-{}.meta", catalog_key(job))),
         &catalog,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sha256;
+
+    #[test]
+    fn sha256_uses_lowercase_hex() {
+        assert_eq!(
+            sha256(b"laghu"),
+            "d311abbb408521b297a6912263ca2d923d71c5bb50a7c53d58f330aa0b1d768a"
+        );
+    }
 }

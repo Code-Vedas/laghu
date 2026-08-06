@@ -14,7 +14,7 @@ extern "C" {
 
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_MIME_ALLOWLIST_SIZE 2048U
-#define LAGHU_VARIANT_KEY_VERSION 9U
+#define LAGHU_VARIANT_KEY_VERSION 10U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -47,6 +47,9 @@ extern "C" {
 #define LAGHU_VARIANTS_PER_SOURCE_DEFAULT 16U
 #define LAGHU_VARIANTS_PER_SOURCE_MIN 1U
 #define LAGHU_VARIANTS_PER_SOURCE_MAX 64U
+#define LAGHU_DOMAIN_POLICY_MAX_DOMAINS 8U
+#define LAGHU_DOMAIN_POLICY_MAX_MAPPINGS 8U
+#define LAGHU_DOMAIN_ORIGIN_SIZE 256U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -130,6 +133,22 @@ typedef struct {
   unsigned char resource_policy_hash[32U];
 } laghu_policy;
 
+/* A domain policy is deliberately origin-only. Paths, credentials, queries,
+ * and fragments belong to the resource URL and are never configuration. */
+typedef struct {
+  char source_origin[LAGHU_DOMAIN_ORIGIN_SIZE];
+  char public_origin[LAGHU_DOMAIN_ORIGIN_SIZE];
+} laghu_domain_mapping;
+
+typedef struct {
+  char domains[LAGHU_DOMAIN_POLICY_MAX_DOMAINS][LAGHU_DOMAIN_ORIGIN_SIZE];
+  unsigned int domain_count;
+  laghu_domain_mapping mappings[LAGHU_DOMAIN_POLICY_MAX_MAPPINGS];
+  unsigned int mapping_count;
+  char shards[LAGHU_DOMAIN_POLICY_MAX_DOMAINS][LAGHU_DOMAIN_ORIGIN_SIZE];
+  unsigned int shard_count;
+} laghu_domain_policy;
+
 typedef struct {
   laghu_mode mode;
   laghu_preset preset;
@@ -164,6 +183,7 @@ typedef struct {
   char allow_resources[LAGHU_RESOURCE_RULE_LIMIT][LAGHU_RESOURCE_PATTERN_SIZE];
   char disallow_resources[LAGHU_RESOURCE_RULE_LIMIT]
                          [LAGHU_RESOURCE_PATTERN_SIZE];
+  laghu_domain_policy domain_policy;
 } laghu_config;
 
 typedef struct {
@@ -232,6 +252,21 @@ bool laghu_resource_rule_add(laghu_config *config, bool allow,
 bool laghu_resource_rules_merge_valid(const laghu_config *parent,
                                       const laghu_config *child);
 bool laghu_resource_allowed(const laghu_config *config, const char *url);
+bool laghu_domain_policy_add_domain(laghu_domain_policy *policy,
+                                    const char *origin);
+bool laghu_domain_policy_add_mapping(laghu_domain_policy *policy,
+                                     const char *source_origin,
+                                     const char *public_origin);
+bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
+                                   const char *origin);
+bool laghu_domain_policy_validate(const laghu_domain_policy *policy);
+bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent,
+                                     const laghu_domain_policy *child);
+/* A pure, allocation-free rewrite. The caller supplies storage for the exact
+ * original path, query, fragment, and percent-encoding to be retained. */
+bool laghu_domain_url_rewrite(const laghu_domain_policy *policy,
+                              const char *source_url, char *output,
+                              size_t output_size);
 bool laghu_vary_supported(const char *vary);
 bool laghu_apply_query_filter_overrides(const laghu_config *config,
                                         const char *query, laghu_policy *policy,

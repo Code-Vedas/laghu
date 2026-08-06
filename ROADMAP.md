@@ -174,7 +174,7 @@ Instrumentation evidence: inherited opt-in settings default to off with a 10-per
 - [x] Backend-driven file cache path, byte capacity, cleaning interval, and inode limits through `FileCacheBackend`, with deprecated path aliases.
 - [x] Bounded approximate-LRU and shared-memory metadata cache; shared memory contains coordination metadata only, never cached payloads.
 - [x] Memory-native RUM store with local persistence and optional Redis synchronization.
-- [ ] Domain mapping, sharding, proxying, and rewrite-domain configuration (`Domain`, `MapRewriteDomain`, `ShardDomain`, and `MapProxyDomain` in migration input).
+- [x] Domain mapping, sharding, proxying, and rewrite-domain configuration (`Domain`, `MapRewriteDomain`, `ShardDomain`, and `MapProxyDomain` in migration input).
 - [x] Direct file loading that avoids loopback origin fetches (`LoadFromFile` in migration input).
 - [x] Configurable `Vary` and forwarded-protocol handling (`RespectVary` and `RespectXForwardedProto` in migration input).
 - [x] Allow/disallow URL wildcard filtering (`AllowResources` and `Disallow` in migration input).

@@ -185,6 +185,56 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
 }
 
+static void test_domain_policy(void) {
+  laghu_domain_policy parent = {0};
+  laghu_domain_policy child = {0};
+  laghu_config config = enabled_config();
+  laghu_config merged;
+  laghu_policy policy;
+  laghu_policy baseline_policy;
+  char output[512U];
+  char first[512U];
+  char domain_key[LAGHU_SHA256_HEX_SIZE];
+  char baseline_key[LAGHU_SHA256_HEX_SIZE];
+
+  assert(laghu_domain_policy_add_domain(&parent, "https://cdn-a.example"));
+  assert(laghu_domain_policy_add_domain(&parent, "https://cdn-b.example"));
+  assert(laghu_domain_policy_add_mapping(&child, "https://origin.example",
+                                         "https://cdn-a.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-b.example"));
+  assert(laghu_domain_policy_merge_valid(&parent, &child));
+  assert(!laghu_domain_policy_validate(&child));
+
+  config.domain_policy = parent;
+  laghu_config child_config = enabled_config();
+  child_config.domain_policy = child;
+  laghu_config_merge(&merged, &config, &child_config);
+  assert(laghu_domain_policy_validate(&merged.domain_policy));
+  assert(laghu_resolve_config_policy(&merged, &policy));
+  assert(laghu_resolve_config_policy(&config, &baseline_policy));
+  assert(laghu_variant_key((laghu_buffer){(const unsigned char *)"x", 1U},
+                           &policy, domain_key));
+  assert(laghu_variant_key((laghu_buffer){(const unsigned char *)"x", 1U},
+                           &baseline_policy, baseline_key));
+  assert(strcmp(domain_key, baseline_key) != 0);
+  assert(laghu_domain_url_rewrite(&merged.domain_policy,
+                                  "https://origin.example/assets/a.js?x=1#top",
+                                  output, sizeof(output)));
+  assert(strstr(output, "/assets/a.js?x=1#top") != NULL);
+  assert(laghu_domain_url_rewrite(&merged.domain_policy,
+                                  "https://origin.example/assets/a.js?x=1#top",
+                                  first, sizeof(first)));
+  assert(strcmp(output, first) == 0);
+  assert(!laghu_domain_url_rewrite(&merged.domain_policy,
+                                   "https://other.example/assets/a.js", output,
+                                   sizeof(output)));
+  assert(!laghu_domain_policy_add_domain(&parent, "http://insecure.example"));
+  assert(!laghu_domain_policy_add_domain(&parent, "https://user@bad.example"));
+  assert(!laghu_domain_policy_add_mapping(&child, "https://origin.example",
+                                          "https://cdn-b.example"));
+}
+
 static void test_request_policy_controls(void) {
   laghu_config config = enabled_config();
   laghu_config child;
@@ -671,9 +721,11 @@ static void test_hashing(void) {
   assert(laghu_resolve_policy(LAGHU_PRESET_BALANCED, &policy));
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
-  assert(strcmp(key,
-                "8f871bfec868a16a7a78d503491e63ac6dcc74e663472f3871632cd5f8c1"
-                "dd40") == 0);
+  assert(
+      strcmp(
+          key,
+          "bfd3b607b72a5338fd326229d5f46407341cd2c03b2fddba0e9cdf5df0a86345") ==
+      0);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,
@@ -736,6 +788,7 @@ int main(void) {
   assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
                                   "image/pngx"));
   test_config_defaults_and_inheritance();
+  test_domain_policy();
   test_request_policy_controls();
   test_preset_parser();
   test_preset_policies();

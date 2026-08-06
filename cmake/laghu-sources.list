@@ -24,6 +24,7 @@ runtime|laghu_rum.c|libs/laghu-runtime/src/rum.c
 runtime|laghu_rum_codec.c|libs/laghu-runtime/src/rum_codec.c
 runtime|laghu_catalog.c|libs/laghu-runtime/src/catalog.c
 runtime|laghu_html.c|libs/laghu-runtime/src/html.c
+runtime|laghu_domain.c|libs/laghu-runtime/src/domain.c
 runtime|laghu_html_head.c|libs/laghu-runtime/src/html_head.c
 runtime|laghu_html_lexical.c|libs/laghu-runtime/src/html_lexical.c
 runtime|laghu_html_hints.c|libs/laghu-runtime/src/html_hints.c
@@ -89,6 +90,7 @@ runtime_test|source_asset|libs/laghu-runtime/tests/source_asset_test.c
 runtime_test|catalog|libs/laghu-runtime/tests/catalog_test.c
 runtime_test|html|libs/laghu-runtime/tests/html_test.c
 runtime_test|css|libs/laghu-runtime/tests/css_test.c
+runtime_test|domain|libs/laghu-runtime/tests/domain_test.c
 runtime_test|javascript|libs/laghu-runtime/tests/javascript_test.c
 runtime_test|instrumentation|libs/laghu-runtime/tests/instrumentation_test.c
 runtime_test|lcp|libs/laghu-runtime/tests/lcp_test.c

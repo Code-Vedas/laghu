@@ -174,6 +174,21 @@ int main(void) {
                             "on",
                             "--trusted-proxy",
                             "127.0.0.0/8"};
+  char *domain_policy[] = {"laghu",
+                           "--listen",
+                           "127.0.0.1:8080",
+                           "--origin",
+                           "http://127.0.0.1:8000",
+                           "--cache",
+                           "/tmp/cache",
+                           "--worker-queue",
+                           "/tmp/jobs",
+                           "--map-proxy-domain",
+                           "https://proxy.example",
+                           "https://origin.example",
+                           "--shard-domain",
+                           "https://proxy.example",
+                           "https://one.example,https://two.example"};
   char *secure[] = {"laghu",
                     "--listen",
                     "127.0.0.1:8080",
@@ -423,6 +438,13 @@ int main(void) {
   CHECK(options.config.respect_vary == LAGHU_MODE_OFF);
   CHECK(options.config.respect_x_forwarded_proto == LAGHU_MODE_ON);
   CHECK(options.config.query_filter_overrides == LAGHU_MODE_ON);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(15, domain_policy, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.config.domain_policy.mapping_count == 1U);
+  CHECK(options.config.domain_policy.shard_count == 2U);
+  CHECK(strcmp(options.config.domain_policy.mappings[0].source_origin,
+               "https://origin.example") == 0);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, filter_conflict, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);

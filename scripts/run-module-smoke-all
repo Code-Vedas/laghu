@@ -172,6 +172,9 @@ http {
     laghu variants_per_source 16;
     laghu allow_resources /*;
     laghu disallow /never-optimized/*;
+    laghu domain https://authorized.example.test;
+    laghu map_proxy_domain https://proxy.example.test https://origin.example.test;
+    laghu shard_domain https://proxy.example.test https://one.example.test,https://two.example.test;
     laghu respect_vary on;
     laghu query_filter_overrides on;
     laghu respect_x_forwarded_proto on;

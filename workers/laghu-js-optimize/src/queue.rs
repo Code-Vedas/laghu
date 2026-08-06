@@ -4,7 +4,8 @@
 // LICENSE file in the root directory of this source tree.
 
 use crate::persisted_state::*;
-use crate::{BACKEND, MAX_INPUT, c_string, read_u32, read_u64, write_u32, write_u64};
+use crate::wire::{c_string, read_u32, read_u64, write_u32, write_u64};
+use crate::{BACKEND, MAX_INPUT};
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
 use memmap2::{MmapMut, MmapOptions};
