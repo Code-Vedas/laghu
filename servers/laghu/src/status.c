@@ -202,7 +202,7 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
   line = strstr(header, "\r\n");
   if (line == NULL) { SSL_free(tls); close(socket); return -2; }
   line += 2U;
-  while (*line != '\0') {
+  while (*line != '\0' && line != header_end + 2U) {
     char *colon;
     next = strstr(line, "\r\n");
     if (next == NULL) { SSL_free(tls); close(socket); return -2; }
