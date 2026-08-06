@@ -377,7 +377,10 @@ def request(port, path, method="GET", headers=None, body=b"", timeout=10):
         if expected_length is not None and len(response_body) >= expected_length:
             break
     sock.close()
-    head, body = b"".join(chunks).split(b"\r\n\r\n", 1)
+    response = b"".join(chunks)
+    if b"\r\n\r\n" not in response:
+        raise OSError("incomplete HTTP response")
+    head, body = response.split(b"\r\n\r\n", 1)
     return head.lower(), body
 
 
@@ -720,7 +723,7 @@ def main():
                         main_log.flush()
                         main_log.seek(0)
                         raise AssertionError(
-                            "proxy failed startup: "
+                            f"proxy failed startup ({process.returncode}): "
                             + main_log.read().decode(errors="replace")
                         )
                     time.sleep(0.05)

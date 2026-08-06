@@ -391,8 +391,6 @@ bool laghu_config_setting_apply_pair(laghu_config *config,
       char *next = strchr(cursor, ',');
       if (next != NULL) *next++ = '\0';
       if (cursor[0] == '\0' ||
-          (!laghu_config_domain_present(&config->domain_policy, cursor) &&
-           !laghu_domain_policy_add_domain(&config->domain_policy, cursor)) ||
           !laghu_domain_policy_add_shard(&config->domain_policy, first,
                                          cursor))
         return laghu_config_fail(error, error_size,

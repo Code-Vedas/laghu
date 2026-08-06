@@ -784,8 +784,6 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
     if (!mapped) return false;
     for (shard = 0U; shard < group->shard_count; ++shard) {
       if (!laghu_domain_origin_valid(group->shards[shard]) ||
-          !laghu_domain_contains(policy->domains, policy->domain_count,
-                                 group->shards[shard]) ||
           laghu_domain_contains(group->shards, shard, group->shards[shard]))
         return false;
     }
