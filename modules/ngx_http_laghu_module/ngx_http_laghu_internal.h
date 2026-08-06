@@ -146,6 +146,12 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
 char *ngx_http_laghu_command(ngx_conf_t *configuration, ngx_command_t *command,
                              void *conf);
 ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request);
+ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
+                                        ngx_http_laghu_loc_conf_t *conf);
+ngx_int_t ngx_http_laghu_beacon_endpoint(ngx_http_request_t *request,
+                                         ngx_http_laghu_loc_conf_t *conf);
+ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request,
+                                        ngx_http_laghu_loc_conf_t *conf);
 ngx_int_t ngx_http_laghu_apply_result(
     ngx_http_request_t *request, const laghu_http_transaction_result *result);
 void ngx_http_laghu_remove_header(ngx_http_request_t *request,

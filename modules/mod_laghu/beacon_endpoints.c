@@ -24,43 +24,41 @@ static bool laghu_apache_backend_available(laghu_apache_config *config) {
 
 int laghu_apache_beacon_endpoint(request_rec *request,
                                  laghu_apache_config *config) {
-  static const char script_path[] = "/.laghu/beacon/images.js";
-  static const char post_path[] = "/.laghu/beacon/images";
-  static const char critical_script_path[] = "/.laghu/beacon/critical-css.js";
-  static const char critical_post_path[] = "/.laghu/beacon/critical-css";
-  static const char instrumentation_script_path[] =
-      "/.laghu/beacon/instrumentation.js";
-  static const char instrumentation_post_path[] =
-      "/.laghu/beacon/instrumentation";
-  static const char script[] =
-      "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
-      "forEach(i=>{const "
-      "r=i.getBoundingClientRect();if(r.width<1||r.height<1)return;fetch('/"
-      ".laghu/beacon/"
-      "images',{method:'POST',headers:{'Content-Type':'application/"
-      "json'},body:JSON.stringify({url:new "
-      "URL(i.currentSrc||i.src,location.href).pathname,width:Math.round(r."
-      "width),height:Math.round(r.height),viewport_width:innerWidth,dpr_"
-      "hundredths:Math.min(400,Math.max(100,Math.round(devicePixelRatio*100))),"
-      "above_fold:r.top<innerHeight,mobile:innerWidth<768}),keepalive:true})})}"
-      ");";
+  laghu_http_beacon_options options;
+  laghu_http_beacon_plan plan;
+  laghu_buffer method = {NULL, 0U};
+  laghu_buffer target = {NULL, 0U};
   {
     int admin_status = laghu_apache_admin_endpoint(request, config);
     if (admin_status != DECLINED) return admin_status;
   }
-  if (strcmp(request->uri, script_path) == 0) {
-    if (config->core.image_beacon != LAGHU_MODE_ON ||
-        request->method_number != M_GET) {
-      return HTTP_NOT_FOUND;
-    }
+  if (request->method != NULL)
+    method = (laghu_buffer){(const unsigned char *)request->method,
+                            strlen(request->method)};
+  if (request->uri != NULL)
+    target = (laghu_buffer){(const unsigned char *)request->uri,
+                            strlen(request->uri)};
+  laghu_http_beacon_options_init(&options);
+  options.image_enabled = config->core.image_beacon == LAGHU_MODE_ON;
+  options.critical_css_enabled =
+      config->core.critical_css_beacon == LAGHU_MODE_ON;
+  options.instrumentation_enabled =
+      config->core.instrumentation_beacon == LAGHU_MODE_ON;
+  if (!laghu_http_beacon_plan_build(&plan, method, target, &options) ||
+      !plan.recognized)
+    return DECLINED;
+  if (plan.status != 0U) return (int)plan.status;
+
+  if (plan.route == LAGHU_HTTP_BEACON_ROUTE_IMAGE_SCRIPT) {
+    const char *script = laghu_runtime_image_beacon_script();
+    size_t length = strlen(script);
     ap_set_content_type(request, "application/javascript");
-    ap_set_content_length(request, (apr_off_t)(sizeof(script) - 1U));
-    return request->header_only ||
-                   ap_rwrite(script, sizeof(script) - 1U, request) >= 0
+    ap_set_content_length(request, (apr_off_t)length);
+    return request->header_only || ap_rwrite(script, length, request) >= 0
                ? OK
                : HTTP_INTERNAL_SERVER_ERROR;
   }
-  if (strcmp(request->uri, post_path) == 0) {
+  if (plan.route == LAGHU_HTTP_BEACON_ROUTE_IMAGE_REPORT) {
     const char *type = apr_table_get(request->headers_in, "Content-Type");
     const char *site = apr_table_get(request->headers_in, "Sec-Fetch-Site");
     const char *content_length =
@@ -77,12 +75,11 @@ int laghu_apache_beacon_endpoint(request_rec *request,
         content_length != NULL
             ? strtoul(content_length, &content_length_end, 10)
             : 0U;
-    if (config->core.image_beacon != LAGHU_MODE_ON ||
-        request->method_number != M_POST || type == NULL ||
-        ap_cstr_casecmpn(type, "application/json", 16U) != 0 || site == NULL ||
-        ap_cstr_casecmp(site, "same-origin") != 0 || content_length == NULL ||
-        content_length_end == content_length || *content_length_end != '\0' ||
-        declared_length == 0U || declared_length > 16384U ||
+    if (type == NULL || ap_cstr_casecmpn(type, "application/json", 16U) != 0 ||
+        site == NULL || ap_cstr_casecmp(site, "same-origin") != 0 ||
+        content_length == NULL || content_length_end == content_length ||
+        *content_length_end != '\0' || declared_length == 0U ||
+        declared_length > 16384U ||
         ap_setup_client_block(request, REQUEST_CHUNKED_ERROR) != OK ||
         !ap_should_client_block(request)) {
       return HTTP_BAD_REQUEST;
@@ -119,12 +116,9 @@ int laghu_apache_beacon_endpoint(request_rec *request,
     request->status = HTTP_NO_CONTENT;
     return OK;
   }
-  if (strcmp(request->uri, critical_script_path) == 0) {
+  if (plan.route == LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_SCRIPT) {
     const char *critical_script = laghu_runtime_critical_css_beacon_script();
     size_t length = strlen(critical_script);
-    if (config->core.critical_css_beacon != LAGHU_MODE_ON ||
-        request->method_number != M_GET)
-      return HTTP_NOT_FOUND;
     ap_set_content_type(request, "application/javascript");
     ap_set_content_length(request, (apr_off_t)length);
     return request->header_only ||
@@ -132,7 +126,7 @@ int laghu_apache_beacon_endpoint(request_rec *request,
                ? OK
                : HTTP_INTERNAL_SERVER_ERROR;
   }
-  if (strcmp(request->uri, critical_post_path) == 0) {
+  if (plan.route == LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_REPORT) {
     const char *type = apr_table_get(request->headers_in, "Content-Type");
     const char *site = apr_table_get(request->headers_in, "Sec-Fetch-Site");
     const char *content_length =
@@ -149,12 +143,11 @@ int laghu_apache_beacon_endpoint(request_rec *request,
     laghu_policy policy;
     char policy_key[LAGHU_RUNTIME_KEY_SIZE];
     uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
-    if (config->core.critical_css_beacon != LAGHU_MODE_ON ||
-        request->method_number != M_POST || type == NULL ||
-        ap_cstr_casecmpn(type, "application/json", 16U) != 0 || site == NULL ||
-        ap_cstr_casecmp(site, "same-origin") != 0 || content_length == NULL ||
-        content_length_end == content_length || *content_length_end != '\0' ||
-        declared_length == 0U || declared_length > 16384U ||
+    if (type == NULL || ap_cstr_casecmpn(type, "application/json", 16U) != 0 ||
+        site == NULL || ap_cstr_casecmp(site, "same-origin") != 0 ||
+        content_length == NULL || content_length_end == content_length ||
+        *content_length_end != '\0' || declared_length == 0U ||
+        declared_length > 16384U ||
         ap_setup_client_block(request, REQUEST_CHUNKED_ERROR) != OK ||
         !ap_should_client_block(request))
       return HTTP_BAD_REQUEST;
@@ -183,19 +176,16 @@ int laghu_apache_beacon_endpoint(request_rec *request,
     request->status = HTTP_NO_CONTENT;
     return OK;
   }
-  if (strcmp(request->uri, instrumentation_script_path) == 0) {
+  if (plan.route == LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_SCRIPT) {
     const char *rum_script = laghu_runtime_instrumentation_script();
     size_t length = strlen(rum_script);
-    if (config->core.instrumentation_beacon != LAGHU_MODE_ON ||
-        request->method_number != M_GET)
-      return HTTP_NOT_FOUND;
     ap_set_content_type(request, "application/javascript");
     ap_set_content_length(request, (apr_off_t)length);
     return request->header_only || ap_rwrite(rum_script, length, request) >= 0
                ? OK
                : HTTP_INTERNAL_SERVER_ERROR;
   }
-  if (strcmp(request->uri, instrumentation_post_path) == 0) {
+  if (plan.route == LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_REPORT) {
     const char *type = apr_table_get(request->headers_in, "Content-Type");
     const char *site = apr_table_get(request->headers_in, "Sec-Fetch-Site");
     const char *content_length =
@@ -209,12 +199,11 @@ int laghu_apache_beacon_endpoint(request_rec *request,
     long length, total = 0;
     uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
     laghu_instrumentation_beacon rum;
-    if (config->core.instrumentation_beacon != LAGHU_MODE_ON ||
-        request->method_number != M_POST || type == NULL ||
-        ap_cstr_casecmpn(type, "application/json", 16U) != 0 || site == NULL ||
-        ap_cstr_casecmp(site, "same-origin") != 0 || content_length == NULL ||
-        content_length_end == content_length || *content_length_end != '\0' ||
-        declared_length == 0U || declared_length > 16384U ||
+    if (type == NULL || ap_cstr_casecmpn(type, "application/json", 16U) != 0 ||
+        site == NULL || ap_cstr_casecmp(site, "same-origin") != 0 ||
+        content_length == NULL || content_length_end == content_length ||
+        *content_length_end != '\0' || declared_length == 0U ||
+        declared_length > 16384U ||
         ap_setup_client_block(request, REQUEST_CHUNKED_ERROR) != OK ||
         !ap_should_client_block(request))
       return HTTP_BAD_REQUEST;

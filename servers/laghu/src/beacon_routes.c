@@ -12,22 +12,50 @@
 #include "laghu/instrumentation.h"
 #include "server_internal.h"
 
-static const char laghu_beacon_script[] =
-    "addEventListener('load',()=>{document.querySelectorAll('img[src]').forEach"
-    "(i=>{const r=i.getBoundingClientRect();if(r.width<1||r.height<1)return;"
-    "fetch('/.laghu/beacon/images',{method:'POST',headers:{'Content-Type':"
-    "'application/json'},body:JSON.stringify({url:new URL(i.currentSrc||i.src,"
-    "location.href).pathname,width:Math.round(r.width),height:Math.round(r."
-    "height),viewport_width:innerWidth,dpr_hundredths:Math.min(400,Math.max("
-    "100,Math.round(devicePixelRatio*100))),above_fold:r.top<innerHeight,"
-    "mobile:innerWidth<768}),keepalive:true})})});";
+static void proxy_beacon_fail(laghu_socket client, proxy_access_log *access,
+                              unsigned int status, const char *reason,
+                              const char *failure) {
+  proxy_error_response(client, status, reason);
+  access->status = status;
+  access->failure = failure;
+}
 
-#define PROXY_FAIL(status_value, reason_value, failure_value)     \
-  do {                                                            \
-    proxy_error_response(client, (status_value), (reason_value)); \
-    access.status = (status_value);                               \
-    access.failure = (failure_value);                             \
-  } while (0)
+static void proxy_beacon_send_script(laghu_socket client, const char *script,
+                                     size_t length, proxy_access_log *access) {
+  char header[256];
+  int written = snprintf(header, sizeof(header),
+                         "HTTP/1.1 200 OK\r\nContent-Type: "
+                         "application/javascript\r\nContent-Length: "
+                         "%zu\r\nConnection: close\r\n\r\n",
+                         length);
+  if (written > 0 && (size_t)written < sizeof(header)) {
+    (void)proxy_send_all(client, header, (size_t)written);
+    (void)proxy_send_all(client, script, length);
+  }
+  access->status = 200U;
+  access->output_bytes = length;
+}
+
+static void proxy_beacon_send_no_content(laghu_socket client,
+                                         proxy_access_log *access) {
+  static const char response[] =
+      "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
+      "Connection: close\r\n\r\n";
+  (void)proxy_send_all(client, response, sizeof(response) - 1U);
+  access->status = 204U;
+}
+
+static bool proxy_beacon_request_valid(proxy_request *request,
+                                       size_t request_body_length) {
+  proxy_header *type =
+      proxy_find(request->headers, request->header_count, "Content-Type");
+  proxy_header *site =
+      proxy_find(request->headers, request->header_count, "Sec-Fetch-Site");
+  return type != NULL && strncmp(type->value, "application/json", 16U) == 0 &&
+         site != NULL && proxy_name_equal(site->value, "same-origin") &&
+         request_body_length != 0U &&
+         request_body_length <= LAGHU_PROXY_BEACON_BODY;
+}
 
 bool proxy_handle_beacon_routes(const proxy_connection *connection,
                                 proxy_worker *worker,
@@ -37,193 +65,115 @@ bool proxy_handle_beacon_routes(const proxy_connection *connection,
                                 proxy_access_log *access_value) {
   const laghu_proxy_options *options = worker->queue->options;
   laghu_socket client = connection->socket;
-#define request (*request_value)
-#define access (*access_value)
-  if (!strcmp(request.target, "/.laghu/health")) {
-    bool head = !strcmp(request.method, "HEAD");
-    if (strcmp(request.method, "GET") != 0 && !head) {
-      PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
+  if (!strcmp(request_value->target, "/.laghu/health")) {
+    bool head = !strcmp(request_value->method, "HEAD");
+    if (strcmp(request_value->method, "GET") != 0 && !head) {
+      proxy_beacon_fail(client, access_value, 405U, "Method Not Allowed",
+                        "request_limit");
     } else {
       char json[128];
       const char *state = proxy_state_name(proxy_state(worker->queue));
       (void)snprintf(json, sizeof(json), "{\"status\":\"ok\",\"state\":\"%s\"}",
                      state);
       proxy_send_json(client, 200U, "OK", json, head);
-      access.status = 200U;
-      access.output_bytes = head ? 0U : strlen(json);
+      access_value->status = 200U;
+      access_value->output_bytes = head ? 0U : strlen(json);
     }
     return true;
   }
-  if (!strcmp(request.target, "/.laghu/beacon/images.js") &&
-      options->config.image_beacon == LAGHU_MODE_ON &&
-      !strcmp(request.method, "GET")) {
-    char head[256];
-    int n = snprintf(head, sizeof(head),
-                     "HTTP/1.1 200 OK\r\nContent-Type: "
-                     "application/javascript\r\nContent-Length: "
-                     "%zu\r\nConnection: close\r\n\r\n",
-                     sizeof(laghu_beacon_script) - 1U);
-    if (n > 0) {
-      (void)proxy_send_all(client, head, (size_t)n);
-      (void)proxy_send_all(client, laghu_beacon_script,
-                           sizeof(laghu_beacon_script) - 1U);
+  {
+    laghu_http_beacon_options beacon_options = {
+        options->config.image_beacon == LAGHU_MODE_ON,
+        options->config.critical_css_beacon == LAGHU_MODE_ON,
+        options->config.instrumentation_beacon == LAGHU_MODE_ON};
+    laghu_http_beacon_plan plan;
+    laghu_buffer method = {(const unsigned char *)request_value->method,
+                           strlen(request_value->method)};
+    laghu_buffer target = {(const unsigned char *)request_value->target,
+                           strlen(request_value->target)};
+    if (!laghu_http_beacon_plan_build(&plan, method, target, &beacon_options) ||
+        !plan.recognized) {
+      return false;
     }
-    access.status = 200U;
-    access.output_bytes = sizeof(laghu_beacon_script) - 1U;
-    return true;
-  }
-  if (!strcmp(request.target, "/.laghu/beacon/images") &&
-      options->config.image_beacon == LAGHU_MODE_ON &&
-      !strcmp(request.method, "POST")) {
-    proxy_header *type =
-        proxy_find(request.headers, request.header_count, "Content-Type");
-    proxy_header *site =
-        proxy_find(request.headers, request.header_count, "Sec-Fetch-Site");
-    laghu_image_beacon_record beacon;
-    laghu_policy policy;
-    char policy_key[LAGHU_RUNTIME_KEY_SIZE];
-    uint64_t now = (uint64_t)time(NULL);
-    if (type == NULL || strncmp(type->value, "application/json", 16U) != 0 ||
-        site == NULL || !proxy_name_equal(site->value, "same-origin") ||
-        request_body_length == 0U ||
-        request_body_length > LAGHU_PROXY_BEACON_BODY) {
-      PROXY_FAIL(400U, "Bad Request", "client_parse");
-    } else if (!proxy_beacon_allowed(worker->queue, now)) {
-      PROXY_FAIL(429U, "Too Many Requests", "request_limit");
-    } else if (!laghu_runtime_parse_image_beacon(
-                   (laghu_buffer){request_body, request_body_length},
-                   &beacon) ||
-               !laghu_resolve_config_policy(&options->config, &policy) ||
-               !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy,
-                                  policy_key) ||
-               (worker->runtime_queue.mapping == NULL &&
-                !laghu_runtime_queue_open(&worker->runtime_queue,
-                                          options->worker_queue_path)) ||
-               !laghu_runtime_queue_refresh(&worker->runtime_queue) ||
-               !laghu_catalog_apply_beacon(
-                   worker->queue->rum, options->cache_path, policy_key,
-                   worker->runtime_queue.capabilities, now,
-                   options->config.image_metadata_ttl, &beacon)) {
-      PROXY_FAIL(400U, "Bad Request", "worker");
-    } else {
-      static const char response_204[] =
-          "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
-          "Connection: close\r\n\r\n";
-      (void)proxy_send_all(client, response_204, sizeof(response_204) - 1U);
-      access.status = 204U;
+    if (plan.status != 0U) {
+      proxy_beacon_fail(
+          client, access_value, plan.status,
+          plan.status == 404U ? "Not Found" : "Method Not Allowed",
+          "request_limit");
+      return true;
     }
-    return true;
-  }
-  if (!strcmp(request.target, "/.laghu/beacon/critical-css.js") &&
-      options->config.critical_css_beacon == LAGHU_MODE_ON &&
-      !strcmp(request.method, "GET")) {
-    const char *script = laghu_runtime_critical_css_beacon_script();
-    char head[256];
-    size_t script_length = strlen(script);
-    int n = snprintf(head, sizeof(head),
-                     "HTTP/1.1 200 OK\r\nContent-Type: "
-                     "application/javascript\r\nContent-Length: "
-                     "%zu\r\nConnection: close\r\n\r\n",
-                     script_length);
-    if (n > 0) {
-      (void)proxy_send_all(client, head, (size_t)n);
-      (void)proxy_send_all(client, script, script_length);
+    if (plan.action == LAGHU_HTTP_BEACON_ACTION_SERVE_SCRIPT) {
+      const char *script;
+      size_t script_length;
+      if (plan.route == LAGHU_HTTP_BEACON_ROUTE_IMAGE_SCRIPT) {
+        script = laghu_runtime_image_beacon_script();
+        script_length = strlen(script);
+      } else if (plan.route == LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_SCRIPT) {
+        script = laghu_runtime_critical_css_beacon_script();
+        script_length = strlen(script);
+      } else {
+        script = laghu_runtime_instrumentation_script();
+        script_length = strlen(script);
+      }
+      proxy_beacon_send_script(client, script, script_length, access_value);
+      return true;
     }
-    access.status = 200U;
-    access.output_bytes = script_length;
-    return true;
-  }
-  if (!strcmp(request.target, "/.laghu/beacon/critical-css") &&
-      options->config.critical_css_beacon == LAGHU_MODE_ON &&
-      !strcmp(request.method, "POST")) {
-    proxy_header *type =
-        proxy_find(request.headers, request.header_count, "Content-Type");
-    proxy_header *site =
-        proxy_find(request.headers, request.header_count, "Sec-Fetch-Site");
-    laghu_critical_css_beacon beacon;
-    laghu_policy policy;
-    char policy_key[LAGHU_RUNTIME_KEY_SIZE];
-    uint64_t now = (uint64_t)time(NULL);
-    if (type == NULL || strncmp(type->value, "application/json", 16U) != 0 ||
-        site == NULL || !proxy_name_equal(site->value, "same-origin") ||
-        request_body_length == 0U ||
-        request_body_length > LAGHU_PROXY_BEACON_BODY) {
-      PROXY_FAIL(400U, "Bad Request", "client_parse");
-    } else if (!proxy_beacon_allowed(worker->queue, now)) {
-      PROXY_FAIL(429U, "Too Many Requests", "request_limit");
-    } else if (!laghu_runtime_parse_critical_css_beacon(
-                   (laghu_buffer){request_body, request_body_length},
-                   &beacon) ||
-               !laghu_resolve_config_policy(&options->config, &policy) ||
-               !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy,
-                                  policy_key) ||
-               !laghu_critical_css_apply_beacon(
-                   worker->queue->rum, options->cache_path, policy_key, now,
-                   options->config.image_metadata_ttl, &beacon)) {
-      PROXY_FAIL(400U, "Bad Request", "worker");
-    } else {
-      static const char response_204[] =
-          "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
-          "Connection: close\r\n\r\n";
-      (void)proxy_send_all(client, response_204, sizeof(response_204) - 1U);
-      access.status = 204U;
+    {
+      bool applied = false;
+      uint64_t now = (uint64_t)time(NULL);
+      if (!proxy_beacon_request_valid(request_value, request_body_length)) {
+        proxy_beacon_fail(client, access_value, 400U, "Bad Request",
+                          "client_parse");
+        return true;
+      } else if (!proxy_beacon_allowed(worker->queue, now)) {
+        proxy_beacon_fail(client, access_value, 429U, "Too Many Requests",
+                          "request_limit");
+        return true;
+      }
+      if (plan.route == LAGHU_HTTP_BEACON_ROUTE_IMAGE_REPORT) {
+        laghu_image_beacon_record beacon;
+        laghu_policy policy;
+        char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+        applied =
+            laghu_runtime_parse_image_beacon(
+                (laghu_buffer){request_body, request_body_length}, &beacon) &&
+            laghu_resolve_config_policy(&options->config, &policy) &&
+            laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
+            (worker->runtime_queue.mapping != NULL ||
+             laghu_runtime_queue_open(&worker->runtime_queue,
+                                      options->worker_queue_path)) &&
+            laghu_runtime_queue_refresh(&worker->runtime_queue) &&
+            laghu_catalog_apply_beacon(
+                worker->queue->rum, options->cache_path, policy_key,
+                worker->runtime_queue.capabilities, now,
+                options->config.image_metadata_ttl, &beacon);
+      } else if (plan.route == LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_REPORT) {
+        laghu_critical_css_beacon beacon;
+        laghu_policy policy;
+        char policy_key[LAGHU_RUNTIME_KEY_SIZE];
+        applied =
+            laghu_runtime_parse_critical_css_beacon(
+                (laghu_buffer){request_body, request_body_length}, &beacon) &&
+            laghu_resolve_config_policy(&options->config, &policy) &&
+            laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
+            laghu_critical_css_apply_beacon(
+                worker->queue->rum, options->cache_path, policy_key, now,
+                options->config.image_metadata_ttl, &beacon);
+      } else if (plan.route == LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_REPORT) {
+        laghu_instrumentation_beacon beacon;
+        applied =
+            laghu_runtime_parse_instrumentation_beacon(
+                (laghu_buffer){request_body, request_body_length}, &beacon) &&
+            laghu_instrumentation_apply_beacon(
+                worker->queue->rum, options->cache_path, now,
+                options->config.image_metadata_ttl, &beacon);
+      }
+      if (!applied) {
+        proxy_beacon_fail(client, access_value, 400U, "Bad Request", "worker");
+      } else {
+        proxy_beacon_send_no_content(client, access_value);
+      }
+      return true;
     }
-    return true;
   }
-  if (!strcmp(request.target, "/.laghu/beacon/instrumentation.js") &&
-      options->config.instrumentation_beacon == LAGHU_MODE_ON &&
-      !strcmp(request.method, "GET")) {
-    const char *script = laghu_runtime_instrumentation_script();
-    char head[256];
-    size_t script_length = strlen(script);
-    int n =
-        snprintf(head, sizeof(head),
-                 "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n"
-                 "Content-Length: %zu\r\nConnection: close\r\n\r\n",
-                 script_length);
-    if (n > 0) {
-      (void)proxy_send_all(client, head, (size_t)n);
-      (void)proxy_send_all(client, script, script_length);
-    }
-    access.status = 200U;
-    access.output_bytes = script_length;
-    return true;
-  }
-  if (!strcmp(request.target, "/.laghu/beacon/instrumentation") &&
-      options->config.instrumentation_beacon == LAGHU_MODE_ON &&
-      !strcmp(request.method, "POST")) {
-    proxy_header *type =
-        proxy_find(request.headers, request.header_count, "Content-Type");
-    proxy_header *site =
-        proxy_find(request.headers, request.header_count, "Sec-Fetch-Site");
-    laghu_instrumentation_beacon beacon;
-    uint64_t now = (uint64_t)time(NULL);
-    if (type == NULL || strncmp(type->value, "application/json", 16U) != 0 ||
-        site == NULL || !proxy_name_equal(site->value, "same-origin") ||
-        request_body_length == 0U ||
-        request_body_length > LAGHU_PROXY_BEACON_BODY) {
-      PROXY_FAIL(400U, "Bad Request", "client_parse");
-    } else if (!proxy_beacon_allowed(worker->queue, now)) {
-      PROXY_FAIL(429U, "Too Many Requests", "request_limit");
-    } else if (!laghu_runtime_parse_instrumentation_beacon(
-                   (laghu_buffer){request_body, request_body_length},
-                   &beacon) ||
-               !laghu_instrumentation_apply_beacon(
-                   worker->queue->rum, options->cache_path, now,
-                   options->config.image_metadata_ttl, &beacon)) {
-      PROXY_FAIL(400U, "Bad Request", "worker");
-    } else {
-      static const char response_204[] =
-          "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n"
-          "Connection: close\r\n\r\n";
-      (void)proxy_send_all(client, response_204, sizeof(response_204) - 1U);
-      access.status = 204U;
-    }
-    return true;
-  }
-  return false;
-#undef access
-#undef request
 }
-
-#undef PROXY_FAIL

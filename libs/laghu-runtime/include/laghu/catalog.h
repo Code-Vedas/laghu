@@ -101,6 +101,7 @@ bool laghu_catalog_url_identity(const char *normalized_url,
                                 char output[LAGHU_RUNTIME_KEY_SIZE]);
 bool laghu_runtime_parse_image_beacon(laghu_buffer json,
                                       laghu_image_beacon_record *record);
+const char *laghu_runtime_image_beacon_script(void);
 bool laghu_catalog_apply_beacon(laghu_rum_engine *rum, const char *cache_path,
                                 const char *policy_key,
                                 uint32_t capability_mask, uint64_t now,

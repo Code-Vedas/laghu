@@ -683,6 +683,186 @@ static void test_request_policy_enforcement(void) {
   laghu_http_transaction_result_release(&result);
 }
 
+static void test_administrative_plan_and_rendering(void) {
+  laghu_http_administrative_options options;
+  laghu_http_administrative_plan plan;
+  laghu_http_administrative_response response;
+  laghu_operational_snapshot snapshot;
+  laghu_cache_limits limits;
+  laghu_cache_stats stats;
+  char output[LAGHU_OPERATIONAL_RENDER_SIZE];
+  laghu_http_administrative_options_init(&options);
+  options.metrics_enabled = true;
+  options.readiness_enabled = true;
+  options.statistics_enabled = true;
+  options.purge_method_enabled = true;
+  options.purge_query_enabled = true;
+
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"),
+                                             VIEW("/.laghu/stats"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.requires_authorization);
+  CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_STATS);
+  CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_STATS);
+  CHECK(plan.status == 0U);
+
+  options.metrics_enabled = false;
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/.laghu/metrics"), &options));
+  CHECK(plan.recognized);
+  CHECK(!plan.requires_authorization);
+  CHECK(plan.status == 404U);
+  options.metrics_enabled = true;
+
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("POST"),
+                                             VIEW("/.laghu/ready"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.requires_authorization);
+  CHECK(plan.status == 405U);
+
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/images/example.jpg?laghu=purge"), &options));
+  CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_PURGE);
+  CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_PURGE);
+  CHECK(plan.purge_by_query);
+  CHECK(strcmp(plan.normalized_path, "/images/example.jpg") == 0);
+  CHECK(plan.status == 0U);
+
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("POST"),
+                                             VIEW("/images/example.jpg?"
+                                                  "laghu=purge"),
+                                             &options));
+  CHECK(plan.status == 0U);
+  options.purge_query_get_only = true;
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("POST"),
+                                             VIEW("/images/example.jpg?"
+                                                  "laghu=purge"),
+                                             &options));
+  CHECK(plan.status == 405U);
+  options.purge_query_get_only = false;
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("PURGE"),
+                                             VIEW("//malformed"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.requires_authorization);
+  CHECK(plan.status == 400U);
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"),
+                                             VIEW("/ordinary"), &options));
+  CHECK(!plan.recognized);
+
+  memset(&snapshot, 0, sizeof(snapshot));
+  snapshot.version = LAGHU_OPERATIONAL_VERSION;
+  snapshot.slot_count = 1U;
+  snapshot.slots[0].active = 1U;
+  snapshot.slots[0].heartbeat = 100U;
+  snapshot.slots[0].surface = LAGHU_OPERATIONAL_SURFACE_STANDALONE;
+  snapshot.slots[0].process_kind = LAGHU_OPERATIONAL_PROCESS_ADAPTER;
+  snapshot.slots[0].healthy = 1U;
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("HEAD"), VIEW("/.laghu/metrics"), &options));
+  CHECK(plan.head);
+  CHECK(laghu_http_administrative_render_operational(
+      &plan, &snapshot, 100U, true, true, false, output, sizeof(output),
+      &response));
+  CHECK(response.status == 200U);
+  CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS);
+  CHECK(response.length != 0U);
+  CHECK(strstr(output, "laghu_requests_total") != NULL);
+
+  snapshot.slot_count = 2U;
+  snapshot.slots[1].active = 1U;
+  snapshot.slots[1].heartbeat = 1U;
+  snapshot.slots[1].surface = LAGHU_OPERATIONAL_SURFACE_WORKER;
+  snapshot.slots[1].process_kind = LAGHU_OPERATIONAL_PROCESS_LIBVIPS;
+  snapshot.slots[1].required = 1U;
+  CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"),
+                                             VIEW("/.laghu/ready"), &options));
+  CHECK(laghu_http_administrative_render_operational(
+      &plan, &snapshot, 100U, true, true, false, output, sizeof(output),
+      &response));
+  CHECK(response.status == 200U);
+  CHECK(strstr(output, "\"status\":\"degraded\"") != NULL);
+  CHECK(laghu_http_administrative_render_operational(
+      &plan, &snapshot, 100U, true, true, true, output, sizeof(output),
+      &response));
+  CHECK(response.status == 503U);
+
+  CHECK(laghu_http_administrative_render_purge(
+      LAGHU_CACHE_PURGE_ACCEPTED, 7U, output, sizeof(output), &response));
+  CHECK(response.status == 202U);
+  CHECK(strcmp(output, "{\"status\":\"accepted\",\"matched_artifacts\":7}") ==
+        0);
+  CHECK(laghu_http_administrative_render_purge(
+      LAGHU_CACHE_PURGE_INVALID, 0U, output, sizeof(output), &response));
+  CHECK(response.status == 400U);
+  CHECK(!laghu_http_administrative_render_purge(LAGHU_CACHE_PURGE_ACCEPTED, 1U,
+                                                output, 1U, &response));
+
+  laghu_cache_limits_init(&limits);
+  limits.size_limit = 4096U;
+  limits.inode_limit = 32U;
+  memset(&stats, 0, sizeof(stats));
+  stats.bytes = 1024U;
+  stats.files = 8U;
+  stats.hits = UINT64_MAX;
+  stats.misses = UINT64_MAX;
+  stats.publications = 4U;
+  stats.rejected_publications = 2U;
+  stats.evictions = 1U;
+  stats.url_purges = 3U;
+  stats.full_purges = 1U;
+  stats.invalidated_artifacts = 5U;
+  stats.invalidated_bytes = 1024U;
+  stats.cache_generation = 9U;
+  stats.last_purge = 99U;
+  stats.corrupt_removals = 2U;
+  stats.cleaner_active = true;
+  stats.last_cleanup = 98U;
+  CHECK(laghu_http_administrative_render_stats(&limits, &stats, output,
+                                               sizeof(output), &response));
+  CHECK(response.status == 200U);
+  CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
+  CHECK(strstr(output, "\"hit_ratio_ppm\":500000") != NULL);
+  CHECK(strstr(output, "\"cleaner_active\":true") != NULL);
+  CHECK(!laghu_http_administrative_render_stats(&limits, &stats, output, 1U,
+                                                &response));
+}
+
+static void test_beacon_plan(void) {
+  laghu_http_beacon_options options;
+  laghu_http_beacon_plan plan;
+  laghu_http_beacon_options_init(&options);
+  CHECK(laghu_http_beacon_plan_build(
+      &plan, VIEW("GET"), VIEW("/.laghu/beacon/images.js"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.route == LAGHU_HTTP_BEACON_ROUTE_IMAGE_SCRIPT);
+  CHECK(plan.status == 404U);
+
+  options.image_enabled = true;
+  CHECK(laghu_http_beacon_plan_build(
+      &plan, VIEW("GET"), VIEW("/.laghu/beacon/images.js"), &options));
+  CHECK(plan.status == 0U);
+  CHECK(plan.action == LAGHU_HTTP_BEACON_ACTION_SERVE_SCRIPT);
+  CHECK(laghu_http_beacon_plan_build(
+      &plan, VIEW("POST"), VIEW("/.laghu/beacon/images.js"), &options));
+  CHECK(plan.status == 405U);
+  CHECK(laghu_http_beacon_plan_build(&plan, VIEW("POST"),
+                                     VIEW("/.laghu/beacon/images"), &options));
+  CHECK(plan.status == 0U);
+  CHECK(plan.action == LAGHU_HTTP_BEACON_ACTION_ACCEPT_REPORT);
+
+  options.critical_css_enabled = true;
+  options.instrumentation_enabled = true;
+  CHECK(laghu_http_beacon_plan_build(
+      &plan, VIEW("GET"), VIEW("/.laghu/beacon/critical-css.js"), &options));
+  CHECK(plan.route == LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_SCRIPT);
+  CHECK(laghu_http_beacon_plan_build(
+      &plan, VIEW("POST"), VIEW("/.laghu/beacon/instrumentation"), &options));
+  CHECK(plan.route == LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_REPORT);
+  CHECK(laghu_http_beacon_plan_build(&plan, VIEW("GET"), VIEW("/ordinary"),
+                                     &options));
+  CHECK(!plan.recognized);
+}
+
 int main(void) {
   laghu_rum_options rum_options;
   initialize_test_paths();
@@ -699,6 +879,8 @@ int main(void) {
   test_validator_hints_and_worker_liveness();
   test_mime_driven_opaque_resource_cache();
   test_request_policy_enforcement();
+  test_administrative_plan_and_rendering();
+  test_beacon_plan();
   laghu_rum_engine_destroy(test_rum);
   puts("laghu-http tests passed");
   return 0;

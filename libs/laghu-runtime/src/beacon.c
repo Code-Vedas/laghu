@@ -12,6 +12,18 @@
 #include "laghu/rum.h"
 #include "laghu/types.h"
 
+const char *laghu_runtime_image_beacon_script(void) {
+  return "addEventListener('load',()=>{document.querySelectorAll('img[src]')."
+         "forEach(i=>{const r=i.getBoundingClientRect();if(r.width<1||r.height<"
+         "1)return;fetch('/.laghu/beacon/images',{method:'POST',headers:{"
+         "'Content-Type':'application/json'},body:JSON.stringify({url:new URL("
+         "i.currentSrc||i.src,location.href).pathname,width:Math.round(r.width)"
+         ",height:Math.round(r.height),viewport_width:innerWidth,dpr_"
+         "hundredths:Math.min(400,Math.max(100,Math.round(devicePixelRatio*100)"
+         ")),above_fold:r.top<innerHeight,mobile:innerWidth<768}),keepalive:"
+         "true})})});";
+}
+
 static const char *laghu_beacon_field(const char *json, const char *name) {
   char needle[64U];
   int length = snprintf(needle, sizeof(needle), "\"%s\"", name);

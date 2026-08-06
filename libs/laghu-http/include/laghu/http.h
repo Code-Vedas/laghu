@@ -12,10 +12,12 @@
 
 #include "laghu/assets.h"
 #include "laghu/budget.h"
+#include "laghu/cache.h"
 #include "laghu/fonts.h"
 #include "laghu/html.h"
 #include "laghu/javascript.h"
 #include "laghu/lcp.h"
+#include "laghu/operational.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
 #include "laghu/types.h"
@@ -24,12 +26,98 @@
 extern "C" {
 #endif
 
-#define LAGHU_HTTP_ABI_VERSION 3U
+#define LAGHU_HTTP_ABI_VERSION 4U
 #define LAGHU_HTTP_MAX_REQUEST_HEADERS 64U
 #define LAGHU_HTTP_MAX_RESPONSE_HEADERS 64U
 #define LAGHU_HTTP_MAX_HEADER_OPERATIONS 32U
 #define LAGHU_HTTP_MAX_HEADER_NAME 64U
 #define LAGHU_HTTP_MAX_HEADER_VALUE 8192U
+
+/*
+ * Administrative routes are classified before native authorization or cache
+ * access. The plan is value-only: it neither opens a registry nor touches a
+ * cache, so each delivery surface can apply the same route and method rules
+ * without putting server I/O in shared request policy.
+ */
+typedef enum {
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_NONE = 0,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_PURGE,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_STATS,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_METRICS,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_READINESS
+} laghu_http_administrative_route;
+
+typedef enum {
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_NONE = 0,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_PURGE,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_STATS,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_METRICS,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS
+} laghu_http_administrative_action;
+
+typedef enum {
+  LAGHU_HTTP_ADMINISTRATIVE_CONTENT_NONE = 0,
+  LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON,
+  LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS
+} laghu_http_administrative_content;
+
+typedef struct {
+  bool metrics_enabled;
+  bool readiness_enabled;
+  bool statistics_enabled;
+  bool purge_method_enabled;
+  bool purge_query_enabled;
+  /* Standalone currently limits query purge to GET; native adapters do not. */
+  bool purge_query_get_only;
+} laghu_http_administrative_options;
+
+typedef struct {
+  laghu_http_administrative_route route;
+  laghu_http_administrative_action action;
+  char normalized_path[LAGHU_RUNTIME_PATH_SIZE];
+  bool recognized;
+  bool requires_authorization;
+  bool head;
+  bool purge_by_method;
+  bool purge_by_query;
+  /* A non-zero status is returned after native authorization succeeds. */
+  unsigned int status;
+} laghu_http_administrative_plan;
+
+typedef struct {
+  unsigned int status;
+  laghu_http_administrative_content content;
+  size_t length;
+} laghu_http_administrative_response;
+
+typedef enum {
+  LAGHU_HTTP_BEACON_ROUTE_NONE = 0,
+  LAGHU_HTTP_BEACON_ROUTE_IMAGE_SCRIPT,
+  LAGHU_HTTP_BEACON_ROUTE_IMAGE_REPORT,
+  LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_SCRIPT,
+  LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_REPORT,
+  LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_SCRIPT,
+  LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_REPORT
+} laghu_http_beacon_route;
+
+typedef enum {
+  LAGHU_HTTP_BEACON_ACTION_NONE = 0,
+  LAGHU_HTTP_BEACON_ACTION_SERVE_SCRIPT,
+  LAGHU_HTTP_BEACON_ACTION_ACCEPT_REPORT
+} laghu_http_beacon_action;
+
+typedef struct {
+  bool image_enabled;
+  bool critical_css_enabled;
+  bool instrumentation_enabled;
+} laghu_http_beacon_options;
+
+typedef struct {
+  laghu_http_beacon_route route;
+  laghu_http_beacon_action action;
+  bool recognized;
+  unsigned int status;
+} laghu_http_beacon_plan;
 
 /*
  * laghu-http owns classification, policy and backend resolution, warm lookup,
@@ -171,6 +259,29 @@ typedef struct {
   bool cache_publishable;
   laghu_transform_budget budget;
 } laghu_http_transaction;
+
+void laghu_http_administrative_options_init(
+    laghu_http_administrative_options *options);
+bool laghu_http_administrative_plan_build(
+    laghu_http_administrative_plan *plan, laghu_buffer method,
+    laghu_buffer target, const laghu_http_administrative_options *options);
+bool laghu_http_administrative_render_operational(
+    const laghu_http_administrative_plan *plan,
+    const laghu_operational_snapshot *snapshot, uint64_t now,
+    bool runtime_ready, bool cache_ready, bool strict_workers, char *output,
+    size_t capacity, laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_purge(
+    laghu_cache_purge_result purge_result, uint64_t matched_artifacts,
+    char *output, size_t capacity,
+    laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_stats(
+    const laghu_cache_limits *limits, const laghu_cache_stats *stats,
+    char *output, size_t capacity,
+    laghu_http_administrative_response *response);
+void laghu_http_beacon_options_init(laghu_http_beacon_options *options);
+bool laghu_http_beacon_plan_build(laghu_http_beacon_plan *plan,
+                                  laghu_buffer method, laghu_buffer target,
+                                  const laghu_http_beacon_options *options);
 
 void laghu_http_transaction_init(laghu_http_transaction *transaction);
 bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,

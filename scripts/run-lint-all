@@ -91,6 +91,8 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_fuzz.c \
     "${REPO_ROOT}"/libs/laghu-http/include/laghu/http.h \
     "${REPO_ROOT}"/libs/laghu-http/src/http.c \
+    "${REPO_ROOT}"/libs/laghu-http/src/administrative.c \
+    "${REPO_ROOT}"/libs/laghu-http/src/http_beacon.c \
     "${REPO_ROOT}"/libs/laghu-http/tests/http_test.c \
     "${REPO_ROOT}"/servers/laghu/include/laghu/proxy.h \
     "${REPO_ROOT}"/servers/laghu/src/proxy.c \
@@ -131,6 +133,9 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/beacon.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/configuration.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/endpoints.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/admin_endpoints.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/beacon_endpoints.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/asset_endpoints.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/ngx_http_laghu_internal.h
 else
   echo "Skipping clang-format: clang-format is not installed"

@@ -59,6 +59,10 @@ if(LAGHU_BUILD_TESTS)
   add_executable(laghu_runtime_integration_test tests/integration_test.c)
   add_executable(laghu_runtime_lcp_integration_test
                  tests/lcp_integration_test.c)
+  add_executable(laghu_runtime_rum_integration_test
+                 tests/rum_integration_test.c)
+  add_executable(laghu_runtime_source_integration_test
+                 tests/source_integration_test.c)
   add_executable(laghu_runtime_operational_integration_test
                  tests/operational_integration_test.c)
   target_link_libraries(laghu_runtime_operational_integration_test
@@ -69,6 +73,14 @@ if(LAGHU_BUILD_TESTS)
                         PRIVATE Laghu::Runtime Threads::Threads)
   add_test(NAME laghu_runtime_lcp_integration_test
            COMMAND laghu_runtime_lcp_integration_test)
+  target_link_libraries(laghu_runtime_rum_integration_test
+                        PRIVATE Laghu::Runtime laghu_runtime_test_fixture)
+  add_test(NAME laghu_runtime_rum_integration_test
+           COMMAND laghu_runtime_rum_integration_test)
+  target_link_libraries(laghu_runtime_source_integration_test
+                        PRIVATE Laghu::Runtime laghu_runtime_test_fixture)
+  add_test(NAME laghu_runtime_source_integration_test
+           COMMAND laghu_runtime_source_integration_test)
   target_link_libraries(laghu_runtime_integration_test
                         PRIVATE Laghu::Runtime Threads::Threads)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

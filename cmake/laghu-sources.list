@@ -37,6 +37,8 @@ runtime|laghu_instrumentation.c|libs/laghu-runtime/src/instrumentation.c
 runtime|laghu_lcp.c|libs/laghu-runtime/src/lcp.c
 runtime|laghu_beacon.c|libs/laghu-runtime/src/beacon.c
 http|laghu_http.c|libs/laghu-http/src/http.c
+http|laghu_http_administrative.c|libs/laghu-http/src/administrative.c
+http|laghu_http_beacon.c|libs/laghu-http/src/http_beacon.c
 http|laghu_http_finalize.c|libs/laghu-http/src/finalize.c
 nginx|ngx_http_laghu_module.c|modules/ngx_http_laghu_module/ngx_http_laghu_module.c
 nginx|laghu_nginx_logging.c|modules/ngx_http_laghu_module/logging.c
@@ -47,6 +49,9 @@ nginx|laghu_nginx_transaction_adaptation.c|modules/ngx_http_laghu_module/transac
 nginx|laghu_nginx_response_adaptation.c|modules/ngx_http_laghu_module/response_adaptation.c
 nginx|laghu_nginx_configuration.c|modules/ngx_http_laghu_module/configuration.c
 nginx|laghu_nginx_endpoints.c|modules/ngx_http_laghu_module/endpoints.c
+nginx|laghu_nginx_admin_endpoints.c|modules/ngx_http_laghu_module/admin_endpoints.c
+nginx|laghu_nginx_beacon_endpoints.c|modules/ngx_http_laghu_module/beacon_endpoints.c
+nginx|laghu_nginx_asset_endpoints.c|modules/ngx_http_laghu_module/asset_endpoints.c
 apache|mod_laghu.c|modules/mod_laghu/registration.c
 apache|laghu_apache_filtering.c|modules/mod_laghu/filtering.c
 apache|laghu_apache_endpoints.c|modules/mod_laghu/endpoints.c
