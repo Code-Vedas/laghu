@@ -16,7 +16,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${LAGHU_JS_TARGET_DIR}
           ${LAGHU_CARGO_EXECUTABLE} build --locked --release
           --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
-  DEPENDS Cargo.toml Cargo.lock build.rs src/main.rs
+  DEPENDS Cargo.toml Cargo.lock build.rs src/main.rs src/queue.rs src/operational.rs src/publication.rs
           "${CMAKE_SOURCE_DIR}/libs/laghu-runtime/persisted_state_contract.def"
   VERBATIM
 )
