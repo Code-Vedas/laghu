@@ -98,6 +98,41 @@ The file cache is the only cache backend currently implemented. Its portable sha
 Remote RUM synchronization requires verified `rediss://`; `redis://` is loopback-only and Memcached is unsupported.
 Mapped loading requires asset offload configuration and remains capture-first and worker-only. Standalone rejects `native` and `both` because its origin is remote. Roots, every path component, and the final regular file are checked; symlinks, traversal, reparse points, device paths, and changed files fail open.
 
+## Status client
+
+`laghu status URL --token-file PATH` queries the existing authenticated
+`/.laghu/ready` and `/.laghu/stats` routes on standalone, NGINX, or Apache.
+`URL` must be a root `http://` or `https://` origin; paths, credentials,
+queries, and fragments are rejected.
+
+Create the client token file with the same token configured for the endpoint.
+It must be an absolute, regular file owned by the invoking user, inaccessible
+to group and other users, and contain a 16-256 byte printable non-whitespace
+token (a final newline is allowed):
+
+```sh
+install -m 600 /dev/stdin /etc/laghu/status.token
+laghu status https://edge.example.com --token-file /etc/laghu/status.token
+```
+
+The command sends the token only as `X-Laghu-Purge-Token`; it never prints the
+token, request header, or reconstructed command. The default five-second
+timeout applies to the request operations and can be set to `1..30` seconds.
+For a private HTTPS CA, `--ca-file /etc/laghu/edge-ca.pem` adds trust without
+disabling certificate or hostname verification. `--json` emits a
+`laghu-status-v1` object; ordinary output is one readiness line and one cache
+hit/miss/usage/capacity line.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Both routes returned valid `200` JSON. |
+| 2 | Invalid command, URL, or token file. |
+| 3 | Either route returned `401` or `403`. |
+| 4 | DNS, connection, TLS, or I/O failure. |
+| 5 | Invalid HTTP framing, content, or JSON schema. |
+| 6 | Either route returned `503`; stats is still queried after readiness `503`. |
+| 7 | Another HTTP status. |
+
 ## JavaScript deferral approvals
 
 The approval file accepts exact, root-relative, query-free script paths, optionally scoped to one exact template:

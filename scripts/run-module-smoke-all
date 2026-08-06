@@ -18,6 +18,7 @@ PORT="${LAGHU_SMOKE_PORT:-18080}"
 ORIGIN_PORT=$((PORT + 1))
 OPTIMIZER_BIN="${LAGHU_OPTIMIZER_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips}"
 JAVASCRIPT_BIN="${LAGHU_JAVASCRIPT_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize}"
+STATUS_BIN="${LAGHU_STATUS_BIN:-${REPO_ROOT}/tmp/build/servers/laghu/laghu}"
 nginx_user_directive=
 if [ "$(id -u)" -eq 0 ]; then
   nginx_user_directive="user root;"
@@ -677,6 +678,13 @@ curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/ready" | \
   grep '"status":"ready"' >/dev/null
+if [ ! -x "${STATUS_BIN}" ]; then
+  echo "Laghu status executable not found: ${STATUS_BIN}" >&2
+  exit 1
+fi
+"${STATUS_BIN}" status "http://127.0.0.1:${PORT}" \
+  --token-file "${SMOKE_DIR}/purge.token" --json | \
+  grep '"schema":"laghu-status-v1"' >/dev/null
 curl --fail --silent --show-error --dump-header "${SMOKE_DIR}/lcp-headers" \
   --output "${SMOKE_DIR}/lcp-body" "http://127.0.0.1:${PORT}/lcp.html"
 grep 'fetchpriority=\("\)\?high\("\)\?' "${SMOKE_DIR}/lcp-body" >/dev/null

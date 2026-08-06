@@ -241,17 +241,35 @@ def free_port():
 
 class StatusOrigin(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    paths = []
+    ready_status = 200
+    stats_status = 200
+    ready_body = (
+        b'{"status":"ready","runtime":"ready","cache":"ready",'
+        b'"workers":"ready","budgets":"ready","policy":"degraded",'
+        b'"configured_workers":1,"healthy_workers":1}'
+    )
+    stats_body = (
+        b'{"schema":"laghu-cache-stats-v1","backend":"file",'
+        b'"capacity":{"bytes":10,"files":1},"usage":{"bytes":2,"files":1},'
+        b'"requests":{"hits":1,"misses":2,"hit_ratio_ppm":333333},'
+        b'"publications":0,"rejected_writes":0,"evictions":0,'
+        b'"purges":{"url":0,"full":0,"artifacts":0,"bytes":0,'
+        b'"generation":0,"last":0},"corrupt_removals":0,'
+        b'"cleaner_active":false,"rebuilding":false,"last_maintenance":0}'
+    )
 
     def do_GET(self):
         assert self.headers.get("X-Laghu-Purge-Token") == "0123456789abcdef"
+        self.__class__.paths.append(self.path)
         if self.path == "/.laghu/ready":
-            body = b'{"status":"ready","runtime":"ready"}'
+            status, body = self.ready_status, self.ready_body
         elif self.path == "/.laghu/stats":
-            body = b'{"schema":"laghu-cache-stats-v1","requests":{"hits":1,"misses":2}}'
+            status, body = self.stats_status, self.stats_body
         else:
             self.send_error(404)
             return
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
@@ -267,23 +285,85 @@ def status_smoke(executable, root):
     token = root / "status.token"
     token.write_text("0123456789abcdef\n")
     token.chmod(0o600)
-    server = QuietThreadingHTTPServer(("127.0.0.1", 0), StatusOrigin)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        result = subprocess.run(
-            [str(executable), "status", f"http://127.0.0.1:{server.server_port}",
-             "--token-file", str(token), "--json"],
-            capture_output=True, text=True, check=True,
+    def run(port, *options):
+        return subprocess.run(
+            [str(executable), "status", f"http://127.0.0.1:{port}",
+             "--token-file", str(token), *options],
+            capture_output=True, text=True,
         )
+
+    def serve(handler):
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server
+
+    server = serve(StatusOrigin)
+    try:
+        result = run(server.server_port, "--json")
+        assert result.returncode == 0
         payload = json.loads(result.stdout)
         assert payload["schema"] == "laghu-status-v1"
         assert payload["ready"]["status"] == "ready"
-        assert payload["stats"]["requests"] == {"hits": 1, "misses": 2}
+        assert payload["stats"]["requests"] == {
+            "hits": 1, "misses": 2, "hit_ratio_ppm": 333333,
+        }
         assert "0123456789abcdef" not in result.stdout + result.stderr
     finally:
         server.shutdown()
         server.server_close()
+
+    server = serve(StatusOrigin)
+    try:
+        result = run(server.server_port)
+        assert result.returncode == 0
+        assert result.stdout == "ready: ready\ncache: hits=1 misses=2 usage=2 capacity=10\n"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    for code in (403, 503):
+        handler = type("StatusFailure", (StatusOrigin,), {
+            "ready_status": code, "stats_status": code,
+            "ready_body": b"{}", "stats_body": b"{}",
+            "paths": [],
+        })
+        server = serve(handler)
+        try:
+            result = run(server.server_port, "--json")
+            assert result.returncode == (3 if code == 403 else 6)
+            if code == 503:
+                assert handler.paths == ["/.laghu/ready", "/.laghu/stats"]
+            assert "0123456789abcdef" not in result.stdout + result.stderr
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    handler = type("MalformedStatus", (StatusOrigin,), {
+        "ready_body": b'{"status":"ready","status":"bad"}',
+    })
+    server = serve(handler)
+    try:
+        result = run(server.server_port, "--json")
+        assert result.returncode == 5
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    result = run(free_port(), "--json")
+    assert result.returncode == 4
+    timeout_port = one_shot_tcp_server(hold=2)
+    result = run(timeout_port, "--timeout", "1", "--json")
+    assert result.returncode == 4
+    token.chmod(0o644)
+    result = run(free_port(), "--json")
+    assert result.returncode == 2
+    token.chmod(0o600)
+    result = subprocess.run(
+        [str(executable), "status", "http://127.0.0.1/path", "--token-file", str(token)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2
 
 
 def create_tls_certificate(root):

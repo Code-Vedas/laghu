@@ -29,6 +29,7 @@ module="${REPO_ROOT}/tmp/apache-module/.libs/mod_laghu.so"
 modules=$(${APXS} -q LIBEXECDIR)
 service=${LAGHU_SERVICE:-"${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips"}
 javascript_service=${LAGHU_JAVASCRIPT_BIN:-"${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize"}
+status_bin=${LAGHU_STATUS_BIN:-"${REPO_ROOT}/tmp/build/servers/laghu/laghu"}
 service_pid=
 javascript_pid=
 origin_pid=
@@ -345,6 +346,13 @@ grep -i '^X-Laghu-Transform: pass' "${work}/headers"
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/.laghu/stats | grep 'laghu-cache-stats-v1' >/dev/null
+if [ ! -x "${status_bin}" ]; then
+  echo "Laghu status executable not found: ${status_bin}" >&2
+  exit 1
+fi
+"${status_bin}" status http://127.0.0.1:18081 \
+  --token-file "${work}/purge.token" --json | \
+  grep '"schema":"laghu-status-v1"' >/dev/null
 curl --fail --silent --dump-header "${work}/lcp.headers" \
   http://127.0.0.1:18081/lcp.html >"${work}/lcp.html"
 grep 'fetchpriority=\("\)\?high\("\)\?' "${work}/lcp.html" >/dev/null

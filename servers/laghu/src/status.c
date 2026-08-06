@@ -267,13 +267,41 @@ static bool status_json_has_only_fields(const char *body, size_t length,
   return true;
 }
 
+static unsigned int status_json_field_count(const char *body, size_t length,
+                                            const char *name) {
+  size_t cursor = 0U, name_length = strlen(name);
+  unsigned int count = 0U;
+  while (cursor < length) {
+    size_t start, field_length, check;
+    if (body[cursor++] != '"') continue;
+    start = cursor;
+    while (cursor < length && body[cursor] != '"') ++cursor;
+    if (cursor == length) return 0U;
+    field_length = cursor++ - start;
+    check = cursor;
+    while (check < length && isspace((unsigned char)body[check])) ++check;
+    if (check < length && body[check] == ':' && field_length == name_length &&
+        memcmp(body + start, name, name_length) == 0)
+      ++count;
+  }
+  return count;
+}
+
 static bool status_schema_valid(const char *body, size_t length, bool stats) {
   static const char *const readiness[] = {"status", "runtime", "cache", "workers", "budgets", "policy", "configured_workers", "healthy_workers"};
   static const char *const cache_stats[] = {"schema", "backend", "capacity", "usage", "requests", "bytes", "files", "hits", "misses", "hit_ratio_ppm", "publications", "rejected_writes", "evictions", "purges", "url", "full", "artifacts", "generation", "last", "corrupt_removals", "cleaner_active", "rebuilding", "last_maintenance"};
-  const char *schema = "\"schema\":\"laghu-cache-stats-v1\"";
-  return status_json_has_only_fields(body, length, stats ? cache_stats : readiness,
-                                     stats ? sizeof(cache_stats) / sizeof(cache_stats[0]) : sizeof(readiness) / sizeof(readiness[0])) &&
-         (!stats ? strstr(body, "\"status\":") != NULL : strstr(body, schema) != NULL);
+  const char *const *fields = stats ? cache_stats : readiness;
+  size_t field_count = stats ? sizeof(cache_stats) / sizeof(cache_stats[0]) :
+                               sizeof(readiness) / sizeof(readiness[0]);
+  size_t index;
+  if (!status_json_has_only_fields(body, length, fields, field_count)) return false;
+  for (index = 0U; index < field_count; ++index) {
+    unsigned int expected = !stats || strcmp(fields[index], "bytes") != 0 ?
+                                (stats && strcmp(fields[index], "files") == 0 ? 2U : 1U) :
+                                3U;
+    if (status_json_field_count(body, length, fields[index]) != expected) return false;
+  }
+  return !stats || strstr(body, "\"schema\":\"laghu-cache-stats-v1\"") != NULL;
 }
 
 static bool status_json_text_field(const char *body, const char *name,
@@ -309,6 +337,11 @@ static bool status_json_number_field(const char *body, const char *name,
   return true;
 }
 
+static bool status_json_content_type(const char *value) {
+  return strncasecmp(value, "application/json", 16U) == 0 &&
+         (value[16U] == '\0' || value[16U] == ';');
+}
+
 /* Strict HTTP/1.1 fixed-length JSON fetch.  Returns 0 success, status code or
  * negative local/framing failure. */
 static int status_fetch(const status_origin *origin, SSL_CTX *context,
@@ -342,37 +375,60 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
     header[used] = '\0';
     if (used >= 4U && (next = strstr(header, "\r\n\r\n")) != NULL) break;
   }
+  if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    SSL_free(tls); close(socket); return -1;
+  }
   if (received <= 0 || used >= STATUS_HEADER_LIMIT || (next = strstr(header, "\r\n\r\n")) == NULL) {
     SSL_free(tls); close(socket); return -2;
   }
   header_end = next;
-  if (sscanf(header, "HTTP/1.1 %u", &status) != 1 || status < 100U || status > 599U) {
+  line = strstr(header, "\r\n");
+  if (line == NULL || (size_t)(line - header) < 12U ||
+      memcmp(header, "HTTP/1.1 ", 9U) != 0 || !isdigit((unsigned char)header[9]) ||
+      !isdigit((unsigned char)header[10]) || !isdigit((unsigned char)header[11]) ||
+      ((size_t)(line - header) > 12U && header[12] != ' ')) {
     SSL_free(tls); close(socket); return -2;
   }
-  line = strstr(header, "\r\n");
-  if (line == NULL) { SSL_free(tls); close(socket); return -2; }
+  status = (unsigned int)(header[9] - '0') * 100U +
+           (unsigned int)(header[10] - '0') * 10U +
+           (unsigned int)(header[11] - '0');
   line += 2U;
-  while (*line != '\0' && line != header_end + 2U) {
+  while (*line != '\0' && line != header_end) {
     char *colon;
     next = strstr(line, "\r\n");
     if (next == NULL) { SSL_free(tls); close(socket); return -2; }
+    {
+      char *character;
+      for (character = line; character < next; ++character)
+        if ((unsigned char)*character < 0x20U && *character != '\t') {
+          SSL_free(tls); close(socket); return -2;
+        }
+    }
     *next = '\0';
     if (++headers > STATUS_HEADER_COUNT || (colon = strchr(line, ':')) == NULL ||
         strchr(line, '\r') != NULL || strchr(line, '\n') != NULL) { SSL_free(tls); close(socket); return -2; }
     *colon++ = '\0'; while (*colon == ' ' || *colon == '\t') ++colon;
     if (strcasecmp(line, "Content-Length") == 0) { if (content_length != NULL) { SSL_free(tls); close(socket); return -2; } content_length = colon; }
-    else if (strcasecmp(line, "Content-Type") == 0) content_type = colon;
+    else if (strcasecmp(line, "Content-Type") == 0) {
+      if (content_type != NULL) { SSL_free(tls); close(socket); return -2; }
+      content_type = colon;
+    }
     else if (strcasecmp(line, "Transfer-Encoding") == 0) { SSL_free(tls); close(socket); return -2; }
+    if (next == header_end) break;
     line = next + 2U;
   }
-  if (content_length == NULL || content_type == NULL || strncasecmp(content_type, "application/json", 16U) != 0 ||
+  if (content_length == NULL || content_type == NULL || !status_json_content_type(content_type) ||
       !status_uint(content_length, 0U, STATUS_BODY_LIMIT, &declared_length)) { SSL_free(tls); close(socket); return -2; }
   length = declared_length;
   size_t initial = used - ((size_t)(header_end + 4U - header));
   if (initial > length) { SSL_free(tls); close(socket); return -2; }
   memcpy(body, header_end + 4U, initial); used = initial;
-  while (used < length && (received = tls != NULL ? SSL_read(tls, body + used, length - used) : recv(socket, body + used, length - used, 0)) > 0) used += (size_t)received;
+  while (used < length &&
+         (received = tls != NULL ? SSL_read(tls, body + used, length - used) :
+                                   recv(socket, body + used, length - used, 0)) > 0)
+    used += (size_t)received;
   SSL_free(tls); close(socket);
+  if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return -1;
   if (used != length) return -2;
   body[used] = '\0'; *body_length = used;
   return (int)status;
