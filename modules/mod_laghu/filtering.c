@@ -252,6 +252,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
       ap_remove_output_filter(filter);
       return ap_pass_brigade(filter->next, brigade);
     }
+    context->log_started = apr_time_now();
     context->config = laghu_apache_merge_config(request->pool, server_config,
                                                 directory_config);
     if (context->config == NULL || !laghu_apache_normalize(request, context)) {
@@ -268,6 +269,8 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
     }
     context->action = prepared.action;
     if (!ok || prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
+      laghu_apache_log_transaction(request, context, &prepared,
+                                   ok ? "none" : "runtime");
       laghu_http_transaction_result_release(&prepared);
       ap_remove_output_filter(filter);
       return ap_pass_brigade(filter->next, brigade);
@@ -282,6 +285,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
         return ap_pass_brigade(filter->next, brigade);
       }
       context->cache_hit = true;
+      laghu_apache_log_transaction(request, context, &prepared, "none");
     } else {
       context->capture_capacity = prepared.capture_limit;
       if (context->response.has_declared_length &&
@@ -356,6 +360,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
         &laghu_apache_operational, result.lcp_decision, result.lcp_applied,
         result.lcp_profile_observations, result.lcp_profile_ready);
     laghu_apache_log_defer_recommendation(request, &result);
+    laghu_apache_log_transaction(request, context, &result, "none");
     if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
         context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
         context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
@@ -410,6 +415,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
     return APR_SUCCESS;
   }
   if (eos) {
+    laghu_apache_log_transaction(request, context, NULL, "runtime");
     ap_remove_output_filter(filter);
   }
   return ap_pass_brigade(filter->next, brigade);

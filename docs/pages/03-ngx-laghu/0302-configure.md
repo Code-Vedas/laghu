@@ -10,6 +10,8 @@ permalink: /ngx-laghu/configure/
 NGINX exposes one `laghu` directive with a setting and value.
 Most settings are inherited through `http`, `server`, and `location`; RUM-store settings are process-wide and valid only in `http`.
 
+Laghu transaction records use the configured NGINX error_log sink. Each native error-log line contains one laghu_json=<JSON> payload in the stable laghu-log-v1 schema. Parse the payload, not the NGINX prefix. The schema never records request queries, headers, bodies, credentials, tokens, hosts, or cache keys.
+
 | Directive | Context | Accepted value | Default | Effect |
 | --- | --- | --- | --- | --- |
 | `laghu on\|off;` | inherited | boolean | `off` | Enables or bypasses transformation. |

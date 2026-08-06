@@ -59,7 +59,7 @@ if(LAGHU_BUILD_TESTS)
   target_include_directories(laghu_runtime_test_fixture PUBLIC tests)
   target_link_libraries(laghu_runtime_test_fixture PUBLIC Laghu::Runtime)
   foreach(subsystem IN ITEMS budget service_config queue cache operational rum source_asset
-                            catalog html css domain javascript instrumentation lcp worker)
+                            catalog html css domain javascript instrumentation lcp worker log)
     laghu_add_runtime_test(${subsystem} FIXTURE)
   endforeach()
   laghu_add_runtime_test(fixture FIXTURE)

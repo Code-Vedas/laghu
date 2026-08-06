@@ -73,6 +73,8 @@ typedef struct {
   bool html_capture;
   bool css_capture;
   bool header_deferred;
+  bool log_written;
+  uint64_t log_started_ms;
 } ngx_http_laghu_request_ctx_t;
 
 extern ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;
@@ -84,6 +86,10 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
 
 void ngx_http_laghu_log_defer_recommendation(
     ngx_http_request_t *request, const laghu_http_transaction_result *result);
+void ngx_http_laghu_log_transaction(ngx_http_request_t *request,
+                                    ngx_http_laghu_request_ctx_t *context,
+                                    const laghu_http_transaction_result *result,
+                                    const char *failure);
 extern ngx_module_t ngx_http_laghu_module;
 extern laghu_rum_engine *ngx_http_laghu_rum;
 extern laghu_operational_registry ngx_http_laghu_operational;

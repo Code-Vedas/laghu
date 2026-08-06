@@ -91,11 +91,17 @@ typedef struct {
   uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
   bool html_capture;
   bool css_capture;
+  bool log_written;
+  apr_time_t log_started;
 } laghu_apache_context;
 
 extern module AP_MODULE_DECLARE_DATA laghu_module;
 void laghu_apache_log_defer_recommendation(
     request_rec *request, const laghu_http_transaction_result *result);
+void laghu_apache_log_transaction(request_rec *request,
+                                  laghu_apache_context *context,
+                                  const laghu_http_transaction_result *result,
+                                  const char *failure);
 extern laghu_rum_engine *laghu_apache_rum;
 extern laghu_operational_registry laghu_apache_operational;
 extern const char *laghu_apache_operational_cache;

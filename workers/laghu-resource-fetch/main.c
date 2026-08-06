@@ -32,6 +32,7 @@ static void laghu_sleep_ms(unsigned int value) {
 
 #include "laghu/cache.h"
 #include "laghu/fonts.h"
+#include "laghu/log.h"
 #include "laghu/queue.h"
 #include "laghu/source.h"
 #include "laghu/types.h"
@@ -53,6 +54,31 @@ typedef struct {
 } laghu_fetch_response;
 
 static volatile sig_atomic_t laghu_fetch_stop;
+
+static void laghu_fetch_log_lifecycle(const char *state, const char *failure) {
+  char line[LAGHU_LOG_LINE_SIZE];
+  laghu_log_lifecycle record = {
+      .common = {(time_t)time(NULL), "worker", "resource-fetch"},
+      .state = state,
+      .failure = failure};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
+    fprintf(stderr, "%s\n", line);
+}
+
+static void laghu_fetch_log_job(const laghu_runtime_job *job, bool success,
+                                uint64_t elapsed) {
+  char line[LAGHU_LOG_LINE_SIZE];
+  laghu_log_job record = {
+      .common = {(time_t)time(NULL), "worker", "resource-fetch"},
+      .job_kind = "font_css",
+      .outcome = success ? "success" : "failed",
+      .input_bytes = job->payload.length,
+      .output_bytes = 0U,
+      .duration_ms = elapsed / 1000U,
+      .failure = success ? "none" : "network"};
+  if (laghu_log_render_job(&record, line, sizeof(line)))
+    fprintf(stderr, "%s\n", line);
+}
 
 static void laghu_fetch_signal(int signal_number) {
   (void)signal_number;
@@ -316,34 +342,17 @@ static bool laghu_fetch_once(SSL_CTX *context,
   bool success = false;
   memset(response, 0, sizeof(*response));
   if (!laghu_fetch_url(url, host, target) ||
-      !laghu_font_provider_url_allowed(provider, url, false, false)) {
-    fprintf(stderr, "laghu-resource-fetch: provider=%s stage=url-policy\n",
-            provider->id);
+      !laghu_font_provider_url_allowed(provider, url, false, false))
     goto done;
-  }
-  if ((socket = laghu_fetch_connect(host)) == LAGHU_INVALID_SOCKET) {
-    fprintf(stderr, "laghu-resource-fetch: provider=%s host=%s stage=connect\n",
-            provider->id, host);
-    goto done;
-  }
-  if ((tls = SSL_new(context)) == NULL) {
-    fprintf(stderr, "laghu-resource-fetch: provider=%s host=%s stage=tls-new\n",
-            provider->id, host);
-    goto done;
-  }
+  if ((socket = laghu_fetch_connect(host)) == LAGHU_INVALID_SOCKET) goto done;
+  if ((tls = SSL_new(context)) == NULL) goto done;
   parameters = SSL_get0_param(tls);
   X509_VERIFY_PARAM_set_hostflags(parameters,
                                   X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
   if (!SSL_set_tlsext_host_name(tls, host) || !SSL_set1_host(tls, host) ||
       !SSL_set_fd(tls, (int)socket) || SSL_connect(tls) != 1 ||
-      SSL_get_verify_result(tls) != X509_V_OK) {
-    fprintf(stderr,
-            "laghu-resource-fetch: provider=%s host=%s stage=tls error=%lu "
-            "verify=%ld\n",
-            provider->id, host, ERR_peek_last_error(),
-            SSL_get_verify_result(tls));
+      SSL_get_verify_result(tls) != X509_V_OK)
     goto done;
-  }
   length = snprintf(request, sizeof(request),
                     "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0 "
                     "LaghuFontFetch/1\r\nAccept: text/css,*/*;q=0.1\r\n"
@@ -351,12 +360,8 @@ static bool laghu_fetch_once(SSL_CTX *context,
                     target, host);
   if (length <= 0 || (size_t)length >= sizeof(request) ||
       !laghu_fetch_send(tls, (const unsigned char *)request, (size_t)length) ||
-      !laghu_fetch_read(tls, provider, response)) {
-    fprintf(stderr,
-            "laghu-resource-fetch: provider=%s host=%s stage=response\n",
-            provider->id, host);
+      !laghu_fetch_read(tls, provider, response))
     goto done;
-  }
   success = true;
 done:
   if (tls != NULL) {
@@ -490,6 +495,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   (void)laghu_worker_lifecycle_start(&lifecycle, cache_path,
                                      LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH,
                                      NULL, true, (uint64_t)time(NULL));
+  laghu_fetch_log_lifecycle("starting", "none");
   laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), false);
   (void)signal(SIGINT, laghu_fetch_signal);
   (void)signal(SIGTERM, laghu_fetch_signal);
@@ -498,7 +504,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
     uint64_t now = (uint64_t)time(NULL);
     if (!laghu_runtime_queue_open(&queue, queue_path)) {
       if (!queue_unavailable_reported) {
-        fputs("laghu-resource-fetch: queue unavailable\n", stderr);
+        laghu_fetch_log_lifecycle("degraded", "queue");
         queue_unavailable_reported = true;
       }
       laghu_worker_lifecycle_heartbeat(&lifecycle, now, false);
@@ -508,7 +514,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
     if (!queue_configured &&
         !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND)) {
       if (!queue_unavailable_reported) {
-        fputs("laghu-resource-fetch: queue unavailable\n", stderr);
+        laghu_fetch_log_lifecycle("degraded", "queue");
         queue_unavailable_reported = true;
       }
       laghu_worker_lifecycle_heartbeat(&lifecycle, now, false);
@@ -516,6 +522,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
       continue;
     }
     lifecycle.queue = &queue;
+    if (!queue_configured) laghu_fetch_log_lifecycle("running", "none");
     queue_configured = true;
     queue_unavailable_reported = false;
     laghu_worker_lifecycle_heartbeat(&lifecycle, now, true);
@@ -524,15 +531,17 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
         uint64_t started = laghu_worker_lifecycle_clock();
         bool success =
             laghu_fetch_process(context, &providers, cache_path, &job);
-        laghu_worker_lifecycle_job(&lifecycle, success,
-                                   laghu_worker_lifecycle_clock() - started,
+        uint64_t elapsed = laghu_worker_lifecycle_clock() - started;
+        laghu_worker_lifecycle_job(&lifecycle, success, elapsed,
                                    LAGHU_OPERATIONAL_FAILURE_WORKER);
+        laghu_fetch_log_job(&job, success, elapsed);
       }
     } else {
       laghu_sleep_ms(100U);
     }
   }
   laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
+  laghu_fetch_log_lifecycle("stopped", "none");
   laghu_runtime_queue_close(&queue);
   SSL_CTX_free(context);
   return 0;

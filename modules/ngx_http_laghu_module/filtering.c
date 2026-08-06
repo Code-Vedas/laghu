@@ -32,6 +32,7 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
   if (context == NULL || !ngx_http_laghu_normalize(request, conf, context)) {
     return ngx_http_laghu_next_header_filter(request);
   }
+  context->log_started_ms = ngx_current_msec;
   prepared = laghu_http_transaction_prepare(
       &context->transaction, &context->request, &context->response,
       &context->environment, &result);
@@ -40,6 +41,8 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
     return ngx_http_laghu_next_header_filter(request);
   }
   if (!prepared || result.action == LAGHU_HTTP_ACTION_BYPASS) {
+    ngx_http_laghu_log_transaction(request, context, &result,
+                                   prepared ? "none" : "runtime");
     laghu_http_transaction_result_release(&result);
     return ngx_http_laghu_next_header_filter(request);
   }
@@ -77,6 +80,7 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
     context->cached_output->buf = buffer;
     context->cached_output->next = NULL;
     context->cache_hit = true;
+    ngx_http_laghu_log_transaction(request, context, &result, "none");
     ngx_http_set_ctx(request, context, ngx_http_laghu_module);
     laghu_http_transaction_result_release(&result);
     return ngx_http_laghu_next_header_filter(request);
@@ -174,6 +178,7 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
         &ngx_http_laghu_operational, result.lcp_decision, result.lcp_applied,
         result.lcp_profile_observations, result.lcp_profile_ready);
     ngx_http_laghu_log_defer_recommendation(request, &result);
+    ngx_http_laghu_log_transaction(request, context, &result, "none");
     if (context->header_deferred) {
       const unsigned char *selected = result.selected.data;
       size_t selected_length = result.selected.length;
@@ -217,6 +222,7 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
     }
     laghu_http_transaction_result_release(&result);
   }
+  ngx_http_laghu_log_transaction(request, context, NULL, "runtime");
   context->capture_enabled = false;
   return ngx_http_laghu_next_body_filter(request, chain);
 }

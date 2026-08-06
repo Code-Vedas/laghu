@@ -17,6 +17,7 @@ runtime|laghu_cache_artifact.c|libs/laghu-runtime/src/cache_artifact.c
 runtime|laghu_operational.c|libs/laghu-runtime/src/operational.c
 runtime|laghu_queue.c|libs/laghu-runtime/src/queue.c
 runtime|laghu_worker.c|libs/laghu-runtime/src/worker.c
+runtime|laghu_log.c|libs/laghu-runtime/src/log.c
 runtime|laghu_csp.c|libs/laghu-runtime/src/csp.c
 runtime|laghu_source.c|libs/laghu-runtime/src/source.c
 runtime|laghu_asset.c|libs/laghu-runtime/src/asset.c
@@ -96,6 +97,7 @@ runtime_test|javascript|libs/laghu-runtime/tests/javascript_test.c
 runtime_test|instrumentation|libs/laghu-runtime/tests/instrumentation_test.c
 runtime_test|lcp|libs/laghu-runtime/tests/lcp_test.c
 runtime_test|worker|libs/laghu-runtime/tests/worker_test.c
+runtime_test|log|libs/laghu-runtime/tests/log_test.c
 runtime_test|cache_fixture|libs/laghu-runtime/tests/cache_fixture.c
 runtime_test|html_integration|libs/laghu-runtime/tests/html_integration_test.c
 runtime_test|asset_integration|libs/laghu-runtime/tests/asset_integration_test.c

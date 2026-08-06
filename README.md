@@ -6,6 +6,14 @@ Cache extension is MIME-driven: `extend_cache_media` only handles administrator-
 
 The image path uses an out-of-process libvips worker: a cold request serves the original while the adapter publishes a try-only job, and a later request can use a validated, strictly smaller cached variant. Codec work never runs inside NGINX or Apache.
 
+## Structured logs
+
+Laghu emits privacy-safe laghu-log-v1 records for handled transactions, worker jobs, and lifecycle changes. Records never include query strings, headers, bodies, credentials, tokens, hosts, or cache keys.
+
+The standalone server and workers write one JSON object per stderr line. NGINX and Apache preserve their configured native error-log sinks and write one laghu_json=<JSON> payload per Laghu record; extract that payload before JSON parsing.
+
+Schema v1 fixes the common schema, timestamp, surface, component, and event fields. Transaction records add method, query-free path, status, decision, byte counts, duration, cache state, publication result, and a fixed failure reason. Worker records contain only job kind, outcome, byte counts, duration, and a fixed failure reason.
+
 ## Product Shape
 
 Laghu keeps explicit ownership boundaries:

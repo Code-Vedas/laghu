@@ -824,7 +824,10 @@ def main():
         )
         assert invalid.returncode == 1
         invalid_log = invalid.stderr.decode().strip()
-        assert json.loads(invalid_log)["event"] == "startup_failure"
+        invalid_record = json.loads(invalid_log)
+        assert invalid_record["schema"] == "laghu-log-v1"
+        assert invalid_record["event"] == "lifecycle"
+        assert invalid_record["state"] == "failed"
         proxy_port = free_port()
         purge_token = root / "purge.token"
         purge_token.write_text("standalone-purge-token-0123456789\n")
@@ -1325,9 +1328,10 @@ def main():
             main_log.flush()
             main_log.seek(0)
             logs = main_log.read().decode()
-            assert '"event":"startup"' in logs
+            assert '"schema":"laghu-log-v1"' in logs
             assert '"event":"transaction"' in logs
             assert '"path":"/.laghu/ready"' in logs
+            assert '"event":"lifecycle"' in logs
             assert '"state":"draining"' in logs
             assert '"state":"stopped"' in logs
             assert '"failure":"origin_timeout"' in logs

@@ -7,52 +7,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "laghu/log.h"
 #include "server_internal.h"
-
-static bool proxy_json_escape(const char *input, char *output,
-                              size_t capacity) {
-  size_t used = 0U;
-  const unsigned char *cursor = (const unsigned char *)input;
-  if (capacity == 0U) return false;
-  while (*cursor != '\0') {
-    const char *escape = NULL;
-    char unicode[7];
-    size_t length;
-    if (*cursor == '"')
-      escape = "\\\"";
-    else if (*cursor == '\\')
-      escape = "\\\\";
-    else if (*cursor == '\n')
-      escape = "\\n";
-    else if (*cursor == '\r')
-      escape = "\\r";
-    else if (*cursor == '\t')
-      escape = "\\t";
-    else if (*cursor < 32U) {
-      (void)snprintf(unicode, sizeof(unicode), "\\u%04x", *cursor);
-      escape = unicode;
-    }
-    length = escape == NULL ? 1U : strlen(escape);
-    if (used + length >= capacity) return false;
-    if (escape == NULL)
-      output[used++] = (char)*cursor;
-    else {
-      memcpy(output + used, escape, length);
-      used += length;
-    }
-    ++cursor;
-  }
-  output[used] = '\0';
-  return true;
-}
-
-static void proxy_timestamp(char output[32]) {
-  time_t now = time(NULL);
-  struct tm value;
-  (void)gmtime_r(&now, &value);
-  if (strftime(output, 32U, "%Y-%m-%dT%H:%M:%SZ", &value) == 0U)
-    memcpy(output, "1970-01-01T00:00:00Z", 21U);
-}
 
 static void proxy_log_line(proxy_queue *queue, const char *line) {
   if (queue != NULL) proxy_queue_lock(queue);
@@ -63,23 +19,25 @@ static void proxy_log_line(proxy_queue *queue, const char *line) {
 }
 
 void proxy_log_event(proxy_queue *queue, const char *event, const char *state) {
-  char timestamp[32], line[512];
-  proxy_timestamp(timestamp);
-  (void)snprintf(line, sizeof(line),
-                 "{\"timestamp\":\"%s\",\"event\":\"%s\","
-                 "\"state\":\"%s\"}",
-                 timestamp, event, state);
-  proxy_log_line(queue, line);
+  char line[LAGHU_LOG_LINE_SIZE];
+  laghu_log_lifecycle record = {
+      .common = {(time_t)time(NULL), "standalone", "standalone"},
+      .state = state == NULL ? "failed" : state,
+      .failure = event != NULL && strcmp(event, "startup_failure") == 0
+                     ? "runtime"
+                     : "none"};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
+    proxy_log_line(queue, line);
 }
 
 void proxy_log_startup_failure(proxy_queue *queue, const char *failure) {
-  char timestamp[32], line[512];
-  proxy_timestamp(timestamp);
-  (void)snprintf(line, sizeof(line),
-                 "{\"timestamp\":\"%s\",\"event\":\"startup_failure\","
-                 "\"state\":\"stopped\",\"failure\":\"%s\"}",
-                 timestamp, failure);
-  proxy_log_line(queue, line);
+  char line[LAGHU_LOG_LINE_SIZE];
+  laghu_log_lifecycle record = {
+      .common = {(time_t)time(NULL), "standalone", "standalone"},
+      .state = "failed",
+      .failure = failure == NULL ? "runtime" : failure};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
+    proxy_log_line(queue, line);
 }
 
 void proxy_access_init(proxy_access_log *access, proxy_queue *queue) {
@@ -94,9 +52,7 @@ void proxy_access_init(proxy_access_log *access, proxy_queue *queue) {
 }
 
 void proxy_access_write(proxy_queue *queue, const proxy_access_log *access) {
-  char timestamp[32], method[64], path[LAGHU_RUNTIME_PATH_SIZE * 2U];
-  char defer_path[LAGHU_RUNTIME_PATH_SIZE * 2U];
-  char line[LAGHU_RUNTIME_PATH_SIZE * 4U + 1400U];
+  char line[LAGHU_LOG_LINE_SIZE];
   uint64_t elapsed = proxy_monotonic_ms() - access->started_ms;
   (void)laghu_operational_registry_heartbeat(
       &queue->operational, (uint64_t)time(NULL), true, 0U, 0U);
@@ -118,36 +74,21 @@ void proxy_access_write(proxy_queue *queue, const proxy_access_log *access) {
   if (strcmp(access->failure, "none") != 0)
     laghu_operational_registry_failure(&queue->operational,
                                        LAGHU_OPERATIONAL_FAILURE_TRANSPORT);
-  proxy_timestamp(timestamp);
-  if (!proxy_json_escape(access->method[0] ? access->method : "unknown", method,
-                         sizeof(method)) ||
-      !proxy_json_escape(access->path[0] ? access->path : "/", path,
-                         sizeof(path)) ||
-      !proxy_json_escape(access->javascript_defer_path, defer_path,
-                         sizeof(defer_path)))
-    return;
-  (void)snprintf(
-      line, sizeof(line),
-      "{\"timestamp\":\"%s\",\"event\":\"transaction\","
-      "\"request_id\":\"%016llx\",\"method\":\"%s\","
-      "\"path\":\"%s\",\"status\":%u,\"decision\":\"%s\","
-      "\"input_bytes\":%zu,\"output_bytes\":%zu,"
-      "\"duration_ms\":%llu,\"cache\":\"%s\","
-      "\"job_published\":%s,\"failure\":\"%s\","
-      "\"javascript_defer_recommended\":%s,"
-      "\"javascript_defer_rollback_recommended\":%s,"
-      "\"javascript_defer_path\":\"%s\","
-      "\"javascript_defer_template\":\"%s\","
-      "\"javascript_defer_bucket\":%u,"
-      "\"javascript_defer_observations\":%llu}",
-      timestamp, (unsigned long long)access->request_id, method, path,
-      access->status, laghu_decision_name(access->decision),
-      access->input_bytes, access->output_bytes, (unsigned long long)elapsed,
-      access->cache_state, access->job_published ? "true" : "false",
-      access->failure, access->javascript_defer_recommended ? "true" : "false",
-      access->javascript_defer_rollback_recommended ? "true" : "false",
-      defer_path, access->javascript_defer_template,
-      access->javascript_defer_bucket,
-      (unsigned long long)access->javascript_defer_observations);
-  proxy_log_line(queue, line);
+  {
+    laghu_log_transaction record = {
+        .common = {(time_t)time(NULL), "standalone", "standalone"},
+        .method = access->method[0] ? access->method : "unknown",
+        .path = access->path[0] ? access->path : "/",
+        .status = access->status,
+        .decision = laghu_decision_name(access->decision),
+        .request_bytes = access->input_bytes,
+        .original_bytes = access->original_response_bytes,
+        .output_bytes = access->output_bytes,
+        .duration_ms = elapsed,
+        .cache = access->cache_state,
+        .job_published = access->job_published,
+        .failure = access->failure};
+    if (laghu_log_render_transaction(&record, line, sizeof(line)))
+      proxy_log_line(queue, line);
+  }
 }

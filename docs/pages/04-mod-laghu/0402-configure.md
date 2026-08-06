@@ -10,6 +10,8 @@ permalink: /mod-laghu/configure/
 Apache exposes one `Laghu` directive.
 Optimization settings inherit through main server, virtual host, directory, and location configuration; RUM-store settings are accepted only in main server configuration.
 
+Laghu transaction records use Apache's configured ErrorLog sink. Each native error-log line contains one laghu_json=<JSON> payload in the stable laghu-log-v1 schema. Parse the payload, not Apache's prefix. The schema never records request queries, headers, bodies, credentials, tokens, hosts, or cache keys.
+
 | Directive | Context | Accepted value | Default | Effect |
 | --- | --- | --- | --- | --- |
 | `Laghu On\|Off` | inherited | boolean | `Off` | Enables or bypasses transformation. |

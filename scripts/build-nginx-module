@@ -15,6 +15,39 @@ SOURCE_DIR="${NGINX_SOURCE_DIR:-${WORK_DIR}/source}"
 BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
 MODULE_DIR="${NGINX_MODULE_DIR:-${REPO_ROOT}/modules/ngx_http_laghu_module}"
 TAR="${TAR:-tar}"
+LOCK_DIR="${NGINX_BUILD_LOCK_DIR:-${WORK_DIR}/.laghu-build.lock}"
+lock_held=0
+
+release_lock() {
+  if [ "${lock_held}" = 1 ]; then
+    rm -f "${LOCK_DIR}/pid"
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+  fi
+}
+
+trap release_lock EXIT
+trap 'exit 1' HUP INT TERM
+
+mkdir -p "${WORK_DIR}"
+
+while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
+  if [ -f "${LOCK_DIR}/pid" ]; then
+    read -r lock_pid <"${LOCK_DIR}/pid" || lock_pid=""
+    case "${lock_pid}" in
+      *[!0-9]*|'') ;;
+      *)
+        if ! kill -0 "${lock_pid}" 2>/dev/null; then
+          rm -f "${LOCK_DIR}/pid"
+          rmdir "${LOCK_DIR}" 2>/dev/null || true
+          continue
+        fi
+        ;;
+    esac
+  fi
+  sleep 1
+done
+lock_held=1
+printf '%s\n' "$$" >"${LOCK_DIR}/pid"
 
 if [ ! -x "${SOURCE_DIR}/configure" ]; then
   archive="${WORK_DIR}/nginx-${NGINX_VERSION}.tar.gz"
@@ -25,7 +58,6 @@ if [ ! -x "${SOURCE_DIR}/configure" ]; then
     exit 127
   }
 
-  mkdir -p "${WORK_DIR}"
   curl --fail --location --retry 3 \
     --output "${archive}" \
     "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"

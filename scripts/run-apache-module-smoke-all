@@ -807,6 +807,12 @@ if [ "${readiness_status}" != 200 ] || \
   exit 1
 fi
 
+grep 'laghu_json={"schema":"laghu-log-v1"' "${work}/logs/error.log" >/dev/null
+if grep -E 'smoke-test|apache-purge-token-0123456789|[?]laghu=' "${work}/logs/error.log" >/dev/null; then
+  echo "Apache structured log leaked a secret or query." >&2
+  exit 1
+fi
+
 trap - EXIT
 kill -WINCH "${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
 kill "${origin_pid}" 2>/dev/null || true

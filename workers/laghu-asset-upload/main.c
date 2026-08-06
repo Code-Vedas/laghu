@@ -26,11 +26,36 @@
 #include <openssl/x509v3.h>
 
 #include "laghu/assets.h"
+#include "laghu/log.h"
 #include "laghu/source.h"
 #include "laghu/types.h"
 #include "laghu/worker.h"
 
 static volatile sig_atomic_t laghu_asset_stop;
+
+static void laghu_asset_log_lifecycle(const char *state, const char *failure) {
+  char line[LAGHU_LOG_LINE_SIZE];
+  laghu_log_lifecycle record = {
+      .common = {(time_t)time(NULL), "worker", "asset-upload"},
+      .state = state,
+      .failure = failure};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
+    fprintf(stderr, "%s\n", line);
+}
+
+static void laghu_asset_log_job(int status, uint64_t elapsed) {
+  char line[LAGHU_LOG_LINE_SIZE];
+  laghu_log_job record = {
+      .common = {(time_t)time(NULL), "worker", "asset-upload"},
+      .job_kind = "asset_upload",
+      .outcome = status == 0 ? "success" : "failed",
+      .input_bytes = 0U,
+      .output_bytes = 0U,
+      .duration_ms = elapsed / 1000U,
+      .failure = status == 0 ? "none" : "worker"};
+  if (laghu_log_render_job(&record, line, sizeof(line)))
+    fprintf(stderr, "%s\n", line);
+}
 
 typedef struct {
   laghu_asset_config config;
@@ -510,17 +535,7 @@ static int laghu_asset_process(laghu_s3 *s3, laghu_asset_provider *provider) {
     if (loaded == LAGHU_SOURCE_LOAD_READY)
       (void)snprintf(record.source_validator, sizeof(record.source_validator),
                      "%s", validator);
-    if (loaded == LAGHU_SOURCE_LOAD_READY) {
-      char source_hash[LAGHU_RUNTIME_KEY_SIZE];
-      if (laghu_sha256_hex(
-              (laghu_buffer){(const unsigned char *)record.source_url,
-                             strlen(record.source_url)},
-              source_hash))
-        fprintf(stderr,
-                "laghu-asset-upload: event=source_acquired loader=file "
-                "source=%.12s mapping=%.12s bytes=%zu result=ready\n",
-                source_hash, mapping, length);
-    }
+    (void)mapping;
     if ((loaded != LAGHU_SOURCE_LOAD_READY &&
          (!s3->config.policy.trusted_origin_fallback ||
           !laghu_origin_fetch(s3, &record, &body, &length))) ||
@@ -599,24 +614,28 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
                                        s3.config.operational_cache_path,
                                        LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD,
                                        NULL, true, (uint64_t)time(NULL));
+  laghu_asset_log_lifecycle("running", "none");
   (void)signal(SIGINT, laghu_asset_signal);
   (void)signal(SIGTERM, laghu_asset_signal);
   do {
     uint64_t started = laghu_worker_lifecycle_clock();
     int status = laghu_asset_process(&s3, &provider);
+    uint64_t elapsed = laghu_worker_lifecycle_clock() - started;
     laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL),
                                      status == 0);
-    laghu_worker_lifecycle_job(&lifecycle, status == 0,
-                               laghu_worker_lifecycle_clock() - started,
+    laghu_worker_lifecycle_job(&lifecycle, status == 0, elapsed,
                                LAGHU_OPERATIONAL_FAILURE_WORKER);
+    laghu_asset_log_job(status, elapsed);
     if (!serve) {
       laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
+      laghu_asset_log_lifecycle("stopped", "none");
       SSL_CTX_free(s3.tls);
       return status;
     }
     if (!laghu_asset_stop) laghu_sleep(1U);
   } while (!laghu_asset_stop);
   laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
+  laghu_asset_log_lifecycle("stopped", "none");
   SSL_CTX_free(s3.tls);
   return 0;
 }

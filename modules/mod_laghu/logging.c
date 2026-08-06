@@ -3,9 +3,55 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/log.h"
 #include "mod_laghu_internal.h"
 
 static apr_time_t laghu_apache_last_defer_recommendation;
+
+void laghu_apache_log_transaction(request_rec *request,
+                                  laghu_apache_context *context,
+                                  const laghu_http_transaction_result *result,
+                                  const char *failure) {
+  char line[LAGHU_LOG_LINE_SIZE];
+  const char *cache = "none";
+  const char *decision = "bypass-error";
+  uint64_t original = 0U, output = 0U;
+  bool job_published = false;
+  if (request == NULL || context == NULL || context->log_written) return;
+  if (result != NULL) {
+    decision = laghu_decision_name(result->decision);
+    original = result->original.length;
+    output = result->selected.length;
+    job_published = result->job_published;
+    if (result->action == LAGHU_HTTP_ACTION_SERVE_CACHED)
+      cache = "warm";
+    else if (result->action != LAGHU_HTTP_ACTION_BYPASS)
+      cache = "cold";
+  }
+  {
+    laghu_log_transaction record = {
+        .common = {(time_t)apr_time_sec(apr_time_now()), "apache", "apache"},
+        .method = request->method == NULL ? "unknown" : request->method,
+        .path = request->uri == NULL ? "/" : request->uri,
+        .status = (unsigned int)request->status,
+        .decision = decision,
+        .request_bytes = request->read_length > 0 ? request->read_length : 0U,
+        .original_bytes = original,
+        .output_bytes = output,
+        .duration_ms =
+            context->log_started == 0
+                ? 0U
+                : (uint64_t)((apr_time_now() - context->log_started) / 1000),
+        .cache = cache,
+        .job_published = job_published,
+        .failure = failure == NULL ? "none" : failure};
+    if (laghu_log_render_transaction(&record, line, sizeof(line))) {
+      ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, request, "laghu_json=%s",
+                    line);
+      context->log_written = true;
+    }
+  }
+}
 
 void laghu_apache_log_defer_recommendation(
     request_rec *request, const laghu_http_transaction_result *result) {

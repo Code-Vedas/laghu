@@ -109,4 +109,7 @@ if launchctl print "${target}" >/dev/null 2>&1; then
   exit 1
 fi
 
+grep '"schema":"laghu-log-v1"' "${work}/service.log" >/dev/null
+grep '"event":"job"' "${work}/service.log" >/dev/null
+
 echo "macOS launchd service lifecycle passed"

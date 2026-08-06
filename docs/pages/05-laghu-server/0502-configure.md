@@ -10,6 +10,8 @@ permalink: /laghu-server/configure/
 The standalone server accepts command-line options only.
 `--listen`, `--origin`, one of `--file-cache-backend` or deprecated `--cache`, and `--worker-queue` are required; duplicate, conflicting, or unknown options fail startup.
 
+Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lifecycle changes. Transaction paths exclude the complete query string; headers, bodies, credentials, tokens, hosts, and cache keys are never emitted. Worker services use the same schema on stderr for lifecycle and job events.
+
 | Option | Accepted value | Default | Effect |
 | --- | --- | --- | --- |
 | `--listen HOST:PORT` | valid endpoint | required | Selects the client listener. |

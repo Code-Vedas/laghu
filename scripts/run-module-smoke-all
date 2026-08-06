@@ -1312,6 +1312,12 @@ done
 test "${attempt}" -lt 50
 curl --fail --silent "http://127.0.0.1:${PORT}${outline_route}" | grep 'outlinePublic' >/dev/null
 
+grep 'laghu_json={"schema":"laghu-log-v1"' "${SMOKE_DIR}/logs/error.log" >/dev/null
+if grep -E 'smoke-test|nginx-purge-token-0123456789|[?]laghu=' "${SMOKE_DIR}/logs/error.log" >/dev/null; then
+  echo "NGINX structured log leaked a secret or query." >&2
+  exit 1
+fi
+
 kill "${nginx_pid}"
 wait "${nginx_pid}"
 if [ "${optimizer_pid}" != "" ]; then

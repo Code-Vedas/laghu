@@ -270,7 +270,7 @@ Resource-governance evidence: shared configuration supplies inherited 4–256 Mi
 ### 4.5 Observability and Operations
 
 - [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
-- [ ] Emit the standalone JSON transaction schema from NGINX, Apache, and `laghu-libvips` so every process has one operational log contract.
+- [x] Emit the standalone JSON transaction schema from NGINX, Apache, and `laghu-libvips` so every process has one operational log contract.
 - [ ] Emit OpenTelemetry traces across the optimization path.
 - [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.

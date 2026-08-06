@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
+import json
 from pathlib import Path
 import re
 import shutil
@@ -106,11 +107,13 @@ def main():
             else:
                 assert set(variants(cache)) == before
                 if result.stderr:
-                    assert "reason=no-valid-smaller-candidate" in result.stderr, (
-                        extension,
-                        result.returncode,
-                        result.stderr,
-                    )
+                    records = [json.loads(line) for line in result.stderr.splitlines()]
+                    assert any(
+                        record["schema"] == "laghu-log-v1"
+                        and record["event"] == "job"
+                        and record["outcome"] == "preserved"
+                        for record in records
+                    ), (extension, result.returncode, result.stderr)
         assert len(published) >= 2
         assert "png" in published
         assert len(indexes(cache)) >= len(published) * 2

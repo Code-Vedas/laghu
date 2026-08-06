@@ -52,6 +52,7 @@ use publication::{publish, publish_catalog};
 #[cfg(test)]
 use publication::{sha256, write_fixed};
 use queue::Queue;
+mod logging;
 #[cfg(test)]
 use queue::{FILTER_SOURCE_MAP, JOB_JAVASCRIPT, queue_slot_base};
 
@@ -432,6 +433,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if action == "--once" {
+        logging::lifecycle("starting", "none");
         let mut operational = Operational::open(&cache_path);
         let (capacity, occupied) = queue.snapshot();
         operational.heartbeat(capacity, occupied);
@@ -439,8 +441,16 @@ fn main() -> Result<()> {
         let processed = process_one(&mut queue, &cache_path);
         let elapsed = started.elapsed().map_or(0, |time| time.as_micros() as u64);
         record_process(&mut operational, &processed, elapsed);
+        logging::job(
+            matches!(processed, ProcessOutcome::Success),
+            0,
+            0,
+            elapsed / 1_000,
+        );
+        logging::lifecycle("stopped", "none");
         return Ok(());
     }
+    logging::lifecycle("running", "none");
     let mut operational = Operational::open(&cache_path);
     loop {
         let (capacity, occupied) = queue.snapshot();
@@ -449,6 +459,14 @@ fn main() -> Result<()> {
         let processed = process_one(&mut queue, &cache_path);
         let elapsed = started.elapsed().map_or(0, |time| time.as_micros() as u64);
         record_process(&mut operational, &processed, elapsed);
+        if !matches!(processed, ProcessOutcome::Idle) {
+            logging::job(
+                matches!(processed, ProcessOutcome::Success),
+                0,
+                0,
+                elapsed / 1_000,
+            );
+        }
         if !matches!(processed, ProcessOutcome::Success) {
             thread::sleep(Duration::from_millis(25));
         }
