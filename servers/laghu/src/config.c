@@ -37,12 +37,7 @@ static bool proxy_copy(char *output, size_t capacity, const char *value) {
 }
 
 static bool proxy_absolute_path(const char *value) {
-#ifdef _WIN32
-  return value != NULL && isalpha((unsigned char)value[0]) && value[1] == ':' &&
-         (value[2] == '\\' || value[2] == '/');
-#else
   return value != NULL && value[0] == '/';
-#endif
 }
 
 static bool proxy_endpoint(const char *value, char *host, size_t host_capacity,
@@ -448,15 +443,6 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       else
         return proxy_error(error, error_size, "invalid --forwarded-headers");
       forwarded_seen = true;
-    } else if (strcmp(name, "--service") == 0) {
-#ifdef _WIN32
-      if (options->service_mode)
-        return proxy_error(error, error_size, "duplicate --service");
-      options->service_mode = true;
-#else
-      return proxy_error(error, error_size,
-                         "--service is available only on Windows");
-#endif
     } else {
       return proxy_error(error, error_size, "unknown option");
     }

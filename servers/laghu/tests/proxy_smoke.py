@@ -22,22 +22,16 @@ BODY = b"<!doctype html>\n<html>  <head><!-- remove --></head>  <body>hello</bod
 
 
 def start_process(arguments, **options):
-    if sys.platform == "win32":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     return subprocess.Popen(arguments, **options)
 
 
 def request_shutdown(process):
-    if sys.platform == "win32":
-        process.terminate()
-    else:
-        process.terminate()
+    process.terminate()
 
 
 def wait_for_shutdown(process, timeout=5):
     status = process.wait(timeout=timeout)
-    if sys.platform != "win32":
-        assert status == 0
+    assert status == 0
     return status
 
 
@@ -255,10 +249,6 @@ def create_tls_certificate(root):
     if openssl is None:
         raise AssertionError("OpenSSL executable is required for TLS fixtures")
     command_environment = os.environ.copy()
-    if sys.platform == "win32" and "OPENSSL_CONF" not in command_environment:
-        configuration = pathlib.Path(openssl).with_name("openssl.cnf")
-        if configuration.is_file():
-            command_environment["OPENSSL_CONF"] = str(configuration)
     quiet = {
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
@@ -555,8 +545,7 @@ def main():
         proxy_port = free_port()
         purge_token = root / "purge.token"
         purge_token.write_text("standalone-purge-token-0123456789\n")
-        if sys.platform != "win32":
-            purge_token.chmod(0o600)
+        purge_token.chmod(0o600)
         flush_file = root / "cache.flush"
         asset_catalog = root / "asset-catalog"
         asset_queue = root / "asset.queue"
@@ -874,21 +863,16 @@ def main():
             assert b" 200 " in ready_head.split(b"\r\n", 1)[0]
             assert ready_body == b""
             cache_path = root / "cache"
-            if sys.platform == "win32":
-                unavailable_path = root / "cache-unavailable"
-                cache_path.rename(unavailable_path)
-                try:
-                    unavailable_head, unavailable_body = request(
-                        proxy_port, "/.laghu/ready", headers=admin_headers
-                    )
-                finally:
-                    unavailable_path.rename(cache_path)
-            else:
-                cache_path.chmod(0o500)
+            unavailable_cache_path = root / "cache-unavailable"
+            cache_path.rename(unavailable_cache_path)
+            cache_path.touch()
+            try:
                 unavailable_head, unavailable_body = request(
                     proxy_port, "/.laghu/ready", headers=admin_headers
                 )
-                cache_path.chmod(0o700)
+            finally:
+                cache_path.unlink()
+                unavailable_cache_path.rename(cache_path)
             assert b" 503 " in unavailable_head.split(b"\r\n", 1)[0]
             assert b'"cache":"not_ready"' in unavailable_body
             second_head, second_body = request(proxy_port, "/index.html")
@@ -1018,50 +1002,41 @@ def main():
                 or b"x-laghu: bypass-error" in corrupt_head
             )
             flush_file.write_text("laghu-cache-flush-v1 9\n")
-            if sys.platform != "win32":
-                flush_file.chmod(0o600)
+            flush_file.chmod(0o600)
             _, flushed_stats = request(
                 proxy_port, "/.laghu/stats", headers=admin_headers
             )
             assert b'"generation":9' in flushed_stats
-            if sys.platform != "win32":
-                draining = socket.create_connection(
-                    ("127.0.0.1", proxy_port), timeout=5
-                )
-                draining.sendall(
-                    b"GET /drain HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
-                )
-                time.sleep(0.1)
-                queued_for_shutdown = socket.create_connection(
-                    ("127.0.0.1", proxy_port), timeout=5
-                )
-                queued_for_shutdown.sendall(
-                    b"GET /api/data HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
-                )
-                time.sleep(0.1)
-                request_shutdown(process)
-                queued_response = read_open_socket(queued_for_shutdown)
-                active_response = read_open_socket(draining)
-                assert queued_response.startswith(b"http/1.1 503 "), queued_response
-                assert active_response.startswith(b"http/1.1 200 "), active_response
-                assert b"hello" in active_response, active_response
-                wait_for_shutdown(process)
-            else:
-                request_shutdown(process)
-                wait_for_shutdown(process)
+            draining = socket.create_connection(("127.0.0.1", proxy_port), timeout=5)
+            draining.sendall(
+                b"GET /drain HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            time.sleep(0.1)
+            queued_for_shutdown = socket.create_connection(
+                ("127.0.0.1", proxy_port), timeout=5
+            )
+            queued_for_shutdown.sendall(
+                b"GET /api/data HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            time.sleep(0.1)
+            request_shutdown(process)
+            queued_response = read_open_socket(queued_for_shutdown)
+            active_response = read_open_socket(draining)
+            assert queued_response.startswith(b"http/1.1 503 "), queued_response
+            assert active_response.startswith(b"http/1.1 200 "), active_response
+            assert b"hello" in active_response, active_response
+            wait_for_shutdown(process)
             main_log.flush()
             main_log.seek(0)
             logs = main_log.read().decode()
             assert '"event":"startup"' in logs
             assert '"event":"transaction"' in logs
             assert '"path":"/.laghu/ready"' in logs
-            if sys.platform != "win32":
-                assert '"state":"draining"' in logs
-                assert '"state":"stopped"' in logs
+            assert '"state":"draining"' in logs
+            assert '"state":"stopped"' in logs
             assert '"failure":"origin_timeout"' in logs
             assert '"failure":"queue_saturated"' in logs
-            if sys.platform != "win32":
-                assert '"failure":"shutdown"' in logs
+            assert '"failure":"shutdown"' in logs
             assert "query-secret" not in logs
             assert "private-token" not in logs
             assert "private-cookie" not in logs
@@ -1129,51 +1104,48 @@ def main():
             assert "192.0.2.10" not in forwarded_logs
             assert "127.0.0.1" not in forwarded_logs
             process.stderr.close()
-            if sys.platform != "win32":
-                force_port = free_port()
-                process = start_process(
-                    [
-                        str(executable),
-                        "--listen",
-                        f"127.0.0.1:{force_port}",
-                        "--origin",
-                        f"http://127.0.0.1:{origin_port}",
-                        "--cache",
-                        str(root / "cache"),
-                        "--worker-queue",
-                        str(root / "missing.queue"),
-                        "--io-timeout",
-                        "30",
-                        "--drain-timeout",
-                        "30",
-                    ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
-                for _ in range(warm_attempts):
-                    try:
-                        forced = socket.create_connection(
-                            ("127.0.0.1", force_port), timeout=5
-                        )
-                        break
-                    except OSError:
-                        time.sleep(0.05)
-                else:
-                    raise AssertionError("forced-drain proxy did not start")
-                forced.sendall(
-                    b"GET /hang HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
-                )
-                time.sleep(0.2)
-                request_shutdown(process)
-                time.sleep(0.3)
-                request_shutdown(process)
-                started = time.monotonic()
-                wait_for_shutdown(process)
-                assert time.monotonic() - started < 5
-                read_open_socket(forced)
-                forced_logs = process.stderr.read().decode()
-                assert '"state":"forcing"' in forced_logs
-                assert '"failure":"shutdown"' in forced_logs
+            force_port = free_port()
+            process = start_process(
+                [
+                    str(executable),
+                    "--listen",
+                    f"127.0.0.1:{force_port}",
+                    "--origin",
+                    f"http://127.0.0.1:{origin_port}",
+                    "--cache",
+                    str(root / "cache"),
+                    "--worker-queue",
+                    str(root / "missing.queue"),
+                    "--io-timeout",
+                    "30",
+                    "--drain-timeout",
+                    "30",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            for _ in range(warm_attempts):
+                try:
+                    forced = socket.create_connection(("127.0.0.1", force_port), timeout=5)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                raise AssertionError("forced-drain proxy did not start")
+            forced.sendall(
+                b"GET /hang HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            time.sleep(0.2)
+            request_shutdown(process)
+            time.sleep(0.3)
+            request_shutdown(process)
+            started = time.monotonic()
+            wait_for_shutdown(process)
+            assert time.monotonic() - started < 5
+            read_open_socket(forced)
+            forced_logs = process.stderr.read().decode()
+            assert '"state":"forcing"' in forced_logs
+            assert '"failure":"shutdown"' in forced_logs
         except Exception:
             if process.poll() is None:
                 request_shutdown(process)

@@ -420,7 +420,7 @@ Optional professional support does not change the free product. Laghu has no dar
 
 * **Three first-class packages**: `ngx-laghu`, `mod-laghu`, and the standalone `laghu` proxy; `laghu-libvips` remains their internal transform dependency.
 * **Prebuilt server adapters** for every supported NGINX and Apache release and ABI.
-* **Distro packages**: deb, rpm, Homebrew, and Winget.
+* **Distro packages**: deb, rpm, and Homebrew.
 * **Container delivery**: separate NGINX, Apache, and standalone proxy images plus a Helm chart.
 * **Server coverage**: Apache 2.4, NGINX, OpenResty, Angie, and freenginx.
 * **LTS branches** with a published security-response policy and CVE process.

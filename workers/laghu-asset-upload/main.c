@@ -4,35 +4,21 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <ctype.h>
+#include <netdb.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#define strcasecmp _stricmp
-#define laghu_socket SOCKET
-#define laghu_socklen int
-#define LAGHU_INVALID_SOCKET INVALID_SOCKET
-#define laghu_close closesocket
-#define laghu_sleep(value) Sleep((value) * 1000U)
-#else
-#include <netdb.h>
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 #define laghu_socket int
 #define laghu_socklen socklen_t
 #define LAGHU_INVALID_SOCKET (-1)
 #define laghu_close close
 #define laghu_sleep(value) sleep(value)
-#endif
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -45,12 +31,6 @@
 #include "laghu/worker.h"
 
 static volatile sig_atomic_t laghu_asset_stop;
-
-#ifdef _WIN32
-static SERVICE_STATUS_HANDLE laghu_asset_service_handle;
-static SERVICE_STATUS laghu_asset_service_status;
-static const char *laghu_asset_service_config;
-#endif
 
 typedef struct {
   laghu_asset_config config;
@@ -114,11 +94,7 @@ static bool laghu_s3_authorization_at(laghu_s3 *s3, const char *method,
   unsigned char kdate[32], kregion[32], kservice[32], ksigning[32],
       signed_hash[32];
   struct tm utc;
-#ifdef _WIN32
-  if (gmtime_s(&utc, &now) != 0) return false;
-#else
   if (gmtime_r(&now, &utc) == NULL) return false;
-#endif
   if (strftime(date, 17U, "%Y%m%dT%H%M%SZ", &utc) != 16U ||
       strftime(day, 9U, "%Y%m%d", &utc) != 8U)
     return false;
@@ -174,19 +150,11 @@ static bool laghu_s3_authorization(laghu_s3 *s3, const char *method,
 
 static void laghu_socket_timeout(laghu_socket socket_value,
                                  unsigned int seconds) {
-#ifdef _WIN32
-  DWORD timeout = seconds * 1000U;
-  (void)setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO,
-                   (const char *)&timeout, sizeof(timeout));
-  (void)setsockopt(socket_value, SOL_SOCKET, SO_SNDTIMEO,
-                   (const char *)&timeout, sizeof(timeout));
-#else
   struct timeval timeout = {(time_t)seconds, 0};
   (void)setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout,
                    sizeof(timeout));
   (void)setsockopt(socket_value, SOL_SOCKET, SO_SNDTIMEO, &timeout,
                    sizeof(timeout));
-#endif
 }
 
 static laghu_socket laghu_s3_connect(const char *host, unsigned int timeout,
@@ -600,7 +568,7 @@ publish_failure:
 }
 
 static void laghu_usage(FILE *stream) {
-  fputs("Usage: laghu-asset-upload --once|--serve|--service CONFIG\n", stream);
+  fputs("Usage: laghu-asset-upload --once|--serve CONFIG\n", stream);
 }
 
 static int laghu_asset_run(const char *mode, const char *config_path) {
@@ -611,10 +579,6 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   laghu_worker_lifecycle lifecycle;
   laghu_worker_lifecycle_init(&lifecycle);
   error[0] = '\0';
-#ifdef _WIN32
-  WSADATA sockets;
-  if (WSAStartup(MAKEWORD(2, 2), &sockets) != 0) return 1;
-#endif
   serve = strcmp(mode, "--once") != 0;
   memset(&s3, 0, sizeof(s3));
   if (!laghu_asset_config_load(config_path, &s3.config, error, sizeof(error)) ||
@@ -654,62 +618,14 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   } while (!laghu_asset_stop);
   laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
   SSL_CTX_free(s3.tls);
-#ifdef _WIN32
-  WSACleanup();
-#endif
   return 0;
 }
 
-#ifdef _WIN32
-static void WINAPI laghu_asset_service_control(DWORD control) {
-  if (control != SERVICE_CONTROL_STOP) return;
-  laghu_asset_service_status.dwCurrentState = SERVICE_STOP_PENDING;
-  laghu_asset_service_status.dwControlsAccepted = 0U;
-  laghu_asset_service_status.dwWaitHint = 15000U;
-  (void)SetServiceStatus(laghu_asset_service_handle,
-                         &laghu_asset_service_status);
-  laghu_asset_stop = 1;
-}
-
-static void WINAPI laghu_asset_service_main(DWORD argc, LPSTR *argv) {
-  int status;
-  (void)argc;
-  (void)argv;
-  memset(&laghu_asset_service_status, 0, sizeof(laghu_asset_service_status));
-  laghu_asset_service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-  laghu_asset_service_status.dwCurrentState = SERVICE_START_PENDING;
-  laghu_asset_service_handle = RegisterServiceCtrlHandlerA(
-      "laghu-asset-upload", laghu_asset_service_control);
-  if (laghu_asset_service_handle == NULL) return;
-  laghu_asset_service_status.dwCurrentState = SERVICE_RUNNING;
-  laghu_asset_service_status.dwControlsAccepted = SERVICE_ACCEPT_STOP;
-  (void)SetServiceStatus(laghu_asset_service_handle,
-                         &laghu_asset_service_status);
-  status = laghu_asset_run("--service", laghu_asset_service_config);
-  laghu_asset_service_status.dwCurrentState = SERVICE_STOPPED;
-  laghu_asset_service_status.dwWin32ExitCode =
-      status == 0 ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR;
-  laghu_asset_service_status.dwServiceSpecificExitCode = (DWORD)status;
-  laghu_asset_service_status.dwControlsAccepted = 0U;
-  (void)SetServiceStatus(laghu_asset_service_handle,
-                         &laghu_asset_service_status);
-}
-#endif
-
 int main(int argc, char **argv) {
   if (argc != 3 ||
-      (strcmp(argv[1], "--once") != 0 && strcmp(argv[1], "--serve") != 0 &&
-       strcmp(argv[1], "--service") != 0)) {
+      (strcmp(argv[1], "--once") != 0 && strcmp(argv[1], "--serve") != 0)) {
     laghu_usage(stderr);
     return 2;
   }
-#ifdef _WIN32
-  if (strcmp(argv[1], "--service") == 0) {
-    SERVICE_TABLE_ENTRYA table[] = {
-        {"laghu-asset-upload", laghu_asset_service_main}, {NULL, NULL}};
-    laghu_asset_service_config = argv[2];
-    return StartServiceCtrlDispatcherA(table) ? 0 : 1;
-  }
-#endif
   return laghu_asset_run(argv[1], argv[2]);
 }

@@ -37,6 +37,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+def lock_queue(file):
+    file.seek(0)
+    import fcntl
+
+    fcntl.flock(file.fileno(), fcntl.LOCK_EX)
+
+
+def unlock_queue(file):
+    file.seek(0)
+    import fcntl
+
+    fcntl.flock(file.fileno(), fcntl.LOCK_UN)
+
+
 def main():
     worker = pathlib.Path(sys.argv[1])
     fixture = pathlib.Path(sys.argv[2])
@@ -87,18 +101,49 @@ def main():
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        subprocess.run(
-            [worker, "--init", queue, cache, config], check=True
-        )
         environment = os.environ.copy()
         environment["LAGHU_TEST_FETCH_ENDPOINT"] = (
             f"127.0.0.1:{server.server_address[1]}"
         )
         environment["LAGHU_TEST_FETCH_CA"] = str(certificate)
-        process = subprocess.Popen(
+        absent = subprocess.Popen(
             [worker, "--serve", queue, cache, config], env=environment,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        try:
+            time.sleep(0.2)
+            if absent.poll() is not None:
+                stdout, stderr = absent.communicate(timeout=5)
+                raise AssertionError(
+                    f"font fetch worker exited before queue initialization with "
+                    f"{absent.returncode}\nworker stdout:\n{stdout}\n"
+                    f"worker stderr:\n{stderr}"
+                )
+        finally:
+            if absent.poll() is None:
+                absent.terminate()
+                absent.wait(timeout=5)
+        subprocess.run([worker, "--init", queue, cache, config], check=True)
+        with queue.open("r+b", buffering=0) as queue_lock:
+            lock_queue(queue_lock)
+            process = subprocess.Popen(
+                [worker, "--serve", queue, cache, config], env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            try:
+                # Keep the native whole-file lock held across several of the
+                # worker's 100 ms unavailable intervals.  The same process
+                # must remain alive and recover once the lock is released.
+                time.sleep(0.35)
+                if process.poll() is not None:
+                    stdout, stderr = process.communicate(timeout=5)
+                    raise AssertionError(
+                        f"font fetch worker exited while queue was locked with "
+                        f"{process.returncode}\nworker stdout:\n{stdout}\n"
+                        f"worker stderr:\n{stderr}"
+                    )
+            finally:
+                unlock_queue(queue_lock)
         try:
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:

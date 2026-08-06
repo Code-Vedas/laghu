@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_HTTP_ABI_VERSION 4U
+#define LAGHU_HTTP_ABI_VERSION 5U
 #define LAGHU_HTTP_MAX_REQUEST_HEADERS 64U
 #define LAGHU_HTTP_MAX_RESPONSE_HEADERS 64U
 #define LAGHU_HTTP_MAX_HEADER_OPERATIONS 32U
@@ -165,11 +165,8 @@ typedef struct {
   laghu_config config;
   const char *cache_path;
   laghu_rum_engine *rum;
-  const char *worker_queue_path;
   laghu_runtime_queue *queue;
-  const char *font_fetch_queue_path;
   laghu_runtime_queue *font_fetch_queue;
-  const char *javascript_queue_path;
   laghu_runtime_queue *javascript_queue;
   const char *javascript_target;
   const laghu_font_provider_set *font_providers;

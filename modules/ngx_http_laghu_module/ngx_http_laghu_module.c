@@ -26,32 +26,43 @@
 #include "ngx_http_laghu_internal.h"
 
 static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration);
-void ngx_http_laghu_queue_cleanup(void *data) {
-  laghu_runtime_queue_close(data);
+
+laghu_runtime_queue *ngx_http_laghu_image_queue(
+    ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue_snapshot snapshot;
+  if (conf == NULL || !conf->runtime_queue_attached ||
+      !laghu_runtime_queue_snapshot_get(&conf->runtime_queue, &snapshot))
+    return NULL;
+  return &conf->runtime_queue;
+}
+
+laghu_runtime_queue *ngx_http_laghu_font_queue(
+    ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue_snapshot snapshot;
+  if (conf == NULL || !conf->font_fetch_runtime_queue_attached ||
+      conf->service.font_providers == NULL ||
+      !laghu_runtime_queue_snapshot_get(&conf->font_fetch_runtime_queue,
+                                        &snapshot))
+    return NULL;
+  return &conf->font_fetch_runtime_queue;
+}
+
+laghu_runtime_queue *ngx_http_laghu_javascript_queue(
+    ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue_snapshot snapshot;
+  if (conf == NULL || !conf->javascript_runtime_queue_attached ||
+      !laghu_runtime_queue_snapshot_get(&conf->javascript_runtime_queue,
+                                        &snapshot))
+    return NULL;
+  return &conf->javascript_runtime_queue;
 }
 
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
-  laghu_runtime_queue *queue = &conf->font_fetch_runtime_queue;
-  laghu_runtime_queue_snapshot snapshot;
-  if (conf->service.font_providers == NULL ||
-      conf->service.font_fetch_queue[0] == '\0')
-    return false;
-  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (!laghu_runtime_queue_open(queue, conf->service.font_fetch_queue) ||
-       !laghu_runtime_queue_snapshot_get(queue, &snapshot)))
-    return false;
-  return true;
+  return ngx_http_laghu_font_queue(conf) != NULL;
 }
 
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
-  laghu_runtime_queue *queue = &conf->javascript_runtime_queue;
-  laghu_runtime_queue_snapshot snapshot;
-  if (conf->service.javascript_queue[0] == '\0') return false;
-  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (!laghu_runtime_queue_open(queue, conf->service.javascript_queue) ||
-       !laghu_runtime_queue_snapshot_get(queue, &snapshot)))
-    return false;
-  return true;
+  return ngx_http_laghu_javascript_queue(conf) != NULL;
 }
 
 static ngx_command_t ngx_http_laghu_commands[] = {
@@ -85,14 +96,11 @@ ngx_module_t ngx_http_laghu_module = {NGX_MODULE_V1,
                                       NGX_MODULE_V1_PADDING};
 
 bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
-  laghu_runtime_queue *queue = &conf->runtime_queue;
+  laghu_runtime_queue *queue = ngx_http_laghu_image_queue(conf);
   laghu_runtime_queue_snapshot snapshot;
   uint64_t now = (uint64_t)ngx_time();
-  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (!laghu_runtime_queue_open(queue, conf->service.worker_queue) ||
-       !laghu_runtime_queue_snapshot_get(queue, &snapshot))) {
+  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot))
     return false;
-  }
   return snapshot.capabilities != 0U && snapshot.worker_heartbeat != 0U &&
          snapshot.worker_heartbeat <= now &&
          now - snapshot.worker_heartbeat <= 45U;

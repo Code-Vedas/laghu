@@ -48,14 +48,6 @@ docker pull ghcr.io/code-vedas/ngx-laghu:latest
 docker run --rm ghcr.io/code-vedas/ngx-laghu:latest nginx -t
 ```
 
-## Windows
-
-```powershell
-winget install CodeVedas.NgxLaghu
-```
-
-The installer includes matched NGINX and native workers, configures their services and ACLs, and validates the signed build manifest.
-
 ## Source Build
 
 ```bash

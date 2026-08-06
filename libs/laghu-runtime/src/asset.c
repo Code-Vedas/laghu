@@ -4,34 +4,22 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "laghu/assets.h"
 #include "laghu/types.h"
-
-#ifdef _WIN32
-#include <direct.h>
-#include <io.h>
-#include <windows.h>
-#define laghu_asset_mkdir(path) _mkdir(path)
-#define laghu_asset_unlink(path) _unlink(path)
-#define laghu_asset_pid() GetCurrentProcessId()
-#define laghu_asset_replace(from, to) \
-  MoveFileExA((from), (to), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
-#else
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #define laghu_asset_mkdir(path) mkdir((path), 0750)
 #define laghu_asset_unlink(path) unlink(path)
 #define laghu_asset_pid() getpid()
 #define laghu_asset_replace(from, to) (rename((from), (to)) == 0)
-#endif
 
 typedef struct {
   uint32_t version;
@@ -101,22 +89,6 @@ static bool laghu_asset_directory(const char *path) {
 static bool laghu_asset_directory_has_capacity(const char *path,
                                                unsigned int limit) {
   unsigned int count = 0U;
-#ifdef _WIN32
-  WIN32_FIND_DATAA found;
-  HANDLE search;
-  char pattern[LAGHU_RUNTIME_PATH_SIZE];
-  if (snprintf(pattern, sizeof(pattern), "%s/*", path) <= 0) return false;
-  search = FindFirstFileA(pattern, &found);
-  if (search == INVALID_HANDLE_VALUE) return true;
-  do {
-    if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0U &&
-        ++count >= limit) {
-      (void)FindClose(search);
-      return false;
-    }
-  } while (FindNextFileA(search, &found));
-  (void)FindClose(search);
-#else
   DIR *directory = opendir(path);
   struct dirent *entry;
   if (directory == NULL) return false;
@@ -126,7 +98,6 @@ static bool laghu_asset_directory_has_capacity(const char *path,
       return false;
     }
   (void)closedir(directory);
-#endif
   return true;
 }
 
@@ -705,9 +676,9 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
         source[end - index] = '\0';
       } else if (root_relative &&
                  domain_length + end - index < sizeof(source)) {
-        (void)snprintf(source, sizeof(source), "%s%.*s",
-                       config->policy.source_domain, (int)(end - index),
-                       input.data + index);
+        memcpy(source, config->policy.source_domain, domain_length);
+        memcpy(source + domain_length, input.data + index, end - index);
+        source[domain_length + end - index] = '\0';
       } else if (document_relative &&
                  !(end - index >= 2U && input.data[index] == '.' &&
                    input.data[index + 1U] == '.')) {
@@ -720,11 +691,14 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
           relative += 2U;
           relative_length -= 2U;
         }
-        if (domain_length + directory_length + relative_length < sizeof(source))
-          (void)snprintf(source, sizeof(source), "%s%.*s%.*s",
-                         config->policy.source_domain, (int)directory_length,
-                         page_path, (int)relative_length, relative);
-        else
+        if (domain_length + directory_length + relative_length <
+            sizeof(source)) {
+          memcpy(source, config->policy.source_domain, domain_length);
+          memcpy(source + domain_length, page_path, directory_length);
+          memcpy(source + domain_length + directory_length, relative,
+                 relative_length);
+          source[domain_length + directory_length + relative_length] = '\0';
+        } else
           source[0] = '\0';
       } else {
         source[0] = '\0';
@@ -854,16 +828,6 @@ bool laghu_asset_job_take(const laghu_asset_config *config,
     return false;
   *body = NULL;
   *body_length = 0U;
-#ifdef _WIN32
-  WIN32_FIND_DATAA found;
-  HANDLE search;
-  char pattern[LAGHU_RUNTIME_PATH_SIZE];
-  const char *name = NULL;
-  (void)snprintf(pattern, sizeof(pattern), "%s/*.job", config->queue_path);
-  search = FindFirstFileA(pattern, &found);
-  if (search == INVALID_HANDLE_VALUE) return false;
-  name = found.cFileName;
-#else
   DIR *directory;
   struct dirent *entry;
   const char *name = NULL;
@@ -880,7 +844,6 @@ bool laghu_asset_job_take(const laghu_asset_config *config,
     (void)closedir(directory);
     return false;
   }
-#endif
   {
     char source[LAGHU_RUNTIME_PATH_SIZE];
     laghu_asset_job_file header;
@@ -889,11 +852,7 @@ bool laghu_asset_job_take(const laghu_asset_config *config,
     int a = snprintf(source, sizeof(source), "%s/%s", config->queue_path, name);
     int b = snprintf(job_path, LAGHU_RUNTIME_PATH_SIZE, "%s/%s.work",
                      config->queue_path, name);
-#ifndef _WIN32
     (void)closedir(directory);
-#else
-    (void)FindClose(search);
-#endif
     if (a <= 0 || b <= 0 || (size_t)a >= sizeof(source) ||
         (size_t)b >= LAGHU_RUNTIME_PATH_SIZE ||
         !laghu_asset_replace(source, job_path) ||

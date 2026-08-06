@@ -7,7 +7,7 @@ permalink: /developer-guide/releasing/
 
 # Packaging and Release Engineering
 
-The monorepo ships deb, RPM, Homebrew, Winget, containers, Helm, matched NGINX/Apache artifacts, the standalone server, and shared worker packages.
+The monorepo ships deb, RPM, Homebrew, containers, Helm, matched NGINX/Apache artifacts, the standalone server, and shared worker packages.
 
 ## Release Inputs
 

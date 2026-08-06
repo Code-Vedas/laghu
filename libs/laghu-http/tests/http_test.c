@@ -8,20 +8,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "laghu/cache.h"
 #include "laghu/javascript.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
 #include "laghu/types.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <unistd.h>
-
-#endif
 
 #define CHECK(condition)                                                 \
   do {                                                                   \
@@ -41,25 +34,11 @@ static laghu_rum_engine *test_rum;
 
 static void initialize_test_paths(void) {
   unsigned long process_id;
-#ifdef _WIN32
-  char temporary_buffer[LAGHU_RUNTIME_PATH_SIZE];
-  DWORD temporary_length =
-      GetTempPathA((DWORD)sizeof(temporary_buffer), temporary_buffer);
-  const char *temporary =
-      temporary_length > 0U && temporary_length < sizeof(temporary_buffer)
-          ? temporary_buffer
-          : ".";
-  process_id = (unsigned long)GetCurrentProcessId();
-#else
   const char *temporary = getenv("TMPDIR");
-  if (temporary == NULL || temporary[0] == '\0') {
-    temporary = getenv("TEMP");
-  }
   if (temporary == NULL || temporary[0] == '\0') {
     temporary = ".";
   }
   process_id = (unsigned long)getpid();
-#endif
   CHECK(snprintf(test_cache_path, sizeof(test_cache_path),
                  "%s/laghu-http-test-cache-%lu", temporary, process_id) > 0);
   CHECK(snprintf(test_queue_path, sizeof(test_queue_path),
@@ -114,7 +93,6 @@ static laghu_http_environment test_environment(const char *cache_path,
   test_config(&environment.config);
   environment.cache_path = cache_path;
   environment.rum = test_rum;
-  environment.worker_queue_path = queue == NULL ? NULL : test_queue_path;
   environment.queue = queue;
   environment.now = 1784851200U;
   return environment;
@@ -452,6 +430,38 @@ static void test_image_cold_warm_and_queue(void) {
   (void)remove(test_queue_path);
 }
 
+static void test_request_does_not_attach_queue(void) {
+  const laghu_http_header headers[] = {
+      {VIEW("Content-Type"), VIEW("image/png")}};
+  laghu_runtime_queue producer;
+  laghu_runtime_queue unattached;
+  laghu_http_environment environment;
+  laghu_http_request request = test_request(NULL, 0U, VIEW("/cold.png"));
+  laghu_http_response response = test_response(headers, 1U, 128U);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result result;
+  laghu_runtime_queue_init(&producer);
+  laghu_runtime_queue_init(&unattached);
+  (void)remove(test_queue_path);
+  CHECK(laghu_runtime_queue_create(&producer, test_queue_path, 2U,
+                                   LAGHU_IMAGE_MAX_INPUT_BYTES));
+  CHECK(laghu_runtime_queue_set_backend(&producer, LAGHU_IMAGE_CAP_ALL,
+                                        "test-worker"));
+  CHECK(laghu_runtime_queue_heartbeat(&producer, 1784851200U));
+  environment = test_environment(test_cache_path, &unattached);
+  /* The path is valid and a worker is healthy, but prepare must only read a
+   * queue attached by lifecycle code. */
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(!laghu_runtime_queue_snapshot_get(&unattached,
+                                          &(laghu_runtime_queue_snapshot){0}));
+  laghu_http_transaction_result_release(&result);
+  laghu_runtime_queue_close(&unattached);
+  laghu_runtime_queue_close(&producer);
+  (void)remove(test_queue_path);
+}
+
 static void test_css_cold_warm(void) {
   const laghu_http_header headers[] = {
       {VIEW("Content-Type"), VIEW("text/css")}};
@@ -506,7 +516,6 @@ static void test_javascript_cold_publication(void) {
   CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 2U,
                                    LAGHU_JAVASCRIPT_MAX_BYTES));
   environment.javascript_queue = &queue;
-  environment.javascript_queue_path = test_queue_path;
   environment.javascript_target = "last 2 chrome versions";
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
@@ -873,6 +882,7 @@ int main(void) {
   test_bounds_and_incomplete_body();
   test_transport_exclusions();
   test_image_cold_warm_and_queue();
+  test_request_does_not_attach_queue();
   test_css_cold_warm();
   test_javascript_cold_publication();
   test_html_cold_warm_headers();

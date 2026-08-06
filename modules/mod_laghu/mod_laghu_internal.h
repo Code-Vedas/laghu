@@ -13,10 +13,12 @@
 #include <stdlib.h>
 
 /* Apache requires httpd.h to define its public record types first. */
+#include <apr_atomic.h>
 #include <apr_buckets.h>
 #include <apr_network_io.h>
 #include <apr_strings.h>
 #include <apr_tables.h>
+#include <apr_thread_proc.h>
 #include <http_config.h>
 #include <http_core.h>
 #include <http_log.h>
@@ -43,25 +45,19 @@
 
 #define LAGHU_APACHE_FILTER "LAGHU"
 #define LAGHU_APACHE_INITIAL_CAPTURE (64U * 1024U)
+#define LAGHU_APACHE_QUEUE_CONFIG_LIMIT 128U
 
-#ifdef _WIN32
-#define LAGHU_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
-#define LAGHU_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
-#define LAGHU_DEFAULT_FONT_QUEUE "C:/ProgramData/Laghu/fonts.queue"
-#define LAGHU_DEFAULT_JAVASCRIPT_QUEUE "C:/ProgramData/Laghu/javascript.queue"
-#else
 #define LAGHU_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_DEFAULT_CACHE "/var/cache/laghu/images"
 #define LAGHU_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
 #define LAGHU_DEFAULT_JAVASCRIPT_QUEUE "/run/laghu/javascript.queue"
-#endif
+
+typedef struct laghu_apache_queue_binding laghu_apache_queue_binding;
 
 typedef struct {
   laghu_config core;
   laghu_service_config service;
-  laghu_runtime_queue queue;
-  laghu_runtime_queue font_queue;
-  laghu_runtime_queue javascript_runtime_queue;
+  laghu_apache_queue_binding *queue_binding;
 } laghu_apache_config;
 
 typedef struct {
@@ -105,6 +101,15 @@ extern laghu_operational_registry laghu_apache_operational;
 extern const char *laghu_apache_operational_cache;
 extern bool laghu_apache_operational_enabled;
 void laghu_apache_child_init(apr_pool_t *pool, server_rec *server);
+void laghu_apache_queue_registry_reset(void);
+bool laghu_apache_queue_registry_add(const laghu_apache_config *parent,
+                                     const laghu_apache_config *child,
+                                     const laghu_service_config *service);
+laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(
+    const laghu_service_config *service);
+laghu_runtime_queue *laghu_apache_image_queue(laghu_apache_config *config);
+laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config);
+laghu_runtime_queue *laghu_apache_javascript_queue(laghu_apache_config *config);
 void *laghu_apache_create_config(apr_pool_t *pool, char *path);
 void *laghu_apache_create_server_config(apr_pool_t *pool, server_rec *server);
 void laghu_apache_service_defaults(laghu_service_config *service);

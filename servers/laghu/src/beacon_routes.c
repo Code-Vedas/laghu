@@ -133,6 +133,7 @@ bool proxy_handle_beacon_routes(const proxy_connection *connection,
       if (plan.route == LAGHU_HTTP_BEACON_ROUTE_IMAGE_REPORT) {
         laghu_image_beacon_record beacon;
         laghu_runtime_queue_snapshot queue_snapshot;
+        laghu_runtime_queue *runtime_queue = proxy_runtime_queue(worker);
         laghu_policy policy;
         char policy_key[LAGHU_RUNTIME_KEY_SIZE];
         applied =
@@ -140,12 +141,8 @@ bool proxy_handle_beacon_routes(const proxy_connection *connection,
                 (laghu_buffer){request_body, request_body_length}, &beacon) &&
             laghu_resolve_config_policy(&options->config, &policy) &&
             laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
-            (laghu_runtime_queue_snapshot_get(&worker->runtime_queue,
-                                              &queue_snapshot) ||
-             (laghu_runtime_queue_open(&worker->runtime_queue,
-                                       options->service.worker_queue) &&
-              laghu_runtime_queue_snapshot_get(&worker->runtime_queue,
-                                               &queue_snapshot))) &&
+            runtime_queue != NULL &&
+            laghu_runtime_queue_snapshot_get(runtime_queue, &queue_snapshot) &&
             laghu_catalog_apply_beacon(
                 worker->queue->rum, options->service.image_cache, policy_key,
                 queue_snapshot.capabilities, now,

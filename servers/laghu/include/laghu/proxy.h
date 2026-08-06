@@ -50,7 +50,6 @@ typedef struct {
   unsigned int drain_timeout;
   laghu_proxy_forwarded_mode forwarded_mode;
   bool origin_tls;
-  bool service_mode;
 } laghu_proxy_options;
 
 typedef enum {
@@ -69,9 +68,6 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
 bool laghu_proxy_decode_chunked(laghu_buffer encoded, unsigned char *decoded,
                                 size_t capacity, size_t *decoded_length);
 int laghu_proxy_run(const laghu_proxy_options *options);
-#ifdef _WIN32
-int laghu_proxy_run_service(const laghu_proxy_options *options);
-#endif
 
 #ifdef __cplusplus
 }

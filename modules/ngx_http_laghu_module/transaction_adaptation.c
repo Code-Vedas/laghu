@@ -241,21 +241,10 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->environment.config = conf->core;
   context->environment.cache_path = conf->service.image_cache;
   context->environment.rum = ngx_http_laghu_rum;
-  context->environment.worker_queue_path = conf->service.worker_queue;
-  context->environment.queue = &conf->runtime_queue;
-  context->environment.font_fetch_queue_path =
-      conf->service.font_fetch_queue[0] == '\0'
-          ? NULL
-          : conf->service.font_fetch_queue;
-  context->environment.font_fetch_queue =
-      ngx_http_laghu_font_queue_refresh(conf) ? &conf->font_fetch_runtime_queue
-                                              : NULL;
+  context->environment.queue = ngx_http_laghu_image_queue(conf);
+  context->environment.font_fetch_queue = ngx_http_laghu_font_queue(conf);
   context->environment.font_providers = conf->service.font_providers;
-  context->environment.javascript_queue_path = conf->service.javascript_queue;
-  context->environment.javascript_queue =
-      ngx_http_laghu_javascript_queue_refresh(conf)
-          ? &conf->javascript_runtime_queue
-          : NULL;
+  context->environment.javascript_queue = ngx_http_laghu_javascript_queue(conf);
   context->environment.javascript_target = conf->service.javascript_target;
   context->environment.javascript_observations =
       conf->service.javascript_observations;

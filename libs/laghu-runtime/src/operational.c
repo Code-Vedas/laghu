@@ -18,14 +18,8 @@
 #include "persisted_state_wire.h"
 #include "runtime_platform.h"
 
-#ifdef _WIN32
-#include <windows.h>
-typedef volatile LONG64 laghu_local_atomic;
-typedef volatile LONG laghu_local_flag;
-#else
 typedef uint64_t laghu_local_atomic;
 typedef unsigned int laghu_local_flag;
-#endif
 
 typedef struct {
   laghu_runtime_shared_mapping mapping;
@@ -58,66 +52,37 @@ static const uint64_t laghu_latency_limits[] = {
 static size_t laghu_local_index(size_t wire_offset) { return wire_offset / 8U; }
 
 static uint64_t laghu_local_atomic_load(const laghu_local_atomic *value) {
-#ifdef _WIN32
-  return (uint64_t)InterlockedCompareExchange64((volatile LONG64 *)value, 0, 0);
-#else
   return __atomic_load_n(value, __ATOMIC_RELAXED);
-#endif
 }
 
 static void laghu_local_atomic_store(laghu_local_atomic *value,
                                      uint64_t replacement) {
-#ifdef _WIN32
-  (void)InterlockedExchange64(value, (LONG64)replacement);
-#else
   __atomic_store_n(value, replacement, __ATOMIC_RELAXED);
-#endif
 }
 
 static bool laghu_local_atomic_compare_exchange(laghu_local_atomic *value,
                                                 uint64_t expected,
                                                 uint64_t replacement) {
-#ifdef _WIN32
-  return (uint64_t)InterlockedCompareExchange64(value, (LONG64)replacement,
-                                                (LONG64)expected) == expected;
-#else
   return __atomic_compare_exchange_n(value, &expected, replacement, true,
                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED);
-#endif
 }
 
 static bool laghu_local_flag_try_set(laghu_local_flag *value) {
-#ifdef _WIN32
-  return InterlockedCompareExchange(value, 1, 0) == 0;
-#else
   unsigned int expected = 0U;
   return __atomic_compare_exchange_n(value, &expected, 1U, false,
                                      __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
-#endif
 }
 
 static void laghu_local_flag_clear(laghu_local_flag *value) {
-#ifdef _WIN32
-  (void)InterlockedExchange(value, 0);
-#else
   __atomic_store_n(value, 0U, __ATOMIC_RELEASE);
-#endif
 }
 
 static void laghu_local_flag_store(laghu_local_flag *value, bool replacement) {
-#ifdef _WIN32
-  (void)InterlockedExchange(value, replacement ? 1 : 0);
-#else
   __atomic_store_n(value, replacement ? 1U : 0U, __ATOMIC_RELAXED);
-#endif
 }
 
 static bool laghu_local_flag_load(const laghu_local_flag *value) {
-#ifdef _WIN32
-  return InterlockedCompareExchange((volatile LONG *)value, 0, 0) != 0;
-#else
   return __atomic_load_n(value, __ATOMIC_RELAXED) != 0U;
-#endif
 }
 
 static uint64_t laghu_local_load(const laghu_operational_state *state,

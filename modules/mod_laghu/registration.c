@@ -33,6 +33,54 @@ static bool laghu_apache_validate_directory_config(
   return true;
 }
 
+static bool laghu_apache_register_queue_binding(server_rec *server,
+                                                laghu_apache_config *parent,
+                                                laghu_apache_config *child) {
+  laghu_config core;
+  laghu_service_config service;
+  laghu_service_diagnostic diagnostic = {0};
+  if (parent == NULL || child == NULL) return true;
+  if (!laghu_resource_rules_merge_valid(&parent->core, &child->core))
+    return false;
+  laghu_config_merge(&core, &parent->core, &child->core);
+  if (!laghu_apache_service_resolve(&service, &parent->service, &child->service,
+                                    &core, &diagnostic))
+    return false;
+  if (core.mode != LAGHU_MODE_ON) return true;
+  if (laghu_apache_queue_registry_add(parent, child, &service)) return true;
+  ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server,
+               "Laghu queue attachment limit reached; queue work disabled");
+  return true;
+}
+
+static bool laghu_apache_register_server_queue_bindings(server_rec *server) {
+  laghu_apache_config *parent =
+      ap_get_module_config(server->module_config, &laghu_module);
+  laghu_apache_config *child =
+      ap_get_module_config(server->lookup_defaults, &laghu_module);
+  const core_server_config *core =
+      ap_get_core_module_config(server->module_config);
+  apr_array_header_t *lists[2];
+  size_t list_index;
+  if (parent == NULL || core == NULL) return true;
+  if (!laghu_apache_register_queue_binding(server, parent, child)) return false;
+  lists[0] = core->sec_dir;
+  lists[1] = core->sec_url;
+  for (list_index = 0U; list_index < sizeof(lists) / sizeof(lists[0]);
+       ++list_index) {
+    ap_conf_vector_t **entries;
+    int index;
+    if (lists[list_index] == NULL) continue;
+    entries = (ap_conf_vector_t **)lists[list_index]->elts;
+    for (index = 0; index < lists[list_index]->nelts; ++index) {
+      child = ap_get_module_config(entries[index], &laghu_module);
+      if (!laghu_apache_register_queue_binding(server, parent, child))
+        return false;
+    }
+  }
+  return true;
+}
+
 static int laghu_apache_check_config(apr_pool_t *configuration_pool,
                                      apr_pool_t *log_pool,
                                      apr_pool_t *temporary_pool,
@@ -111,6 +159,16 @@ int laghu_apache_post_config(apr_pool_t *configuration_pool,
         }
       }
     }
+  }
+  laghu_apache_queue_registry_reset();
+  {
+    server_rec *item;
+    for (item = server; item != NULL; item = item->next)
+      if (!laghu_apache_register_server_queue_bindings(item)) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, item,
+                     "Laghu queue configuration is invalid");
+        return HTTP_INTERNAL_SERVER_ERROR;
+      }
   }
   {
     laghu_apache_config empty;

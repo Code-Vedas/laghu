@@ -11,17 +11,9 @@
 #include "server_internal.h"
 
 void proxy_timeout(laghu_socket socket, unsigned int seconds) {
-#ifdef _WIN32
-  DWORD value = seconds * 1000U;
-  (void)setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&value,
-                   sizeof(value));
-  (void)setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&value,
-                   sizeof(value));
-#else
   struct timeval value = {(time_t)seconds, 0};
   (void)setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value));
   (void)setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value));
-#endif
 }
 
 bool proxy_send_all(laghu_socket socket, const void *data, size_t length) {
@@ -36,12 +28,7 @@ bool proxy_send_all(laghu_socket socket, const void *data, size_t length) {
 }
 
 bool proxy_socket_timed_out(void) {
-#ifdef _WIN32
-  int error = WSAGetLastError();
-  return error == WSAETIMEDOUT || error == WSAEWOULDBLOCK;
-#else
   return errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT;
-#endif
 }
 
 int proxy_origin_recv(laghu_socket socket, SSL *tls, void *data,
@@ -91,11 +78,7 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket,
   bool ip_literal;
   bool complete = false;
   uint64_t deadline;
-#ifdef _WIN32
-  u_long nonblocking = 1U;
-#else
   int flags = fcntl(socket, F_GETFL, 0);
-#endif
   *timed_out = false;
   if (tls == NULL) return NULL;
   ip_literal = inet_pton(AF_INET, host, (unsigned char[4]){0}) == 1 ||
@@ -109,11 +92,7 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket,
     SSL_free(tls);
     return NULL;
   }
-#ifdef _WIN32
-  if (ioctlsocket(socket, FIONBIO, &nonblocking) != 0) {
-#else
   if (flags < 0 || fcntl(socket, F_SETFL, flags | O_NONBLOCK) < 0) {
-#endif
     SSL_free(tls);
     return NULL;
   }
@@ -130,11 +109,7 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket,
     error = SSL_get_error(tls, result);
     if (proxy_monotonic_ms() >= deadline) {
       *timed_out = true;
-#ifdef _WIN32
-      WSASetLastError(WSAETIMEDOUT);
-#else
       errno = ETIMEDOUT;
-#endif
       break;
     }
     if ((error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) ||
@@ -143,20 +118,10 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket,
     }
     FD_ZERO(&set);
     FD_SET(socket, &set);
-#ifdef _WIN32
-    (void)select(0, error == SSL_ERROR_WANT_READ ? &set : NULL,
-                 error == SSL_ERROR_WANT_WRITE ? &set : NULL, NULL, &wait);
-#else
     (void)select(socket + 1, error == SSL_ERROR_WANT_READ ? &set : NULL,
                  error == SSL_ERROR_WANT_WRITE ? &set : NULL, NULL, &wait);
-#endif
   }
-#ifdef _WIN32
-  nonblocking = 0U;
-  (void)ioctlsocket(socket, FIONBIO, &nonblocking);
-#else
   (void)fcntl(socket, F_SETFL, flags);
-#endif
   if (!complete) {
     SSL_free(tls);
     return NULL;
@@ -213,18 +178,6 @@ laghu_socket proxy_connect(proxy_worker *worker, const char *host,
     proxy_worker_origin(worker, descriptor);
     {
       bool connected = false;
-#ifdef _WIN32
-      u_long nonblocking = 1U;
-      int result;
-      (void)ioctlsocket(descriptor, FIONBIO, &nonblocking);
-      result = connect(descriptor, address->ai_addr,
-                       (laghu_socklen)address->ai_addrlen);
-      if (result == 0) {
-        connected = true;
-      } else {
-        int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS) {
-#else
       int flags = fcntl(descriptor, F_GETFL, 0);
       int result;
       if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) {
@@ -238,45 +191,28 @@ laghu_socket proxy_connect(proxy_worker *worker, const char *host,
       if (result == 0) {
         connected = true;
       } else if (errno == EINPROGRESS) {
-#endif
-          uint64_t deadline = proxy_monotonic_ms() + (uint64_t)timeout * 1000U;
-          int socket_error = 0;
-          laghu_socklen error_length = (laghu_socklen)sizeof(socket_error);
-          while (!proxy_is_forcing(worker->queue) &&
-                 proxy_monotonic_ms() < deadline) {
-            fd_set writable;
-            struct timeval wait = {0, 200000};
-            int selected;
-            FD_ZERO(&writable);
-            FD_SET(descriptor, &writable);
-#ifdef _WIN32
-            selected = select(0, NULL, &writable, NULL, &wait);
-#else
+        uint64_t deadline = proxy_monotonic_ms() + (uint64_t)timeout * 1000U;
+        int socket_error = 0;
+        laghu_socklen error_length = (laghu_socklen)sizeof(socket_error);
+        while (!proxy_is_forcing(worker->queue) &&
+               proxy_monotonic_ms() < deadline) {
+          fd_set writable;
+          struct timeval wait = {0, 200000};
+          int selected;
+          FD_ZERO(&writable);
+          FD_SET(descriptor, &writable);
           selected = select(descriptor + 1, NULL, &writable, NULL, &wait);
-#endif
-            if (selected > 0 &&
-                getsockopt(descriptor, SOL_SOCKET, SO_ERROR,
-#ifdef _WIN32
-                           (char *)&socket_error,
-#else
-                         &socket_error,
-#endif
-                           &error_length) == 0 &&
-                socket_error == 0) {
-              connected = true;
-              break;
-            }
-            if (selected < 0) break;
+          if (selected > 0 &&
+              getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &socket_error,
+                         &error_length) == 0 &&
+              socket_error == 0) {
+            connected = true;
+            break;
           }
-#ifdef _WIN32
+          if (selected < 0) break;
         }
       }
-      nonblocking = 0U;
-      (void)ioctlsocket(descriptor, FIONBIO, &nonblocking);
-#else
-      }
       (void)fcntl(descriptor, F_SETFL, flags);
-#endif
       if (connected) {
         proxy_timeout(descriptor, timeout);
         break;

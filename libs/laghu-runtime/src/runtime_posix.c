@@ -149,6 +149,57 @@ bool laghu_runtime_shared_mapping_open(laghu_runtime_shared_mapping *mapping,
   return true;
 }
 
+bool laghu_runtime_shared_mapping_open_existing(
+    laghu_runtime_shared_mapping *mapping, const char *path, size_t size) {
+  int file;
+  struct stat status;
+  void *address;
+  if (mapping == NULL || path == NULL || size < 4096U ||
+      size > (size_t)INT64_MAX)
+    return false;
+  laghu_runtime_shared_mapping_init(mapping);
+  file = open(path, O_RDWR);
+  if (file < 0 || fstat(file, &status) != 0 || status.st_size < 0 ||
+      (uintmax_t)status.st_size != (uintmax_t)size) {
+    if (file >= 0) (void)close(file);
+    return false;
+  }
+  address = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+  if (address == MAP_FAILED) {
+    (void)close(file);
+    return false;
+  }
+  mapping->platform_file = file;
+  mapping->mapping = address;
+  mapping->mapping_length = size;
+  return true;
+}
+
+bool laghu_runtime_shared_mapping_open_prefix(
+    laghu_runtime_shared_mapping *mapping, const char *path, size_t size) {
+  int file;
+  struct stat status;
+  void *address;
+  if (mapping == NULL || path == NULL || size == 0U || size > (size_t)INT64_MAX)
+    return false;
+  laghu_runtime_shared_mapping_init(mapping);
+  file = open(path, O_RDWR);
+  if (file < 0 || fstat(file, &status) != 0 || status.st_size < 0 ||
+      (uintmax_t)status.st_size < (uintmax_t)size) {
+    if (file >= 0) (void)close(file);
+    return false;
+  }
+  address = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0);
+  if (address == MAP_FAILED) {
+    (void)close(file);
+    return false;
+  }
+  mapping->platform_file = file;
+  mapping->mapping = address;
+  mapping->mapping_length = size;
+  return true;
+}
+
 bool laghu_runtime_shared_mapping_try_lock(
     laghu_runtime_shared_mapping *mapping) {
   return mapping != NULL && mapping->mapping != NULL &&

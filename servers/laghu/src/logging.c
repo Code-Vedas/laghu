@@ -49,11 +49,7 @@ static bool proxy_json_escape(const char *input, char *output,
 static void proxy_timestamp(char output[32]) {
   time_t now = time(NULL);
   struct tm value;
-#ifdef _WIN32
-  (void)gmtime_s(&value, &now);
-#else
   (void)gmtime_r(&now, &value);
-#endif
   if (strftime(output, 32U, "%Y-%m-%dT%H:%M:%SZ", &value) == 0U)
     memcpy(output, "1970-01-01T00:00:00Z", 21U);
 }

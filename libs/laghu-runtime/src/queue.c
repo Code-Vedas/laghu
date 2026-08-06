@@ -221,34 +221,41 @@ bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
 bool laghu_runtime_queue_open(laghu_runtime_queue *queue, const char *path) {
   unsigned char header[LAGHU_WIRE_QUEUE_HEADER_SIZE];
   laghu_runtime_queue_state *state;
+  laghu_runtime_shared_mapping prefix;
   uint64_t payload_size;
   uint32_t slot_count;
-  uint64_t file_size;
   size_t length;
   if (queue == NULL || path == NULL) return false;
   if (queue->implementation != NULL) return true;
-  if (!laghu_runtime_file_read_exact(path, header, sizeof(header)) ||
-      laghu_wire_u64_read(header + LAGHU_WIRE_QUEUE_HEADER_MAGIC_OFFSET) !=
+  laghu_runtime_shared_mapping_init(&prefix);
+  if (!laghu_runtime_shared_mapping_open_prefix(&prefix, path, sizeof(header)))
+    return false;
+  memcpy(header, prefix.mapping, sizeof(header));
+  laghu_runtime_shared_mapping_close(&prefix);
+  if (laghu_wire_u64_read(header + LAGHU_WIRE_QUEUE_HEADER_MAGIC_OFFSET) !=
           LAGHU_WIRE_QUEUE_MAGIC ||
       laghu_wire_u32_read(header + LAGHU_WIRE_QUEUE_HEADER_VERSION_OFFSET) !=
           LAGHU_WIRE_QUEUE_VERSION ||
       !laghu_wire_string_valid(
           header + LAGHU_WIRE_QUEUE_HEADER_BACKEND_ID_OFFSET,
-          LAGHU_RUNTIME_BACKEND_SIZE))
+          LAGHU_RUNTIME_BACKEND_SIZE) ||
+      !laghu_wire_zeroes(header + 36U, 4U))
     return false;
   slot_count =
       laghu_wire_u32_read(header + LAGHU_WIRE_QUEUE_HEADER_SLOT_COUNT_OFFSET);
   payload_size = laghu_wire_u64_read(
       header + LAGHU_WIRE_QUEUE_HEADER_SLOT_PAYLOAD_SIZE_OFFSET);
   if (payload_size > SIZE_MAX ||
-      !laghu_queue_size(slot_count, (size_t)payload_size, &length) ||
-      !laghu_runtime_file_size(path, &file_size) || file_size != length)
+      !laghu_queue_size(slot_count, (size_t)payload_size, &length))
     return false;
   laghu_runtime_queue_close(queue);
   state = calloc(1U, sizeof(*state));
   if (state == NULL) return false;
   laghu_runtime_shared_mapping_init(&state->mapping);
-  if (!laghu_runtime_shared_mapping_open(&state->mapping, path, length)) {
+  /* Header and exact size were validated before mapping; dimensions never
+   * change after queue creation, so attaching must not contend with writers. */
+  if (!laghu_runtime_shared_mapping_open_existing(&state->mapping, path,
+                                                  length)) {
     free(state);
     return false;
   }
@@ -260,6 +267,16 @@ bool laghu_runtime_queue_open(laghu_runtime_queue *queue, const char *path) {
     return false;
   }
   queue->implementation = state;
+  return true;
+}
+
+bool laghu_runtime_queue_move(laghu_runtime_queue *destination,
+                              laghu_runtime_queue *source) {
+  if (destination == NULL || source == NULL ||
+      destination->implementation != NULL || source->implementation == NULL)
+    return false;
+  destination->implementation = source->implementation;
+  source->implementation = NULL;
   return true;
 }
 

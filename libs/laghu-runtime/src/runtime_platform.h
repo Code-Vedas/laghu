@@ -28,6 +28,11 @@ bool laghu_runtime_file_write_atomic(const char *path,
                                      const unsigned char *data, size_t length);
 bool laghu_runtime_shared_mapping_open(laghu_runtime_shared_mapping *mapping,
                                        const char *path, size_t size);
+/* Opens a fixed, already-validated mapping without taking its writer lock. */
+bool laghu_runtime_shared_mapping_open_existing(
+    laghu_runtime_shared_mapping *mapping, const char *path, size_t size);
+bool laghu_runtime_shared_mapping_open_prefix(
+    laghu_runtime_shared_mapping *mapping, const char *path, size_t size);
 bool laghu_runtime_shared_mapping_try_lock(
     laghu_runtime_shared_mapping *mapping);
 void laghu_runtime_shared_mapping_unlock(laghu_runtime_shared_mapping *mapping);

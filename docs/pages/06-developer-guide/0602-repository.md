@@ -21,7 +21,7 @@ permalink: /developer-guide/repository/
 | `workers/laghu-libvips` | Image encoding and sprite work. |
 | `workers/laghu-resource-fetch` | Provider-configured font stylesheet fetching. |
 | `workers/laghu-js-optimize` | Locked native SWC processing. |
-| `packaging` | Package, service, container, Homebrew, and Windows definitions. |
+| `packaging` | Package, service, container, and Homebrew definitions. |
 | `scripts` | Canonical build and validation entry points. |
 
 Adapters must not acquire codec or network dependencies.

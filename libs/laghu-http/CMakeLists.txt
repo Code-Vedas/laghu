@@ -18,8 +18,6 @@ set_target_properties(laghu_http PROPERTIES C_EXTENSIONS OFF POSITION_INDEPENDEN
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu_http PRIVATE -Wall -Wextra -Wpedantic -Werror)
-elseif(MSVC)
-  target_compile_options(laghu_http PRIVATE /W4 /WX)
 endif()
 
 if(LAGHU_BUILD_TESTS)
@@ -27,8 +25,6 @@ if(LAGHU_BUILD_TESTS)
   target_link_libraries(laghu_http_test PRIVATE Laghu::Http)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(laghu_http_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  elseif(MSVC)
-    target_compile_options(laghu_http_test PRIVATE /W4 /WX)
   endif()
   add_test(NAME laghu_http_test COMMAND laghu_http_test)
 endif()

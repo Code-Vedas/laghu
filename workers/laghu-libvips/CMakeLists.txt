@@ -11,14 +11,7 @@ target_compile_definitions(
 
 if(LAGHU_BUILD_TESTS AND LAGHU_HAVE_VIPS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  find_program(
-    LAGHU_VIPS_EXECUTABLE
-    NAMES vips vips.exe
-    HINTS
-      "$ENV{VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}/tools/libvips"
-      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/libvips"
-    REQUIRED
-  )
+  find_program(LAGHU_VIPS_EXECUTABLE NAMES vips REQUIRED)
   add_test(
     NAME laghu_libvips_integration_test
     COMMAND ${Python3_EXECUTABLE}
@@ -26,13 +19,6 @@ if(LAGHU_BUILD_TESTS AND LAGHU_HAVE_VIPS)
             $<TARGET_FILE:laghu-libvips> ${LAGHU_VIPS_EXECUTABLE}
             $<TARGET_FILE:laghu_runtime_cache_fixture>
   )
-endif()
-if(LAGHU_BUILD_TESTS AND WIN32)
-  add_test(NAME laghu_libvips_windows_probe
-           COMMAND $<TARGET_FILE:laghu-libvips> --probe)
-  if(NOT LAGHU_HAVE_VIPS)
-    set_tests_properties(laghu_libvips_windows_probe PROPERTIES WILL_FAIL TRUE)
-  endif()
 endif()
 target_compile_features(laghu-libvips PRIVATE c_std_11)
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

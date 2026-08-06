@@ -71,17 +71,10 @@ static bool laghu_artifact_paths(const char *cache_path, const char *index_key,
                                  const char *variant_key, char *index_path,
                                  size_t index_size, char *variant_path,
                                  size_t variant_size) {
-#ifdef _WIN32
-  int index_length = snprintf(index_path, index_size, "%s\\index-%s.meta",
-                              cache_path, index_key);
-  int variant_length = snprintf(variant_path, variant_size,
-                                "%s\\variant-%s.bin", cache_path, variant_key);
-#else
   int index_length = snprintf(index_path, index_size, "%s/index-%s.meta",
                               cache_path, index_key);
   int variant_length = snprintf(variant_path, variant_size, "%s/variant-%s.bin",
                                 cache_path, variant_key);
-#endif
   return cache_path != NULL && index_key != NULL && variant_key != NULL &&
          index_length > 0 && (size_t)index_length < index_size &&
          variant_length > 0 && (size_t)variant_length < variant_size;

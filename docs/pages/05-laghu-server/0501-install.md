@@ -35,14 +35,6 @@ docker run --rm ghcr.io/code-vedas/laghu:latest --version
 
 Mount persistent cache and RUM directories and provide origin/TLS/Redis secrets through the orchestrator rather than baking them into the image.
 
-## Windows
-
-```powershell
-winget install CodeVedas.Laghu
-```
-
-The installer registers the server and workers with the Windows Service Control Manager and creates restricted `%ProgramData%\Laghu` runtime directories.
-
 ## Source Build
 
 ```bash

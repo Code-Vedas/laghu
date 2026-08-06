@@ -3,23 +3,18 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/cache.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#ifndef _WIN32
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
-#endif
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
-#include "laghu/cache.h"
 #include "laghu/types.h"
 #include "runtime_platform.h"
 
@@ -36,11 +31,7 @@
 static laghu_cache_backend
     laghu_cache_backends[LAGHU_CACHE_BACKEND_REGISTRY_SIZE];
 static size_t laghu_cache_backend_count;
-#ifdef _MSC_VER
-#define LAGHU_THREAD_LOCAL __declspec(thread)
-#else
 #define LAGHU_THREAD_LOCAL _Thread_local
-#endif
 
 static LAGHU_THREAD_LOCAL char laghu_cache_scoped_path[LAGHU_RUNTIME_PATH_SIZE];
 static LAGHU_THREAD_LOCAL char
@@ -147,13 +138,8 @@ static int laghu_cache_slot_compare(const void *left, const void *right) {
 static bool laghu_cache_file_path(char *output, size_t output_size,
                                   const char *cache_path, const char *prefix,
                                   const char *key, const char *suffix) {
-#ifdef _WIN32
-  int written = snprintf(output, output_size, "%s\\%s%s%s", cache_path, prefix,
-                         key, suffix);
-#else
   int written = snprintf(output, output_size, "%s/%s%s%s", cache_path, prefix,
                          key, suffix);
-#endif
   return written > 0 && (size_t)written < output_size;
 }
 
@@ -305,18 +291,6 @@ static void laghu_cache_record_hit(laghu_cache_backend *backend,
   laghu_file_cache_state *state = backend->implementation;
   laghu_cache_index_slot *slot;
   uint64_t now = (uint64_t)time(NULL);
-#ifdef _WIN32
-  if (state == NULL || !laghu_cache_index_valid(backend, state)) return;
-  if (hit) {
-    (void)InterlockedIncrement64((volatile LONG64 *)&state->header->hits);
-    slot = laghu_cache_slot(state, entry->variant_key, false);
-    if (slot != NULL && now >= slot->accessed_at + 60U)
-      (void)InterlockedExchange64((volatile LONG64 *)&slot->accessed_at,
-                                  (LONG64)now);
-  } else {
-    (void)InterlockedIncrement64((volatile LONG64 *)&state->header->misses);
-  }
-#else
   if (state == NULL || !laghu_runtime_shared_mapping_try_lock(&state->mapping))
     return;
   if (!laghu_cache_index_valid(backend, state))
@@ -329,7 +303,6 @@ static void laghu_cache_record_hit(laghu_cache_backend *backend,
     ++state->header->misses;
   }
   laghu_runtime_shared_mapping_unlock(&state->mapping);
-#endif
 }
 
 static bool laghu_cache_file_lookup(laghu_cache_backend *backend,
@@ -745,10 +718,6 @@ bool laghu_cache_backend_uri_parse(const char *uri, char *path,
     return false;
   }
   input = uri + 7U;
-#ifdef _WIN32
-  if (input[0] == '/' && isalpha((unsigned char)input[1]) && input[2] == ':')
-    ++input;
-#endif
   while (*input != '\0') {
     unsigned char value = (unsigned char)*input++;
     if (value == '%') {
@@ -764,18 +733,10 @@ bool laghu_cache_backend_uri_parse(const char *uri, char *path,
       if (value == '\0' || value == '/' || value == '\\') return false;
     }
     if (value < 0x20U || used + 1U >= path_size) return false;
-#ifdef _WIN32
-    if (value == '/') value = '\\';
-#endif
     path[used++] = (char)value;
   }
   path[used] = '\0';
-#ifdef _WIN32
-  return used >= 3U && isalpha((unsigned char)path[0]) && path[1] == ':' &&
-         path[2] == '\\';
-#else
   return used > 1U && path[0] == '/';
-#endif
 }
 
 bool laghu_cache_backend_open(laghu_cache_backend *backend, const char *uri,
@@ -807,17 +768,8 @@ bool laghu_cache_backend_open_path(laghu_cache_backend *backend,
   char uri[LAGHU_RUNTIME_PATH_SIZE];
   int written;
   if (backend == NULL || path == NULL || path[0] == '\0') return false;
-#ifdef _WIN32
-  if (!isalpha((unsigned char)path[0]) || path[1] != ':' ||
-      (path[2] != '\\' && path[2] != '/'))
-    return false;
-  written = snprintf(uri, sizeof(uri), "file:///%c:/%s", path[0], path + 3U);
-  for (char *cursor = uri + 8U; *cursor != '\0'; ++cursor)
-    if (*cursor == '\\') *cursor = '/';
-#else
   if (path[0] != '/') return false;
   written = snprintf(uri, sizeof(uri), "file://%s", path);
-#endif
   return written > 0 && (size_t)written < sizeof(uri) &&
          laghu_cache_backend_open(backend, uri, limits);
 }
@@ -1123,15 +1075,6 @@ bool laghu_cache_flush_file_poll(const char *path, const char *flush_file,
   unsigned long long requested;
   char trailing;
   if (path == NULL || flush_file == NULL || flush_file[0] == '\0') return false;
-#ifdef _WIN32
-  {
-    DWORD attributes = GetFileAttributesA(flush_file);
-    if (attributes == INVALID_FILE_ATTRIBUTES ||
-        (attributes &
-         (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U)
-      return false;
-  }
-#else
   {
     struct stat status;
     if (lstat(flush_file, &status) != 0 || !S_ISREG(status.st_mode) ||
@@ -1139,7 +1082,6 @@ bool laghu_cache_flush_file_poll(const char *path, const char *flush_file,
         (status.st_mode & (S_IWGRP | S_IWOTH)) != 0U)
       return false;
   }
-#endif
   file = fopen(flush_file, "rb");
   if (file == NULL || fgets(line, sizeof(line), file) == NULL) {
     if (file != NULL) (void)fclose(file);

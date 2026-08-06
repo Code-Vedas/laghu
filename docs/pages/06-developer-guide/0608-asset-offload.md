@@ -45,7 +45,7 @@ Laghu FileSourceMap "https://www.example.com/assets/" "/srv/assets"
 laghu ... --load-from-file mapped --file-source-map https://www.example.com/assets/=/srv/assets
 ```
 
-Standalone supports mapped mode only. Mappings do not enable loading by themselves, and they must use normalized HTTPS prefixes and absolute local roots. The worker rejects traversal, symlinks and Windows reparse points, non-regular or changed files, disallowed MIME types, and oversized bodies. Request threads never read these files.
+Standalone supports mapped mode only. Mappings do not enable loading by themselves, and they must use normalized HTTPS prefixes and absolute local roots. The worker rejects traversal, symlinks, non-regular or changed files, disallowed MIME types, and oversized bodies. Request threads never read these files.
 
 If capture and file acquisition miss, the same worker may use the asset policy's trusted HTTPS fallback. Every DNS answer and redirect is revalidated; non-global, loopback, private, link-local, reserved, documentation, carrier-grade NAT, multicast, and IPv4-mapped private addresses are rejected. Connections use only the validated address while preserving the original hostname for TLS SNI and certificate verification. Credentials, cookies, authorization, proxy environment settings, unsafe ports, and cross-policy redirects are never forwarded.
 

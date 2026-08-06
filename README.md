@@ -96,6 +96,8 @@ The origin may use verified HTTPS. `--origin-ca-file` adds a private CA to syste
 
 Server modules are architecture- and ABI-specific. Build each module against the target server ABI.
 
+Windows is unsupported.
+
 ## Documentation
 
 Start with:

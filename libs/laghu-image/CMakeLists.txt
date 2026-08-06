@@ -11,7 +11,7 @@ endif()
 
 if(NOT LAGHU_WITH_VIPS STREQUAL "OFF")
   find_package(PkgConfig QUIET)
-  if(PkgConfig_FOUND AND NOT MSVC)
+  if(PkgConfig_FOUND)
     pkg_check_modules(VIPS QUIET IMPORTED_TARGET vips>=8.15)
   endif()
   if(VIPS_FOUND)

@@ -8,24 +8,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <direct.h>
-#include <io.h>
-#include <process.h>
-#include <windows.h>
-#define laghu_mkdir(path, mode) _mkdir(path)
-#define laghu_unlink(path) _unlink(path)
-#else
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #define laghu_mkdir(path, mode) mkdir(path, mode)
 #define laghu_unlink(path) unlink(path)
-#endif
 
 #include "laghu/cache.h"
 #include "laghu/catalog.h"
@@ -36,25 +25,12 @@
 
 #define LAGHU_SERVICE_TIMEOUT_SECONDS 30U
 
-#ifdef _WIN32
-static HANDLE laghu_service_stop_event;
-
-static bool laghu_libvips_stop_requested(void) {
-  return laghu_service_stop_event != NULL &&
-         WaitForSingleObject(laghu_service_stop_event, 0U) == WAIT_OBJECT_0;
-}
-#else
 static bool laghu_libvips_stop_requested(void) { return false; }
-#endif
 
 static void laghu_libvips_pause(unsigned int milliseconds) {
-#ifdef _WIN32
-  Sleep(milliseconds);
-#else
   struct timespec pause = {.tv_sec = (time_t)(milliseconds / 1000U),
                            .tv_nsec = (long)(milliseconds % 1000U) * 1000000L};
   (void)nanosleep(&pause, NULL);
-#endif
 }
 
 static unsigned int laghu_libvips_timeout(void) {
@@ -433,87 +409,6 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
 
 static int laghu_libvips_run_isolated(const laghu_runtime_job *job,
                                       const char *cache_path) {
-#ifdef _WIN32
-  char executable[LAGHU_RUNTIME_PATH_SIZE];
-  char temporary_directory[LAGHU_RUNTIME_PATH_SIZE];
-  char job_path[LAGHU_RUNTIME_PATH_SIZE];
-  char command[LAGHU_RUNTIME_PATH_SIZE * 3U];
-  STARTUPINFOA startup = {0};
-  PROCESS_INFORMATION process = {0};
-  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
-  HANDLE job_object;
-  FILE *job_file;
-  DWORD wait_status;
-  DWORD exit_code = 1U;
-
-  if (GetModuleFileNameA(NULL, executable, sizeof(executable)) == 0U ||
-      GetTempPathA(sizeof(temporary_directory), temporary_directory) == 0U ||
-      GetTempFileNameA(temporary_directory, "lgh", 0U, job_path) == 0U) {
-    return 1;
-  }
-  job_file = fopen(job_path, "wb");
-  if (job_file == NULL || fwrite(job, sizeof(*job), 1U, job_file) != 1U ||
-      fwrite(job->payload.data, 1U, job->payload.length, job_file) !=
-          job->payload.length) {
-    if (job_file != NULL) {
-      (void)fclose(job_file);
-    }
-    (void)laghu_unlink(job_path);
-    return 1;
-  }
-  if (fclose(job_file) != 0) {
-    (void)laghu_unlink(job_path);
-    return 1;
-  }
-  if (snprintf(command, sizeof(command), "\"%s\" --process-job \"%s\" \"%s\"",
-               executable, job_path, cache_path) <= 0) {
-    (void)laghu_unlink(job_path);
-    return 1;
-  }
-  job_object = CreateJobObjectA(NULL, NULL);
-  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-  startup.cb = sizeof(startup);
-  if (job_object == NULL ||
-      !SetInformationJobObject(job_object, JobObjectExtendedLimitInformation,
-                               &limits, sizeof(limits)) ||
-      !CreateProcessA(NULL, command, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL,
-                      NULL, &startup, &process) ||
-      !AssignProcessToJobObject(job_object, process.hProcess)) {
-    if (process.hProcess != NULL) {
-      TerminateProcess(process.hProcess, 1U);
-      CloseHandle(process.hThread);
-      CloseHandle(process.hProcess);
-    }
-    if (job_object != NULL) {
-      CloseHandle(job_object);
-    }
-    (void)laghu_unlink(job_path);
-    return 1;
-  }
-  ResumeThread(process.hThread);
-  if (laghu_service_stop_event != NULL) {
-    HANDLE waits[] = {process.hProcess, laghu_service_stop_event};
-    wait_status = WaitForMultipleObjects(2U, waits, FALSE,
-                                         laghu_libvips_timeout() * 1000U);
-  } else {
-    wait_status =
-        WaitForSingleObject(process.hProcess, laghu_libvips_timeout() * 1000U);
-  }
-  if (wait_status == WAIT_TIMEOUT) {
-    (void)TerminateJobObject(job_object, 1U);
-    (void)WaitForSingleObject(process.hProcess, INFINITE);
-  } else if (wait_status == WAIT_OBJECT_0 + 1U) {
-    (void)TerminateJobObject(job_object, 1U);
-    (void)WaitForSingleObject(process.hProcess, INFINITE);
-  } else if (wait_status == WAIT_OBJECT_0) {
-    (void)GetExitCodeProcess(process.hProcess, &exit_code);
-  }
-  CloseHandle(process.hThread);
-  CloseHandle(process.hProcess);
-  CloseHandle(job_object);
-  (void)laghu_unlink(job_path);
-  return wait_status == WAIT_OBJECT_0 ? (int)exit_code : 1;
-#else
   struct timespec pause = {.tv_sec = 0, .tv_nsec = 100000000L};
   unsigned int attempts = laghu_libvips_timeout() * 10U;
   pid_t child = fork();
@@ -538,35 +433,7 @@ static int laghu_libvips_run_isolated(const laghu_runtime_job *job,
   (void)kill(child, SIGKILL);
   (void)waitpid(child, &child_status, 0);
   return 1;
-#endif
 }
-
-#ifdef _WIN32
-static int laghu_libvips_process_file(const char *job_path,
-                                      const char *cache_path) {
-  laghu_runtime_job job;
-  unsigned char *file_data;
-  size_t file_length;
-  int status;
-  file_data = laghu_read_file(job_path, &file_length);
-  if (file_data == NULL || file_length < sizeof(job)) {
-    free(file_data);
-    return 1;
-  }
-  memcpy(&job, file_data, sizeof(job));
-  if (job.payload.length != file_length - sizeof(job) ||
-      (job.kind == LAGHU_RUNTIME_JOB_IMAGE && job.payload.length == 0U) ||
-      (job.kind != LAGHU_RUNTIME_JOB_IMAGE &&
-       job.kind != LAGHU_RUNTIME_JOB_SPRITE)) {
-    free(file_data);
-    return 1;
-  }
-  job.payload.data = file_data + sizeof(job);
-  status = laghu_libvips_process_job(&job, cache_path);
-  free(file_data);
-  return status;
-}
-#endif
 
 static int laghu_libvips_submit(const char *queue_path, const char *input_path,
                                 const char *request_path,
@@ -739,76 +606,7 @@ static int laghu_libvips_init_runtime(const char *queue_path,
   return 0;
 }
 
-#ifdef _WIN32
-static SERVICE_STATUS_HANDLE laghu_service_handle;
-static SERVICE_STATUS laghu_service_status;
-
-static void WINAPI laghu_libvips_service_control(DWORD control) {
-  if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN) {
-    laghu_service_status.dwCurrentState = SERVICE_STOP_PENDING;
-    laghu_service_status.dwControlsAccepted = 0U;
-    laghu_service_status.dwWaitHint = 5000U;
-    (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
-    if (laghu_service_stop_event != NULL) {
-      (void)SetEvent(laghu_service_stop_event);
-    }
-  }
-}
-
-static void WINAPI laghu_libvips_service_main(DWORD argument_count,
-                                              char **arguments) {
-  const char *queue_path = "C:/ProgramData/Laghu/jobs.queue";
-  const char *cache_path = "C:/ProgramData/Laghu/images";
-  int status;
-  (void)argument_count;
-  (void)arguments;
-  memset(&laghu_service_status, 0, sizeof(laghu_service_status));
-  laghu_service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-  laghu_service_status.dwCurrentState = SERVICE_START_PENDING;
-  laghu_service_stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
-  if (laghu_service_stop_event == NULL) {
-    return;
-  }
-  laghu_service_handle = RegisterServiceCtrlHandlerA(
-      "laghu-libvips", laghu_libvips_service_control);
-  if (laghu_service_handle == NULL) {
-    CloseHandle(laghu_service_stop_event);
-    laghu_service_stop_event = NULL;
-    return;
-  }
-  (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
-  status = laghu_libvips_init_runtime(queue_path, cache_path);
-  if (status == 0) {
-    laghu_service_status.dwCurrentState = SERVICE_RUNNING;
-    laghu_service_status.dwControlsAccepted =
-        SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
-    (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
-    status = laghu_libvips_serve(queue_path, cache_path, false);
-  }
-  laghu_service_status.dwCurrentState = SERVICE_STOPPED;
-  laghu_service_status.dwWin32ExitCode = (DWORD)status;
-  laghu_service_status.dwControlsAccepted = 0U;
-  (void)SetServiceStatus(laghu_service_handle, &laghu_service_status);
-  CloseHandle(laghu_service_stop_event);
-  laghu_service_stop_event = NULL;
-}
-
-static int laghu_libvips_run_service(void) {
-  SERVICE_TABLE_ENTRYA table[] = {{"laghu-libvips", laghu_libvips_service_main},
-                                  {NULL, NULL}};
-  return StartServiceCtrlDispatcherA(table) ? 0 : 1;
-}
-#endif
-
 int main(int argc, char **argv) {
-#ifdef _WIN32
-  if (argc == 2 && strcmp(argv[1], "--service") == 0) {
-    return laghu_libvips_run_service();
-  }
-  if (argc == 4 && strcmp(argv[1], "--process-job") == 0) {
-    return laghu_libvips_process_file(argv[2], argv[3]);
-  }
-#endif
   if (argc == 2 && strcmp(argv[1], "--probe") == 0) {
     return laghu_libvips_probe();
   }
@@ -830,11 +628,7 @@ int main(int argc, char **argv) {
     if (status != 0) {
       return status;
     }
-#ifdef _WIN32
-    _execvp(argv[0], (const char *const *)serve_arguments);
-#else
     execvp(argv[0], serve_arguments);
-#endif
     perror("laghu-libvips: cannot exec a clean worker process");
     return 1;
   }

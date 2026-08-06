@@ -14,9 +14,9 @@ class ModLaghu < Formula
   license "MIT"
 
   depends_on "httpd"
+  depends_on "laghu-js-optimize"
   depends_on "laghu-libvips"
   depends_on "laghu-resource-fetch"
-  depends_on "laghu-js-optimize"
 
   def install
     (share/"laghu").install "packaging/javascript-observation.conf", "packaging/javascript-defer.conf"

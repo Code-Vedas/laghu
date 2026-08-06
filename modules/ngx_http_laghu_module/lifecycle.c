@@ -11,14 +11,89 @@
 #include "laghu/types.h"
 #include "ngx_http_laghu_internal.h"
 
-#ifdef _WIN32
-#define LAGHU_NGINX_LIFECYCLE_CACHE "C:/ProgramData/Laghu/images"
-#else
 #define LAGHU_NGINX_LIFECYCLE_CACHE "/var/cache/laghu/images"
-#endif
 
 laghu_rum_engine *ngx_http_laghu_rum;
 laghu_operational_registry ngx_http_laghu_operational;
+static ngx_event_t ngx_http_laghu_queue_retry_event;
+
+static bool ngx_http_laghu_attach_queue(laghu_runtime_queue *queue,
+                                        bool *attached, const char *path) {
+  laghu_runtime_queue_snapshot snapshot;
+  if (*attached) return laghu_runtime_queue_snapshot_get(queue, &snapshot);
+  if (path == NULL || path[0] == '\0' || !laghu_runtime_queue_open(queue, path))
+    return false;
+  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot)) {
+    laghu_runtime_queue_close(queue);
+    return false;
+  }
+  *attached = true;
+  return true;
+}
+
+static bool ngx_http_laghu_attach_config_queues(
+    ngx_http_laghu_loc_conf_t *conf) {
+  bool complete = true;
+  if (conf == NULL || !conf->queue_registered) return true;
+  if (!ngx_http_laghu_attach_queue(&conf->runtime_queue,
+                                   &conf->runtime_queue_attached,
+                                   conf->service.worker_queue))
+    complete = false;
+  if (conf->service.font_providers != NULL &&
+      !ngx_http_laghu_attach_queue(&conf->font_fetch_runtime_queue,
+                                   &conf->font_fetch_runtime_queue_attached,
+                                   conf->service.font_fetch_queue))
+    complete = false;
+  if (!ngx_http_laghu_attach_queue(&conf->javascript_runtime_queue,
+                                   &conf->javascript_runtime_queue_attached,
+                                   conf->service.javascript_queue))
+    complete = false;
+  return complete;
+}
+
+static bool ngx_http_laghu_attach_all_queues(ngx_cycle_t *cycle) {
+  ngx_http_laghu_main_conf_t *conf;
+  ngx_http_laghu_loc_conf_t **entries;
+  ngx_uint_t index;
+  bool complete = true;
+  conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
+  if (conf == NULL || conf->queue_configs == NULL) return true;
+  entries = conf->queue_configs->elts;
+  for (index = 0U; index < conf->queue_configs->nelts; ++index)
+    if (!ngx_http_laghu_attach_config_queues(entries[index])) complete = false;
+  return complete;
+}
+
+static void ngx_http_laghu_retry_queues(ngx_event_t *event) {
+  ngx_cycle_t *cycle = event->data;
+  if (cycle != NULL && !ngx_http_laghu_attach_all_queues(cycle))
+    ngx_add_timer(event, 1000U);
+}
+
+static void ngx_http_laghu_close_config_queues(
+    ngx_http_laghu_loc_conf_t *conf) {
+  if (conf == NULL || !conf->queue_registered) return;
+  if (conf->runtime_queue_attached)
+    laghu_runtime_queue_close(&conf->runtime_queue);
+  if (conf->font_fetch_runtime_queue_attached)
+    laghu_runtime_queue_close(&conf->font_fetch_runtime_queue);
+  if (conf->javascript_runtime_queue_attached)
+    laghu_runtime_queue_close(&conf->javascript_runtime_queue);
+  conf->runtime_queue_attached = false;
+  conf->font_fetch_runtime_queue_attached = false;
+  conf->javascript_runtime_queue_attached = false;
+}
+
+static void ngx_http_laghu_close_all_queues(ngx_cycle_t *cycle) {
+  ngx_http_laghu_main_conf_t *conf;
+  ngx_http_laghu_loc_conf_t **entries;
+  ngx_uint_t index;
+  conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
+  if (conf == NULL || conf->queue_configs == NULL) return;
+  entries = conf->queue_configs->elts;
+  for (index = 0U; index < conf->queue_configs->nelts; ++index)
+    ngx_http_laghu_close_config_queues(entries[index]);
+}
 
 ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
   ngx_http_laghu_main_conf_t *conf;
@@ -29,6 +104,13 @@ ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
   int length;
   laghu_rum_options_init(&options);
   conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
+  ngx_memzero(&ngx_http_laghu_queue_retry_event,
+              sizeof(ngx_http_laghu_queue_retry_event));
+  ngx_http_laghu_queue_retry_event.handler = ngx_http_laghu_retry_queues;
+  ngx_http_laghu_queue_retry_event.data = cycle;
+  ngx_http_laghu_queue_retry_event.log = cycle->log;
+  if (!ngx_http_laghu_attach_all_queues(cycle))
+    ngx_add_timer(&ngx_http_laghu_queue_retry_event, 1000U);
   laghu_operational_registry_init(&ngx_http_laghu_operational);
   (void)laghu_operational_registry_open(
       &ngx_http_laghu_operational,
@@ -76,7 +158,9 @@ ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
 }
 
 void ngx_http_laghu_exit_process(ngx_cycle_t *cycle) {
-  (void)cycle;
+  if (ngx_http_laghu_queue_retry_event.timer_set)
+    ngx_del_timer(&ngx_http_laghu_queue_retry_event);
+  ngx_http_laghu_close_all_queues(cycle);
   laghu_operational_registry_close(&ngx_http_laghu_operational);
   laghu_rum_engine_destroy(ngx_http_laghu_rum);
   ngx_http_laghu_rum = NULL;

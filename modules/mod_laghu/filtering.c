@@ -175,39 +175,14 @@ bool laghu_apache_normalize(request_rec *request,
   context->environment.config = context->config->core;
   context->environment.cache_path = context->config->service.image_cache;
   context->environment.rum = laghu_apache_rum;
-  context->environment.worker_queue_path =
-      context->config->service.worker_queue;
-  context->environment.queue = &context->config->queue;
-  context->environment.font_fetch_queue_path =
-      context->config->service.font_fetch_queue;
-  {
-    laghu_runtime_queue_snapshot queue_snapshot;
-    if (context->config->service.font_providers != NULL &&
-        (laghu_runtime_queue_snapshot_get(&context->config->font_queue,
-                                          &queue_snapshot) ||
-         (laghu_runtime_queue_open(
-              &context->config->font_queue,
-              context->environment.font_fetch_queue_path) &&
-          laghu_runtime_queue_snapshot_get(&context->config->font_queue,
-                                           &queue_snapshot)))) {
-      context->environment.font_fetch_queue = &context->config->font_queue;
-      context->environment.font_providers =
-          context->config->service.font_providers;
-    }
-  }
-  context->environment.javascript_queue_path =
-      context->config->service.javascript_queue;
-  {
-    laghu_runtime_queue_snapshot queue_snapshot;
-    if (laghu_runtime_queue_snapshot_get(
-            &context->config->javascript_runtime_queue, &queue_snapshot) ||
-        (laghu_runtime_queue_open(&context->config->javascript_runtime_queue,
-                                  context->environment.javascript_queue_path) &&
-         laghu_runtime_queue_snapshot_get(
-             &context->config->javascript_runtime_queue, &queue_snapshot)))
-      context->environment.javascript_queue =
-          &context->config->javascript_runtime_queue;
-  }
+  context->environment.queue = laghu_apache_image_queue(context->config);
+  context->environment.font_fetch_queue =
+      laghu_apache_font_queue(context->config);
+  if (context->environment.font_fetch_queue != NULL)
+    context->environment.font_providers =
+        context->config->service.font_providers;
+  context->environment.javascript_queue =
+      laghu_apache_javascript_queue(context->config);
   context->environment.javascript_target =
       context->config->service.javascript_target;
   context->environment.javascript_observations =

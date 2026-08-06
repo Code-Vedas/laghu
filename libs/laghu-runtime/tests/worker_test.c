@@ -3,18 +3,13 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include "laghu/worker.h"
+
 #include <assert.h>
 #include <stdio.h>
-#include <time.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#else
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
-#endif
-
-#include "laghu/worker.h"
 
 int main(void) {
   char directory[LAGHU_RUNTIME_PATH_SIZE];
@@ -23,15 +18,9 @@ int main(void) {
   uint64_t now = (uint64_t)time(NULL);
   unsigned int slot;
   bool found = false;
-#ifdef _WIN32
-  assert(snprintf(directory, sizeof(directory), "laghu-worker-%llu",
-                  (unsigned long long)now) > 0);
-  assert(_mkdir(directory) == 0);
-#else
   assert(snprintf(directory, sizeof(directory), "/tmp/laghu-worker-%ld-%llu",
                   (long)getpid(), (unsigned long long)now) > 0);
   assert(mkdir(directory, 0700) == 0);
-#endif
   laghu_worker_lifecycle_init(&lifecycle);
   assert(laghu_worker_lifecycle_start(&lifecycle, directory,
                                       LAGHU_OPERATIONAL_PROCESS_LIBVIPS, NULL,

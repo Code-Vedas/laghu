@@ -23,8 +23,6 @@ set_target_properties(laghu_core PROPERTIES
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
-elseif(MSVC)
-  target_compile_options(laghu_core PRIVATE /W4 /WX)
 endif()
 
 if(LAGHU_BUILD_TESTS)
@@ -36,9 +34,6 @@ if(LAGHU_BUILD_TESTS)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(laghu_core_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     target_compile_options(laghu_config_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  elseif(MSVC)
-    target_compile_options(laghu_core_test PRIVATE /W4 /WX)
-    target_compile_options(laghu_config_test PRIVATE /W4 /WX)
   endif()
 
   add_test(NAME laghu_core_test COMMAND laghu_core_test)

@@ -8,10 +8,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 
 #include "../src/persisted_state_wire.h"
 #include "../src/runtime_platform.h"
@@ -56,18 +54,6 @@ static void test_snapshot_ignores_whole_file_lock(const char *root) {
   assert(laghu_operational_registry_open(
       &registry, root, LAGHU_OPERATIONAL_SURFACE_STANDALONE,
       LAGHU_OPERATIONAL_PROCESS_ADAPTER, false, 100U));
-#ifdef _WIN32
-  {
-    laghu_runtime_shared_mapping mapping;
-    laghu_runtime_shared_mapping_init(&mapping);
-    assert(laghu_runtime_shared_mapping_open(&mapping, path,
-                                             TEST_OPERATIONAL_FILE_SIZE));
-    assert(laghu_runtime_shared_mapping_try_lock(&mapping));
-    assert(laghu_operational_registry_snapshot(&registry, &snapshot));
-    laghu_runtime_shared_mapping_unlock(&mapping);
-    laghu_runtime_shared_mapping_close(&mapping);
-  }
-#else
   {
     int ready[2], release[2], child_status;
     pid_t child;
@@ -98,7 +84,6 @@ static void test_snapshot_ignores_whole_file_lock(const char *root) {
     (void)close(release[0]);
     (void)close(release[1]);
   }
-#endif
   laghu_operational_registry_close(&registry);
 }
 

@@ -10,14 +10,6 @@
 #include "laghu/config.h"
 #include "mod_laghu_internal.h"
 
-static apr_status_t laghu_apache_queue_cleanup(void *data) {
-  laghu_apache_config *config = data;
-  laghu_runtime_queue_close(&config->queue);
-  laghu_runtime_queue_close(&config->font_queue);
-  laghu_runtime_queue_close(&config->javascript_runtime_queue);
-  return APR_SUCCESS;
-}
-
 static apr_status_t laghu_apache_service_cleanup(void *data) {
   laghu_service_config_dispose(data);
   return APR_SUCCESS;
@@ -79,11 +71,6 @@ void *laghu_apache_create_config(apr_pool_t *pool, char *path) {
   if (config == NULL) return NULL;
   laghu_config_init(&config->core);
   laghu_service_config_init(&config->service);
-  laghu_runtime_queue_init(&config->queue);
-  laghu_runtime_queue_init(&config->font_queue);
-  laghu_runtime_queue_init(&config->javascript_runtime_queue);
-  apr_pool_cleanup_register(pool, config, laghu_apache_queue_cleanup,
-                            apr_pool_cleanup_null);
   apr_pool_cleanup_register(pool, &config->service,
                             laghu_apache_service_cleanup,
                             apr_pool_cleanup_null);
@@ -109,11 +96,8 @@ void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
                                     &child->service, &merged->core,
                                     &diagnostic))
     return NULL;
-  laghu_runtime_queue_init(&merged->queue);
-  laghu_runtime_queue_init(&merged->font_queue);
-  laghu_runtime_queue_init(&merged->javascript_runtime_queue);
-  apr_pool_cleanup_register(pool, merged, laghu_apache_queue_cleanup,
-                            apr_pool_cleanup_null);
+  merged->queue_binding =
+      laghu_apache_queue_binding_find_service(&merged->service);
   apr_pool_cleanup_register(pool, &merged->service,
                             laghu_apache_service_cleanup,
                             apr_pool_cleanup_null);

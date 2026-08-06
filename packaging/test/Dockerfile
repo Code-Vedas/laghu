@@ -10,6 +10,9 @@ ARG PACKAGE_FAMILY
 ARG LAGHU_WITH_VIPS=ON
 ENV PACKAGE_FAMILY=${PACKAGE_FAMILY} LAGHU_WITH_VIPS=${LAGHU_WITH_VIPS} \
     DEBIAN_FRONTEND=noninteractive
+COPY --from=rust:1.95-bookworm /usr/local/cargo /usr/local/cargo
+COPY --from=rust:1.95-bookworm /usr/local/rustup /usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:${PATH} RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 
 WORKDIR /workspace
 COPY packaging/test/install-dependencies /workspace/packaging/test/install-dependencies

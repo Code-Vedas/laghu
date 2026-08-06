@@ -57,6 +57,9 @@ void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration) {
       ngx_pcalloc(configuration->pool, sizeof(*conf));
   if (conf != NULL) {
     laghu_service_config_init(&conf->service);
+    conf->queue_configs = ngx_array_create(configuration->pool, 8U,
+                                           sizeof(ngx_http_laghu_loc_conf_t *));
+    if (conf->queue_configs == NULL) return NULL;
     if (!ngx_http_laghu_service_cleanup_register(configuration->pool,
                                                  &conf->service))
       return NULL;
@@ -66,7 +69,6 @@ void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration) {
 
 void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   ngx_http_laghu_loc_conf_t *conf;
-  ngx_pool_cleanup_t *cleanup;
   conf = ngx_pcalloc(configuration->pool, sizeof(*conf));
   if (conf == NULL) return NULL;
   laghu_config_init(&conf->core);
@@ -77,18 +79,6 @@ void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   laghu_runtime_queue_init(&conf->runtime_queue);
   laghu_runtime_queue_init(&conf->font_fetch_runtime_queue);
   laghu_runtime_queue_init(&conf->javascript_runtime_queue);
-  cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
-  if (cleanup == NULL) return NULL;
-  cleanup->handler = ngx_http_laghu_queue_cleanup;
-  cleanup->data = &conf->runtime_queue;
-  cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
-  if (cleanup == NULL) return NULL;
-  cleanup->handler = ngx_http_laghu_queue_cleanup;
-  cleanup->data = &conf->font_fetch_runtime_queue;
-  cleanup = ngx_pool_cleanup_add(configuration->pool, 0);
-  if (cleanup == NULL) return NULL;
-  cleanup->handler = ngx_http_laghu_queue_cleanup;
-  cleanup->data = &conf->javascript_runtime_queue;
   return conf;
 }
 
@@ -153,6 +143,21 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
                            child_conf->service.image_cache,
                            main_conf->operational_cache.len) != 0)
       return "metrics and readiness locations must share one file cache";
+  }
+  if (child_conf->core.mode == LAGHU_MODE_ON && !child_conf->queue_registered) {
+    ngx_http_laghu_loc_conf_t **entry;
+    if (main_conf == NULL || main_conf->queue_configs == NULL)
+      return NGX_CONF_ERROR;
+    if (main_conf->queue_configs->nelts >= LAGHU_NGINX_QUEUE_CONFIG_LIMIT) {
+      ngx_conf_log_error(
+          NGX_LOG_WARN, configuration, 0,
+          "laghu queue attachment limit reached; queue work disabled");
+      return NGX_CONF_OK;
+    }
+    entry = ngx_array_push(main_conf->queue_configs);
+    if (entry == NULL) return NGX_CONF_ERROR;
+    *entry = child_conf;
+    child_conf->queue_registered = true;
   }
   return NGX_CONF_OK;
 }

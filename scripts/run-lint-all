@@ -40,6 +40,15 @@ elif has_command xcrun && xcrun --find clang-format >/dev/null 2>&1; then
 fi
 
 if [ "${clang_format}" != "" ]; then
+  runtime_test_sources=$(awk -F '|' -v root="${REPO_ROOT}" '
+    $1 == "runtime_test" { print root "/" $3 }
+  ' "${REPO_ROOT}/cmake/laghu-sources.list")
+  if [ "${runtime_test_sources}" = "" ]; then
+    echo "No runtime test sources registered" >&2
+    exit 1
+  fi
+  # The manifest is repository-controlled and every source path is space-free.
+  # shellcheck disable=SC2086
   run_cmd clang-format "${clang_format}" --dry-run --Werror \
     "${REPO_ROOT}"/libs/laghu-core/include/laghu/core.h \
     "${REPO_ROOT}"/libs/laghu-core/src/core.c \
@@ -53,7 +62,6 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-image/tests/image_fuzz.c \
     "${REPO_ROOT}"/libs/laghu-runtime/include/laghu/*.h \
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_posix.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_win32.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/queue.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/cache_artifact.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/persisted_state_wire.h \
@@ -74,26 +82,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_combine.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_imports.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/beacon.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/integration_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/lcp_integration_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/operational_integration_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/test_fixture.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/test_fixture.h \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/queue_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/cache_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/operational_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/persisted_state_conformance_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/rum_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/source_asset_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/catalog_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/html_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/css_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/javascript_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/instrumentation_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/lcp_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/budget_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/service_config_test.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/worker_test.c \
+    ${runtime_test_sources} \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_fuzz.c \
     "${REPO_ROOT}"/libs/laghu-http/include/laghu/http.h \
     "${REPO_ROOT}"/libs/laghu-http/src/http.c \
@@ -108,7 +97,6 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/servers/laghu/src/beacon_routes.c \
     "${REPO_ROOT}"/servers/laghu/src/worker_pool.c \
     "${REPO_ROOT}"/servers/laghu/src/lifecycle.c \
-    "${REPO_ROOT}"/servers/laghu/src/windows_service.c \
     "${REPO_ROOT}"/servers/laghu/src/config.c \
     "${REPO_ROOT}"/servers/laghu/src/protocol.c \
     "${REPO_ROOT}"/servers/laghu/src/origin.c \
@@ -118,7 +106,6 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/servers/laghu/src/main.c \
     "${REPO_ROOT}"/servers/laghu/tests/proxy_test.c \
     "${REPO_ROOT}"/workers/laghu-asset-upload/main.c \
-    "${REPO_ROOT}"/libs/laghu-runtime/tests/cache_fixture.c \
     "${REPO_ROOT}"/workers/laghu-libvips/main.c \
     "${REPO_ROOT}"/modules/mod_laghu/registration.c \
     "${REPO_ROOT}"/modules/mod_laghu/filtering.c \

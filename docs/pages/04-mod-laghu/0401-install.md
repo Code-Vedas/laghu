@@ -47,14 +47,6 @@ docker pull ghcr.io/code-vedas/mod-laghu:latest
 docker run --rm ghcr.io/code-vedas/mod-laghu:latest apache2ctl configtest
 ```
 
-## Windows
-
-```powershell
-winget install CodeVedas.ModLaghu
-```
-
-The installer contains matched Apache and workers, configures services and ACLs, and validates the signed build manifest.
-
 ## Source Build
 
 ```bash

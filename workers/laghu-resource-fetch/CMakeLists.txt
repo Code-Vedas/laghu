@@ -11,9 +11,6 @@ target_compile_features(laghu-resource-fetch PRIVATE c_std_11)
 target_compile_definitions(
   laghu-resource-fetch PRIVATE LAGHU_TEST_HOOKS=$<BOOL:${LAGHU_BUILD_TESTS}>
 )
-if(WIN32)
-  target_link_libraries(laghu-resource-fetch PRIVATE ws2_32)
-endif()
 
 if(LAGHU_BUILD_TESTS)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -25,7 +22,4 @@ if(LAGHU_BUILD_TESTS)
 endif()
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu-resource-fetch PRIVATE -Wall -Wextra -Wpedantic -Werror)
-elseif(MSVC)
-  target_compile_definitions(laghu-resource-fetch PRIVATE _CRT_SECURE_NO_WARNINGS)
-  target_compile_options(laghu-resource-fetch PRIVATE /W4 /WX)
 endif()

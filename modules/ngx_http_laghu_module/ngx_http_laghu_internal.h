@@ -20,18 +20,12 @@
 #include "laghu/service_config.h"
 #include "laghu/source.h"
 
-#ifdef _WIN32
-#define LAGHU_NGINX_DEFAULT_QUEUE "C:/ProgramData/Laghu/jobs.queue"
-#define LAGHU_NGINX_DEFAULT_CACHE "C:/ProgramData/Laghu/images"
-#define LAGHU_NGINX_DEFAULT_FONT_QUEUE "C:/ProgramData/Laghu/fonts.queue"
-#define LAGHU_NGINX_DEFAULT_JAVASCRIPT_QUEUE \
-  "C:/ProgramData/Laghu/javascript.queue"
-#else
 #define LAGHU_NGINX_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_NGINX_DEFAULT_CACHE "/var/cache/laghu/images"
 #define LAGHU_NGINX_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
 #define LAGHU_NGINX_DEFAULT_JAVASCRIPT_QUEUE "/run/laghu/javascript.queue"
-#endif
+
+#define LAGHU_NGINX_QUEUE_CONFIG_LIMIT 128U
 
 typedef struct {
   laghu_config core;
@@ -39,11 +33,16 @@ typedef struct {
   laghu_runtime_queue runtime_queue;
   laghu_runtime_queue font_fetch_runtime_queue;
   laghu_runtime_queue javascript_runtime_queue;
+  bool runtime_queue_attached;
+  bool font_fetch_runtime_queue_attached;
+  bool javascript_runtime_queue_attached;
+  bool queue_registered;
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
   laghu_service_config service;
   ngx_str_t operational_cache;
+  ngx_array_t *queue_configs;
 } ngx_http_laghu_main_conf_t;
 
 typedef struct {
@@ -93,8 +92,12 @@ void ngx_http_laghu_exit_process(ngx_cycle_t *cycle);
 bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_image_queue(
+    ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_javascript_queue(
+    ngx_http_laghu_loc_conf_t *conf);
 void ngx_http_laghu_beacon_body(ngx_http_request_t *request);
-void ngx_http_laghu_queue_cleanup(void *data);
 void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration);
 void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration);
 char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,

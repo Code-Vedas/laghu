@@ -8,11 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#include <direct.h>
-#else
 #include <sys/stat.h>
-#endif
+#include <unistd.h>
 
 #define main laghu_asset_worker_entry
 #include "laghu/assets.h"
@@ -105,15 +102,9 @@ int main(void) {
     laghu_asset_provider provider = {contract_ok_upload, contract_ok_verify,
                                      NULL, laghu_s3_healthy, &s3};
     FILE *file;
-#ifdef _WIN32
-    assert(snprintf(root, sizeof(root), "%s\\laghu-source-contract-%lu",
-                    getenv("TEMP"), (unsigned long)GetCurrentProcessId()) > 0);
-    assert(_mkdir(root) == 0 || errno == EEXIST);
-#else
     assert(snprintf(root, sizeof(root), "/tmp/laghu-source-contract-%ld",
                     (long)getpid()) > 0);
     assert(mkdir(root, 0700) == 0 || errno == EEXIST);
-#endif
     assert(snprintf(queue, sizeof(queue), "%s/queue", root) > 0);
     assert(snprintf(catalog, sizeof(catalog), "%s/catalog", root) > 0);
     assert(snprintf(source_path, sizeof(source_path), "%s/source.png", root) >

@@ -18,6 +18,7 @@ tap="codevedas/laghu-smoke"
 tap_repo=
 formula_dir=
 archive="${work}/laghu-0.1.0.tar.gz"
+source_list="${work}/source-files"
 nginx_was_installed=0
 nginx_config_existed=0
 httpd_config_existed=0
@@ -81,8 +82,10 @@ brew untap "${tap}" >/dev/null 2>&1 || true
 brew tap-new --no-git "${tap}" >/dev/null
 tap_repo=$(brew --repo "${tap}")
 formula_dir="${tap_repo}/Formula"
-COPYFILE_DISABLE=1 tar -C "${REPO_ROOT}" --exclude=.git --exclude=tmp \
-  -czf "${archive}" .
+git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z \
+  >"${source_list}"
+COPYFILE_DISABLE=1 tar -C "${REPO_ROOT}" --null -T "${source_list}" \
+  -czf "${archive}"
 archive_sha=$(shasum -a 256 "${archive}" | awk '{print $1}')
 cp "${REPO_ROOT}"/packaging/homebrew/*.rb "${formula_dir}/"
 
@@ -91,15 +94,17 @@ for formula in "${formula_dir}"/*.rb; do
   perl -0pi -e \
     's!  url "https://github.com/Code-Vedas/laghu.git", tag: "v0.1.0"!  url "file://$ENV{LAGHU_LOCAL_ARCHIVE}"\n  sha256 "$ENV{LAGHU_LOCAL_SHA}"!' \
     "${formula}"
+  brew trust --formula "${tap}/$(basename "${formula}" .rb)" >/dev/null
 done
 
 brew style "${formula_dir}"/*.rb
 brew install --build-from-source "${tap}/laghu-libvips"
 brew test laghu-libvips
 brew services start laghu-libvips
+service_target="gui/$(id -u)/homebrew.mxcl.laghu-libvips"
 attempt=0
 while [ "${attempt}" -lt 50 ] &&
-    ! brew services list | grep -E '^laghu-libvips[[:space:]]+started' >/dev/null; do
+    ! launchctl print "${service_target}" 2>/dev/null | grep -q 'state = running'; do
   attempt=$((attempt + 1))
   sleep 0.1
 done

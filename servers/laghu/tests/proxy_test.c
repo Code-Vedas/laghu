@@ -16,11 +16,7 @@
     }                                                         \
   } while (0)
 
-#ifdef _WIN32
-#define TEST_BACKEND_URI "file:///C:/laghu-cache"
-#else
 #define TEST_BACKEND_URI "file:///tmp/cache"
-#endif
 
 static bool service_apply(laghu_service_config *config,
                           laghu_service_setting setting, const char *value) {
@@ -68,11 +64,7 @@ int main(void) {
                      "--origin",
                      "http://127.0.0.1:8000",
                      "--file-cache-backend",
-#ifdef _WIN32
-                     "file:///C:/laghu-cache",
-#else
                      "file:///tmp/cache",
-#endif
                      "--file-cache-size",
                      "20m",
                      "--file-cache-inode-limit",
@@ -259,11 +251,7 @@ int main(void) {
                    "--purge-query",
                    "on",
                    "--purge-token-file",
-#ifdef _WIN32
-                   "C:/ProgramData/Laghu/purge.token",
-#else
                    "/etc/laghu/purge.token",
-#endif
                    "--purge-allow",
                    "127.0.0.0/8",
                    "--statistics",
@@ -323,13 +311,8 @@ int main(void) {
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, backend, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_OK);
-#ifdef _WIN32
-  CHECK(!strcmp(options.service.file_cache_backend, "file:///C:/laghu-cache"));
-  CHECK(!strcmp(options.service.image_cache, "C:\\laghu-cache"));
-#else
   CHECK(!strcmp(options.service.file_cache_backend, "file:///tmp/cache"));
   CHECK(!strcmp(options.service.image_cache, "/tmp/cache"));
-#endif
   CHECK(options.service.cache_limits.size_limit == 20U * 1024U * 1024U);
   CHECK(options.service.cache_limits.inode_limit == 2000U);
   CHECK(options.service.cache_limits.clean_interval == 120U);
@@ -414,14 +397,12 @@ int main(void) {
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, unbound_file, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
-#ifndef _WIN32
   {
     char *service[] = {"laghu", "--service"};
     laghu_proxy_options_init(&options);
     CHECK(laghu_proxy_parse_options(2, service, &options, error,
                                     sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   }
-#endif
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(14, conflict, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);

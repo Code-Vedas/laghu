@@ -5,24 +5,12 @@
 
 #include "laghu/service_config.h"
 
+#include <arpa/inet.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef _WIN32
-#include <arpa/inet.h>
-#endif
-
-#ifdef _WIN32
-#define TEST_SOURCE_ROOT "C:/srv/assets"
-#define TEST_CACHE_ROOT "C:\\laghu-cache"
-#define TEST_CACHE_URI "file:///C:/laghu-cache"
-#define TEST_PARENT_CACHE_ROOT "C:\\parent-cache"
-#define TEST_PARENT_CACHE_URI "file:///C:/parent-cache"
-#define TEST_CHILD_CACHE_ROOT "C:\\child-cache"
-#define TEST_CHILD_CACHE_URI "file:///C:/child-cache"
-#else
 #define TEST_SOURCE_ROOT "/srv/assets"
 #define TEST_CACHE_ROOT "/tmp/laghu-cache"
 #define TEST_CACHE_URI "file:///tmp/laghu-cache"
@@ -30,7 +18,6 @@
 #define TEST_PARENT_CACHE_URI "file:///tmp/parent-cache"
 #define TEST_CHILD_CACHE_ROOT "/tmp/child-cache"
 #define TEST_CHILD_CACHE_URI "file:///tmp/child-cache"
-#endif
 
 static void test_descriptors(void) {
   laghu_service_setting setting;
@@ -204,7 +191,6 @@ static void test_cidr_fixtures(void) {
   for (index = 0U; index < sizeof(valid) / sizeof(valid[0]); ++index) {
     laghu_service_cidr cidr;
     assert(laghu_service_cidr_parse(valid[index], &cidr));
-#ifndef _WIN32
     {
       char address[46U];
       const char *slash = strrchr(valid[index], '/');
@@ -217,7 +203,6 @@ static void test_cidr_fixtures(void) {
       assert(inet_pton(family, address, expected) == 1);
       assert(memcmp(cidr.address, expected, family == AF_INET ? 4U : 16U) == 0);
     }
-#endif
   }
   for (index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
     laghu_service_cidr cidr;

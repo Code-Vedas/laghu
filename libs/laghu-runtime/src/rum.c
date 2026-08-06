@@ -3,74 +3,17 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-typedef CRITICAL_SECTION laghu_rum_mutex;
-typedef HANDLE laghu_rum_thread;
-typedef HANDLE laghu_rum_backend_lock;
-typedef HMODULE laghu_rum_library;
-#define laghu_rum_library_open(path) LoadLibraryA(path)
-#define laghu_rum_library_symbol(handle, name) GetProcAddress((handle), (name))
-#define laghu_rum_library_close(handle) FreeLibrary(handle)
-static bool laghu_rum_mutex_init(laghu_rum_mutex *mutex) {
-  InitializeCriticalSection(mutex);
-  return true;
-}
-static void laghu_rum_mutex_lock(laghu_rum_mutex *mutex) {
-  EnterCriticalSection(mutex);
-}
-static void laghu_rum_mutex_unlock(laghu_rum_mutex *mutex) {
-  LeaveCriticalSection(mutex);
-}
-static void laghu_rum_mutex_destroy(laghu_rum_mutex *mutex) {
-  DeleteCriticalSection(mutex);
-}
-static void laghu_rum_pause(void) { Sleep(100U); }
-static uint64_t laghu_rum_monotonic_ms(void) {
-  LARGE_INTEGER counter, frequency;
-  if (!QueryPerformanceCounter(&counter) ||
-      !QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
-    return 0U;
-  return (uint64_t)(counter.QuadPart / frequency.QuadPart) * 1000U +
-         (uint64_t)(counter.QuadPart % frequency.QuadPart) * 1000U /
-             (uint64_t)frequency.QuadPart;
-}
-#define laghu_rum_replace(from, to) \
-  (MoveFileExA((from), (to),        \
-               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
-static laghu_rum_backend_lock laghu_rum_backend_lock_acquire(const char *path) {
-  OVERLAPPED overlap = {0};
-  HANDLE handle = CreateFileA(path, GENERIC_READ | GENERIC_WRITE,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (handle == INVALID_HANDLE_VALUE ||
-      !LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0U, MAXDWORD, MAXDWORD,
-                  &overlap)) {
-    if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-    return INVALID_HANDLE_VALUE;
-  }
-  return handle;
-}
-static void laghu_rum_backend_lock_release(laghu_rum_backend_lock lock) {
-  OVERLAPPED overlap = {0};
-  (void)UnlockFileEx(lock, 0U, MAXDWORD, MAXDWORD, &overlap);
-  CloseHandle(lock);
-}
-#else
-#include <dlfcn.h>
-#include <fcntl.h>
-#include <pthread.h>
 #include <sys/file.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 typedef pthread_mutex_t laghu_rum_mutex;
 typedef pthread_t laghu_rum_thread;
@@ -110,7 +53,6 @@ static void laghu_rum_backend_lock_release(laghu_rum_backend_lock lock) {
   (void)flock(lock, LOCK_UN);
   (void)close(lock);
 }
-#endif
 
 #include "laghu/catalog.h"
 #include "laghu/css.h"
@@ -468,10 +410,7 @@ static laghu_rum_library laghu_rum_open_first(const char *configured,
 
 static bool laghu_rum_redis_load(laghu_rum_engine *engine,
                                  const char *configured) {
-#ifdef _WIN32
-  static const char *const base_names[] = {"hiredis.dll", NULL};
-  static const char *const ssl_names[] = {"hiredis_ssl.dll", NULL};
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
   static const char *const base_names[] = {"libhiredis.dylib", NULL};
   static const char *const ssl_names[] = {"libhiredis_ssl.dylib", NULL};
 #else
@@ -503,16 +442,9 @@ static bool laghu_rum_redis_load(laghu_rum_engine *engine,
   if (engine->redis_tls) {
     if (configured != NULL && configured[0] != '\0') {
       const char *slash = strrchr(configured, '/');
-#ifdef _WIN32
-      const char *backslash = strrchr(configured, '\\');
-      if (backslash != NULL && (slash == NULL || backslash > slash))
-        slash = backslash;
-#endif
       if (slash != NULL) {
         size_t directory = (size_t)(slash - configured + 1U);
-#ifdef _WIN32
-        const char name[] = "hiredis_ssl.dll";
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
         const char name[] = "libhiredis_ssl.dylib";
 #else
         const char name[] = "libhiredis_ssl.so";
@@ -607,11 +539,7 @@ void laghu_rum_options_init(laghu_rum_options *options) {
 static bool laghu_rum_instance_id(laghu_rum_engine *engine) {
   char material[192U];
   uint64_t now = (uint64_t)time(NULL);
-#ifdef _WIN32
-  unsigned long process = GetCurrentProcessId();
-#else
   unsigned long process = (unsigned long)getpid();
-#endif
   int length = snprintf(material, sizeof(material), "%llu\n%lu\n%p\n%llu",
                         (unsigned long long)now, process, (void *)engine,
                         (unsigned long long)clock());
@@ -649,11 +577,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
       snprintf(lock_path, sizeof(lock_path), "%s.lock", engine->snapshot_path);
   if (length <= 0 || (size_t)length >= sizeof(lock_path)) return false;
   backend_lock = laghu_rum_backend_lock_acquire(lock_path);
-#ifdef _WIN32
-  if (backend_lock == INVALID_HANDLE_VALUE) return false;
-#else
   if (backend_lock < 0) return false;
-#endif
   entries = calloc(engine->slot_count, sizeof(*entries));
   deltas = calloc(engine->slot_count, sizeof(*deltas));
   disk.slot_count = engine->slot_count;
@@ -969,11 +893,7 @@ static bool laghu_rum_snapshot_cache(laghu_rum_engine *engine) {
   if (length <= 0 || (size_t)length >= sizeof(lock_path))
     goto done_without_lock;
   lock = laghu_rum_backend_lock_acquire(lock_path);
-#ifdef _WIN32
-  if (lock == INVALID_HANDLE_VALUE) goto done_without_lock;
-#else
   if (lock < 0) goto done_without_lock;
-#endif
   length =
       snprintf(temporary, sizeof(temporary), "%s.tmp", engine->snapshot_path);
   if (length <= 0 || (size_t)length >= sizeof(temporary) ||
@@ -1450,12 +1370,7 @@ static bool laghu_rum_sync(laghu_rum_engine *engine) {
   return laghu_rum_snapshot_write(engine);
 }
 
-#ifdef _WIN32
-static DWORD WINAPI laghu_rum_sync_main(void *data)
-#else
-static void *laghu_rum_sync_main(void *data)
-#endif
-{
+static void *laghu_rum_sync_main(void *data) {
   laghu_rum_engine *engine = data;
   unsigned int ticks = 0U;
   for (;;) {
@@ -1471,11 +1386,7 @@ static void *laghu_rum_sync_main(void *data)
     }
   }
   (void)laghu_rum_sync(engine);
-#ifdef _WIN32
-  return 0U;
-#else
   return NULL;
-#endif
 }
 
 laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
@@ -1590,14 +1501,8 @@ laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
       return NULL;
     }
   }
-#ifdef _WIN32
-  engine->thread =
-      CreateThread(NULL, 0U, laghu_rum_sync_main, engine, 0U, NULL);
-  engine->thread_ready = engine->thread != NULL;
-#else
   engine->thread_ready =
       pthread_create(&engine->thread, NULL, laghu_rum_sync_main, engine) == 0;
-#endif
   if (!engine->thread_ready && engine->backend != LAGHU_RUM_BACKEND_MEMORY) {
     laghu_rum_engine_destroy(engine);
     return NULL;
@@ -1612,12 +1517,7 @@ void laghu_rum_engine_destroy(laghu_rum_engine *engine) {
     laghu_rum_mutex_lock(&engine->mutex);
     engine->stop = true;
     laghu_rum_mutex_unlock(&engine->mutex);
-#ifdef _WIN32
-    (void)WaitForSingleObject(engine->thread, INFINITE);
-    CloseHandle(engine->thread);
-#else
     (void)pthread_join(engine->thread, NULL);
-#endif
     engine->thread_ready = false;
   }
   if (engine->mutex_ready) laghu_rum_mutex_lock(&engine->mutex);

@@ -3,30 +3,18 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <direct.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#define laghu_socket SOCKET
-#define laghu_socklen int
-#define LAGHU_INVALID_SOCKET INVALID_SOCKET
-#define laghu_close closesocket
-#define laghu_sleep_ms(value) Sleep(value)
-#else
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 #define laghu_socket int
 #define laghu_socklen socklen_t
@@ -37,7 +25,6 @@ static void laghu_sleep_ms(unsigned int value) {
                            .tv_nsec = (long)(value % 1000U) * 1000000L};
   (void)nanosleep(&pause, NULL);
 }
-#endif
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -67,14 +54,6 @@ typedef struct {
 
 static volatile sig_atomic_t laghu_fetch_stop;
 
-#ifdef _WIN32
-static SERVICE_STATUS_HANDLE laghu_fetch_service_handle;
-static SERVICE_STATUS laghu_fetch_service_status;
-static const char *laghu_fetch_service_queue;
-static const char *laghu_fetch_service_cache;
-static const char *laghu_fetch_service_providers;
-#endif
-
 static void laghu_fetch_signal(int signal_number) {
   (void)signal_number;
   laghu_fetch_stop = 1;
@@ -102,17 +81,9 @@ static bool laghu_fetch_url(const char *url, char host[256],
 }
 
 static void laghu_fetch_timeout(laghu_socket socket) {
-#ifdef _WIN32
-  DWORD timeout = LAGHU_FETCH_TIMEOUT_SECONDS * 1000U;
-  (void)setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout,
-                   sizeof(timeout));
-  (void)setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout,
-                   sizeof(timeout));
-#else
   struct timeval timeout = {LAGHU_FETCH_TIMEOUT_SECONDS, 0};
   (void)setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
   (void)setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-#endif
 }
 
 static laghu_socket laghu_fetch_connect(const char *host) {
@@ -491,10 +462,8 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   SSL_CTX *context;
   char error[256];
   unsigned char payload[1];
-#ifdef _WIN32
-  WSADATA sockets;
-  if (WSAStartup(MAKEWORD(2, 2), &sockets) != 0) return 1;
-#endif
+  bool queue_configured = false;
+  bool queue_unavailable_reported = false;
   if (!laghu_font_providers_load(provider_path, &providers, error,
                                  sizeof(error))) {
     fprintf(stderr, "laghu-resource-fetch: %s\n", error);
@@ -518,33 +487,38 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   laghu_runtime_queue_init(&queue);
   laghu_worker_lifecycle_init(&lifecycle);
-  if (!laghu_runtime_queue_open(&queue, queue_path)) {
-    SSL_CTX_free(context);
-    return 1;
-  }
   (void)laghu_worker_lifecycle_start(&lifecycle, cache_path,
                                      LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH,
-                                     &queue, true, (uint64_t)time(NULL));
-  {
-    unsigned int attempt;
-    for (attempt = 0U; attempt < 100U; ++attempt) {
-      if (laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND))
-        break;
-      laghu_sleep_ms(1U);
-    }
-    if (attempt == 100U) {
-      laghu_runtime_queue_close(&queue);
-      SSL_CTX_free(context);
-      return 1;
-    }
-  }
-#ifndef _WIN32
+                                     NULL, true, (uint64_t)time(NULL));
+  laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), false);
   (void)signal(SIGINT, laghu_fetch_signal);
   (void)signal(SIGTERM, laghu_fetch_signal);
-#endif
   while (!laghu_fetch_stop) {
     laghu_runtime_job job;
-    laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), true);
+    uint64_t now = (uint64_t)time(NULL);
+    if (!laghu_runtime_queue_open(&queue, queue_path)) {
+      if (!queue_unavailable_reported) {
+        fputs("laghu-resource-fetch: queue unavailable\n", stderr);
+        queue_unavailable_reported = true;
+      }
+      laghu_worker_lifecycle_heartbeat(&lifecycle, now, false);
+      laghu_sleep_ms(100U);
+      continue;
+    }
+    if (!queue_configured &&
+        !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND)) {
+      if (!queue_unavailable_reported) {
+        fputs("laghu-resource-fetch: queue unavailable\n", stderr);
+        queue_unavailable_reported = true;
+      }
+      laghu_worker_lifecycle_heartbeat(&lifecycle, now, false);
+      laghu_sleep_ms(100U);
+      continue;
+    }
+    lifecycle.queue = &queue;
+    queue_configured = true;
+    queue_unavailable_reported = false;
+    laghu_worker_lifecycle_heartbeat(&lifecycle, now, true);
     if (laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload))) {
       if (job.kind == LAGHU_RUNTIME_JOB_FONT_CSS) {
         uint64_t started = laghu_worker_lifecycle_clock();
@@ -561,78 +535,21 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
   laghu_runtime_queue_close(&queue);
   SSL_CTX_free(context);
-#ifdef _WIN32
-  WSACleanup();
-#endif
   return 0;
 }
-
-#ifdef _WIN32
-static void WINAPI laghu_fetch_service_control(DWORD control) {
-  if (control != SERVICE_CONTROL_STOP && control != SERVICE_CONTROL_SHUTDOWN)
-    return;
-  laghu_fetch_service_status.dwCurrentState = SERVICE_STOP_PENDING;
-  laghu_fetch_service_status.dwCheckPoint = 1U;
-  laghu_fetch_service_status.dwWaitHint = 15000U;
-  (void)SetServiceStatus(laghu_fetch_service_handle,
-                         &laghu_fetch_service_status);
-  laghu_fetch_stop = 1;
-}
-
-static void WINAPI laghu_fetch_service_main(DWORD argc, LPSTR *argv) {
-  int result;
-  (void)argc;
-  (void)argv;
-  memset(&laghu_fetch_service_status, 0, sizeof(laghu_fetch_service_status));
-  laghu_fetch_service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-  laghu_fetch_service_status.dwCurrentState = SERVICE_START_PENDING;
-  laghu_fetch_service_status.dwControlsAccepted =
-      SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
-  laghu_fetch_service_handle = RegisterServiceCtrlHandlerA(
-      "laghu-resource-fetch", laghu_fetch_service_control);
-  if (laghu_fetch_service_handle == NULL) return;
-  laghu_fetch_service_status.dwCurrentState = SERVICE_RUNNING;
-  (void)SetServiceStatus(laghu_fetch_service_handle,
-                         &laghu_fetch_service_status);
-  result =
-      laghu_fetch_serve(laghu_fetch_service_queue, laghu_fetch_service_cache,
-                        laghu_fetch_service_providers);
-  laghu_fetch_service_status.dwCurrentState = SERVICE_STOPPED;
-  laghu_fetch_service_status.dwWin32ExitCode =
-      result == 0 ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR;
-  laghu_fetch_service_status.dwServiceSpecificExitCode =
-      result == 0 ? 0U : (DWORD)result;
-  (void)SetServiceStatus(laghu_fetch_service_handle,
-                         &laghu_fetch_service_status);
-}
-#endif
 
 int main(int argc, char **argv) {
   laghu_runtime_queue queue;
   bool initialize;
   if (argc != 5 ||
       (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 &&
-       strcmp(argv[1], "--init-and-serve") != 0
-#ifdef _WIN32
-       && strcmp(argv[1], "--service") != 0
-#endif
-       )) {
+       strcmp(argv[1], "--init-and-serve") != 0)) {
     fputs(
         "Usage: laghu-resource-fetch --init|--serve|--init-and-serve "
         "QUEUE CACHE PROVIDERS\n",
         stderr);
     return 2;
   }
-#ifdef _WIN32
-  if (strcmp(argv[1], "--service") == 0) {
-    SERVICE_TABLE_ENTRYA table[] = {
-        {"laghu-resource-fetch", laghu_fetch_service_main}, {NULL, NULL}};
-    laghu_fetch_service_queue = argv[2];
-    laghu_fetch_service_cache = argv[3];
-    laghu_fetch_service_providers = argv[4];
-    return StartServiceCtrlDispatcherA(table) ? 0 : 1;
-  }
-#endif
   initialize = strcmp(argv[1], "--serve") != 0;
   if (initialize) {
     laghu_font_provider_set providers;

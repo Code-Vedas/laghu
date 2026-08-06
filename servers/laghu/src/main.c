@@ -54,9 +54,6 @@ static void usage(FILE *stream) {
       "  --purge-token-file PATH --purge-allow CIDR\n"
       "  --cache-flush-file PATH --statistics on|off\n",
       stream);
-#ifdef _WIN32
-  fputs("  --service\n", stream);
-#endif
 }
 
 int main(int argc, char **argv) {
@@ -82,13 +79,6 @@ int main(int argc, char **argv) {
     laghu_proxy_options_dispose(&options);
     return 2;
   }
-#ifdef _WIN32
-  if (options.service_mode) {
-    int result = laghu_proxy_run_service(&options);
-    laghu_proxy_options_dispose(&options);
-    return result;
-  }
-#endif
   {
     int result = laghu_proxy_run(&options);
     laghu_proxy_options_dispose(&options);

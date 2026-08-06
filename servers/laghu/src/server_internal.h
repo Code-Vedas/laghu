@@ -6,39 +6,25 @@
 #ifndef LAGHU_SERVER_INTERNAL_H
 #define LAGHU_SERVER_INTERNAL_H
 
-#include <openssl/ssl.h>
-#include <stdint.h>
-
-#include "laghu/proxy.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-typedef SOCKET laghu_socket;
-typedef int laghu_socklen;
-#define LAGHU_INVALID_SOCKET INVALID_SOCKET
-#define laghu_close closesocket
-#define LAGHU_SHUT_WRITE SD_SEND
-#define LAGHU_SHUT_BOTH SD_BOTH
-#else
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <openssl/ssl.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include "laghu/proxy.h"
 typedef int laghu_socket;
 typedef socklen_t laghu_socklen;
 #define LAGHU_INVALID_SOCKET (-1)
 #define laghu_close close
 #define LAGHU_SHUT_WRITE SHUT_WR
 #define LAGHU_SHUT_BOTH SHUT_RDWR
-#endif
 
 #include "laghu/operational.h"
 #include "laghu/queue.h"
@@ -109,22 +95,19 @@ typedef struct proxy_queue {
   SSL_CTX *tls_context;
   laghu_rum_engine *rum;
   laghu_operational_registry operational;
-#ifdef _WIN32
-  CRITICAL_SECTION lock;
-  CONDITION_VARIABLE ready;
-  CONDITION_VARIABLE drained;
-#else
+  laghu_runtime_queue runtime_queue;
+  laghu_runtime_queue font_fetch_queue;
+  laghu_runtime_queue javascript_queue;
+  bool runtime_queue_ready;
+  bool font_fetch_queue_ready;
+  bool javascript_queue_ready;
   pthread_mutex_t lock;
   pthread_cond_t ready;
   pthread_cond_t drained;
-#endif
 } proxy_queue;
 
 typedef struct proxy_worker {
   proxy_queue *queue;
-  laghu_runtime_queue runtime_queue;
-  laghu_runtime_queue font_fetch_queue;
-  laghu_runtime_queue javascript_queue;
   laghu_socket active_client;
   laghu_socket active_origin;
 } proxy_worker;
@@ -252,11 +235,11 @@ bool proxy_append_forwarding(const laghu_proxy_options *options,
                              char *output, size_t capacity, size_t *length);
 void proxy_handle(const proxy_connection *connection, proxy_worker *worker);
 bool queue_push(proxy_queue *queue, const proxy_connection *connection);
+void proxy_maintain_queue_attachments(proxy_queue *queue);
+laghu_runtime_queue *proxy_runtime_queue(proxy_worker *worker);
+laghu_runtime_queue *proxy_font_fetch_queue(proxy_worker *worker);
+laghu_runtime_queue *proxy_javascript_queue(proxy_worker *worker);
 bool proxy_cache_probe(const char *cache_path);
-#ifdef _WIN32
-DWORD WINAPI proxy_worker_main(LPVOID argument);
-#else
 void *proxy_worker_main(void *argument);
-#endif
 
 #endif

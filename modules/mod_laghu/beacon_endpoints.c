@@ -10,13 +10,9 @@ static unsigned int laghu_apache_beacon_count;
 
 static bool laghu_apache_backend_available(laghu_apache_config *config) {
   uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
+  laghu_runtime_queue *queue = laghu_apache_image_queue(config);
   laghu_runtime_queue_snapshot snapshot;
-  if (!laghu_runtime_queue_snapshot_get(&config->queue, &snapshot) &&
-      (!laghu_runtime_queue_open(&config->queue,
-                                 config->service.worker_queue[0] != '\0'
-                                     ? config->service.worker_queue
-                                     : LAGHU_DEFAULT_QUEUE) ||
-       !laghu_runtime_queue_snapshot_get(&config->queue, &snapshot)))
+  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot))
     return false;
   return snapshot.capabilities != 0U && snapshot.worker_heartbeat != 0U &&
          snapshot.worker_heartbeat <= now &&
@@ -107,7 +103,8 @@ int laghu_apache_beacon_endpoint(request_rec *request,
         !laghu_resolve_config_policy(&config->core, &policy) ||
         !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) ||
         !laghu_apache_backend_available(config) ||
-        !laghu_runtime_queue_snapshot_get(&config->queue, &queue_snapshot) ||
+        !laghu_runtime_queue_snapshot_get(laghu_apache_image_queue(config),
+                                          &queue_snapshot) ||
         !laghu_catalog_apply_beacon(
             laghu_apache_rum,
             config->service.image_cache[0] != '\0' ? config->service.image_cache

@@ -29,16 +29,8 @@ void proxy_reject_connection(proxy_queue *queue, laghu_socket client,
   access.failure = failure;
   proxy_error_response(client, 503U, "Service Unavailable");
   (void)shutdown(client, LAGHU_SHUT_WRITE);
-#ifdef _WIN32
-  {
-    proxy_timeout(client, 1U);
-    while (recv(client, (char *)discarded, sizeof(discarded), 0) > 0) {
-    }
-  }
-#else
   while (recv(client, discarded, sizeof(discarded), MSG_DONTWAIT) > 0) {
   }
-#endif
   laghu_close(client);
   proxy_access_write(queue, &access);
 }
@@ -106,21 +98,13 @@ static bool proxy_operation_removes(const laghu_http_transaction_result *result,
 
 bool proxy_beacon_allowed(proxy_queue *queue, uint64_t now) {
   bool allowed;
-#ifdef _WIN32
-  EnterCriticalSection(&queue->lock);
-#else
   pthread_mutex_lock(&queue->lock);
-#endif
   if (queue->beacon_second != now) {
     queue->beacon_second = now;
     queue->beacon_count = 0U;
   }
   allowed = ++queue->beacon_count <= 32U;
-#ifdef _WIN32
-  LeaveCriticalSection(&queue->lock);
-#else
   pthread_mutex_unlock(&queue->lock);
-#endif
   return allowed;
 }
 

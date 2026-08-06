@@ -71,6 +71,8 @@ bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
                                 unsigned int slot_count,
                                 size_t slot_payload_size);
 bool laghu_runtime_queue_open(laghu_runtime_queue *queue, const char *path);
+bool laghu_runtime_queue_move(laghu_runtime_queue *destination,
+                              laghu_runtime_queue *source);
 bool laghu_runtime_queue_refresh(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_set_backend(laghu_runtime_queue *queue,
                                      uint32_t capabilities,

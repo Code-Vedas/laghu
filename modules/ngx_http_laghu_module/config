@@ -11,16 +11,8 @@ LAGHU_MARKUP_DIR="$ngx_addon_dir/../../libs/laghu-markup"
 LAGHU_RUNTIME_DIR="$ngx_addon_dir/../../libs/laghu-runtime"
 LAGHU_IMAGE_DIR="$ngx_addon_dir/../../libs/laghu-image"
 LAGHU_HTTP_DIR="$ngx_addon_dir/../../libs/laghu-http"
-case "${NGX_PLATFORM:-}" in
-    win32)
-        LAGHU_RUNTIME_PLATFORM="$LAGHU_RUNTIME_DIR/src/runtime_win32.c"
-        LAGHU_MODULE_CFLAGS="-DLAGHU_HAVE_VIPS=0 /FIngx_config.h"
-        ;;
-    *)
-        LAGHU_RUNTIME_PLATFORM="$LAGHU_RUNTIME_DIR/src/runtime_posix.c"
-        LAGHU_MODULE_CFLAGS="-DLAGHU_HAVE_VIPS=0"
-        ;;
-esac
+LAGHU_RUNTIME_PLATFORM="$LAGHU_RUNTIME_DIR/src/runtime_posix.c"
+LAGHU_MODULE_CFLAGS="-DLAGHU_HAVE_VIPS=0"
 
 LAGHU_MODULE_SRCS="$LAGHU_RUNTIME_PLATFORM"
 for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http|nginx)$/ { gsub(/\r/, "", $3); print $3 }' "$ngx_addon_dir/../../cmake/laghu-sources.list"); do

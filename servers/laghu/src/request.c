@@ -87,27 +87,14 @@ bool proxy_admin_token(const laghu_proxy_options *options,
   size_t length, provided_length, index, maximum;
   unsigned char difference = 0U;
   FILE *file;
-#ifndef _WIN32
   struct stat status;
   if (lstat(options->service.purge_token_file, &status) != 0 ||
       !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
       (status.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
     return false;
-#else
-  DWORD attributes = GetFileAttributesA(options->service.purge_token_file);
-  if (attributes == INVALID_FILE_ATTRIBUTES ||
-      (attributes &
-       (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U)
-    return false;
-#endif
   if (provided == NULL) return false;
-#ifdef _WIN32
-  if (fopen_s(&file, options->service.purge_token_file, "rb") != 0)
-    return false;
-#else
   file = fopen(options->service.purge_token_file, "rb");
   if (file == NULL) return false;
-#endif
   length = fread(expected, 1U, sizeof(expected), file);
   if (fclose(file) != 0 || length == 0U || length == sizeof(expected))
     return false;

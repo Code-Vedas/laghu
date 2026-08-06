@@ -38,16 +38,8 @@ while IFS='|' read -r group alias source; do
 done < "${REPO_ROOT}/cmake/laghu-sources.list"
 cp "${REPO_ROOT}/libs/laghu-runtime/src/rum_redis_merge.h" \
   "${build_dir}/rum_redis_merge.h"
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*)
-    cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_win32.c" \
-      "${build_dir}/laghu_runtime.c"
-    ;;
-  *)
-    cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_posix.c" \
-      "${build_dir}/laghu_runtime.c"
-    ;;
-esac
+cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_posix.c" \
+  "${build_dir}/laghu_runtime.c"
 
 cd "${build_dir}"
 "${APXS}" -c \

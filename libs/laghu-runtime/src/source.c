@@ -5,37 +5,24 @@
 
 #include "laghu/source.h"
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "laghu/types.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <fcntl.h>
-#include <io.h>
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#define laghu_source_unlink _unlink
-#define laghu_source_fileno _fileno
-#define laghu_source_fdopen _fdopen
-#else
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "laghu/types.h"
 
 #define laghu_source_stat stat
 #define laghu_source_stat_t struct stat
 #define laghu_source_unlink unlink
 #define laghu_source_fileno fileno
 #define laghu_source_fdopen fdopen
-#endif
 
 typedef struct {
   unsigned int version;
@@ -59,26 +46,12 @@ static bool laghu_source_copy(char *target, size_t size, const char *value) {
 
 static bool laghu_source_root_valid(const char *root) {
   const char *cursor;
-  size_t index;
   if (root == NULL || root[0] == '\0' || strchr(root, '\n') != NULL ||
       strchr(root, '\r') != NULL)
     return false;
-#ifdef _WIN32
-  if (!isalpha((unsigned char)root[0]) || root[1] != ':' ||
-      (root[2] != '/' && root[2] != '\\'))
-    return false;
-  for (index = 2U; root[index] != '\0'; ++index)
-    if (root[index] == ':') return false;
-#else
-  (void)index;
   if (root[0] != '/') return false;
-#endif
   cursor = root;
-#ifdef _WIN32
-  cursor += 3U;
-#else
   ++cursor;
-#endif
   while (*cursor != '\0') {
     size_t length = strcspn(cursor, "/\\");
     if ((length == 1U && cursor[0] == '.') ||
@@ -252,12 +225,7 @@ bool laghu_source_registry_publish(const char *queue_path,
     (void)laghu_source_unlink(temporary);
     return false;
   }
-#ifdef _WIN32
-  if (!MoveFileExA(temporary, path,
-                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-#else
   if (rename(temporary, path) != 0) {
-#endif
     (void)laghu_source_unlink(temporary);
     return false;
   }
@@ -361,34 +329,18 @@ static bool laghu_source_no_links(const char *root, const char *relative,
   size_t used = strlen(root);
   if (used + 2U >= sizeof(current)) return false;
   memcpy(current, root, used);
-  while (used > 1U && (current[used - 1U] == '/' || current[used - 1U] == '\\'))
-    --used;
+  while (used > 1U && current[used - 1U] == '/') --used;
   current[used] = '\0';
   while (*cursor != '\0') {
     size_t length = strcspn(cursor, "/");
-#ifndef _WIN32
     laghu_source_stat_t metadata;
-#endif
     if (used + length + 2U >= sizeof(current)) return false;
-#ifdef _WIN32
-    current[used++] = '\\';
-#else
     current[used++] = '/';
-#endif
     memcpy(current + used, cursor, length);
     used += length;
     current[used] = '\0';
-#ifdef _WIN32
-    {
-      DWORD attributes = GetFileAttributesA(current);
-      if (attributes == INVALID_FILE_ATTRIBUTES ||
-          (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U)
-        return false;
-    }
-#else
     if (lstat(current, &metadata) != 0 || S_ISLNK(metadata.st_mode))
       return false;
-#endif
     cursor += length;
     if (*cursor == '/') ++cursor;
   }
@@ -407,11 +359,7 @@ laghu_source_load_result laghu_source_file_load(
   const char *root = NULL, *mime;
   size_t prefix_length = 0U, index;
   char relative[LAGHU_RUNTIME_PATH_SIZE], path[LAGHU_RUNTIME_PATH_SIZE];
-#ifdef _WIN32
-  BY_HANDLE_FILE_INFORMATION before, after;
-#else
   laghu_source_stat_t before, after;
-#endif
   uint64_t file_size, file_mtime;
   unsigned char *data;
   FILE *file;
@@ -462,28 +410,6 @@ laghu_source_load_result laghu_source_file_load(
     return LAGHU_SOURCE_LOAD_UNSAFE;
   mime = laghu_source_mime(path);
   if (mime == NULL) return LAGHU_SOURCE_LOAD_UNSAFE;
-#ifdef _WIN32
-  {
-    HANDLE handle = CreateFileA(
-        path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    BY_HANDLE_FILE_INFORMATION information;
-    if (handle == INVALID_HANDLE_VALUE ||
-        !GetFileInformationByHandle(handle, &information) ||
-        (information.dwFileAttributes &
-         (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U ||
-        (descriptor =
-             _open_osfhandle((intptr_t)handle, _O_RDONLY | _O_BINARY)) < 0) {
-      if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-      return LAGHU_SOURCE_LOAD_UNSAFE;
-    }
-    before = information;
-    file_size =
-        ((uint64_t)before.nFileSizeHigh << 32U) | (uint64_t)before.nFileSizeLow;
-    file_mtime = ((uint64_t)before.ftLastWriteTime.dwHighDateTime << 32U) |
-                 (uint64_t)before.ftLastWriteTime.dwLowDateTime;
-  }
-#else
   descriptor = open(path, O_RDONLY | O_NOFOLLOW);
   if (descriptor < 0) return LAGHU_SOURCE_LOAD_UNSAFE;
   if (fstat(descriptor, &before) != 0 || !S_ISREG(before.st_mode) ||
@@ -493,55 +419,28 @@ laghu_source_load_result laghu_source_file_load(
   }
   file_size = (uint64_t)before.st_size;
   file_mtime = (uint64_t)before.st_mtime;
-#endif
   if (file_size == 0U || file_size > (uint64_t)policy->max_body_bytes) {
-#ifdef _WIN32
-    _close(descriptor);
-#else
     close(descriptor);
-#endif
     return LAGHU_SOURCE_LOAD_OVERSIZED;
   }
   data = malloc((size_t)file_size);
   if (data == NULL) {
-#ifdef _WIN32
-    _close(descriptor);
-#else
     close(descriptor);
-#endif
     return LAGHU_SOURCE_LOAD_IO_ERROR;
   }
   file = laghu_source_fdopen(descriptor, "rb");
   if (file == NULL) {
     free(data);
-#ifdef _WIN32
-    _close(descriptor);
-#else
     close(descriptor);
-#endif
     return LAGHU_SOURCE_LOAD_IO_ERROR;
   }
   {
     bool changed =
         fread(data, (size_t)file_size, 1U, file) != 1U || fgetc(file) != EOF;
-#ifdef _WIN32
-    HANDLE handle = (HANDLE)_get_osfhandle(laghu_source_fileno(file));
-    changed = changed || handle == INVALID_HANDLE_VALUE ||
-              !GetFileInformationByHandle(handle, &after) ||
-              before.nFileSizeHigh != after.nFileSizeHigh ||
-              before.nFileSizeLow != after.nFileSizeLow ||
-              before.ftLastWriteTime.dwHighDateTime !=
-                  after.ftLastWriteTime.dwHighDateTime ||
-              before.ftLastWriteTime.dwLowDateTime !=
-                  after.ftLastWriteTime.dwLowDateTime ||
-              before.nFileIndexHigh != after.nFileIndexHigh ||
-              before.nFileIndexLow != after.nFileIndexLow;
-#else
     changed = changed || fstat(laghu_source_fileno(file), &after) != 0 ||
               before.st_size != after.st_size ||
               before.st_mtime != after.st_mtime ||
               before.st_ino != after.st_ino || before.st_dev != after.st_dev;
-#endif
     if (fclose(file) != 0) changed = true;
     if (changed) {
       free(data);

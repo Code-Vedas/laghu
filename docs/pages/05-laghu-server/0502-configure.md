@@ -84,7 +84,6 @@ The standalone server accepts command-line options only.
 | `--rum-store-required` | flag | off | Makes RUM initialization failure fatal. |
 | `--help` | flag | n/a | Prints usage. |
 | `--version` | flag | n/a | Prints version. |
-| `--service` | Windows-only flag | off | Runs through the Windows service entry point. |
 
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.

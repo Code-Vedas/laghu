@@ -5,38 +5,22 @@
 
 #include "laghu/catalog.h"
 
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "laghu/types.h"
-
-#ifdef _WIN32
-#include <direct.h>
-#include <process.h>
-#include <windows.h>
-#define laghu_catalog_mkdir(path) _mkdir(path)
-#define laghu_catalog_pid() _getpid()
-#define laghu_catalog_replace(from, to)                            \
-  (MoveFileExA((from), (to),                                       \
-               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) \
-       ? 0                                                         \
-       : -1)
-typedef HANDLE laghu_catalog_lock;
-#define LAGHU_CATALOG_LOCK_INVALID INVALID_HANDLE_VALUE
-#else
-#include <dirent.h>
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "laghu/types.h"
 
 #define laghu_catalog_mkdir(path) mkdir(path, 0750)
 #define laghu_catalog_pid() getpid()
 #define laghu_catalog_replace(from, to) rename((from), (to))
 typedef int laghu_catalog_lock;
 #define LAGHU_CATALOG_LOCK_INVALID (-1)
-#endif
 
 typedef struct {
   uint64_t magic;
@@ -87,20 +71,11 @@ static bool laghu_catalog_paths(const char *cache_path, const char *key,
 }
 
 static laghu_catalog_lock laghu_catalog_try_lock(const char *path) {
-#ifdef _WIN32
-  return CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                     FILE_ATTRIBUTE_TEMPORARY, NULL);
-#else
   return open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
-#endif
 }
 
 static void laghu_catalog_unlock(laghu_catalog_lock lock, const char *path) {
-#ifdef _WIN32
-  (void)CloseHandle(lock);
-#else
   (void)close(lock);
-#endif
   (void)remove(path);
 }
 
@@ -342,32 +317,6 @@ bool laghu_catalog_prune(const char *cache_path, uint64_t now,
   if (length <= 0 || (size_t)length >= sizeof(directory)) {
     return false;
   }
-#ifdef _WIN32
-  {
-    WIN32_FIND_DATAA data;
-    char pattern[LAGHU_RUNTIME_PATH_SIZE];
-    HANDLE search;
-    if (snprintf(pattern, sizeof(pattern), "%s/*.meta", directory) <= 0) {
-      return false;
-    }
-    search = FindFirstFileA(pattern, &data);
-    if (search == INVALID_HANDLE_VALUE) {
-      return GetLastError() == ERROR_FILE_NOT_FOUND;
-    }
-    do {
-      char path[LAGHU_RUNTIME_PATH_SIZE];
-      if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0U &&
-          snprintf(path, sizeof(path), "%s/%s", directory, data.cFileName) >
-              0 &&
-          !laghu_catalog_prune_add(path, now, ttl_seconds, &items, &count,
-                                   &capacity)) {
-        success = false;
-        break;
-      }
-    } while (FindNextFileA(search, &data));
-    (void)FindClose(search);
-  }
-#else
   {
     DIR *stream = opendir(directory);
     struct dirent *entry;
@@ -391,7 +340,6 @@ bool laghu_catalog_prune(const char *cache_path, uint64_t now,
     }
     (void)closedir(stream);
   }
-#endif
   if (!success) {
     free(items);
     return false;

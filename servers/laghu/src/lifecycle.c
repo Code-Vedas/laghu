@@ -11,11 +11,7 @@
 
 #include "server_internal.h"
 
-#ifdef _WIN32
-volatile LONG proxy_stop_requests;
-#else
 volatile sig_atomic_t proxy_stop_requests;
-#endif
 
 static laghu_socket proxy_listen(const char *host, const char *port) {
   struct addrinfo hints, *addresses = NULL, *address;
@@ -44,49 +40,20 @@ static laghu_socket proxy_listen(const char *host, const char *port) {
 }
 
 uint64_t proxy_monotonic_ms(void) {
-#ifdef _WIN32
-  return (uint64_t)GetTickCount64();
-#else
   struct timespec value;
   if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0U;
   return (uint64_t)value.tv_sec * 1000U + (uint64_t)value.tv_nsec / 1000000U;
-#endif
 }
 
 static void proxy_pause_ms(unsigned int milliseconds) {
-#ifdef _WIN32
-  Sleep(milliseconds);
-#else
   struct timespec value = {(time_t)(milliseconds / 1000U),
                            (long)(milliseconds % 1000U) * 1000000L};
   (void)nanosleep(&value, NULL);
-#endif
 }
 
 bool proxy_cache_probe(const char *cache_path) {
   char path[LAGHU_RUNTIME_PATH_SIZE];
   int count;
-#ifdef _WIN32
-  HANDLE file;
-  DWORD written;
-  unsigned char marker = 0x4cU;
-  count = snprintf(path, sizeof(path), "%s\\.laghu-ready-%lu-%lu-%llu",
-                   cache_path, (unsigned long)GetCurrentProcessId(),
-                   (unsigned long)GetCurrentThreadId(),
-                   (unsigned long long)proxy_monotonic_ms());
-  if (count <= 0 || (size_t)count >= sizeof(path)) return false;
-  file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                     FILE_ATTRIBUTE_TEMPORARY, NULL);
-  if (file == INVALID_HANDLE_VALUE) return false;
-  if (!WriteFile(file, &marker, 1U, &written, NULL) || written != 1U ||
-      !FlushFileBuffers(file)) {
-    CloseHandle(file);
-    (void)DeleteFileA(path);
-    return false;
-  }
-  CloseHandle(file);
-  return DeleteFileA(path) != 0;
-#else
   int file;
   unsigned char marker = 0x4cU;
   count =
@@ -106,7 +73,6 @@ bool proxy_cache_probe(const char *cache_path) {
     return false;
   }
   return unlink(path) == 0;
-#endif
 }
 
 static bool proxy_queue_path_valid(const char *path) {
@@ -114,25 +80,11 @@ static bool proxy_queue_path_valid(const char *path) {
   bool exists;
   bool valid = false;
   unsigned int attempt;
-#ifdef _WIN32
-  DWORD attributes = GetFileAttributesA(path);
-  exists = attributes != INVALID_FILE_ATTRIBUTES;
-  if (!exists && GetLastError() != ERROR_FILE_NOT_FOUND &&
-      GetLastError() != ERROR_PATH_NOT_FOUND)
-    return false;
-#else
   exists = access(path, F_OK) == 0;
   if (!exists && errno != ENOENT) return false;
-#endif
   if (!exists) {
     char parent[LAGHU_RUNTIME_PATH_SIZE];
     const char *separator = strrchr(path, '/');
-#ifdef _WIN32
-    const char *backslash = strrchr(path, '\\');
-    DWORD parent_attributes;
-    if (backslash != NULL && (separator == NULL || backslash > separator))
-      separator = backslash;
-#endif
     if (separator == NULL) return true;
     if (separator == path) {
       parent[0] = *separator;
@@ -143,13 +95,7 @@ static bool proxy_queue_path_valid(const char *path) {
       memcpy(parent, path, length);
       parent[length] = '\0';
     }
-#ifdef _WIN32
-    parent_attributes = GetFileAttributesA(parent);
-    return parent_attributes != INVALID_FILE_ATTRIBUTES &&
-           (parent_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U;
-#else
     return access(parent, R_OK | X_OK) == 0;
-#endif
   }
   for (attempt = 0U; attempt < 10U; ++attempt) {
     laghu_runtime_queue_init(&queue);
@@ -161,42 +107,62 @@ static bool proxy_queue_path_valid(const char *path) {
   return valid;
 }
 
-#ifdef _WIN32
-static BOOL WINAPI proxy_console_control(DWORD event) {
-  if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT &&
-      event != CTRL_CLOSE_EVENT && event != CTRL_SHUTDOWN_EVENT)
-    return FALSE;
-  InterlockedIncrement(&proxy_stop_requests);
-  return TRUE;
+static bool proxy_attach_queue(proxy_queue *queue, laghu_runtime_queue *runtime,
+                               bool *ready, const char *path) {
+  laghu_runtime_queue candidate;
+  bool attached;
+  if (path == NULL || path[0] == '\0') return true;
+  laghu_runtime_queue_init(&candidate);
+  proxy_queue_lock(queue);
+  attached = *ready;
+  proxy_queue_unlock(queue);
+  if (attached) return true;
+  if (!laghu_runtime_queue_open(&candidate, path)) return false;
+  proxy_queue_lock(queue);
+  attached = *ready;
+  if (!attached) {
+    attached = laghu_runtime_queue_move(runtime, &candidate);
+    if (attached) *ready = true;
+  }
+  proxy_queue_unlock(queue);
+  laghu_runtime_queue_close(&candidate);
+  return attached;
 }
-#else
+
+void proxy_maintain_queue_attachments(proxy_queue *queue) {
+  const laghu_service_config *service;
+  if (queue == NULL || queue->options == NULL) return;
+  service = &queue->options->service;
+  (void)proxy_attach_queue(queue, &queue->runtime_queue,
+                           &queue->runtime_queue_ready, service->worker_queue);
+  if (service->font_providers != NULL)
+    (void)proxy_attach_queue(queue, &queue->font_fetch_queue,
+                             &queue->font_fetch_queue_ready,
+                             service->font_fetch_queue);
+  if (service->javascript_queue[0] != '\0')
+    (void)proxy_attach_queue(queue, &queue->javascript_queue,
+                             &queue->javascript_queue_ready,
+                             service->javascript_queue);
+}
+
 static void proxy_signal_handler(int signal_number) {
   (void)signal_number;
   if (proxy_stop_requests < 2) ++proxy_stop_requests;
 }
-#endif
 
 static bool proxy_listener_ready(laghu_socket listener) {
   fd_set readable;
   struct timeval wait = {0, 200000};
   FD_ZERO(&readable);
   FD_SET(listener, &readable);
-#ifdef _WIN32
-  return select(0, &readable, NULL, NULL, &wait) > 0;
-#else
   return select(listener + 1, &readable, NULL, NULL, &wait) > 0;
-#endif
 }
 
 static void proxy_begin_drain(proxy_queue *queue) {
   proxy_queue_lock(queue);
   queue->state = PROXY_DRAINING;
   queue->stopping = true;
-#ifdef _WIN32
-  WakeAllConditionVariable(&queue->ready);
-#else
   pthread_cond_broadcast(&queue->ready);
-#endif
   proxy_queue_unlock(queue);
   for (;;) {
     laghu_socket client;
@@ -243,39 +209,25 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   int result = 1;
   bool lock_ready = false;
   if (options == NULL) return 1;
-#ifndef _WIN32
   bool ready_condition = false, drained_condition = false;
-#endif
-#ifdef _WIN32
-  WSADATA data;
-  HANDLE *threads;
-  bool sockets_ready = false;
-  if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return 1;
-  sockets_ready = true;
-#else
   pthread_t *threads;
-#endif
   memset(&queue, 0, sizeof(queue));
   laghu_operational_registry_init(&queue.operational);
+  laghu_runtime_queue_init(&queue.runtime_queue);
+  laghu_runtime_queue_init(&queue.font_fetch_queue);
+  laghu_runtime_queue_init(&queue.javascript_queue);
   queue.options = options;
   queue.capacity = options->connection_queue;
   queue.items = calloc(queue.capacity, sizeof(*queue.items));
   workers = calloc(options->workers, sizeof(*workers));
   threads = calloc(options->workers, sizeof(*threads));
   if (queue.items == NULL || workers == NULL || threads == NULL) goto cleanup;
-#ifdef _WIN32
-  InitializeCriticalSection(&queue.lock);
-  lock_ready = true;
-  InitializeConditionVariable(&queue.ready);
-  InitializeConditionVariable(&queue.drained);
-#else
   if (pthread_mutex_init(&queue.lock, NULL) != 0) goto cleanup;
   lock_ready = true;
   if (pthread_cond_init(&queue.ready, NULL) != 0) goto cleanup;
   ready_condition = true;
   if (pthread_cond_init(&queue.drained, NULL) != 0) goto cleanup;
   drained_condition = true;
-#endif
   queue.state = PROXY_STARTING;
   queue.cache_readiness = -1;
   queue.optimizer_readiness = -1;
@@ -328,6 +280,9 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_startup_failure(&queue, "queue_unavailable");
     goto cleanup;
   }
+  /* Attachment is lifecycle maintenance.  Request workers only receive an
+   * already-mapped queue and therefore never open persisted state. */
+  proxy_maintain_queue_attachments(&queue);
   if (options->service.source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
       !laghu_source_registry_publish(options->service.asset_upload_queue,
                                      &options->service.source_policy)) {
@@ -357,9 +312,6 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     goto cleanup;
   }
   proxy_stop_requests = 0;
-#ifdef _WIN32
-  (void)SetConsoleCtrlHandler(proxy_console_control, TRUE);
-#else
   {
     struct sigaction action;
     memset(&action, 0, sizeof(action));
@@ -370,20 +322,13 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     action.sa_handler = SIG_IGN;
     (void)sigaction(SIGPIPE, &action, NULL);
   }
-#endif
   for (index = 0U; index < options->workers; ++index) {
     workers[index].queue = &queue;
     workers[index].active_client = LAGHU_INVALID_SOCKET;
     workers[index].active_origin = LAGHU_INVALID_SOCKET;
-#ifdef _WIN32
-    threads[index] =
-        CreateThread(NULL, 0U, proxy_worker_main, &workers[index], 0U, NULL);
-    if (threads[index] == NULL) break;
-#else
     if (pthread_create(&threads[index], NULL, proxy_worker_main,
                        &workers[index]) != 0)
       break;
-#endif
     ++started;
   }
   if (started != options->workers) {
@@ -393,6 +338,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     queue.state = PROXY_RUNNING;
     proxy_log_event(&queue, "startup", "running");
     while (proxy_stop_requests == 0) {
+      proxy_maintain_queue_attachments(&queue);
       if (proxy_listener_ready(listener)) {
         proxy_connection connection;
         memset(&connection, 0, sizeof(connection));
@@ -422,33 +368,24 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_event(&queue, "shutdown", "forcing");
   }
   for (index = 0U; index < started; ++index) {
-#ifdef _WIN32
-    (void)WaitForSingleObject(threads[index], INFINITE);
-    CloseHandle(threads[index]);
-#else
     (void)pthread_join(threads[index], NULL);
-#endif
   }
   queue.state = PROXY_STOPPED;
   proxy_log_event(&queue, "shutdown", "stopped");
   result = started == options->workers ? 0 : 1;
 cleanup:
+  laghu_runtime_queue_close(&queue.runtime_queue);
+  laghu_runtime_queue_close(&queue.font_fetch_queue);
+  laghu_runtime_queue_close(&queue.javascript_queue);
   laghu_operational_registry_close(&queue.operational);
   laghu_rum_engine_destroy(queue.rum);
   if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);
   SSL_CTX_free(queue.tls_context);
-#ifdef _WIN32
-  if (lock_ready) DeleteCriticalSection(&queue.lock);
-#else
   if (drained_condition) pthread_cond_destroy(&queue.drained);
   if (ready_condition) pthread_cond_destroy(&queue.ready);
   if (lock_ready) pthread_mutex_destroy(&queue.lock);
-#endif
   free(threads);
   free(workers);
   free(queue.items);
-#ifdef _WIN32
-  if (sockets_ready) WSACleanup();
-#endif
   return result;
 }

@@ -3,28 +3,18 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
-#endif
 
+#include <arpa/inet.h>
 #include <assert.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "test_fixture.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <unistd.h>
-#endif
 
 #include "laghu/source.h"
+#include "test_fixture.h"
 
 static void test_file_mapping(const char *directory) {
   laghu_source_policy *source = malloc(sizeof(*source));
@@ -65,7 +55,6 @@ static void test_file_mapping(const char *directory) {
   assert(laghu_source_file_load(
              loaded, "https://origin.example.test/assets/../source.png", &body,
              &length, type, validator, mapping) == LAGHU_SOURCE_LOAD_UNSAFE);
-#ifndef _WIN32
   {
     char link[LAGHU_RUNTIME_PATH_SIZE];
     assert(snprintf(link, sizeof(link), "%s/link.png", directory) > 0);
@@ -74,7 +63,6 @@ static void test_file_mapping(const char *directory) {
                loaded, "https://origin.example.test/assets/link.png", &body,
                &length, type, validator, mapping) == LAGHU_SOURCE_LOAD_UNSAFE);
   }
-#endif
   free(loaded);
   free(source);
 }

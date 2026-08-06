@@ -46,9 +46,6 @@ mod persisted_state {
 
 use persisted_state::*;
 
-#[cfg(windows)]
-use std::sync::Arc;
-
 const MAX_INPUT: usize = 2 * 1024 * 1024;
 const DEFAULT_TARGET: &str = "defaults and supports es6-module and not dead";
 const JOB_JAVASCRIPT: u32 = 3;
@@ -668,6 +665,7 @@ struct Queue {
     map: MmapMut,
     slots: usize,
     payload_size: usize,
+    last_advertised: Option<u64>,
 }
 
 struct Job {
@@ -720,6 +718,7 @@ impl Queue {
             map,
             slots,
             payload_size: MAX_INPUT,
+            last_advertised: None,
         })
     }
 
@@ -756,25 +755,34 @@ impl Queue {
             map,
             slots,
             payload_size,
+            last_advertised: None,
         })
     }
 
     fn advertise(&mut self) -> Result<()> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        if self.last_advertised == Some(now) {
+            return Ok(());
+        }
         if self.file.try_lock_exclusive().is_err() {
             return Ok(());
         }
-        write_u32(&mut self.map, QUEUE_HEADER_CAPABILITIES_OFFSET as usize, 1);
-        write_u64(
-            &mut self.map,
-            QUEUE_HEADER_HEARTBEAT_OFFSET as usize,
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        );
-        self.map[QUEUE_HEADER_BACKEND_ID_OFFSET as usize..QUEUE_HEADER_SIZE as usize].fill(0);
-        self.map[QUEUE_HEADER_BACKEND_ID_OFFSET as usize
-            ..QUEUE_HEADER_BACKEND_ID_OFFSET as usize + BACKEND.len()]
-            .copy_from_slice(BACKEND.as_bytes());
-        self.map.flush_range(0, QUEUE_HEADER_SIZE as usize)?;
-        FileExt::unlock(&self.file)?;
+        let result: Result<()> = (|| {
+            write_u32(&mut self.map, QUEUE_HEADER_CAPABILITIES_OFFSET as usize, 1);
+            write_u64(&mut self.map, QUEUE_HEADER_HEARTBEAT_OFFSET as usize, now);
+            self.map[QUEUE_HEADER_BACKEND_ID_OFFSET as usize..QUEUE_HEADER_SIZE as usize].fill(0);
+            self.map[QUEUE_HEADER_BACKEND_ID_OFFSET as usize
+                ..QUEUE_HEADER_BACKEND_ID_OFFSET as usize + BACKEND.len()]
+                .copy_from_slice(BACKEND.as_bytes());
+            Ok(())
+        })();
+        let unlock = FileExt::unlock(&self.file);
+        if let Err(error) = result {
+            let _ = unlock;
+            return Err(error);
+        }
+        unlock?;
+        self.last_advertised = Some(now);
         Ok(())
     }
 
@@ -845,10 +853,14 @@ impl Queue {
                 QUEUE_HEADER_NEXT_READ_OFFSET as usize,
                 ((read + 1) % self.slots) as u32,
             );
-            self.map.flush_async()?;
             Ok(job)
         })();
-        FileExt::unlock(&self.file)?;
+        let unlock = FileExt::unlock(&self.file);
+        if let Err(error) = result {
+            let _ = unlock;
+            return Err(error);
+        }
+        unlock?;
         result
     }
 
@@ -1120,92 +1132,9 @@ fn queue_args(mut args: impl Iterator<Item = String>) -> Result<(PathBuf, PathBu
     Ok((queue, cache))
 }
 
-#[cfg(windows)]
-mod windows_worker_service {
-    use super::*;
-    use std::{ffi::OsString, sync::mpsc};
-    use windows_service::{
-        define_windows_service,
-        service::{
-            ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
-            ServiceType,
-        },
-        service_control_handler::{self, ServiceControlHandlerResult},
-        service_dispatcher,
-    };
-
-    const NAME: &str = "laghu-js-optimize";
-    define_windows_service!(ffi_service_main, service_main);
-
-    pub fn dispatch() -> Result<()> {
-        service_dispatcher::start(NAME, ffi_service_main)?;
-        Ok(())
-    }
-
-    fn service_main(_arguments: Vec<OsString>) {
-        if let Err(error) = run() {
-            eprintln!("laghu-js-optimize service failed: {error:#}");
-        }
-    }
-
-    fn run() -> Result<()> {
-        let mut arguments = std::env::args_os().skip(2);
-        let queue_path = PathBuf::from(arguments.next().context("missing service queue path")?);
-        let cache_path = PathBuf::from(arguments.next().context("missing service cache path")?);
-        let (sender, receiver) = mpsc::channel();
-        let stopped = Arc::new(AtomicBool::new(false));
-        let signal = Arc::clone(&stopped);
-        let status = service_control_handler::register(NAME, move |control| match control {
-            ServiceControl::Stop | ServiceControl::Shutdown => {
-                signal.store(true, Ordering::Release);
-                let _ = sender.send(());
-                ServiceControlHandlerResult::NoError
-            }
-            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-            _ => ServiceControlHandlerResult::NotImplemented,
-        })?;
-        status.set_service_status(ServiceStatus {
-            service_type: ServiceType::OWN_PROCESS,
-            current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })?;
-        let mut queue = Queue::open(&queue_path)?;
-        fs::create_dir_all(&cache_path)?;
-        let mut operational = Operational::open(&cache_path);
-        while !stopped.load(Ordering::Acquire) {
-            operational.heartbeat(&queue);
-            let started = SystemTime::now();
-            let processed = process_one(&mut queue, &cache_path);
-            let elapsed = started.elapsed().map_or(0, |time| time.as_micros() as u64);
-            record_process(&mut operational, &processed, elapsed);
-            if !matches!(processed, ProcessOutcome::Success) {
-                let _ = receiver.recv_timeout(Duration::from_millis(25));
-            }
-        }
-        status.set_service_status(ServiceStatus {
-            service_type: ServiceType::OWN_PROCESS,
-            current_state: ServiceState::Stopped,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })?;
-        Ok(())
-    }
-}
-
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let action = args.next().unwrap_or_default();
-    #[cfg(windows)]
-    if action == "--service" {
-        return windows_worker_service::dispatch();
-    }
     if action == "--probe" {
         println!(
             "backend={BACKEND} available=yes capabilities=00000001 queue_version={QUEUE_VERSION}"
@@ -1639,6 +1568,36 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("javascript-")
         }));
+        drop(queue);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn advertises_queue_once_per_second() {
+        let root = std::env::temp_dir().join(format!(
+            "laghu-js-advertise-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let queue_path = root.join("javascript.queue");
+        fs::create_dir_all(&root).unwrap();
+        let mut queue = Queue::create(&queue_path).unwrap();
+        queue.advertise().unwrap();
+        let advertised = queue.last_advertised;
+        queue.advertise().unwrap();
+        assert_eq!(queue.last_advertised, advertised);
+        assert_eq!(
+            read_u32(&queue.map, QUEUE_HEADER_CAPABILITIES_OFFSET as usize),
+            1
+        );
+        assert_eq!(
+            &queue.map[QUEUE_HEADER_BACKEND_ID_OFFSET as usize
+                ..QUEUE_HEADER_BACKEND_ID_OFFSET as usize + BACKEND.len()],
+            BACKEND.as_bytes()
+        );
         drop(queue);
         fs::remove_dir_all(root).unwrap();
     }

@@ -34,7 +34,8 @@ static laghu_runtime_job laghu_test_job(unsigned char *payload,
 
 int main(void) {
   char root[LAGHU_RUNTIME_PATH_SIZE], path[LAGHU_RUNTIME_PATH_SIZE];
-  laghu_runtime_queue queue, reader;
+  laghu_runtime_queue queue, reader, contended, move_source, move_destination,
+      move_second_source;
   laghu_runtime_queue_snapshot snapshot;
   laghu_runtime_shared_mapping lock;
   laghu_runtime_job job, taken;
@@ -48,15 +49,26 @@ int main(void) {
   assert(snprintf(path, sizeof(path), "%s/jobs.queue", root) > 0);
   laghu_runtime_queue_init(&queue);
   laghu_runtime_queue_init(&reader);
+  laghu_runtime_queue_init(&contended);
+  laghu_runtime_queue_init(&move_source);
+  laghu_runtime_queue_init(&move_destination);
+  laghu_runtime_queue_init(&move_second_source);
   assert(laghu_runtime_queue_create(&queue, path, 2U, 64U));
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
   assert(snapshot.capacity == 2U && snapshot.occupied == 0U &&
          snapshot.payload_capacity == 64U);
   assert(laghu_runtime_queue_set_backend(&queue, 7U, "test-worker"));
-  assert(laghu_runtime_queue_heartbeat(&queue, 100U));
+  assert(laghu_runtime_queue_heartbeat(&queue, 123456U));
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
-  assert(snapshot.capabilities == 7U && snapshot.worker_heartbeat == 100U &&
+  assert(snapshot.capabilities == 7U && snapshot.worker_heartbeat == 123456U &&
          strcmp(snapshot.backend_id, "test-worker") == 0);
+  assert(laghu_runtime_queue_open(&reader, path));
+  assert(laghu_runtime_queue_snapshot_get(&reader, &snapshot));
+  assert(snapshot.worker_heartbeat == 123456U);
+  assert(laghu_runtime_queue_heartbeat(&queue, 123457U));
+  assert(laghu_runtime_queue_refresh(&reader));
+  assert(laghu_runtime_queue_snapshot_get(&reader, &snapshot));
+  assert(snapshot.worker_heartbeat == 123457U);
 
   job = laghu_test_job(payload, sizeof(payload) - 1U);
   assert(laghu_runtime_queue_try_publish(&queue, &job));
@@ -64,29 +76,67 @@ int main(void) {
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
   assert(snapshot.occupied == 2U);
-  assert(laghu_runtime_queue_open(&reader, path));
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT &&
          taken.payload.length == sizeof(payload) - 1U &&
          memcmp(output, payload, taken.payload.length) == 0);
+  assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
+  memset(&job, 0, sizeof(job));
+  job.kind = LAGHU_RUNTIME_JOB_SPRITE;
+  laghu_test_hash(job.index_key, 'a');
+  laghu_test_hash(job.policy_key, 'b');
+  job.sprite_count = 2U;
+  laghu_test_hash(job.sprite_variant_keys[0], 'a');
+  laghu_test_hash(job.sprite_variant_keys[1], 'c');
+  job.sprite_width[0] = 20U;
+  job.sprite_width[1] = 30U;
+  assert(laghu_runtime_queue_try_publish(&queue, &job));
+  assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
+  assert(taken.kind == LAGHU_RUNTIME_JOB_SPRITE && taken.sprite_count == 2U &&
+         taken.payload.length == 0U && taken.sprite_width[1] == 30U &&
+         strcmp(taken.sprite_variant_keys[1], job.sprite_variant_keys[1]) == 0);
+  job.sprite_count = 1U;
+  assert(!laghu_runtime_queue_try_publish(&queue, &job));
+  job.sprite_count = 2U;
+  strcpy(job.sprite_variant_keys[1], "not-a-content-key");
+  assert(!laghu_runtime_queue_try_publish(&queue, &job));
 
+  job = laghu_test_job(payload, sizeof(payload) - 1U);
   laghu_runtime_shared_mapping_init(&lock);
   assert(laghu_runtime_shared_mapping_open(&lock, path, mapping_size));
   assert(laghu_runtime_shared_mapping_try_lock(&lock));
-  assert(!laghu_runtime_queue_heartbeat(&queue, 101U));
+  assert(laghu_runtime_queue_open(&contended, path));
+  assert(!laghu_runtime_queue_heartbeat(&queue, 123458U));
+  assert(!laghu_runtime_queue_try_publish(&queue, &job));
   laghu_runtime_shared_mapping_unlock(&lock);
+  assert(laghu_runtime_queue_snapshot_get(&contended, &snapshot));
+  laghu_runtime_queue_close(&contended);
   laghu_runtime_shared_mapping_close(&lock);
-  assert(laghu_runtime_queue_heartbeat(&queue, 101U));
+  assert(laghu_runtime_queue_heartbeat(&queue, 123458U));
+  assert(laghu_runtime_queue_try_publish(&queue, &job));
   laghu_runtime_queue_close(&reader);
   laghu_runtime_queue_close(&queue);
+
+  assert(laghu_runtime_queue_open(&move_source, path));
+  assert(laghu_runtime_queue_open(&move_second_source, path));
+  assert(laghu_runtime_queue_move(&move_destination, &move_source));
+  assert(!laghu_runtime_queue_snapshot_get(&move_source, &snapshot));
+  assert(!laghu_runtime_queue_move(&move_destination, &move_source));
+  assert(!laghu_runtime_queue_move(&move_destination, &move_second_source));
+  laghu_runtime_queue_close(&move_source);
+  assert(laghu_runtime_queue_snapshot_get(&move_destination, &snapshot));
+  laghu_runtime_queue_close(&move_destination);
+  laghu_runtime_queue_close(&move_second_source);
 
   file = fopen(path, "r+b");
   assert(file != NULL &&
          fseek(file, LAGHU_WIRE_QUEUE_HEADER_VERSION_OFFSET, SEEK_SET) == 0 &&
          fputc(0xff, file) != EOF && fclose(file) == 0);
   assert(!laghu_runtime_queue_open(&reader, path));
+  assert(reader.implementation == NULL);
   file = fopen(path, "wb");
   assert(file != NULL && fputc(0, file) != EOF && fclose(file) == 0);
   assert(!laghu_runtime_queue_open(&reader, path));
+  assert(reader.implementation == NULL);
   return 0;
 }

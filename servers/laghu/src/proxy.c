@@ -19,20 +19,10 @@
 #include "laghu/config.h"
 #include "server_internal.h"
 
-void proxy_queue_lock(proxy_queue *queue) {
-#ifdef _WIN32
-  EnterCriticalSection(&queue->lock);
-#else
-  pthread_mutex_lock(&queue->lock);
-#endif
-}
+void proxy_queue_lock(proxy_queue *queue) { pthread_mutex_lock(&queue->lock); }
 
 void proxy_queue_unlock(proxy_queue *queue) {
-#ifdef _WIN32
-  LeaveCriticalSection(&queue->lock);
-#else
   pthread_mutex_unlock(&queue->lock);
-#endif
 }
 
 void proxy_worker_origin(proxy_worker *worker, laghu_socket origin) {
@@ -182,20 +172,13 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         .cache_path = options->service.image_cache,
         .asset_offload = options->service.asset_offload,
         .rum = worker->queue->rum,
-        .worker_queue_path = options->service.worker_queue,
-        .queue = &worker->runtime_queue,
-        .font_fetch_queue_path = options->service.font_providers != NULL
-                                     ? options->service.font_fetch_queue
-                                     : NULL,
+        .queue = proxy_runtime_queue(worker),
         .font_fetch_queue = options->service.font_providers != NULL
-                                ? &worker->font_fetch_queue
+                                ? proxy_font_fetch_queue(worker)
                                 : NULL,
         .font_providers = options->service.font_providers,
-        .javascript_queue_path = options->service.javascript_queue[0] != '\0'
-                                     ? options->service.javascript_queue
-                                     : NULL,
         .javascript_queue = options->service.javascript_queue[0] != '\0'
-                                ? &worker->javascript_queue
+                                ? proxy_javascript_queue(worker)
                                 : NULL,
         .javascript_target = options->service.javascript_target,
         .javascript_observations = options->service.javascript_observations,
@@ -338,20 +321,13 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       .cache_path = options->service.image_cache,
       .asset_offload = options->service.asset_offload,
       .rum = worker->queue->rum,
-      .worker_queue_path = options->service.worker_queue,
-      .queue = &worker->runtime_queue,
-      .font_fetch_queue_path = options->service.font_providers != NULL
-                                   ? options->service.font_fetch_queue
-                                   : NULL,
+      .queue = proxy_runtime_queue(worker),
       .font_fetch_queue = options->service.font_providers != NULL
-                              ? &worker->font_fetch_queue
+                              ? proxy_font_fetch_queue(worker)
                               : NULL,
       .font_providers = options->service.font_providers,
-      .javascript_queue_path = options->service.javascript_queue[0] != '\0'
-                                   ? options->service.javascript_queue
-                                   : NULL,
       .javascript_queue = options->service.javascript_queue[0] != '\0'
-                              ? &worker->javascript_queue
+                              ? proxy_javascript_queue(worker)
                               : NULL,
       .javascript_target = options->service.javascript_target,
       .javascript_observations = options->service.javascript_observations,

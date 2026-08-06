@@ -55,12 +55,12 @@ void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
               ngx_http_laghu_rum, conf->service.image_cache, policy_key,
               (uint64_t)ngx_time(), conf->core.image_metadata_ttl, &critical);
     else if (valid) {
+      laghu_runtime_queue *queue = ngx_http_laghu_image_queue(conf);
       memset(&queue_snapshot, 0, sizeof(queue_snapshot));
       valid = laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
                                                &beacon) &&
-              ngx_http_laghu_queue_refresh(conf) &&
-              laghu_runtime_queue_snapshot_get(&conf->runtime_queue,
-                                               &queue_snapshot) &&
+              ngx_http_laghu_queue_refresh(conf) && queue != NULL &&
+              laghu_runtime_queue_snapshot_get(queue, &queue_snapshot) &&
               laghu_catalog_apply_beacon(
                   ngx_http_laghu_rum, conf->service.image_cache, policy_key,
                   queue_snapshot.capabilities, (uint64_t)ngx_time(),

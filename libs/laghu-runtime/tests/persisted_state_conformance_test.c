@@ -4,22 +4,15 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
-#endif
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
-#endif
 
 #include "../src/runtime_platform.h"
 #include "laghu/cache.h"
@@ -54,21 +47,13 @@ static bool conformance_path(char *output, size_t output_size,
   if (output == NULL || output_size == 0U || directory == NULL ||
       suffix == NULL)
     return false;
-#ifdef _WIN32
-  written = snprintf(output, output_size, "%s\\%s", directory, suffix);
-#else
   written = snprintf(output, output_size, "%s/%s", directory, suffix);
-#endif
   return written > 0 && (size_t)written < output_size;
 }
 
 static void conformance_sleep(void) {
-#ifdef _WIN32
-  Sleep(10U);
-#else
   struct timespec delay = {0, 10000000L};
   (void)nanosleep(&delay, NULL);
-#endif
 }
 
 static void conformance_wait_for(const char *path) {
@@ -89,23 +74,7 @@ static void conformance_run_worker_once(const char *worker,
       snprintf(command, sizeof(command), "\"%s\" --once \"%s\" \"%s\"", worker,
                queue_path, cache_path);
   assert(written > 0 && (size_t)written < sizeof(command));
-#ifdef _WIN32
-  STARTUPINFOA startup;
-  PROCESS_INFORMATION process;
-  DWORD exit_code;
-  memset(&startup, 0, sizeof(startup));
-  memset(&process, 0, sizeof(process));
-  startup.cb = sizeof(startup);
-  assert(CreateProcessA(NULL, command, NULL, NULL, FALSE, 0U, NULL, NULL,
-                        &startup, &process));
-  assert(WaitForSingleObject(process.hProcess, 30000U) == WAIT_OBJECT_0);
-  assert(GetExitCodeProcess(process.hProcess, &exit_code));
-  CloseHandle(process.hThread);
-  CloseHandle(process.hProcess);
-  assert(exit_code == 0U);
-#else
   assert(system(command) == 0);
-#endif
 }
 
 static void conformance_signal(const char *base, const char *name,

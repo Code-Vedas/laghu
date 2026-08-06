@@ -6,27 +6,12 @@
 #include "laghu/budget.h"
 
 #include <string.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
 #include <time.h>
 
-#endif
-
 uint64_t laghu_runtime_monotonic_ms(void) {
-#ifdef _WIN32
-  LARGE_INTEGER counter, frequency;
-  if (!QueryPerformanceCounter(&counter) ||
-      !QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
-    return 0U;
-  return (uint64_t)((counter.QuadPart * 1000U) / frequency.QuadPart);
-#else
   struct timespec value;
   if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0U;
   return (uint64_t)value.tv_sec * 1000U + (uint64_t)value.tv_nsec / 1000000U;
-#endif
 }
 
 void laghu_transform_budget_init(laghu_transform_budget *budget,

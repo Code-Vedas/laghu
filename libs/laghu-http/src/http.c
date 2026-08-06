@@ -433,10 +433,10 @@ static uint32_t laghu_http_refresh_backend(
     return 0U;
   }
   queue = environment->queue;
-  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (environment->worker_queue_path == NULL ||
-       !laghu_runtime_queue_open(queue, environment->worker_queue_path) ||
-       !laghu_runtime_queue_snapshot_get(queue, &snapshot))) {
+  /* Queue attachment maps persisted state and is lifecycle work.  A request
+   * may only consume an already-mapped snapshot; an unavailable worker is a
+   * normal fail-open condition. */
+  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot)) {
     return 0U;
   }
   if (snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U ||
