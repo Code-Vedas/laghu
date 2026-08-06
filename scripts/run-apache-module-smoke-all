@@ -353,6 +353,9 @@ fi
 "${status_bin}" status http://127.0.0.1:18081 \
   --token-file "${work}/purge.token" --json | \
   grep '"schema":"laghu-status-v1"' >/dev/null
+"${status_bin}" purge http://127.0.0.1:18081/site.css \
+  --token-file "${work}/purge.token" --json | \
+  grep '"schema":"laghu-purge-v1"' >/dev/null
 curl --fail --silent --dump-header "${work}/lcp.headers" \
   http://127.0.0.1:18081/lcp.html >"${work}/lcp.html"
 grep 'fetchpriority=\("\)\?high\("\)\?' "${work}/lcp.html" >/dev/null

@@ -7,5 +7,6 @@
 #define LAGHU_STATUS_H
 
 int laghu_status_run(int argc, char **argv);
+int laghu_purge_run(int argc, char **argv);
 
 #endif

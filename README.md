@@ -129,3 +129,13 @@ laghu status https://laghu.example --token-file /etc/laghu/purge.token
 Use `--json` for the normalized result, `--timeout 1..30`, and `--ca-file` to
 extend HTTPS trust. Exit codes distinguish CLI/token (2), authorization (3),
 connection (4), malformed response (5), 503 (6), and other HTTP failures (7).
+
+## Purge
+
+Purge one cached source URL through the same authenticated endpoint:
+
+```sh
+laghu purge https://laghu.example/assets/site.css?tenant=blue --token-file /etc/laghu/purge.token
+```
+
+`purge` sends authenticated `PURGE` with the URL path and source query, follows no redirects, and prints the accepted artifact count. `--json`, `--timeout 1..30`, and HTTPS-only `--ca-file` use the same secure client rules as `status`; it never prints the token, request header, URL, or response body. Exit `8` means the bounded purge table is saturated; retry after cache maintenance. Other exit meanings match `status`, except `400` is invalid target and `404`/`405` remain other HTTP failures.

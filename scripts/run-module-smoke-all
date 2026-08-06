@@ -685,6 +685,9 @@ fi
 "${STATUS_BIN}" status "http://127.0.0.1:${PORT}" \
   --token-file "${SMOKE_DIR}/purge.token" --json | \
   grep '"schema":"laghu-status-v1"' >/dev/null
+"${STATUS_BIN}" purge "http://127.0.0.1:${PORT}/site.css" \
+  --token-file "${SMOKE_DIR}/purge.token" --json | \
+  grep '"schema":"laghu-purge-v1"' >/dev/null
 curl --fail --silent --show-error --dump-header "${SMOKE_DIR}/lcp-headers" \
   --output "${SMOKE_DIR}/lcp-body" "http://127.0.0.1:${PORT}/lcp.html"
 grep 'fetchpriority=\("\)\?high\("\)\?' "${SMOKE_DIR}/lcp-body" >/dev/null

@@ -133,6 +133,25 @@ hit/miss/usage/capacity line.
 | 6 | Either route returned `503`; stats is still queried after readiness `503`. |
 | 7 | Another HTTP status. |
 
+## Purge client
+
+`laghu purge URL --token-file PATH` sends authenticated `PURGE` to the full `http://` or `https://` resource URL on standalone, NGINX, or Apache.
+
+The URL may include its cache source path and query; a missing path becomes `/`. Credentials, fragments, malformed targets, the reserved `laghu=purge` query control, and targets longer than 1023 bytes are rejected. The client preserves the accepted encoded path and query, follows no redirects, and sends the origin authority as `Host`.
+
+`--timeout 1..30`, HTTPS-only `--ca-file`, and the protected token-file rules are identical to `status`. The command never prints the token, request header, input URL, or server response body. Normal output is `purge: accepted matched_artifacts=N`; `--json` emits `laghu-purge-v1` with the same count.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Valid `202` accepted response. |
+| 2 | Invalid command, URL, token file, or server-rejected target (`400`). |
+| 3 | `401` or `403`. |
+| 4 | DNS, connection, TLS, or I/O failure. |
+| 5 | Invalid HTTP framing or accepted JSON response. |
+| 6 | `503` service unavailable. |
+| 7 | `404`, `405`, or another unexpected HTTP status. |
+| 8 | `429` purge table saturated; retry after maintenance. |
+
 ## JavaScript deferral approvals
 
 The approval file accepts exact, root-relative, query-free script paths, optionally scoped to one exact template:

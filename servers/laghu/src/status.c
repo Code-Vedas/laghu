@@ -14,11 +14,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "laghu/cache.h"
 #include "server_internal.h"
 
 #define STATUS_HEADER_LIMIT 16384U
 #define STATUS_BODY_LIMIT 32768U
 #define STATUS_HEADER_COUNT 64U
+#define STATUS_REQUEST_LIMIT 2048U
 
 typedef struct {
   char host[256];
@@ -96,6 +98,53 @@ static bool status_origin_parse(const char *value, status_origin *origin) {
                origin->host, port) < 1)
     return false;
   return true;
+}
+
+static bool status_purge_target_parse(const char *value, status_origin *origin,
+                                      char target[LAGHU_RUNTIME_PATH_SIZE]) {
+  const char *authority, *end;
+  char origin_value[272U];
+  char normalized[LAGHU_RUNTIME_PATH_SIZE];
+  bool purge_control = false;
+  size_t authority_length, index, prefix_length, target_length;
+  if (value == NULL || strchr(value, '#') != NULL) return false;
+  if (strncmp(value, "http://", 7U) == 0)
+    authority = value + 7U;
+  else if (strncmp(value, "https://", 8U) == 0)
+    authority = value + 8U;
+  else
+    return false;
+  prefix_length = (size_t)(authority - value);
+  end = authority;
+  while (*end != '\0' && *end != '/' && *end != '?' && *end != '#') ++end;
+  authority_length = (size_t)(end - authority);
+  if (authority_length == 0U || prefix_length + authority_length >=
+                                    sizeof(origin_value))
+    return false;
+  memcpy(origin_value, value, prefix_length + authority_length);
+  origin_value[prefix_length + authority_length] = '\0';
+  if (!status_origin_parse(origin_value, origin)) return false;
+  if (*end == '\0') {
+    memcpy(target, "/", 2U);
+    return true;
+  }
+  if (*end == '?') {
+    target_length = strlen(end);
+    if (target_length + 1U >= LAGHU_RUNTIME_PATH_SIZE) return false;
+    target[0] = '/';
+    memcpy(target + 1U, end, target_length + 1U);
+  } else {
+    target_length = strlen(end);
+    if (target_length >= LAGHU_RUNTIME_PATH_SIZE) return false;
+    memcpy(target, end, target_length + 1U);
+  }
+  for (index = 0U; target[index] != '\0'; ++index)
+    if ((unsigned char)target[index] < 0x21U ||
+        (unsigned char)target[index] > 0x7eU)
+      return false;
+  return laghu_cache_source_normalize(target, normalized, sizeof(normalized),
+                                      &purge_control) &&
+         !purge_control;
 }
 
 static bool status_token(const char *path, char token[257]) {
@@ -375,12 +424,14 @@ static bool status_json_content_type(const char *value) {
          (value[16U] == '\0' || value[16U] == ';');
 }
 
-/* Strict HTTP/1.1 fixed-length JSON fetch.  Returns 0 success, status code or
- * negative local/framing failure. */
+/* Strict HTTP/1.1 fixed-length fetch. Returns an HTTP status or a negative
+ * local/framing failure. */
 static int status_fetch(const status_origin *origin, SSL_CTX *context,
-                        const char *token, const char *path, unsigned int timeout,
-                        char body[STATUS_BODY_LIMIT + 1U], size_t *body_length) {
-  char request[1024], header[STATUS_HEADER_LIMIT + 1U];
+                        const char *token, const char *method, const char *path,
+                        unsigned int timeout, bool require_json,
+                        char body[STATUS_BODY_LIMIT + 1U], size_t *body_length,
+                        bool *json_content) {
+  char request[STATUS_REQUEST_LIMIT], header[STATUS_HEADER_LIMIT + 1U];
   int socket = status_connect(origin, timeout), received, request_length;
   SSL *tls = NULL;
   char *line, *next, *header_end, *content_length = NULL, *content_type = NULL;
@@ -392,9 +443,9 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
     close(socket); return -1;
   }
   request_length = snprintf(request, sizeof(request),
-                            "GET %s HTTP/1.1\r\nHost: %s\r\nAccept: application/json\r\n"
+                            "%s %s HTTP/1.1\r\nHost: %s\r\nAccept: application/json\r\n"
                             "X-Laghu-Purge-Token: %s\r\nConnection: close\r\n\r\n",
-                            path, origin->authority, token);
+                            method, path, origin->authority, token);
   if (request_length < 0 || (size_t)request_length >= sizeof(request) ||
       (tls != NULL ? SSL_write(tls, request, request_length) :
                      send(socket, request, (size_t)request_length, 0)) != request_length) {
@@ -450,8 +501,14 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
     if (next == header_end) break;
     line = next + 2U;
   }
-  if (content_length == NULL || content_type == NULL || !status_json_content_type(content_type) ||
-      !status_uint(content_length, 0U, STATUS_BODY_LIMIT, &declared_length)) { SSL_free(tls); close(socket); return -2; }
+  if (content_length == NULL ||
+      (require_json &&
+       (content_type == NULL || !status_json_content_type(content_type))) ||
+      !status_uint(content_length, 0U, STATUS_BODY_LIMIT, &declared_length)) {
+    SSL_free(tls);
+    close(socket);
+    return -2;
+  }
   length = declared_length;
   size_t initial = used - ((size_t)(header_end + 4U - header));
   if (initial > length) { SSL_free(tls); close(socket); return -2; }
@@ -464,6 +521,8 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
   if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return -1;
   if (used != length) return -2;
   body[used] = '\0'; *body_length = used;
+  if (json_content != NULL)
+    *json_content = content_type != NULL && status_json_content_type(content_type);
   return (int)status;
 }
 
@@ -486,8 +545,10 @@ int laghu_status_run(int argc, char **argv) {
         (ca_file != NULL && !SSL_CTX_load_verify_locations(context, ca_file, NULL))) { SSL_CTX_free(context); fputs("laghu status: connection failed\n", stderr); return 4; }
     SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
   }
-  ready_status = status_fetch(&origin, context, token, "/.laghu/ready", timeout, ready, &ready_length);
-  stats_status = status_fetch(&origin, context, token, "/.laghu/stats", timeout, stats, &stats_length);
+  ready_status = status_fetch(&origin, context, token, "GET", "/.laghu/ready",
+                              timeout, true, ready, &ready_length, NULL);
+  stats_status = status_fetch(&origin, context, token, "GET", "/.laghu/stats",
+                              timeout, true, stats, &stats_length, NULL);
   SSL_CTX_free(context);
   if (ready_status == 401 || ready_status == 403 || stats_status == 401 || stats_status == 403) { fputs("laghu status: authorization failed\n", stderr); return 3; }
   if (ready_status < 0 || stats_status < 0) { fputs(ready_status == -2 || stats_status == -2 ? "laghu status: malformed response\n" : "laghu status: connection failed\n", stderr); return ready_status == -2 || stats_status == -2 ? 5 : 4; }
@@ -517,5 +578,104 @@ int laghu_status_run(int argc, char **argv) {
   return 0;
 usage:
   fputs("Usage: laghu status URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n", stderr);
+  return 2;
+}
+
+static bool status_purge_schema_valid(const char *body, size_t length,
+                                      uint64_t *matched_artifacts) {
+  static const char *const fields[] = {"status", "matched_artifacts"};
+  char status[16U];
+  return status_json_has_only_fields(body, length, fields,
+                                     sizeof(fields) / sizeof(fields[0])) &&
+         status_json_field_count(body, length, "status") == 1U &&
+         status_json_field_count(body, length, "matched_artifacts") == 1U &&
+         status_json_text_field(body, "status", status, sizeof(status)) &&
+         strcmp(status, "accepted") == 0 &&
+         status_json_number_field(body, "matched_artifacts", 1U,
+                                  matched_artifacts);
+}
+
+int laghu_purge_run(int argc, char **argv) {
+  status_origin origin;
+  char token[257U], target[LAGHU_RUNTIME_PATH_SIZE], body[STATUS_BODY_LIMIT + 1U];
+  const char *token_file = NULL, *ca_file = NULL;
+  unsigned int timeout = 5U;
+  bool json = false, json_content = false;
+  SSL_CTX *context = NULL;
+  int index, response_status;
+  size_t body_length;
+  uint64_t matched_artifacts;
+  if (argc < 2 || !status_purge_target_parse(argv[1], &origin, target)) goto usage;
+  for (index = 2; index < argc; ++index) {
+    if (strcmp(argv[index], "--token-file") == 0 && index + 1 < argc)
+      token_file = argv[++index];
+    else if (strcmp(argv[index], "--timeout") == 0 && index + 1 < argc &&
+             status_uint(argv[++index], 1U, 30U, &timeout)) {
+    } else if (strcmp(argv[index], "--ca-file") == 0 && index + 1 < argc)
+      ca_file = argv[++index];
+    else if (strcmp(argv[index], "--json") == 0)
+      json = true;
+    else
+      goto usage;
+  }
+  if (token_file == NULL || !status_token(token_file, token) ||
+      (ca_file != NULL && !origin.tls))
+    goto usage;
+  if (origin.tls) {
+    context = SSL_CTX_new(TLS_client_method());
+    if (context == NULL || !SSL_CTX_set_default_verify_paths(context) ||
+        (ca_file != NULL && !SSL_CTX_load_verify_locations(context, ca_file,
+                                                            NULL))) {
+      SSL_CTX_free(context);
+      fputs("laghu purge: connection failed\n", stderr);
+      return 4;
+    }
+    SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+  }
+  response_status = status_fetch(&origin, context, token, "PURGE", target,
+                                 timeout, false, body, &body_length,
+                                 &json_content);
+  SSL_CTX_free(context);
+  if (response_status < 0) {
+    fputs(response_status == -2 ? "laghu purge: malformed response\n"
+                                : "laghu purge: connection failed\n",
+          stderr);
+    return response_status == -2 ? 5 : 4;
+  }
+  if (response_status == 400) {
+    fputs("laghu purge: target rejected\n", stderr);
+    return 2;
+  }
+  if (response_status == 401 || response_status == 403) {
+    fputs("laghu purge: authorization failed\n", stderr);
+    return 3;
+  }
+  if (response_status == 429) {
+    fputs("laghu purge: cache purge saturated\n", stderr);
+    return 8;
+  }
+  if (response_status == 503) {
+    fputs("laghu purge: service unavailable\n", stderr);
+    return 6;
+  }
+  if (response_status != 202) {
+    fprintf(stderr, "laghu purge: HTTP %d\n", response_status);
+    return 7;
+  }
+  if (!json_content || !status_purge_schema_valid(body, body_length,
+                                                   &matched_artifacts)) {
+    fputs("laghu purge: malformed response\n", stderr);
+    return 5;
+  }
+  if (json)
+    printf("{\"schema\":\"laghu-purge-v1\",\"status\":\"accepted\",\"matched_artifacts\":%llu}\n",
+           (unsigned long long)matched_artifacts);
+  else
+    printf("purge: accepted matched_artifacts=%llu\n",
+           (unsigned long long)matched_artifacts);
+  return 0;
+usage:
+  fputs("Usage: laghu purge URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n",
+        stderr);
   return 2;
 }

@@ -281,6 +281,28 @@ class StatusOrigin(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class PurgeOrigin(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    requests = []
+    response_status = 202
+    response_body = b'{"status":"accepted","matched_artifacts":7}'
+    content_type = "application/json"
+
+    def do_PURGE(self):
+        assert self.headers.get("X-Laghu-Purge-Token") == "0123456789abcdef"
+        self.__class__.requests.append((self.path, self.headers.get("Host")))
+        self.send_response(self.response_status)
+        self.send_header("Content-Type", self.content_type)
+        self.send_header("Content-Length", str(len(self.response_body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(self.response_body)
+        self.close_connection = True
+
+    def log_message(self, *_args):
+        pass
+
+
 def status_smoke(executable, root):
     token = root / "status.token"
     token.write_text("0123456789abcdef\n")
@@ -387,6 +409,108 @@ def status_smoke(executable, root):
     server.socket = context.wrap_socket(server.socket, server_side=True)
     try:
         result = run(server.server_port, "--ca-file", str(ca_file), "--json", scheme="https")
+        assert result.returncode == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def purge_smoke(executable, root):
+    token = root / "purge-client.token"
+    token.write_text("0123456789abcdef\n")
+    token.chmod(0o600)
+
+    def serve(handler):
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server
+
+    def run(port, url="/site.css?tenant=blue", *options, scheme="http"):
+        return subprocess.run(
+            [str(executable), "purge", f"{scheme}://127.0.0.1:{port}{url}",
+             "--token-file", str(token), *options],
+            capture_output=True, text=True,
+        )
+
+    server = serve(PurgeOrigin)
+    try:
+        result = run(server.server_port)
+        assert result.returncode == 0
+        assert result.stdout == "purge: accepted matched_artifacts=7\n"
+        assert PurgeOrigin.requests == [
+            ("/site.css?tenant=blue", f"127.0.0.1:{server.server_port}"),
+        ]
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    handler = type("PurgeJson", (PurgeOrigin,), {"requests": []})
+    server = serve(handler)
+    try:
+        result = run(server.server_port, "/", "--json")
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == {
+            "schema": "laghu-purge-v1", "status": "accepted",
+            "matched_artifacts": 7,
+        }
+        assert handler.requests == [("/", f"127.0.0.1:{server.server_port}")]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    for code, expected in ((400, 2), (401, 3), (403, 3), (404, 7),
+                           (405, 7), (429, 8), (503, 6), (418, 7)):
+        handler = type("PurgeFailure", (PurgeOrigin,), {
+            "requests": [], "response_status": code,
+            "response_body": b"not JSON", "content_type": "text/plain",
+        })
+        server = serve(handler)
+        try:
+            result = run(server.server_port, "/site.css", "--json")
+            assert result.returncode == expected
+            assert "0123456789abcdef" not in result.stdout + result.stderr
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    handler = type("MalformedPurge", (PurgeOrigin,), {
+        "requests": [],
+        "response_body": b'{"status":"accepted","status":"bad",'
+                         b'"matched_artifacts":7}',
+    })
+    server = serve(handler)
+    try:
+        result = run(server.server_port, "/site.css", "--json")
+        assert result.returncode == 5
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    for url in ("http://127.0.0.1/path#fragment",
+                "http://token@127.0.0.1/path",
+                "http://127.0.0.1//path",
+                "http://127.0.0.1/path?laghu=purge",
+                "http://127.0.0.1/path\r\nHost: attacker",
+                "http://127.0.0.1/" + "x" * 1024):
+        result = subprocess.run(
+            [str(executable), "purge", url, "--token-file", str(token)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 2
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+
+    ca_file, server_file, server_key = create_tls_certificate(root)
+    handler = type("PurgeTls", (PurgeOrigin,), {"requests": []})
+    server = serve(handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(server_file, server_key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    try:
+        result = run(server.server_port, "/site.css", "--ca-file", str(ca_file),
+                     "--json", scheme="https")
         assert result.returncode == 0
     finally:
         server.shutdown()
@@ -536,6 +660,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="laghu-proxy-") as directory:
         root = pathlib.Path(directory)
         status_smoke(executable, root)
+        purge_smoke(executable, root)
         (root / "cache").mkdir()
         subprocess.run(
             [str(javascript_worker), "--init", str(root / "javascript.queue"),
@@ -996,6 +1121,19 @@ def main():
             assert b" 202 " in purge_head.split(b"\r\n", 1)[0]
             assert b"cache-control: no-store" in purge_head
             assert b'"status":"accepted"' in purge_body
+            cli_purge = subprocess.run(
+                [
+                    str(executable), "purge", f"http://127.0.0.1:{proxy_port}/site.css",
+                    "--token-file", str(purge_token), "--json",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert json.loads(cli_purge.stdout)["status"] == "accepted"
+            assert "standalone-purge-token-0123456789" not in (
+                cli_purge.stdout + cli_purge.stderr
+            )
             query_head, _ = request(
                 proxy_port, "/site.css?laghu=purge", headers=admin_headers
             )
