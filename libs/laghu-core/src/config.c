@@ -371,7 +371,16 @@ bool laghu_config_setting_apply_pair(laghu_config *config,
   if (setting == LAGHU_CONFIG_SETTING_SHARD_DOMAIN) {
     char shards[LAGHU_DOMAIN_ORIGIN_SIZE * LAGHU_DOMAIN_POLICY_MAX_DOMAINS];
     char *cursor;
-    if (strlen(second) >= sizeof(shards) ||
+    bool mapped = false;
+    unsigned int mapping;
+    for (mapping = 0U; mapping < config->domain_policy.mapping_count;
+         ++mapping)
+      if (strcmp(config->domain_policy.mappings[mapping].public_origin,
+                 first) == 0) {
+        mapped = true;
+        break;
+      }
+    if (!mapped || strlen(second) >= sizeof(shards) ||
         (!laghu_config_domain_present(&config->domain_policy, first) &&
          !laghu_domain_policy_add_domain(&config->domain_policy, first)))
       return laghu_config_fail(error, error_size,
@@ -384,7 +393,8 @@ bool laghu_config_setting_apply_pair(laghu_config *config,
       if (cursor[0] == '\0' ||
           (!laghu_config_domain_present(&config->domain_policy, cursor) &&
            !laghu_domain_policy_add_domain(&config->domain_policy, cursor)) ||
-          !laghu_domain_policy_add_shard(&config->domain_policy, cursor))
+          !laghu_domain_policy_add_shard(&config->domain_policy, first,
+                                         cursor))
         return laghu_config_fail(error, error_size,
                                  "invalid, duplicate, or conflicting shard");
       cursor = next;

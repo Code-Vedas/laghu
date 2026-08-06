@@ -442,7 +442,8 @@ int main(void) {
   CHECK(laghu_proxy_parse_options(15, domain_policy, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.config.domain_policy.mapping_count == 1U);
-  CHECK(options.config.domain_policy.shard_count == 2U);
+  CHECK(options.config.domain_policy.group_count == 1U);
+  CHECK(options.config.domain_policy.groups[0].shard_count == 2U);
   CHECK(strcmp(options.config.domain_policy.mappings[0].source_origin,
                "https://origin.example") == 0);
   laghu_proxy_options_init(&options);

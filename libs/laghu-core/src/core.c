@@ -480,9 +480,15 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
           &result->domain_policy,
           parent->domain_policy.mappings[index].source_origin,
           parent->domain_policy.mappings[index].public_origin);
-    for (index = 0U; index < parent->domain_policy.shard_count; ++index)
-      (void)laghu_domain_policy_add_shard(&result->domain_policy,
-                                          parent->domain_policy.shards[index]);
+    for (index = 0U; index < parent->domain_policy.group_count; ++index) {
+      unsigned int shard;
+      for (shard = 0U; shard < parent->domain_policy.groups[index].shard_count;
+           ++shard)
+        (void)laghu_domain_policy_add_shard(
+            &result->domain_policy,
+            parent->domain_policy.groups[index].public_origin,
+            parent->domain_policy.groups[index].shards[shard]);
+    }
   }
   if (child != NULL) {
     unsigned int index;
@@ -494,9 +500,15 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
           &result->domain_policy,
           child->domain_policy.mappings[index].source_origin,
           child->domain_policy.mappings[index].public_origin);
-    for (index = 0U; index < child->domain_policy.shard_count; ++index)
-      (void)laghu_domain_policy_add_shard(&result->domain_policy,
-                                          child->domain_policy.shards[index]);
+    for (index = 0U; index < child->domain_policy.group_count; ++index) {
+      unsigned int shard;
+      for (shard = 0U; shard < child->domain_policy.groups[index].shard_count;
+           ++shard)
+        (void)laghu_domain_policy_add_shard(
+            &result->domain_policy,
+            child->domain_policy.groups[index].public_origin,
+            child->domain_policy.groups[index].shards[shard]);
+    }
   }
 }
 
@@ -691,13 +703,38 @@ bool laghu_domain_policy_add_mapping(laghu_domain_policy *policy,
 }
 
 bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
+                                   const char *public_origin,
                                    const char *origin) {
-  if (policy == NULL || !laghu_domain_origin_valid(origin) ||
-      policy->shard_count >= LAGHU_DOMAIN_POLICY_MAX_DOMAINS ||
-      laghu_domain_contains(policy->shards, policy->shard_count, origin))
+  laghu_domain_shard_group *group = NULL;
+  unsigned int index;
+  if (policy == NULL || !laghu_domain_origin_valid(public_origin) ||
+      !laghu_domain_origin_valid(origin))
     return false;
-  (void)snprintf(policy->shards[policy->shard_count++],
-                 LAGHU_DOMAIN_ORIGIN_SIZE, "%s", origin);
+  {
+    bool mapped = false;
+    for (index = 0U; index < policy->mapping_count; ++index)
+      if (strcmp(policy->mappings[index].public_origin, public_origin) == 0) {
+        mapped = true;
+        break;
+      }
+    if (!mapped) return false;
+  }
+  for (index = 0U; index < policy->group_count; ++index)
+    if (strcmp(policy->groups[index].public_origin, public_origin) == 0) {
+      group = &policy->groups[index];
+      break;
+    }
+  if (group == NULL) {
+    if (policy->group_count >= LAGHU_DOMAIN_POLICY_MAX_GROUPS) return false;
+    group = &policy->groups[policy->group_count++];
+    (void)snprintf(group->public_origin, sizeof(group->public_origin), "%s",
+                   public_origin);
+  }
+  if (group->shard_count >= LAGHU_DOMAIN_POLICY_MAX_SHARDS ||
+      laghu_domain_contains(group->shards, group->shard_count, origin))
+    return false;
+  (void)snprintf(group->shards[group->shard_count++], LAGHU_DOMAIN_ORIGIN_SIZE,
+                 "%s", origin);
   return true;
 }
 
@@ -706,7 +743,7 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
   if (policy == NULL ||
       policy->domain_count > LAGHU_DOMAIN_POLICY_MAX_DOMAINS ||
       policy->mapping_count > LAGHU_DOMAIN_POLICY_MAX_MAPPINGS ||
-      policy->shard_count > LAGHU_DOMAIN_POLICY_MAX_DOMAINS)
+      policy->group_count > LAGHU_DOMAIN_POLICY_MAX_GROUPS)
     return false;
   for (index = 0U; index < policy->domain_count; ++index)
     if (!laghu_domain_origin_valid(policy->domains[index]) ||
@@ -724,12 +761,35 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
                  policy->mappings[index].source_origin) == 0)
         return false;
   }
-  for (index = 0U; index < policy->shard_count; ++index)
-    if (!laghu_domain_origin_valid(policy->shards[index]) ||
+  for (index = 0U; index < policy->group_count; ++index) {
+    unsigned int shard, prior;
+    const laghu_domain_shard_group *group = &policy->groups[index];
+    bool mapped = false;
+    if (!laghu_domain_origin_valid(group->public_origin) ||
+        group->shard_count == 0U ||
+        group->shard_count > LAGHU_DOMAIN_POLICY_MAX_SHARDS ||
         !laghu_domain_contains(policy->domains, policy->domain_count,
-                               policy->shards[index]) ||
-        laghu_domain_contains(policy->shards, index, policy->shards[index]))
+                               group->public_origin))
       return false;
+    for (prior = 0U; prior < index; ++prior)
+      if (strcmp(policy->groups[prior].public_origin, group->public_origin) ==
+          0)
+        return false;
+    for (prior = 0U; prior < policy->mapping_count; ++prior)
+      if (strcmp(policy->mappings[prior].public_origin, group->public_origin) ==
+          0) {
+        mapped = true;
+        break;
+      }
+    if (!mapped) return false;
+    for (shard = 0U; shard < group->shard_count; ++shard) {
+      if (!laghu_domain_origin_valid(group->shards[shard]) ||
+          !laghu_domain_contains(policy->domains, policy->domain_count,
+                                 group->shards[shard]) ||
+          laghu_domain_contains(group->shards, shard, group->shards[shard]))
+        return false;
+    }
+  }
   return true;
 }
 
@@ -755,12 +815,22 @@ bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent,
                                          child->mappings[index].source_origin,
                                          child->mappings[index].public_origin))
       return false;
-  for (index = 0U; index < parent->shard_count; ++index)
-    if (!laghu_domain_policy_add_shard(&merged, parent->shards[index]))
-      return false;
-  for (index = 0U; index < child->shard_count; ++index)
-    if (!laghu_domain_policy_add_shard(&merged, child->shards[index]))
-      return false;
+  for (index = 0U; index < parent->group_count; ++index) {
+    unsigned int shard;
+    for (shard = 0U; shard < parent->groups[index].shard_count; ++shard)
+      if (!laghu_domain_policy_add_shard(
+              &merged, parent->groups[index].public_origin,
+              parent->groups[index].shards[shard]))
+        return false;
+  }
+  for (index = 0U; index < child->group_count; ++index) {
+    unsigned int shard;
+    for (shard = 0U; shard < child->groups[index].shard_count; ++shard)
+      if (!laghu_domain_policy_add_shard(
+              &merged, child->groups[index].public_origin,
+              child->groups[index].shards[shard]))
+        return false;
+  }
   return laghu_domain_policy_validate(&merged);
 }
 
@@ -789,12 +859,15 @@ bool laghu_domain_url_rewrite(const laghu_domain_policy *policy,
   if (mapping == NULL) return false;
   suffix = source_url + strlen(mapping->source_origin);
   public_origin = mapping->public_origin;
-  if (policy->shard_count != 0U) {
+  for (index = 0U; index < policy->group_count; ++index) {
+    const laghu_domain_shard_group *group = &policy->groups[index];
+    if (strcmp(group->public_origin, public_origin) != 0) continue;
     const unsigned char *cursor;
     for (cursor = (const unsigned char *)suffix;
          *cursor != '\0' && *cursor != '?' && *cursor != '#'; ++cursor)
       hash = (hash ^ *cursor) * 16777619U;
-    public_origin = policy->shards[hash % policy->shard_count];
+    public_origin = group->shards[hash % group->shard_count];
+    break;
   }
   written = snprintf(output, output_size, "%s%s", public_origin, suffix);
   return written > 0 && (size_t)written < output_size;
@@ -1307,13 +1380,25 @@ bool laghu_resolve_config_policy(const laghu_config *config,
               .public_origin,
           strlen(config->domain_policy.mappings[index].public_origin) + 1U);
     }
-    for (index = 0U; index < config->domain_policy.shard_count; ++index) {
-      static const unsigned char shard_marker = 'S';
-      laghu_sha256_update(&resource_context, &shard_marker, 1U);
+    for (index = 0U; index < config->domain_policy.group_count; ++index) {
+      static const unsigned char group_marker = 'G';
+      unsigned int shard;
+      laghu_sha256_update(&resource_context, &group_marker, 1U);
       laghu_sha256_update(
           &resource_context,
-          (const unsigned char *)config->domain_policy.shards[index],
-          strlen(config->domain_policy.shards[index]) + 1U);
+          (const unsigned char *)config->domain_policy.groups[index]
+              .public_origin,
+          strlen(config->domain_policy.groups[index].public_origin) + 1U);
+      for (shard = 0U;
+           shard < config->domain_policy.groups[index].shard_count; ++shard) {
+        static const unsigned char shard_marker = 'S';
+        laghu_sha256_update(&resource_context, &shard_marker, 1U);
+        laghu_sha256_update(
+            &resource_context,
+            (const unsigned char *)config->domain_policy.groups[index]
+                .shards[shard],
+            strlen(config->domain_policy.groups[index].shards[shard]) + 1U);
+      }
     }
     laghu_sha256_final(&resource_context, policy->resource_policy_hash);
   }

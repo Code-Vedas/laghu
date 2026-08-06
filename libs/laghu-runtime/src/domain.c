@@ -5,6 +5,7 @@
 
 #include "laghu/domain.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -67,7 +68,7 @@ static bool laghu_domain_attribute_is(const laghu_html_attribute *attribute,
                                       const char *name) {
   size_t length = strlen(name);
   return attribute->name.length == length &&
-         memcmp(attribute->name.data, name, length) == 0;
+         laghu_base_ascii_equal(attribute->name, name);
 }
 
 static bool laghu_domain_append_srcset(laghu_domain_builder *builder,
@@ -183,15 +184,62 @@ bool laghu_domain_rewrite_css(laghu_buffer input,
                               laghu_domain_rewrite_result *result) {
   laghu_domain_builder builder = {0};
   size_t cursor = 0U, emitted = 0U;
+  enum { LAGHU_CSS_NORMAL, LAGHU_CSS_COMMENT, LAGHU_CSS_SINGLE,
+         LAGHU_CSS_DOUBLE } state = LAGHU_CSS_NORMAL;
   bool changed = false;
   if (result == NULL || !laghu_domain_policy_validate(policy) ||
       (input.data == NULL && input.length != 0U))
     return false;
   memset(result, 0, sizeof(*result));
-  while (cursor + 4U <= input.length) {
+  while (cursor < input.length) {
     size_t value_start, value_end;
     unsigned char quote = 0U;
-    if (memcmp(input.data + cursor, "url(", 4U) != 0) {
+    if (state == LAGHU_CSS_COMMENT) {
+      if (cursor + 1U < input.length && input.data[cursor] == '*' &&
+          input.data[cursor + 1U] == '/') {
+        state = LAGHU_CSS_NORMAL;
+        cursor += 2U;
+      } else {
+        ++cursor;
+      }
+      continue;
+    }
+    if (state == LAGHU_CSS_SINGLE || state == LAGHU_CSS_DOUBLE) {
+      if (input.data[cursor] == '\\') {
+        cursor += cursor + 1U < input.length ? 2U : 1U;
+      } else if ((state == LAGHU_CSS_SINGLE && input.data[cursor] == '\'') ||
+                 (state == LAGHU_CSS_DOUBLE && input.data[cursor] == '"')) {
+        state = LAGHU_CSS_NORMAL;
+        ++cursor;
+      } else {
+        ++cursor;
+      }
+      continue;
+    }
+    if (cursor + 1U < input.length && input.data[cursor] == '/' &&
+        input.data[cursor + 1U] == '*') {
+      state = LAGHU_CSS_COMMENT;
+      cursor += 2U;
+      continue;
+    }
+    if (input.data[cursor] == '\'') {
+      state = LAGHU_CSS_SINGLE;
+      ++cursor;
+      continue;
+    }
+    if (input.data[cursor] == '"') {
+      state = LAGHU_CSS_DOUBLE;
+      ++cursor;
+      continue;
+    }
+    if (cursor + 4U > input.length ||
+        tolower(input.data[cursor]) != 'u' ||
+        tolower(input.data[cursor + 1U]) != 'r' ||
+        tolower(input.data[cursor + 2U]) != 'l' || input.data[cursor + 3U] !=
+            '(' ||
+        (cursor != 0U && (isalnum(input.data[cursor - 1U]) ||
+                          input.data[cursor - 1U] == '-' ||
+                          input.data[cursor - 1U] == '_'))) {
       ++cursor;
       continue;
     }
@@ -205,9 +253,11 @@ bool laghu_domain_rewrite_css(laghu_buffer input,
     value_end = value_start;
     while (value_end < input.length &&
            (quote != 0U ? input.data[value_end] != quote
-                       : input.data[value_end] != ')'))
+                       : input.data[value_end] != ')')) {
+      if (input.data[value_end] == '\\') break;
       ++value_end;
-    if (value_end == input.length ||
+    }
+    if (value_end == input.length || input.data[value_end] == '\\' ||
         (quote != 0U && (value_end + 1U == input.length ||
                           input.data[value_end + 1U] != ')'))) {
       ++cursor;

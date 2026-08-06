@@ -58,7 +58,8 @@ int main(void) {
       &config, LAGHU_CONFIG_SETTING_SHARD_DOMAIN, "https://cdn.example",
       "https://one.example,https://two.example", error, sizeof(error)));
   assert(config.domain_policy.mapping_count == 1U);
-  assert(config.domain_policy.shard_count == 2U);
+  assert(config.domain_policy.group_count == 1U);
+  assert(config.domain_policy.groups[0].shard_count == 2U);
   assert(laghu_domain_policy_validate(&config.domain_policy));
   assert(!laghu_config_setting_apply_pair(
       &config, LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN, "https://cdn.example",

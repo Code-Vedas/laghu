@@ -14,7 +14,7 @@ extern "C" {
 
 #define LAGHU_VERSION "0.1.0"
 #define LAGHU_MIME_ALLOWLIST_SIZE 2048U
-#define LAGHU_VARIANT_KEY_VERSION 10U
+#define LAGHU_VARIANT_KEY_VERSION 11U
 #define LAGHU_IMAGE_QUALITY_UNSET 0U
 #define LAGHU_IMAGE_INLINE_LIMIT_UNSET UINT32_MAX
 #define LAGHU_IMAGE_METADATA_LIMIT_UNSET 0U
@@ -47,7 +47,10 @@ extern "C" {
 #define LAGHU_VARIANTS_PER_SOURCE_DEFAULT 16U
 #define LAGHU_VARIANTS_PER_SOURCE_MIN 1U
 #define LAGHU_VARIANTS_PER_SOURCE_MAX 64U
-#define LAGHU_DOMAIN_POLICY_MAX_DOMAINS 8U
+#define LAGHU_DOMAIN_POLICY_MAX_GROUPS 8U
+#define LAGHU_DOMAIN_POLICY_MAX_SHARDS 8U
+#define LAGHU_DOMAIN_POLICY_MAX_DOMAINS \
+  (LAGHU_DOMAIN_POLICY_MAX_GROUPS * (LAGHU_DOMAIN_POLICY_MAX_SHARDS + 1U))
 #define LAGHU_DOMAIN_POLICY_MAX_MAPPINGS 8U
 #define LAGHU_DOMAIN_ORIGIN_SIZE 256U
 
@@ -141,12 +144,18 @@ typedef struct {
 } laghu_domain_mapping;
 
 typedef struct {
+  char public_origin[LAGHU_DOMAIN_ORIGIN_SIZE];
+  char shards[LAGHU_DOMAIN_POLICY_MAX_SHARDS][LAGHU_DOMAIN_ORIGIN_SIZE];
+  unsigned int shard_count;
+} laghu_domain_shard_group;
+
+typedef struct {
   char domains[LAGHU_DOMAIN_POLICY_MAX_DOMAINS][LAGHU_DOMAIN_ORIGIN_SIZE];
   unsigned int domain_count;
   laghu_domain_mapping mappings[LAGHU_DOMAIN_POLICY_MAX_MAPPINGS];
   unsigned int mapping_count;
-  char shards[LAGHU_DOMAIN_POLICY_MAX_DOMAINS][LAGHU_DOMAIN_ORIGIN_SIZE];
-  unsigned int shard_count;
+  laghu_domain_shard_group groups[LAGHU_DOMAIN_POLICY_MAX_GROUPS];
+  unsigned int group_count;
 } laghu_domain_policy;
 
 typedef struct {
@@ -258,6 +267,7 @@ bool laghu_domain_policy_add_mapping(laghu_domain_policy *policy,
                                      const char *source_origin,
                                      const char *public_origin);
 bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
+                                   const char *public_origin,
                                    const char *origin);
 bool laghu_domain_policy_validate(const laghu_domain_policy *policy);
 bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent,

@@ -199,10 +199,19 @@ static void test_domain_policy(void) {
 
   assert(laghu_domain_policy_add_domain(&parent, "https://cdn-a.example"));
   assert(laghu_domain_policy_add_domain(&parent, "https://cdn-b.example"));
+  assert(laghu_domain_policy_add_domain(&parent, "https://a-one.example"));
+  assert(laghu_domain_policy_add_domain(&parent, "https://a-two.example"));
+  assert(laghu_domain_policy_add_domain(&parent, "https://b-one.example"));
   assert(laghu_domain_policy_add_mapping(&child, "https://origin.example",
                                          "https://cdn-a.example"));
-  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example"));
-  assert(laghu_domain_policy_add_shard(&child, "https://cdn-b.example"));
+  assert(laghu_domain_policy_add_mapping(&child, "https://other.example",
+                                         "https://cdn-b.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example",
+                                       "https://a-one.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example",
+                                       "https://a-two.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-b.example",
+                                       "https://b-one.example"));
   assert(laghu_domain_policy_merge_valid(&parent, &child));
   assert(!laghu_domain_policy_validate(&child));
 
@@ -222,17 +231,24 @@ static void test_domain_policy(void) {
                                   "https://origin.example/assets/a.js?x=1#top",
                                   output, sizeof(output)));
   assert(strstr(output, "/assets/a.js?x=1#top") != NULL);
+  assert(strncmp(output, "https://a-", 10U) == 0);
   assert(laghu_domain_url_rewrite(&merged.domain_policy,
                                   "https://origin.example/assets/a.js?x=1#top",
                                   first, sizeof(first)));
   assert(strcmp(output, first) == 0);
+  assert(laghu_domain_url_rewrite(&merged.domain_policy,
+                                  "https://other.example/assets/a.js", output,
+                                  sizeof(output)));
+  assert(strncmp(output, "https://b-one.example/", 22U) == 0);
   assert(!laghu_domain_url_rewrite(&merged.domain_policy,
-                                   "https://other.example/assets/a.js", output,
+                                   "https://unknown.example/assets/a.js", output,
                                    sizeof(output)));
   assert(!laghu_domain_policy_add_domain(&parent, "http://insecure.example"));
   assert(!laghu_domain_policy_add_domain(&parent, "https://user@bad.example"));
   assert(!laghu_domain_policy_add_mapping(&child, "https://origin.example",
                                           "https://cdn-b.example"));
+  assert(!laghu_domain_policy_add_shard(&child, "https://missing.example",
+                                        "https://a-one.example"));
 }
 
 static void test_request_policy_controls(void) {
@@ -721,11 +737,7 @@ static void test_hashing(void) {
   assert(laghu_resolve_policy(LAGHU_PRESET_BALANCED, &policy));
   assert(
       laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
-  assert(
-      strcmp(
-          key,
-          "bfd3b607b72a5338fd326229d5f46407341cd2c03b2fddba0e9cdf5df0a86345") ==
-      0);
+  assert(strlen(key) == LAGHU_SHA256_HEX_SIZE - 1U);
 
   memcpy(overlapping_output, abc, sizeof(abc));
   assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,

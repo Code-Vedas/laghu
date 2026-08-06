@@ -16,9 +16,13 @@ int main(void) {
       "<img src=\"https://origin.example/i.png\" "
       "srcset=\"https://origin.example/i.png 1x, "
       "https://origin.example/i@2x.png 2x\" "
-      "style=\"background:url(https://origin.example/bg.png)\">";
+      "STYLE=\"background:URL(https://origin.example/bg.png)\">";
   static const unsigned char css[] =
-      "a{background:url('https://origin.example/a.png')}";
+      "/* url(https://origin.example/comment.png) */"
+      "a{background:URL('https://origin.example/a.png');"
+      "content:'url(https://origin.example/string.png)'}"
+      "b{background:noturl(https://origin.example/no.png)}"
+      "c{background:url(https://origin.example/escaped\\).png)}";
   assert(laghu_domain_policy_add_domain(&policy, "https://cdn.example"));
   assert(laghu_domain_policy_add_mapping(&policy, "https://origin.example",
                                          "https://cdn.example"));
@@ -38,6 +42,14 @@ int main(void) {
   assert(result.rewritten);
   assert(strstr((const char *)result.data, "https://cdn.example/a.png") !=
          NULL);
+  assert(strstr((const char *)result.data,
+                "https://origin.example/comment.png") != NULL);
+  assert(strstr((const char *)result.data,
+                "https://origin.example/string.png") != NULL);
+  assert(strstr((const char *)result.data, "https://origin.example/no.png") !=
+         NULL);
+  assert(strstr((const char *)result.data,
+                "https://origin.example/escaped\\).png") != NULL);
   laghu_domain_rewrite_result_release(&result);
   return 0;
 }
