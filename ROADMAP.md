@@ -279,7 +279,7 @@ Resource-governance evidence: shared configuration supplies inherited 4–256 Mi
 
 ### 4.6 CLI and Usability
 
-- [ ] Implement `laghu status`.
+- [x] Implement `laghu status` with authenticated ready/stats checks for standalone, NGINX, and Apache endpoints.
 - [ ] Implement `laghu purge <url>`.
 - [ ] Implement `laghu doctor`.
 - [ ] Implement `laghu bench`.

@@ -4,8 +4,10 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <stdio.h>
+#include <string.h>
 
 #include "laghu/proxy.h"
+#include "laghu/status.h"
 
 static void usage(FILE *stream) {
   fputs(
@@ -64,6 +66,8 @@ int main(int argc, char **argv) {
   laghu_proxy_options options;
   char error[256];
   laghu_proxy_parse_result parsed;
+  if (argc > 1 && strcmp(argv[1], "status") == 0)
+    return laghu_status_run(argc - 1, argv + 1);
   laghu_proxy_options_init(&options);
   parsed =
       laghu_proxy_parse_options(argc, argv, &options, error, sizeof(error));

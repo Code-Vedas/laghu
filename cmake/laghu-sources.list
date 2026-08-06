@@ -77,6 +77,7 @@ standalone|laghu_standalone_admin_routes.c|servers/laghu/src/admin_routes.c
 standalone|laghu_standalone_beacon_routes.c|servers/laghu/src/beacon_routes.c
 standalone|laghu_standalone_worker_pool.c|servers/laghu/src/worker_pool.c
 standalone|laghu_standalone_lifecycle.c|servers/laghu/src/lifecycle.c
+standalone|laghu_standalone_status.c|servers/laghu/src/status.c
 runtime_test|fixture_support|libs/laghu-runtime/tests/test_fixture.c
 runtime_test|fixture_header|libs/laghu-runtime/tests/test_fixture.h
 runtime_test|fixture|libs/laghu-runtime/tests/test_fixture_test.c

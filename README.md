@@ -115,3 +115,17 @@ Start with:
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and review expectations.
+
+## Status
+
+Query an authenticated Laghu endpoint without exposing its token:
+
+```sh
+laghu status https://laghu.example --token-file /etc/laghu/purge.token
+```
+
+`status` reads only an absolute, owner-only token file, sends it as
+`X-Laghu-Purge-Token`, and queries `/.laghu/ready` then `/.laghu/stats`.
+Use `--json` for the normalized result, `--timeout 1..30`, and `--ca-file` to
+extend HTTPS trust. Exit codes distinguish CLI/token (2), authorization (3),
+connection (4), malformed response (5), 503 (6), and other HTTP failures (7).
