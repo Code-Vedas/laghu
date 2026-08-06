@@ -289,11 +289,17 @@ static bool status_json_text_field(const char *body, const char *name,
 }
 
 static bool status_json_number_field(const char *body, const char *name,
-                                     uint64_t *output) {
+                                     unsigned int occurrence, uint64_t *output) {
   char needle[80U]; const char *value; int written; uint64_t parsed = 0U;
   written = snprintf(needle, sizeof(needle), "\"%s\":", name);
-  if (written < 0 || (size_t)written >= sizeof(needle) ||
-      (value = strstr(body, needle)) == NULL || !isdigit((unsigned char)*value)) return false;
+  if (written < 0 || (size_t)written >= sizeof(needle)) return false;
+  value = body;
+  while (occurrence-- != 0U) {
+    value = strstr(value, needle);
+    if (value == NULL) return false;
+    value += (size_t)written;
+  }
+  if (!isdigit((unsigned char)*value)) return false;
   while (isdigit((unsigned char)*value)) {
     unsigned int digit = (unsigned int)(*value++ - '0');
     if (parsed > (UINT64_MAX - digit) / 10U) return false;
@@ -408,10 +414,10 @@ int laghu_status_run(int argc, char **argv) {
   } else {
     char readiness[32U]; uint64_t hits, misses, used, capacity;
     if (!status_json_text_field(ready, "status", readiness, sizeof(readiness)) ||
-        !status_json_number_field(stats, "hits", &hits) ||
-        !status_json_number_field(stats, "misses", &misses) ||
-        !status_json_number_field(stats, "bytes", &used) ||
-        !status_json_number_field(stats, "capacity", &capacity)) {
+        !status_json_number_field(stats, "hits", 1U, &hits) ||
+        !status_json_number_field(stats, "misses", 1U, &misses) ||
+        !status_json_number_field(stats, "bytes", 2U, &used) ||
+        !status_json_number_field(stats, "bytes", 1U, &capacity)) {
       fputs("laghu status: malformed response\n", stderr);
       return 5;
     }
