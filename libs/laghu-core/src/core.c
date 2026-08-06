@@ -728,9 +728,8 @@ bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
   if (group == NULL) {
     if (policy->group_count >= LAGHU_DOMAIN_POLICY_MAX_GROUPS) return false;
     if (policy->group_count == policy->group_capacity) {
-      unsigned int capacity = policy->group_capacity == 0U
-                                  ? 1U
-                                  : policy->group_capacity * 2U;
+      unsigned int capacity =
+          policy->group_capacity == 0U ? 1U : policy->group_capacity * 2U;
       laghu_domain_shard_group *grown;
       if (capacity > LAGHU_DOMAIN_POLICY_MAX_GROUPS)
         capacity = LAGHU_DOMAIN_POLICY_MAX_GROUPS;
