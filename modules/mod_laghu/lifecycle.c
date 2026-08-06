@@ -18,6 +18,21 @@ laghu_operational_registry laghu_apache_operational;
 const char *laghu_apache_operational_cache;
 bool laghu_apache_operational_enabled;
 
+static bool laghu_apache_open_operational(uint64_t now) {
+  unsigned int attempt;
+  /* Apache starts several children together.  Registry locking is deliberately
+   * nonblocking, so make a bounded startup-only retry before giving a child an
+   * unavailable operational view. */
+  for (attempt = 0U; attempt < 16U; ++attempt) {
+    if (laghu_operational_registry_open(
+            &laghu_apache_operational, laghu_apache_operational_cache,
+            LAGHU_OPERATIONAL_SURFACE_APACHE, LAGHU_OPERATIONAL_PROCESS_ADAPTER,
+            true, now))
+      return true;
+  }
+  return false;
+}
+
 static apr_status_t laghu_apache_rum_cleanup(void *data) {
   (void)data;
   laghu_rum_engine_destroy(laghu_apache_rum);
@@ -36,37 +51,36 @@ void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
   laghu_rum_options_init(&options);
   laghu_operational_registry_init(&laghu_apache_operational);
   if (laghu_apache_operational_enabled &&
-      !laghu_operational_registry_open(
-          &laghu_apache_operational, laghu_apache_operational_cache,
-          LAGHU_OPERATIONAL_SURFACE_APACHE, LAGHU_OPERATIONAL_PROCESS_ADAPTER,
-          true, (uint64_t)apr_time_sec(apr_time_now())))
+      !laghu_apache_open_operational((uint64_t)apr_time_sec(apr_time_now())))
     ap_log_error(
         APLOG_MARK, APLOG_WARNING, 0, server,
         "Laghu operational registry unavailable; observability disabled");
   if (config != NULL && config->core.mode == LAGHU_MODE_ON &&
-      !laghu_cache_backend_register_path(config->image_cache != NULL
-                                             ? config->image_cache
+      !laghu_cache_backend_register_path(config->service.image_cache[0] != '\0'
+                                             ? config->service.image_cache
                                              : LAGHU_APACHE_LIFECYCLE_CACHE,
-                                         &config->cache_limits))
+                                         &config->service.cache_limits))
     ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server,
                  "Laghu file cache backend unavailable; serving origin");
-  length =
-      config != NULL && config->rum_snapshot != NULL
-          ? snprintf(snapshot, sizeof(snapshot), "%s", config->rum_snapshot)
-          : snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
-                     LAGHU_APACHE_LIFECYCLE_CACHE);
+  length = config != NULL && config->service.rum_snapshot_path[0] != '\0'
+               ? snprintf(snapshot, sizeof(snapshot), "%s",
+                          config->service.rum_snapshot_path)
+               : snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
+                          LAGHU_APACHE_LIFECYCLE_CACHE);
   if (length <= 0 || (size_t)length >= sizeof(snapshot)) return;
   options.snapshot_path = snapshot;
   if (config != NULL) {
-    options.store_uri = config->rum_store;
-    options.client_library = config->rum_client_library;
-    options.memory_limit = config->rum_memory_limit;
-    options.pending_limit = config->rum_pending_limit;
-    options.ttl_seconds = config->rum_ttl;
-    options.sync_interval_seconds = config->rum_sync_interval;
-    options.timeout_ms = config->rum_timeout_ms;
-    options.retry_limit = config->rum_retry_limit;
-    options.required = config->rum_required;
+    options.store_uri = config->service.rum_store;
+    options.client_library = config->service.rum_client_library[0] == '\0'
+                                 ? NULL
+                                 : config->service.rum_client_library;
+    options.memory_limit = config->service.rum_memory_limit;
+    options.pending_limit = config->service.rum_pending_limit;
+    options.ttl_seconds = config->service.rum_ttl;
+    options.sync_interval_seconds = config->service.rum_sync_interval;
+    options.timeout_ms = config->service.rum_timeout_ms;
+    options.retry_limit = config->service.rum_retry_limit;
+    options.required = config->service.rum_store_required;
   }
   laghu_apache_rum = laghu_rum_engine_create(&options, error, sizeof(error));
   if (laghu_apache_rum == NULL) {

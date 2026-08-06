@@ -25,6 +25,31 @@
 #include "laghu/types.h"
 #include "ngx_http_laghu_internal.h"
 
+bool ngx_http_laghu_peer_matches(ngx_http_request_t *request,
+                                 const laghu_service_cidr *cidrs,
+                                 size_t count) {
+  const struct sockaddr *peer = request->connection->sockaddr;
+  unsigned char address[16U] = {0};
+  unsigned int family;
+  size_t index;
+  if (peer == NULL) return false;
+  if (peer->sa_family == AF_INET) {
+    ngx_memcpy(address, &((const struct sockaddr_in *)peer)->sin_addr, 4U);
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV4;
+  }
+#if (NGX_HAVE_INET6)
+  else if (peer->sa_family == AF_INET6) {
+    ngx_memcpy(address, &((const struct sockaddr_in6 *)peer)->sin6_addr, 16U);
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV6;
+  }
+#endif
+  else
+    return false;
+  for (index = 0U; index < count; ++index)
+    if (laghu_service_cidr_matches(&cidrs[index], address, family)) return true;
+  return false;
+}
+
 static laghu_buffer ngx_http_laghu_view(const ngx_str_t *value) {
   return (laghu_buffer){value == NULL ? NULL : value->data,
                         value == NULL ? 0U : value->len};
@@ -150,9 +175,8 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->request.scheme = (laghu_buffer){(const unsigned char *)"http", 4U};
 #endif
   if (conf->core.respect_x_forwarded_proto == LAGHU_MODE_ON &&
-      conf->trusted_proxy != NULL &&
-      ngx_cidr_match(request->connection->sockaddr, conf->trusted_proxy) ==
-          NGX_OK) {
+      ngx_http_laghu_peer_matches(request, conf->service.trusted_proxies,
+                                  conf->service.trusted_proxy_count)) {
     ngx_list_part_t *part = &request->headers_in.headers.part;
     ngx_table_elt_t *headers = part->elts;
     ngx_table_elt_t *forwarded = NULL;
@@ -215,35 +239,28 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->environment.version = LAGHU_HTTP_ABI_VERSION;
   context->environment.struct_size = sizeof(context->environment);
   context->environment.config = conf->core;
-  context->environment.cache_path = (const char *)conf->image_cache.data;
+  context->environment.cache_path = conf->service.image_cache;
   context->environment.rum = ngx_http_laghu_rum;
-  context->environment.worker_queue_path =
-      (const char *)conf->worker_queue.data;
+  context->environment.worker_queue_path = conf->service.worker_queue;
   context->environment.queue = &conf->runtime_queue;
   context->environment.font_fetch_queue_path =
-      conf->font_fetch_queue.len == 0U
+      conf->service.font_fetch_queue[0] == '\0'
           ? NULL
-          : (const char *)conf->font_fetch_queue.data;
+          : conf->service.font_fetch_queue;
   context->environment.font_fetch_queue =
       ngx_http_laghu_font_queue_refresh(conf) ? &conf->font_fetch_runtime_queue
                                               : NULL;
-  context->environment.font_providers =
-      conf->font_providers_loaded ? &conf->font_providers : NULL;
-  context->environment.javascript_queue_path =
-      (const char *)conf->javascript_queue.data;
+  context->environment.font_providers = conf->service.font_providers;
+  context->environment.javascript_queue_path = conf->service.javascript_queue;
   context->environment.javascript_queue =
       ngx_http_laghu_javascript_queue_refresh(conf)
           ? &conf->javascript_runtime_queue
           : NULL;
-  context->environment.javascript_target =
-      (const char *)conf->javascript_target.data;
+  context->environment.javascript_target = conf->service.javascript_target;
   context->environment.javascript_observations =
-      conf->javascript_observations_loaded ? &conf->javascript_observations
-                                           : NULL;
-  context->environment.javascript_defer =
-      conf->javascript_defer_loaded ? &conf->javascript_defer : NULL;
-  context->environment.asset_offload =
-      conf->asset_offload_loaded ? &conf->asset_offload : NULL;
+      conf->service.javascript_observations;
+  context->environment.javascript_defer = conf->service.javascript_defer;
+  context->environment.asset_offload = conf->service.asset_offload;
   context->environment.now = (uint64_t)ngx_time();
   return true;
 }

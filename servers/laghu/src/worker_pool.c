@@ -87,14 +87,14 @@ void *proxy_worker_main(void *argument)
   laghu_runtime_queue_init(&worker->runtime_queue);
   laghu_runtime_queue_init(&worker->font_fetch_queue);
   laghu_runtime_queue_init(&worker->javascript_queue);
-  if (worker->queue->options->font_providers_loaded)
+  if (worker->queue->options->service.font_providers != NULL)
     (void)laghu_runtime_queue_open(
         &worker->font_fetch_queue,
-        worker->queue->options->font_fetch_queue_path);
-  if (worker->queue->options->javascript_queue_enabled)
+        worker->queue->options->service.font_fetch_queue);
+  if (worker->queue->options->service.javascript_queue[0] != '\0')
     (void)laghu_runtime_queue_open(
         &worker->javascript_queue,
-        worker->queue->options->javascript_queue_path);
+        worker->queue->options->service.javascript_queue);
   while (queue_pop(worker->queue, &connection)) {
     proxy_worker_begin(worker, connection.socket);
     proxy_handle(&connection, worker);

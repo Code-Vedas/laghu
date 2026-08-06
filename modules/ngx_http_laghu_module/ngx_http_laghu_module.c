@@ -33,11 +33,11 @@ void ngx_http_laghu_queue_cleanup(void *data) {
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   laghu_runtime_queue *queue = &conf->font_fetch_runtime_queue;
   laghu_runtime_queue_snapshot snapshot;
-  if (!conf->font_providers_loaded || conf->font_fetch_queue.len == 0U)
+  if (conf->service.font_providers == NULL ||
+      conf->service.font_fetch_queue[0] == '\0')
     return false;
   if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (!laghu_runtime_queue_open(queue,
-                                 (const char *)conf->font_fetch_queue.data) ||
+      (!laghu_runtime_queue_open(queue, conf->service.font_fetch_queue) ||
        !laghu_runtime_queue_snapshot_get(queue, &snapshot)))
     return false;
   return true;
@@ -46,10 +46,9 @@ bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   laghu_runtime_queue *queue = &conf->javascript_runtime_queue;
   laghu_runtime_queue_snapshot snapshot;
-  if (conf->javascript_queue.len == 0U) return false;
+  if (conf->service.javascript_queue[0] == '\0') return false;
   if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (!laghu_runtime_queue_open(queue,
-                                 (const char *)conf->javascript_queue.data) ||
+      (!laghu_runtime_queue_open(queue, conf->service.javascript_queue) ||
        !laghu_runtime_queue_snapshot_get(queue, &snapshot)))
     return false;
   return true;
@@ -90,8 +89,7 @@ bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   laghu_runtime_queue_snapshot snapshot;
   uint64_t now = (uint64_t)ngx_time();
   if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
-      (!laghu_runtime_queue_open(queue,
-                                 (const char *)conf->worker_queue.data) ||
+      (!laghu_runtime_queue_open(queue, conf->service.worker_queue) ||
        !laghu_runtime_queue_snapshot_get(queue, &snapshot))) {
     return false;
   }

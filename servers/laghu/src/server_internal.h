@@ -234,7 +234,7 @@ const char *proxy_effective_scheme(const laghu_proxy_options *options,
                                    const proxy_connection *connection,
                                    const proxy_request *request);
 bool proxy_peer_in_cidrs(const proxy_connection *connection,
-                         const laghu_proxy_cidr *cidrs, size_t count);
+                         const laghu_service_cidr *cidrs, size_t count);
 bool proxy_admin_token(const laghu_proxy_options *options,
                        const proxy_request *request);
 void proxy_poll_flush_file(const laghu_proxy_options *options);

@@ -43,17 +43,17 @@ void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
       valid = laghu_runtime_parse_instrumentation_beacon(
                   (laghu_buffer){body, length}, &instrumentation) &&
               laghu_instrumentation_apply_beacon(
-                  ngx_http_laghu_rum, (const char *)conf->image_cache.data,
+                  ngx_http_laghu_rum, conf->service.image_cache,
                   (uint64_t)ngx_time(), conf->core.image_metadata_ttl,
                   &instrumentation);
     else if (valid &&
              request->uri.len == sizeof("/.laghu/beacon/critical-css") - 1U)
-      valid = laghu_runtime_parse_critical_css_beacon(
-                  (laghu_buffer){body, length}, &critical) &&
-              laghu_critical_css_apply_beacon(
-                  ngx_http_laghu_rum, (const char *)conf->image_cache.data,
-                  policy_key, (uint64_t)ngx_time(),
-                  conf->core.image_metadata_ttl, &critical);
+      valid =
+          laghu_runtime_parse_critical_css_beacon((laghu_buffer){body, length},
+                                                  &critical) &&
+          laghu_critical_css_apply_beacon(
+              ngx_http_laghu_rum, conf->service.image_cache, policy_key,
+              (uint64_t)ngx_time(), conf->core.image_metadata_ttl, &critical);
     else if (valid) {
       memset(&queue_snapshot, 0, sizeof(queue_snapshot));
       valid = laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
@@ -62,8 +62,8 @@ void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
               laghu_runtime_queue_snapshot_get(&conf->runtime_queue,
                                                &queue_snapshot) &&
               laghu_catalog_apply_beacon(
-                  ngx_http_laghu_rum, (const char *)conf->image_cache.data,
-                  policy_key, queue_snapshot.capabilities, (uint64_t)ngx_time(),
+                  ngx_http_laghu_rum, conf->service.image_cache, policy_key,
+                  queue_snapshot.capabilities, (uint64_t)ngx_time(),
                   conf->core.image_metadata_ttl, &beacon);
     }
   }

@@ -56,9 +56,9 @@ static bool ngx_http_laghu_admin_authorized(
   ngx_list_part_t *part = &request->headers_in.headers.part;
   ngx_table_elt_t *headers = part->elts;
   ngx_uint_t header_index;
-  if (conf->purge_token_file.len == 0U || conf->purge_allow == NULL ||
-      ngx_cidr_match(request->connection->sockaddr, conf->purge_allow) !=
-          NGX_OK)
+  if (conf->service.purge_token_file[0] == '\0' ||
+      !ngx_http_laghu_peer_matches(request, conf->service.purge_allow,
+                                   conf->service.purge_allow_count))
     return false;
   for (header_index = 0U;; ++header_index) {
     if (header_index >= part->nelts) {
@@ -82,9 +82,10 @@ static bool ngx_http_laghu_admin_authorized(
     size_t supplied = token->value.len, maximum, compare_index;
     u_char difference;
     ngx_memzero(&file, sizeof(file));
-    file.name = conf->purge_token_file;
-    file.fd = ngx_open_file(conf->purge_token_file.data, NGX_FILE_RDONLY,
-                            NGX_FILE_OPEN, 0U);
+    file.name.data = (u_char *)conf->service.purge_token_file;
+    file.name.len = strlen(conf->service.purge_token_file);
+    file.fd = ngx_open_file((u_char *)conf->service.purge_token_file,
+                            NGX_FILE_RDONLY, NGX_FILE_OPEN, 0U);
     length = file.fd == NGX_INVALID_FILE
                  ? -1
                  : ngx_read_file(&file, expected, sizeof(expected), 0U);
@@ -113,21 +114,21 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
   laghu_http_administrative_options options;
   laghu_http_administrative_plan plan;
   laghu_cache_limits cache_limits = {
-      .size_limit = conf->file_cache_size,
-      .inode_limit = conf->file_cache_inode_limit,
-      .metadata_size = conf->file_cache_metadata_size,
-      .clean_interval = (unsigned int)conf->file_cache_clean_interval};
+      .size_limit = conf->service.cache_limits.size_limit,
+      .inode_limit = conf->service.cache_limits.inode_limit,
+      .metadata_size = conf->service.cache_limits.metadata_size,
+      .clean_interval = conf->service.cache_limits.clean_interval};
   laghu_buffer method = {(const unsigned char *)request->method_name.data,
                          request->method_name.len};
   laghu_buffer target = {(const unsigned char *)request->unparsed_uri.data,
                          request->unparsed_uri.len};
 
   laghu_http_administrative_options_init(&options);
-  options.metrics_enabled = conf->metrics;
-  options.readiness_enabled = conf->readiness;
-  options.statistics_enabled = conf->statistics;
-  options.purge_method_enabled = conf->purge_method;
-  options.purge_query_enabled = conf->purge_query;
+  options.metrics_enabled = conf->service.metrics;
+  options.readiness_enabled = conf->service.readiness;
+  options.statistics_enabled = conf->service.statistics;
+  options.purge_method_enabled = conf->service.purge_method;
+  options.purge_query_enabled = conf->service.purge_query;
   options.purge_query_get_only = false;
   if (!laghu_http_administrative_plan_build(&plan, method, target, &options) ||
       !plan.recognized)
@@ -137,7 +138,7 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
       !ngx_http_laghu_admin_authorized(request, conf))
     return ngx_http_laghu_admin_json(request, NGX_HTTP_FORBIDDEN,
                                      "{\"status\":\"forbidden\"}");
-  if (!laghu_cache_backend_register_path((const char *)conf->image_cache.data,
+  if (!laghu_cache_backend_register_path(conf->service.image_cache,
                                          &cache_limits))
     return ngx_http_laghu_admin_json(request, NGX_HTTP_SERVICE_UNAVAILABLE,
                                      "{\"status\":\"unavailable\"}");
@@ -151,8 +152,7 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
     laghu_cache_stats stats = {0};
     laghu_http_administrative_response response;
     char *json;
-    if (!laghu_cache_backend_health_path((char *)conf->image_cache.data,
-                                         &stats))
+    if (!laghu_cache_backend_health_path(conf->service.image_cache, &stats))
       return NGX_HTTP_SERVICE_UNAVAILABLE;
     json = ngx_pnalloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
     if (json == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -181,13 +181,14 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
                                        "{\"status\":\"unavailable\"}");
     if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS) {
       laghu_cache_stats stats = {0};
-      cache_ready = laghu_cache_backend_health_path(
-          (char *)conf->image_cache.data, &stats);
+      cache_ready =
+          laghu_cache_backend_health_path(conf->service.image_cache, &stats);
       laghu_operational_registry_cache(&ngx_http_laghu_operational, &stats);
     }
     if (!laghu_http_administrative_render_operational(
-            &plan, snapshot, now, true, cache_ready, conf->readiness_strict,
-            rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response))
+            &plan, snapshot, now, true, cache_ready,
+            conf->service.readiness_strict, rendered,
+            LAGHU_OPERATIONAL_RENDER_SIZE, &response))
       return NGX_HTTP_INTERNAL_SERVER_ERROR;
     return ngx_http_laghu_admin_write(request, &response, rendered);
   }
@@ -197,7 +198,7 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
     uint64_t matched = 0U;
     laghu_cache_purge_result result;
     if (rendered == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    result = laghu_cache_backend_purge_url_path((char *)conf->image_cache.data,
+    result = laghu_cache_backend_purge_url_path(conf->service.image_cache,
                                                 plan.normalized_path,
                                                 (uint64_t)ngx_time(), &matched);
     if (!laghu_http_administrative_render_purge(result, matched, rendered,

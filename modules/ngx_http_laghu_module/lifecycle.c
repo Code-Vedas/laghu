@@ -37,25 +37,25 @@ ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
           : LAGHU_NGINX_LIFECYCLE_CACHE,
       LAGHU_OPERATIONAL_SURFACE_NGINX, LAGHU_OPERATIONAL_PROCESS_ADAPTER, true,
       (uint64_t)ngx_time());
-  length = conf != NULL && conf->snapshot_path.len != 0U
+  length = conf != NULL && conf->service.rum_snapshot_path[0] != '\0'
                ? snprintf(snapshot, sizeof(snapshot), "%s",
-                          (const char *)conf->snapshot_path.data)
+                          conf->service.rum_snapshot_path)
                : snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
                           LAGHU_NGINX_LIFECYCLE_CACHE);
   if (length <= 0 || (size_t)length >= sizeof(snapshot)) return NGX_ERROR;
   options.snapshot_path = snapshot;
   if (conf != NULL) {
-    options.store_uri = (const char *)conf->store_uri.data;
-    options.client_library = conf->client_library.len == 0U
+    options.store_uri = conf->service.rum_store;
+    options.client_library = conf->service.rum_client_library[0] == '\0'
                                  ? NULL
-                                 : (const char *)conf->client_library.data;
-    options.memory_limit = conf->memory_limit;
-    options.pending_limit = conf->pending_limit;
-    options.ttl_seconds = (unsigned int)conf->ttl_seconds;
-    options.sync_interval_seconds = (unsigned int)conf->sync_interval_seconds;
-    options.timeout_ms = (unsigned int)conf->timeout_ms;
-    options.retry_limit = (unsigned int)conf->retry_limit;
-    options.required = conf->required == 1;
+                                 : conf->service.rum_client_library;
+    options.memory_limit = conf->service.rum_memory_limit;
+    options.pending_limit = conf->service.rum_pending_limit;
+    options.ttl_seconds = conf->service.rum_ttl;
+    options.sync_interval_seconds = conf->service.rum_sync_interval;
+    options.timeout_ms = conf->service.rum_timeout_ms;
+    options.retry_limit = conf->service.rum_retry_limit;
+    options.required = conf->service.rum_store_required;
   }
   ngx_http_laghu_rum = laghu_rum_engine_create(&options, error, sizeof(error));
   if (ngx_http_laghu_rum == NULL) {

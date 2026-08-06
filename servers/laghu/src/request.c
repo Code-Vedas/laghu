@@ -21,24 +21,19 @@ bool proxy_peer_trusted(const laghu_proxy_options *options,
     peer =
         (const unsigned char *)&((const struct sockaddr_in *)&connection->peer)
             ->sin_addr;
-    family = AF_INET;
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV4;
   } else if (connection->peer.ss_family == AF_INET6) {
     peer =
         (const unsigned char *)&((const struct sockaddr_in6 *)&connection->peer)
             ->sin6_addr;
-    family = AF_INET6;
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV6;
   } else {
     return false;
   }
-  for (index = 0U; index < options->trusted_proxy_count; ++index) {
-    const laghu_proxy_cidr *cidr = &options->trusted_proxies[index];
-    unsigned int bit;
-    bool equal = cidr->family == family;
-    for (bit = 0U; equal && bit < cidr->prefix; ++bit)
-      equal = (peer[bit / 8U] & (1U << (7U - bit % 8U))) ==
-              (cidr->address[bit / 8U] & (1U << (7U - bit % 8U)));
-    if (equal) return true;
-  }
+  for (index = 0U; index < options->service.trusted_proxy_count; ++index)
+    if (laghu_service_cidr_matches(&options->service.trusted_proxies[index],
+                                   peer, family))
+      return true;
   return false;
 }
 
@@ -61,7 +56,7 @@ const char *proxy_effective_scheme(const laghu_proxy_options *options,
 }
 
 bool proxy_peer_in_cidrs(const proxy_connection *connection,
-                         const laghu_proxy_cidr *cidrs, size_t count) {
+                         const laghu_service_cidr *cidrs, size_t count) {
   const unsigned char *peer;
   unsigned int family;
   size_t index;
@@ -69,23 +64,17 @@ bool proxy_peer_in_cidrs(const proxy_connection *connection,
     peer =
         (const unsigned char *)&((const struct sockaddr_in *)&connection->peer)
             ->sin_addr;
-    family = AF_INET;
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV4;
   } else if (connection->peer.ss_family == AF_INET6) {
     peer =
         (const unsigned char *)&((const struct sockaddr_in6 *)&connection->peer)
             ->sin6_addr;
-    family = AF_INET6;
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV6;
   } else {
     return false;
   }
-  for (index = 0U; index < count; ++index) {
-    unsigned int bit;
-    bool equal = cidrs[index].family == family;
-    for (bit = 0U; equal && bit < cidrs[index].prefix; ++bit)
-      equal = (peer[bit / 8U] & (1U << (7U - bit % 8U))) ==
-              (cidrs[index].address[bit / 8U] & (1U << (7U - bit % 8U)));
-    if (equal) return true;
-  }
+  for (index = 0U; index < count; ++index)
+    if (laghu_service_cidr_matches(&cidrs[index], peer, family)) return true;
   return false;
 }
 
@@ -100,12 +89,12 @@ bool proxy_admin_token(const laghu_proxy_options *options,
   FILE *file;
 #ifndef _WIN32
   struct stat status;
-  if (lstat(options->purge_token_file, &status) != 0 ||
+  if (lstat(options->service.purge_token_file, &status) != 0 ||
       !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
       (status.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
     return false;
 #else
-  DWORD attributes = GetFileAttributesA(options->purge_token_file);
+  DWORD attributes = GetFileAttributesA(options->service.purge_token_file);
   if (attributes == INVALID_FILE_ATTRIBUTES ||
       (attributes &
        (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U)
@@ -113,9 +102,10 @@ bool proxy_admin_token(const laghu_proxy_options *options,
 #endif
   if (provided == NULL) return false;
 #ifdef _WIN32
-  if (fopen_s(&file, options->purge_token_file, "rb") != 0) return false;
+  if (fopen_s(&file, options->service.purge_token_file, "rb") != 0)
+    return false;
 #else
-  file = fopen(options->purge_token_file, "rb");
+  file = fopen(options->service.purge_token_file, "rb");
   if (file == NULL) return false;
 #endif
   length = fread(expected, 1U, sizeof(expected), file);
@@ -140,9 +130,9 @@ bool proxy_admin_token(const laghu_proxy_options *options,
 }
 
 void proxy_poll_flush_file(const laghu_proxy_options *options) {
-  if (options->cache_flush_file[0] != '\0')
-    (void)laghu_cache_flush_file_poll(options->cache_path,
-                                      options->cache_flush_file,
+  if (options->service.cache_flush_file[0] != '\0')
+    (void)laghu_cache_flush_file_poll(options->service.image_cache,
+                                      options->service.cache_flush_file,
                                       (uint64_t)time(NULL), NULL);
 }
 

@@ -42,7 +42,7 @@ if(LAGHU_BUILD_TESTS)
   find_package(Threads REQUIRED)
   add_library(laghu_runtime_test_fixture STATIC tests/test_fixture.c)
   target_include_directories(laghu_runtime_test_fixture PUBLIC tests)
-  foreach(subsystem IN ITEMS budget queue cache operational rum source_asset
+  foreach(subsystem IN ITEMS budget service_config queue cache operational rum source_asset
                             catalog html css javascript instrumentation lcp worker)
     add_executable(laghu_runtime_${subsystem}_test tests/${subsystem}_test.c)
     target_link_libraries(laghu_runtime_${subsystem}_test

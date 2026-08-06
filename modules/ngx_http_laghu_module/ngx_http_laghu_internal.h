@@ -17,6 +17,7 @@
 #include "laghu/javascript.h"
 #include "laghu/operational.h"
 #include "laghu/queue.h"
+#include "laghu/service_config.h"
 #include "laghu/source.h"
 
 #ifdef _WIN32
@@ -34,59 +35,14 @@
 
 typedef struct {
   laghu_config core;
+  laghu_service_config service;
   laghu_runtime_queue runtime_queue;
   laghu_runtime_queue font_fetch_runtime_queue;
   laghu_runtime_queue javascript_runtime_queue;
-  laghu_font_provider_set font_providers;
-  laghu_javascript_observation_set javascript_observations;
-  laghu_javascript_defer_set javascript_defer;
-  ngx_str_t worker_queue;
-  ngx_str_t font_fetch_queue;
-  ngx_str_t font_provider_config;
-  ngx_str_t javascript_queue;
-  ngx_str_t javascript_target;
-  ngx_str_t javascript_observation_config;
-  ngx_str_t javascript_defer_config;
-  ngx_str_t file_cache_backend;
-  ngx_str_t image_cache;
-  size_t file_cache_size;
-  size_t file_cache_inode_limit;
-  size_t file_cache_metadata_size;
-  ngx_uint_t file_cache_clean_interval;
-  bool image_cache_set;
-  ngx_flag_t purge_method;
-  ngx_flag_t purge_query;
-  ngx_flag_t statistics;
-  ngx_flag_t metrics;
-  ngx_flag_t readiness;
-  ngx_flag_t readiness_strict;
-  ngx_str_t purge_token_file;
-  ngx_str_t cache_flush_file;
-  ngx_array_t *purge_allow;
-  ngx_array_t *trusted_proxy;
-  ngx_str_t asset_offload_config;
-  ngx_str_t asset_upload_queue;
-  laghu_asset_config asset_offload;
-  bool asset_offload_loaded;
-  laghu_source_policy source_policy;
-  bool source_mode_set;
-  bool font_providers_loaded;
-  bool javascript_observations_loaded;
-  bool javascript_defer_loaded;
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
-  ngx_str_t store_uri;
-  ngx_str_t snapshot_path;
-  ngx_str_t client_library;
-  size_t memory_limit;
-  size_t pending_limit;
-  ngx_uint_t ttl_seconds;
-  ngx_uint_t sync_interval_seconds;
-  ngx_uint_t timeout_ms;
-  ngx_uint_t retry_limit;
-  ngx_flag_t required;
-  uint32_t set_mask;
+  laghu_service_config service;
   ngx_str_t operational_cache;
 } ngx_http_laghu_main_conf_t;
 
@@ -159,5 +115,7 @@ void ngx_http_laghu_remove_header(ngx_http_request_t *request,
 bool ngx_http_laghu_normalize(ngx_http_request_t *request,
                               ngx_http_laghu_loc_conf_t *conf,
                               ngx_http_laghu_request_ctx_t *context);
+bool ngx_http_laghu_peer_matches(ngx_http_request_t *request,
+                                 const laghu_service_cidr *cidrs, size_t count);
 
 #endif

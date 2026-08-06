@@ -56,6 +56,40 @@ function Import-VisualStudioEnvironment {
   }
 }
 
+function Invoke-NativeBuildCommand([scriptblock] $Command, [string] $Failure) {
+  # Native tools can emit successful diagnostics to stderr.  Scriptblocks keep
+  # their defining scope, so alter the caller's preference, not this helper's
+  # local value; exit status remains authoritative.
+  $savedErrorActionPreference = $ErrorActionPreference
+  Set-Variable -Scope 1 -Name ErrorActionPreference -Value "Continue"
+  try {
+    & $Command
+    $exitCode = $LASTEXITCODE
+  } finally {
+    Set-Variable -Scope 1 -Name ErrorActionPreference `
+      -Value $savedErrorActionPreference
+  }
+  if ($exitCode -ne 0) { throw $Failure }
+}
+
+function Test-NativeConfiguration(
+  [string] $Executable,
+  [string] $Arguments,
+  [string] $Name
+) {
+  $stdout = Join-Path $workRoot "$Name-config.stdout"
+  $stderr = Join-Path $workRoot "$Name-config.stderr"
+  Remove-Item -Force $stdout, $stderr -ErrorAction SilentlyContinue
+  $process = Start-Process -FilePath $Executable -ArgumentList $Arguments `
+    -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout `
+    -RedirectStandardError $stderr
+  if ($process.ExitCode -ne 0) {
+    Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
+    throw "Matched $Name configuration failed"
+  }
+  Remove-Item -Force $stdout, $stderr -ErrorAction SilentlyContinue
+}
+
 function Get-VerifiedArchive([string] $Name, [hashtable] $Source) {
   $extension = if ($Source.Url.EndsWith(".tar.bz2")) {
     ".tar.bz2"
@@ -118,6 +152,16 @@ function Get-TextSha256([string] $Value) {
   } finally {
     $algorithm.Dispose()
   }
+}
+
+function Get-SourceTreeIdentity([string[]] $Roots) {
+  $entries = foreach ($root in $Roots) {
+    Get-ChildItem $root -File -Recurse | Sort-Object FullName | ForEach-Object {
+      $relative = $_.FullName.Substring($repo.Length).Replace('\', '/')
+      "$relative`n$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant())"
+    }
+  }
+  return Get-TextSha256 ($entries -join "`n")
 }
 
 function Get-MsysBash {
@@ -254,16 +298,25 @@ function Build-Nginx {
     "--with-openssl=$librariesBuildPath/openssl-$($sources.OpenSsl.Version) --with-openssl-opt='no-asm no-tests'",
     "--with-http_ssl_module --add-module='$moduleMsys'"
   ) -join " "
-  $configurationIdentity = Get-TextSha256 "$configurationArguments`n$([IO.File]::ReadAllText((Join-Path $repo 'modules/ngx_http_laghu_module/config')))`n$([IO.File]::ReadAllText((Join-Path $repo 'cmake/laghu-sources.list')))"
+  $laghuSourceIdentity = Get-SourceTreeIdentity @(
+    "$repo\libs",
+    "$repo\modules\ngx_http_laghu_module",
+    "$repo\cmake\laghu-sources.list"
+  )
+  $configurationIdentity = Get-TextSha256 "$configurationArguments`n$laghuSourceIdentity"
   $configurationMarker = Join-Path $source ".laghu-nginx-config.sha256"
   $makefile = Join-Path $source "objs\Makefile"
-  $moduleConfiguration = Join-Path $repo "modules\ngx_http_laghu_module\config"
-  $legacyConfigurationCached = $sourcesCached -and
-    -not (Test-Path $configurationMarker) -and (Test-Path $makefile) -and
-    (Get-Item $moduleConfiguration).LastWriteTimeUtc -le (Get-Item $makefile).LastWriteTimeUtc
   $configurationCached = $sourcesCached -and (Test-Path $configurationMarker) -and
     (Get-Content -Raw $configurationMarker).Trim() -eq $configurationIdentity
-  $configurationCached = $configurationCached -or $legacyConfigurationCached
+  if (-not $configurationCached) {
+    # Copy-Item preserves source mtimes, so NMAKE cannot infer that staged
+    # Laghu headers changed. Rebuild the complete static addon and its module
+    # aggregate, but preserve independently verified NGINX/OpenSSL objects.
+    Remove-Item -Recurse -Force `
+      (Join-Path $source "objs\addon\ngx_http_laghu_module"), `
+      (Join-Path $source "objs\ngx_http_laghu_module_modules.obj") `
+      -ErrorAction SilentlyContinue
+  }
   $buildCommand = if ($configurationCached) { "nmake" } else { "$configurationArguments && nmake" }
   $configuration = "export PATH='$msvcBinMsys':/c/Strawberry/perl/bin:/usr/bin:`$PATH && cd '$sourceMsys' && $buildCommand"
   $log = Join-Path $workRoot "nginx-build.log"
@@ -306,8 +359,7 @@ http {
 }
 "@ | Set-Content -Encoding ASCII "$root\conf\nginx.conf"
   Write-BuildManifest $root "nginx" $sources.Nginx.Version
-  & "$root\nginx.exe" -t -p $root
-  if ($LASTEXITCODE -ne 0) { throw "Matched NGINX configuration failed" }
+  Test-NativeConfiguration "$root\nginx.exe" "-t -p `"$root`"" "NGINX"
   Get-ChildItem "$root\logs", "$root\temp" -Force -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force
 }
@@ -339,40 +391,48 @@ function Build-Apache {
   $vcpkgToolchainCmake = $vcpkgToolchain.Replace('\', '/')
   Remove-Item -Recurse -Force $aprBuild, $aprUtilBuild, $build, $root -ErrorAction SilentlyContinue
 
-  & cmake.exe -S $aprSource -B $aprBuild -G "Visual Studio 17 2022" -A $cmakeArchitecture `
-    "-DCMAKE_INSTALL_PREFIX=$rootCmake" -DAPR_INSTALL_PRIVATE_H=ON `
-    -DAPR_BUILD_TESTAPR=OFF -DAPR_BUILD_STATIC=OFF
-  if ($LASTEXITCODE -ne 0) { throw "APR configure failed" }
-  & cmake.exe --build $aprBuild --config Release --target INSTALL --parallel
-  if ($LASTEXITCODE -ne 0) { throw "APR build failed" }
+  Invoke-NativeBuildCommand {
+    & cmake.exe -S $aprSource -B $aprBuild -G "Visual Studio 17 2022" -A $cmakeArchitecture `
+      "-DCMAKE_INSTALL_PREFIX=$rootCmake" -DAPR_INSTALL_PRIVATE_H=ON `
+      -DAPR_BUILD_TESTAPR=OFF -DAPR_BUILD_STATIC=OFF
+  } "APR configure failed"
+  Invoke-NativeBuildCommand {
+    & cmake.exe --build $aprBuild --config Release --target INSTALL --parallel
+  } "APR build failed"
 
-  & cmake.exe -S $aprUtilSource -B $aprUtilBuild -G "Visual Studio 17 2022" -A $cmakeArchitecture `
-    "-DCMAKE_INSTALL_PREFIX=$rootCmake" "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchainCmake" `
-    "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet" "-DAPR_INCLUDE_DIR=$rootCmake/include" `
-    "-DAPR_LIBRARIES=$rootCmake/lib/libapr-1.lib" -DAPU_HAVE_CRYPTO=OFF `
-    -DAPU_HAVE_ODBC=OFF -DAPR_HAS_LDAP=OFF -DAPR_BUILD_TESTAPR=OFF
-  if ($LASTEXITCODE -ne 0) { throw "APR-util configure failed" }
-  & cmake.exe --build $aprUtilBuild --config Release --target INSTALL --parallel
-  if ($LASTEXITCODE -ne 0) { throw "APR-util build failed" }
+  Invoke-NativeBuildCommand {
+    & cmake.exe -S $aprUtilSource -B $aprUtilBuild -G "Visual Studio 17 2022" -A $cmakeArchitecture `
+      "-DCMAKE_INSTALL_PREFIX=$rootCmake" "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchainCmake" `
+      "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet" "-DAPR_INCLUDE_DIR=$rootCmake/include" `
+      "-DAPR_LIBRARIES=$rootCmake/lib/libapr-1.lib" -DAPU_HAVE_CRYPTO=OFF `
+      -DAPU_HAVE_ODBC=OFF -DAPR_HAS_LDAP=OFF -DAPR_BUILD_TESTAPR=OFF
+  } "APR-util configure failed"
+  Invoke-NativeBuildCommand {
+    & cmake.exe --build $aprUtilBuild --config Release --target INSTALL --parallel
+  } "APR-util build failed"
 
-  & cmake.exe -S $source -B $build -G "Visual Studio 17 2022" -A $cmakeArchitecture `
-    "-DCMAKE_INSTALL_PREFIX=$rootCmake" "-DCMAKE_PREFIX_PATH=$vcpkgInstalledCmake" `
-    -DENABLE_MODULES=i -DENABLE_OPENSSL=OFF -DINSTALL_MANUAL=OFF `
-    "-DAPR_INCLUDE_DIR=$rootCmake/include" `
-    "-DAPR_LIBRARIES=$rootCmake/lib/libapr-1.lib;$rootCmake/lib/libaprutil-1.lib" `
-    "-DPCRE_INCLUDE_DIR=$vcpkgInstalledCmake/include" `
-    "-DPCRE_LIBRARIES=$vcpkgInstalledCmake/lib/pcre2-8.lib"
-  if ($LASTEXITCODE -ne 0) { throw "Apache configure failed" }
-  & cmake.exe --build $build --config Release --target INSTALL --parallel
-  if ($LASTEXITCODE -ne 0) { throw "Apache build failed" }
+  Invoke-NativeBuildCommand {
+    & cmake.exe -S $source -B $build -G "Visual Studio 17 2022" -A $cmakeArchitecture `
+      "-DCMAKE_INSTALL_PREFIX=$rootCmake" "-DCMAKE_PREFIX_PATH=$vcpkgInstalledCmake" `
+      -DENABLE_MODULES=i -DENABLE_OPENSSL=OFF -DINSTALL_MANUAL=OFF `
+      "-DAPR_INCLUDE_DIR=$rootCmake/include" `
+      "-DAPR_LIBRARIES=$rootCmake/lib/libapr-1.lib;$rootCmake/lib/libaprutil-1.lib" `
+      "-DPCRE_INCLUDE_DIR=$vcpkgInstalledCmake/include" `
+      "-DPCRE_LIBRARIES=$vcpkgInstalledCmake/lib/pcre2-8.lib"
+  } "Apache configure failed"
+  Invoke-NativeBuildCommand {
+    & cmake.exe --build $build --config Release --target INSTALL --parallel
+  } "Apache build failed"
   Copy-Item "$vcpkgInstalled\bin\pcre2-8.dll" "$root\bin" -ErrorAction Stop
   Copy-Item "$vcpkgInstalled\bin\libexpat.dll" "$root\bin" -ErrorAction Stop
   $moduleBuild = Join-Path $workRoot "mod-laghu-build"
   Remove-Item -Recurse -Force $moduleBuild -ErrorAction SilentlyContinue
-  & cmake.exe -S "$repo\packaging\windows\mod-laghu" -B $moduleBuild -G "Visual Studio 17 2022" -A $cmakeArchitecture "-DLAGHU_SOURCE=$repoCmake" "-DAPACHE_ROOT=$rootCmake"
-  if ($LASTEXITCODE -ne 0) { throw "mod_laghu configure failed" }
-  & cmake.exe --build $moduleBuild --config Release --parallel
-  if ($LASTEXITCODE -ne 0) { throw "mod_laghu build failed" }
+  Invoke-NativeBuildCommand {
+    & cmake.exe -S "$repo\packaging\windows\mod-laghu" -B $moduleBuild -G "Visual Studio 17 2022" -A $cmakeArchitecture "-DLAGHU_SOURCE=$repoCmake" "-DAPACHE_ROOT=$rootCmake"
+  } "mod_laghu configure failed"
+  Invoke-NativeBuildCommand {
+    & cmake.exe --build $moduleBuild --config Release --parallel
+  } "mod_laghu build failed"
   Copy-Item "$moduleBuild\Release\mod_laghu.so" "$root\modules\mod_laghu.so"
   Copy-License "$source\LICENSE" $root "apache-LICENSE.txt"
   Copy-License "$source\NOTICE" $root "apache-NOTICE.txt"
@@ -408,8 +468,7 @@ Laghu RumStoreRequired Off
     "$root\error", "$root\icons", "$root\manual" -ErrorAction SilentlyContinue
   Get-ChildItem "$root\htdocs" -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
   Write-BuildManifest $root "apache" $sources.Apache.Version
-  & "$root\bin\httpd.exe" -t -d $root
-  if ($LASTEXITCODE -ne 0) { throw "Matched Apache configuration failed" }
+  Test-NativeConfiguration "$root\bin\httpd.exe" "-t -d `"$root`"" "Apache"
   Get-ChildItem "$root\logs" -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 }
 

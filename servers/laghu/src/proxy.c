@@ -179,32 +179,27 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         .version = LAGHU_HTTP_ABI_VERSION,
         .struct_size = sizeof(environment),
         .config = options->config,
-        .cache_path = options->cache_path,
-        .asset_offload =
-            options->asset_offload_loaded ? &options->asset_offload : NULL,
+        .cache_path = options->service.image_cache,
+        .asset_offload = options->service.asset_offload,
         .rum = worker->queue->rum,
-        .worker_queue_path = options->worker_queue_path,
+        .worker_queue_path = options->service.worker_queue,
         .queue = &worker->runtime_queue,
-        .font_fetch_queue_path = options->font_providers_loaded
-                                     ? options->font_fetch_queue_path
+        .font_fetch_queue_path = options->service.font_providers != NULL
+                                     ? options->service.font_fetch_queue
                                      : NULL,
-        .font_fetch_queue =
-            options->font_providers_loaded ? &worker->font_fetch_queue : NULL,
-        .font_providers =
-            options->font_providers_loaded ? &options->font_providers : NULL,
-        .javascript_queue_path = options->javascript_queue_enabled
-                                     ? options->javascript_queue_path
+        .font_fetch_queue = options->service.font_providers != NULL
+                                ? &worker->font_fetch_queue
+                                : NULL,
+        .font_providers = options->service.font_providers,
+        .javascript_queue_path = options->service.javascript_queue[0] != '\0'
+                                     ? options->service.javascript_queue
                                      : NULL,
-        .javascript_queue = options->javascript_queue_enabled
+        .javascript_queue = options->service.javascript_queue[0] != '\0'
                                 ? &worker->javascript_queue
                                 : NULL,
-        .javascript_target = options->javascript_target,
-        .javascript_observations = options->javascript_observations_loaded
-                                       ? &options->javascript_observations
-                                       : NULL,
-        .javascript_defer = options->javascript_defer_loaded
-                                ? &options->javascript_defer
-                                : NULL,
+        .javascript_target = options->service.javascript_target,
+        .javascript_observations = options->service.javascript_observations,
+        .javascript_defer = options->service.javascript_defer,
         .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request,
@@ -340,30 +335,27 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       .version = LAGHU_HTTP_ABI_VERSION,
       .struct_size = sizeof(environment),
       .config = options->config,
-      .cache_path = options->cache_path,
-      .asset_offload =
-          options->asset_offload_loaded ? &options->asset_offload : NULL,
+      .cache_path = options->service.image_cache,
+      .asset_offload = options->service.asset_offload,
       .rum = worker->queue->rum,
-      .worker_queue_path = options->worker_queue_path,
+      .worker_queue_path = options->service.worker_queue,
       .queue = &worker->runtime_queue,
-      .font_fetch_queue_path = options->font_providers_loaded
-                                   ? options->font_fetch_queue_path
+      .font_fetch_queue_path = options->service.font_providers != NULL
+                                   ? options->service.font_fetch_queue
                                    : NULL,
-      .font_fetch_queue =
-          options->font_providers_loaded ? &worker->font_fetch_queue : NULL,
-      .font_providers =
-          options->font_providers_loaded ? &options->font_providers : NULL,
-      .javascript_queue_path = options->javascript_queue_enabled
-                                   ? options->javascript_queue_path
+      .font_fetch_queue = options->service.font_providers != NULL
+                              ? &worker->font_fetch_queue
+                              : NULL,
+      .font_providers = options->service.font_providers,
+      .javascript_queue_path = options->service.javascript_queue[0] != '\0'
+                                   ? options->service.javascript_queue
                                    : NULL,
-      .javascript_queue =
-          options->javascript_queue_enabled ? &worker->javascript_queue : NULL,
-      .javascript_target = options->javascript_target,
-      .javascript_observations = options->javascript_observations_loaded
-                                     ? &options->javascript_observations
-                                     : NULL,
-      .javascript_defer =
-          options->javascript_defer_loaded ? &options->javascript_defer : NULL,
+      .javascript_queue = options->service.javascript_queue[0] != '\0'
+                              ? &worker->javascript_queue
+                              : NULL,
+      .javascript_target = options->service.javascript_target,
+      .javascript_observations = options->service.javascript_observations,
+      .javascript_defer = options->service.javascript_defer,
       .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless = !strcmp(request.method, "HEAD") ||

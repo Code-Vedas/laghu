@@ -45,11 +45,11 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
   }
   {
     laghu_cache_limits limits = {
-        .size_limit = conf->file_cache_size,
-        .inode_limit = conf->file_cache_inode_limit,
-        .metadata_size = conf->file_cache_metadata_size,
-        .clean_interval = (unsigned int)conf->file_cache_clean_interval};
-    if (!laghu_cache_backend_register_path((const char *)conf->image_cache.data,
+        .size_limit = conf->service.cache_limits.size_limit,
+        .inode_limit = conf->service.cache_limits.inode_limit,
+        .metadata_size = conf->service.cache_limits.metadata_size,
+        .clean_interval = conf->service.cache_limits.clean_interval};
+    if (!laghu_cache_backend_register_path(conf->service.image_cache,
                                            &limits)) {
       ngx_log_error(NGX_LOG_WARN, request->connection->log, 0,
                     "laghu file cache backend unavailable; serving origin");

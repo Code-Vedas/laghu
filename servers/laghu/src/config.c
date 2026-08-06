@@ -12,24 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "laghu/assets.h"
-#include "laghu/cache.h"
-#include "laghu/fonts.h"
-#include "laghu/javascript.h"
 #include "laghu/proxy.h"
-#include "laghu/rum.h"
-#include "laghu/source.h"
 #include "laghu/types.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <arpa/inet.h>
-#include <sys/socket.h>
-
-#endif
 
 static bool proxy_uint(const char *value, unsigned int minimum,
                        unsigned int maximum, unsigned int *output) {
@@ -45,35 +29,20 @@ static bool proxy_uint(const char *value, unsigned int minimum,
   return true;
 }
 
-static bool proxy_size(const char *value, unsigned int minimum,
-                       unsigned int maximum, unsigned int *output) {
-  unsigned long long parsed, multiplier = 1U;
-  char *end = NULL;
-  if (value == NULL || *value == '\0') return false;
-  errno = 0;
-  parsed = strtoull(value, &end, 10);
-  if (errno != 0 || end == value) return false;
-  if (*end != '\0') {
-    if (end[1] != '\0') return false;
-    if (*end == 'k' || *end == 'K')
-      multiplier = 1024U;
-    else if (*end == 'm' || *end == 'M')
-      multiplier = 1024U * 1024U;
-    else
-      return false;
-  }
-  if (parsed > maximum / multiplier) return false;
-  parsed *= multiplier;
-  if (parsed < minimum || parsed > maximum) return false;
-  *output = (unsigned int)parsed;
-  return true;
-}
-
 static bool proxy_copy(char *output, size_t capacity, const char *value) {
   size_t length = value == NULL ? 0U : strlen(value);
   if (length == 0U || length >= capacity) return false;
   memcpy(output, value, length + 1U);
   return true;
+}
+
+static bool proxy_absolute_path(const char *value) {
+#ifdef _WIN32
+  return value != NULL && isalpha((unsigned char)value[0]) && value[1] == ':' &&
+         (value[2] == '\\' || value[2] == '/');
+#else
+  return value != NULL && value[0] == '/';
+#endif
 }
 
 static bool proxy_endpoint(const char *value, char *host, size_t host_capacity,
@@ -162,44 +131,6 @@ static bool proxy_origin(const char *value, laghu_proxy_options *options) {
   return true;
 }
 
-static bool proxy_parse_cidr(const char *value, laghu_proxy_cidr *cidr) {
-  char address[INET6_ADDRSTRLEN];
-  const char *slash = value == NULL ? NULL : strrchr(value, '/');
-  unsigned int maximum, prefix;
-  size_t length;
-  unsigned int index;
-  if (slash == NULL || slash == value) return false;
-  length = (size_t)(slash - value);
-  if (length >= sizeof(address) || !proxy_uint(slash + 1, 0U, 128U, &prefix))
-    return false;
-  memcpy(address, value, length);
-  address[length] = '\0';
-  memset(cidr, 0, sizeof(*cidr));
-  if (inet_pton(AF_INET, address, cidr->address) == 1) {
-    cidr->family = AF_INET;
-    maximum = 32U;
-  } else if (inet_pton(AF_INET6, address, cidr->address) == 1) {
-    cidr->family = AF_INET6;
-    maximum = 128U;
-  } else {
-    return false;
-  }
-  if (prefix > maximum) return false;
-  cidr->prefix = prefix;
-  for (index = prefix; index < maximum; ++index)
-    if ((cidr->address[index / 8U] &
-         (unsigned char)(1U << (7U - index % 8U))) != 0U)
-      return false;
-  return true;
-}
-
-static bool proxy_cidr_equal(const laghu_proxy_cidr *left,
-                             const laghu_proxy_cidr *right) {
-  size_t length = left->family == AF_INET ? 4U : 16U;
-  return left->family == right->family && left->prefix == right->prefix &&
-         memcmp(left->address, right->address, length) == 0;
-}
-
 void laghu_proxy_options_init(laghu_proxy_options *options) {
   laghu_config child;
   memset(options, 0, sizeof(*options));
@@ -212,18 +143,11 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->connect_timeout = LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT;
   options->io_timeout = LAGHU_PROXY_DEFAULT_IO_TIMEOUT;
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
-  (void)proxy_copy(options->javascript_target,
-                   sizeof(options->javascript_target),
-                   "defaults and supports es6-module and not dead");
-  (void)proxy_copy(options->rum_store, sizeof(options->rum_store), "local:");
-  options->rum_timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
-  options->rum_ttl = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
-  options->rum_retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
-  options->rum_sync_interval = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
-  options->rum_memory_limit = LAGHU_RUM_DEFAULT_MEMORY_BYTES;
-  options->rum_pending_limit = LAGHU_RUM_DEFAULT_PENDING_BYTES;
-  laghu_cache_limits_init(&options->cache_limits);
-  laghu_source_policy_init(&options->source_policy);
+  laghu_service_config_init(&options->service);
+}
+
+void laghu_proxy_options_dispose(laghu_proxy_options *options) {
+  if (options != NULL) laghu_service_config_dispose(&options->service);
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity,
@@ -236,35 +160,17 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                                                    laghu_proxy_options *options,
                                                    char *error,
                                                    size_t error_size) {
-  bool listen_seen = false, origin_seen = false, cache_seen = false;
-  bool legacy_cache_seen = false, backend_cache_seen = false;
-  bool cache_size_seen = false, cache_inode_seen = false;
-  bool cache_clean_seen = false, cache_metadata_seen = false;
-  bool queue_seen = false, selector_seen = false;
-  bool font_queue_seen = false, font_config_seen = false;
-  bool javascript_queue_seen = false, javascript_target_seen = false;
+  bool listen_seen = false, origin_seen = false, selector_seen = false;
   bool javascript_inline_limit_seen = false;
   bool javascript_outline_threshold_seen = false;
   bool instrumentation_sample_rate_seen = false;
   bool javascript_defer_suggestions_seen = false;
-  bool javascript_observation_config_seen = false;
-  bool javascript_defer_config_seen = false;
-  bool asset_offload_seen = false, asset_queue_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false;
   bool ca_seen = false, forwarded_seen = false;
   bool respect_vary_seen = false, respect_proto_seen = false;
   bool query_overrides_seen = false;
-  bool rum_store_seen = false, rum_snapshot_seen = false;
-  bool rum_library_seen = false, rum_timeout_seen = false, rum_ttl_seen = false;
-  bool rum_retry_seen = false, rum_sync_seen = false;
-  bool rum_memory_seen = false, rum_pending_seen = false;
-  bool purge_method_seen = false, purge_query_seen = false;
-  bool purge_token_seen = false, flush_file_seen = false;
-  bool statistics_seen = false, metrics_seen = false, readiness_seen = false;
-  bool readiness_policy_seen = false;
-  bool load_from_file_seen = false;
   laghu_config shared_config;
   int index;
   if (options == NULL || argc < 1)
@@ -274,6 +180,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     const char *name = argv[index];
     const char *value = index + 1 < argc ? argv[index + 1] : NULL;
     laghu_config_setting shared_setting = laghu_config_setting_find(name);
+    laghu_service_setting service_setting = laghu_service_setting_find(name);
+    laghu_service_diagnostic service_diagnostic;
 #define NEED_VALUE()                                                    \
   do {                                                                  \
     if (value == NULL || value[0] == '-')                               \
@@ -296,6 +204,42 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
         return LAGHU_PROXY_PARSE_ERROR;
       continue;
     }
+    if (service_setting != LAGHU_SERVICE_SETTING_UNKNOWN) {
+      const char *service_value = value;
+      if (service_setting == LAGHU_SERVICE_SETTING_RUM_STORE_REQUIRED) {
+        service_value = "on";
+      } else {
+        NEED_VALUE();
+      }
+      if (service_setting == LAGHU_SERVICE_SETTING_PURGE_METHOD &&
+          strcmp(service_value, "PURGE") != 0)
+        return proxy_error(error, error_size,
+                           "--purge-method accepts PURGE once");
+      if ((service_setting == LAGHU_SERVICE_SETTING_PURGE_TOKEN_FILE ||
+           service_setting == LAGHU_SERVICE_SETTING_CACHE_FLUSH_FILE) &&
+          !proxy_absolute_path(service_value))
+        return proxy_error(error, error_size, "invalid absolute file");
+      if (service_setting == LAGHU_SERVICE_SETTING_FILE_SOURCE_MAP) {
+        const char *separator = strchr(service_value, '=');
+        char prefix[LAGHU_RUNTIME_PATH_SIZE];
+        size_t prefix_length =
+            separator == NULL ? 0U : (size_t)(separator - service_value);
+        if (prefix_length == 0U || prefix_length >= sizeof(prefix) ||
+            separator[1] == '\0')
+          return proxy_error(error, error_size, "invalid --file-source-map");
+        memcpy(prefix, service_value, prefix_length);
+        prefix[prefix_length] = '\0';
+        if (!laghu_service_config_apply_pair(&options->service, service_setting,
+                                             prefix, separator + 1U,
+                                             &service_diagnostic))
+          return proxy_error(error, error_size, service_diagnostic.message);
+      } else if (!laghu_service_config_apply(&options->service, service_setting,
+                                             service_value,
+                                             &service_diagnostic)) {
+        return proxy_error(error, error_size, service_diagnostic.message);
+      }
+      continue;
+    }
     if (strcmp(name, "--listen") == 0) {
       NEED_VALUE();
       if (listen_seen ||
@@ -308,310 +252,6 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       if (origin_seen || !proxy_origin(value, options))
         return proxy_error(error, error_size, "invalid or duplicate --origin");
       origin_seen = true;
-    } else if (strcmp(name, "--cache") == 0) {
-      NEED_VALUE();
-      if (cache_seen || backend_cache_seen ||
-          !proxy_copy(options->cache_path, sizeof(options->cache_path), value))
-        return proxy_error(error, error_size, "invalid or duplicate --cache");
-      cache_seen = true;
-      legacy_cache_seen = true;
-    } else if (strcmp(name, "--file-cache-backend") == 0) {
-      char path[LAGHU_RUNTIME_PATH_SIZE];
-      NEED_VALUE();
-      if (cache_seen || legacy_cache_seen ||
-          !laghu_cache_backend_uri_parse(value, path, sizeof(path)) ||
-          !proxy_copy(options->cache_backend_uri,
-                      sizeof(options->cache_backend_uri), value) ||
-          !proxy_copy(options->cache_path, sizeof(options->cache_path), path))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --file-cache-backend");
-      cache_seen = true;
-      backend_cache_seen = true;
-    } else if (strcmp(name, "--file-cache-size") == 0) {
-      NEED_VALUE();
-      if (cache_size_seen ||
-          !laghu_cache_size_parse(value, 1024U * 1024U, UINT64_C(1) << 60U,
-                                  &options->cache_limits.size_limit))
-        return proxy_error(error, error_size, "invalid --file-cache-size");
-      cache_size_seen = true;
-    } else if (strcmp(name, "--file-cache-inode-limit") == 0) {
-      NEED_VALUE();
-      if (cache_inode_seen ||
-          !laghu_cache_count_parse(value, 16U, 100000000U,
-                                   &options->cache_limits.inode_limit))
-        return proxy_error(error, error_size,
-                           "invalid --file-cache-inode-limit");
-      cache_inode_seen = true;
-    } else if (strcmp(name, "--file-cache-clean-interval") == 0) {
-      NEED_VALUE();
-      if (cache_clean_seen ||
-          !laghu_cache_duration_parse(value, 1U, 86400U,
-                                      &options->cache_limits.clean_interval))
-        return proxy_error(error, error_size,
-                           "invalid --file-cache-clean-interval");
-      cache_clean_seen = true;
-    } else if (strcmp(name, "--file-cache-metadata-size") == 0) {
-      uint64_t parsed;
-      NEED_VALUE();
-      if (cache_metadata_seen ||
-          !laghu_cache_size_parse(value, 16384U, 1024U * 1024U * 1024U,
-                                  &parsed) ||
-          parsed > SIZE_MAX)
-        return proxy_error(error, error_size,
-                           "invalid --file-cache-metadata-size");
-      options->cache_limits.metadata_size = (size_t)parsed;
-      cache_metadata_seen = true;
-    } else if (strcmp(name, "--purge-method") == 0) {
-      NEED_VALUE();
-      if (purge_method_seen || strcmp(value, "PURGE") != 0)
-        return proxy_error(error, error_size,
-                           "--purge-method accepts PURGE once");
-      options->purge_method = true;
-      purge_method_seen = true;
-    } else if (strcmp(name, "--purge-query") == 0 ||
-               strcmp(name, "--statistics") == 0 ||
-               strcmp(name, "--metrics") == 0 ||
-               strcmp(name, "--readiness") == 0) {
-      bool *target =
-          strcmp(name, "--purge-query") == 0
-              ? &options->purge_query
-              : (strcmp(name, "--statistics") == 0
-                     ? &options->statistics
-                     : (strcmp(name, "--metrics") == 0 ? &options->metrics
-                                                       : &options->readiness));
-      bool *seen =
-          strcmp(name, "--purge-query") == 0
-              ? &purge_query_seen
-              : (strcmp(name, "--statistics") == 0
-                     ? &statistics_seen
-                     : (strcmp(name, "--metrics") == 0 ? &metrics_seen
-                                                       : &readiness_seen));
-      NEED_VALUE();
-      if (*seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
-        return proxy_error(error, error_size,
-                           "invalid duplicate on|off option");
-      *target = strcmp(value, "on") == 0;
-      *seen = true;
-    } else if (strcmp(name, "--readiness-policy") == 0) {
-      NEED_VALUE();
-      if (readiness_policy_seen ||
-          (strcmp(value, "degraded") != 0 && strcmp(value, "strict") != 0))
-        return proxy_error(error, error_size,
-                           "invalid --readiness-policy degraded|strict");
-      options->readiness_strict = strcmp(value, "strict") == 0;
-      readiness_policy_seen = true;
-    } else if (strcmp(name, "--purge-token-file") == 0 ||
-               strcmp(name, "--cache-flush-file") == 0) {
-      char *target = strcmp(name, "--purge-token-file") == 0
-                         ? options->purge_token_file
-                         : options->cache_flush_file;
-      bool *seen = strcmp(name, "--purge-token-file") == 0 ? &purge_token_seen
-                                                           : &flush_file_seen;
-      NEED_VALUE();
-      if (*seen || !proxy_copy(target, LAGHU_RUNTIME_PATH_SIZE, value) ||
-#ifdef _WIN32
-          !(isalpha((unsigned char)value[0]) && value[1] == ':' &&
-            (value[2] == '\\' || value[2] == '/'))
-#else
-          value[0] != '/'
-#endif
-      )
-        return proxy_error(error, error_size,
-                           "invalid duplicate absolute file");
-      *seen = true;
-    } else if (strcmp(name, "--purge-allow") == 0) {
-      laghu_proxy_cidr cidr;
-      size_t cidr_index;
-      NEED_VALUE();
-      if (options->purge_allow_count >= LAGHU_PROXY_MAX_TRUSTED_PROXIES ||
-          !proxy_parse_cidr(value, &cidr))
-        return proxy_error(error, error_size, "invalid --purge-allow CIDR");
-      for (cidr_index = 0U; cidr_index < options->purge_allow_count;
-           ++cidr_index)
-        if (proxy_cidr_equal(&options->purge_allow[cidr_index], &cidr))
-          return proxy_error(error, error_size, "duplicate --purge-allow");
-      options->purge_allow[options->purge_allow_count++] = cidr;
-    } else if (strcmp(name, "--worker-queue") == 0) {
-      NEED_VALUE();
-      if (queue_seen || !proxy_copy(options->worker_queue_path,
-                                    sizeof(options->worker_queue_path), value))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --worker-queue");
-      queue_seen = true;
-    } else if (strcmp(name, "--rum-store") == 0) {
-      NEED_VALUE();
-      if (rum_store_seen || !laghu_rum_store_validate(value, NULL, 0U) ||
-          !proxy_copy(options->rum_store, sizeof(options->rum_store), value))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --rum-store");
-      rum_store_seen = true;
-    } else if (strcmp(name, "--rum-store-local-snapshot") == 0) {
-      NEED_VALUE();
-      if (rum_snapshot_seen ||
-          !proxy_copy(options->rum_snapshot_path,
-                      sizeof(options->rum_snapshot_path), value))
-        return proxy_error(error, error_size,
-                           "invalid --rum-store-local-snapshot");
-      rum_snapshot_seen = true;
-    } else if (strcmp(name, "--rum-store-client-library") == 0) {
-      NEED_VALUE();
-      if (rum_library_seen ||
-          !proxy_copy(options->rum_client_library,
-                      sizeof(options->rum_client_library), value))
-        return proxy_error(error, error_size,
-                           "invalid --rum-store-client-library");
-      rum_library_seen = true;
-    } else if (strcmp(name, "--rum-store-required") == 0) {
-      if (options->rum_store_required)
-        return proxy_error(error, error_size, "duplicate --rum-store-required");
-      options->rum_store_required = true;
-    } else if (strcmp(name, "--rum-store-timeout") == 0) {
-      NEED_VALUE();
-      if (rum_timeout_seen ||
-          !proxy_uint(value, 10U, 10000U, &options->rum_timeout_ms))
-        return proxy_error(error, error_size, "invalid --rum-store-timeout");
-      rum_timeout_seen = true;
-    } else if (strcmp(name, "--rum-store-ttl") == 0) {
-      NEED_VALUE();
-      if (rum_ttl_seen ||
-          !proxy_uint(value, 3600U, 2592000U, &options->rum_ttl))
-        return proxy_error(error, error_size, "invalid --rum-store-ttl");
-      rum_ttl_seen = true;
-    } else if (strcmp(name, "--rum-store-retry-limit") == 0) {
-      NEED_VALUE();
-      if (rum_retry_seen ||
-          !proxy_uint(value, 0U, 10U, &options->rum_retry_limit))
-        return proxy_error(error, error_size,
-                           "invalid --rum-store-retry-limit");
-      rum_retry_seen = true;
-    } else if (strcmp(name, "--rum-store-sync-interval") == 0) {
-      NEED_VALUE();
-      if (rum_sync_seen ||
-          !proxy_uint(value, 1U, 300U, &options->rum_sync_interval))
-        return proxy_error(error, error_size,
-                           "invalid --rum-store-sync-interval");
-      rum_sync_seen = true;
-    } else if (strcmp(name, "--rum-store-memory-limit") == 0) {
-      unsigned int parsed;
-      NEED_VALUE();
-      if (rum_memory_seen || !proxy_size(value, 16384U, 1073741824U, &parsed))
-        return proxy_error(error, error_size,
-                           "invalid --rum-store-memory-limit");
-      options->rum_memory_limit = parsed;
-      rum_memory_seen = true;
-    } else if (strcmp(name, "--rum-store-pending-limit") == 0) {
-      unsigned int parsed;
-      NEED_VALUE();
-      if (rum_pending_seen || !proxy_size(value, 16384U, 1073741824U, &parsed))
-        return proxy_error(error, error_size,
-                           "invalid --rum-store-pending-limit");
-      options->rum_pending_limit = parsed;
-      rum_pending_seen = true;
-    } else if (strcmp(name, "--font-fetch-queue") == 0) {
-      NEED_VALUE();
-      if (font_queue_seen ||
-          !proxy_copy(options->font_fetch_queue_path,
-                      sizeof(options->font_fetch_queue_path), value))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --font-fetch-queue");
-      font_queue_seen = true;
-    } else if (strcmp(name, "--font-provider-config") == 0) {
-      NEED_VALUE();
-      if (font_config_seen ||
-          !proxy_copy(options->font_provider_config_path,
-                      sizeof(options->font_provider_config_path), value) ||
-          !laghu_font_providers_load(value, &options->font_providers, error,
-                                     error_size))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --font-provider-config");
-      options->font_providers_loaded = true;
-      font_config_seen = true;
-    } else if (strcmp(name, "--javascript-queue") == 0) {
-      NEED_VALUE();
-      if (javascript_queue_seen ||
-          !proxy_copy(options->javascript_queue_path,
-                      sizeof(options->javascript_queue_path), value))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --javascript-queue");
-      options->javascript_queue_enabled = true;
-      javascript_queue_seen = true;
-    } else if (strcmp(name, "--asset-offload-config") == 0) {
-      NEED_VALUE();
-      if (asset_offload_seen ||
-          !proxy_copy(options->asset_offload_config_path,
-                      sizeof(options->asset_offload_config_path), value) ||
-          !laghu_asset_config_load(value, &options->asset_offload, error,
-                                   error_size))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --asset-offload-config");
-      options->asset_offload_loaded = true;
-      asset_offload_seen = true;
-    } else if (strcmp(name, "--asset-upload-queue") == 0) {
-      NEED_VALUE();
-      if (asset_queue_seen ||
-          !proxy_copy(options->asset_upload_queue_path,
-                      sizeof(options->asset_upload_queue_path), value))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --asset-upload-queue");
-      asset_queue_seen = true;
-    } else if (strcmp(name, "--load-from-file") == 0) {
-      NEED_VALUE();
-      if (load_from_file_seen ||
-          !laghu_source_mode_parse(value, false, &options->source_policy.mode))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --load-from-file");
-      load_from_file_seen = true;
-    } else if (strcmp(name, "--file-source-map") == 0) {
-      const char *separator;
-      char prefix[LAGHU_RUNTIME_PATH_SIZE];
-      size_t prefix_length;
-      NEED_VALUE();
-      separator = strchr(value, '=');
-      prefix_length = separator == NULL ? 0U : (size_t)(separator - value);
-      if (prefix_length == 0U || prefix_length >= sizeof(prefix) ||
-          separator[1] == '\0')
-        return proxy_error(error, error_size, "invalid --file-source-map");
-      memcpy(prefix, value, prefix_length);
-      prefix[prefix_length] = '\0';
-      if (!laghu_source_mapping_add(&options->source_policy, prefix,
-                                    separator + 1U))
-        return proxy_error(
-            error, error_size,
-            "invalid, duplicate, or excessive --file-source-map");
-    } else if (strcmp(name, "--javascript-target") == 0) {
-      char normalized[LAGHU_JAVASCRIPT_TARGET_SIZE];
-      NEED_VALUE();
-      if (javascript_target_seen ||
-          !laghu_javascript_target_normalize(value, normalized) ||
-          !proxy_copy(options->javascript_target,
-                      sizeof(options->javascript_target), normalized))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --javascript-target");
-      javascript_target_seen = true;
-    } else if (strcmp(name, "--javascript-observation-config") == 0) {
-      NEED_VALUE();
-      if (javascript_observation_config_seen ||
-          !proxy_copy(options->javascript_observation_config_path,
-                      sizeof(options->javascript_observation_config_path),
-                      value) ||
-          !laghu_javascript_observations_load(
-              value, &options->javascript_observations, error, error_size))
-        return proxy_error(
-            error, error_size,
-            "invalid or duplicate --javascript-observation-config");
-      options->javascript_observations_loaded = true;
-      javascript_observation_config_seen = true;
-    } else if (strcmp(name, "--javascript-defer-config") == 0) {
-      NEED_VALUE();
-      if (javascript_defer_config_seen ||
-          !proxy_copy(options->javascript_defer_config_path,
-                      sizeof(options->javascript_defer_config_path), value) ||
-          !laghu_javascript_defer_load(value, &options->javascript_defer, error,
-                                       error_size))
-        return proxy_error(error, error_size,
-                           "invalid or duplicate --javascript-defer-config");
-      options->javascript_defer_loaded = true;
-      javascript_defer_config_seen = true;
     } else if (strcmp(name, "--javascript-inline-limit") == 0) {
       char *end = NULL;
       unsigned long limit;
@@ -808,18 +448,6 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
       else
         return proxy_error(error, error_size, "invalid --forwarded-headers");
       forwarded_seen = true;
-    } else if (strcmp(name, "--trusted-proxy") == 0) {
-      laghu_proxy_cidr parsed;
-      size_t cidr_index;
-      NEED_VALUE();
-      if (options->trusted_proxy_count == LAGHU_PROXY_MAX_TRUSTED_PROXIES ||
-          !proxy_parse_cidr(value, &parsed))
-        return proxy_error(error, error_size, "invalid --trusted-proxy");
-      for (cidr_index = 0U; cidr_index < options->trusted_proxy_count;
-           ++cidr_index)
-        if (proxy_cidr_equal(&parsed, &options->trusted_proxies[cidr_index]))
-          return proxy_error(error, error_size, "duplicate --trusted-proxy");
-      options->trusted_proxies[options->trusted_proxy_count++] = parsed;
     } else if (strcmp(name, "--service") == 0) {
 #ifdef _WIN32
       if (options->service_mode)
@@ -839,47 +467,31 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
     laghu_config_merge(&resolved, &options->config, &shared_config);
     options->config = resolved;
   }
-  if (asset_queue_seen != asset_offload_seen)
-    return proxy_error(
-        error, error_size,
-        "asset offload config and upload queue are required together");
-  if (asset_offload_seen && strcmp(options->asset_offload.queue_path,
-                                   options->asset_upload_queue_path) != 0)
-    return proxy_error(error, error_size,
-                       "asset upload queue must match the asset configuration");
-  if (!laghu_source_policy_validate(&options->source_policy, false, error,
-                                    error_size))
-    return LAGHU_PROXY_PARSE_ERROR;
-  if (options->source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
-      !asset_offload_seen)
-    return proxy_error(error, error_size,
-                       "direct file loading requires asset offload");
-  if (!listen_seen || !origin_seen || !cache_seen || !queue_seen)
+  {
+    laghu_service_finalize_options finalize_options = {
+        .native_file_loading = false,
+        .require_cache = true,
+        .require_worker_queue = true,
+        .require_admin_authorization = true,
+        .respect_x_forwarded_proto =
+            options->config.respect_x_forwarded_proto == LAGHU_MODE_ON};
+    laghu_service_diagnostic diagnostic;
+    if (!laghu_service_config_finalize(&options->service, &finalize_options,
+                                       &diagnostic))
+      return proxy_error(error, error_size, diagnostic.message);
+  }
+  if (!listen_seen || !origin_seen)
     return proxy_error(error, error_size,
                        "--listen, --origin, a file cache backend, and "
                        "--worker-queue are required");
-  if (font_config_seen != font_queue_seen)
-    return proxy_error(
-        error, error_size,
-        "font provider config and fetch queue require each other");
   if (ca_seen && !options->origin_tls)
     return proxy_error(error, error_size,
                        "--origin-ca-file requires an https origin");
-  if (options->trusted_proxy_count != 0U &&
+  if (options->service.trusted_proxy_count != 0U &&
       options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF &&
       options->config.respect_x_forwarded_proto != LAGHU_MODE_ON)
     return proxy_error(error, error_size,
                        "--trusted-proxy requires forwarded headers");
-  if (options->config.respect_x_forwarded_proto == LAGHU_MODE_ON &&
-      options->trusted_proxy_count == 0U)
-    return proxy_error(error, error_size,
-                       "--respect-x-forwarded-proto requires --trusted-proxy");
-  if ((options->purge_method || options->purge_query || options->statistics ||
-       options->metrics || options->readiness) &&
-      (!purge_token_seen || options->purge_allow_count == 0U))
-    return proxy_error(
-        error, error_size,
-        "network administration requires --purge-token-file and --purge-allow");
   {
     laghu_policy policy;
     if (!laghu_resolve_config_policy(&options->config, &policy))

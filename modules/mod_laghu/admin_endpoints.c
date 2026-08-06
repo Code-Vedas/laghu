@@ -13,18 +13,10 @@ static bool laghu_apache_admin_authorized(request_rec *request,
       apr_table_get(request->headers_in, "X-Laghu-Purge-Token");
   bool peer_allowed = false;
   bool token_allowed = false;
-  int subnet_index;
-  if (config->purge_allow != NULL)
-    for (subnet_index = 0; subnet_index < config->purge_allow->nelts;
-         ++subnet_index)
-      if (apr_ipsubnet_test(APR_ARRAY_IDX(config->purge_allow, subnet_index,
-                                          apr_ipsubnet_t *),
-                            request->connection->client_addr)) {
-        peer_allowed = true;
-        break;
-      }
-  if (provided != NULL && config->purge_token_file != NULL) {
-    FILE *token_file = fopen(config->purge_token_file, "rb");
+  peer_allowed = laghu_apache_peer_matches(request, config->service.purge_allow,
+                                           config->service.purge_allow_count);
+  if (provided != NULL && config->service.purge_token_file[0] != '\0') {
+    FILE *token_file = fopen(config->service.purge_token_file, "rb");
     char expected[257U];
     size_t length = token_file == NULL
                         ? 0U
@@ -77,11 +69,11 @@ int laghu_apache_admin_endpoint(request_rec *request,
     target = (laghu_buffer){(const unsigned char *)request->unparsed_uri,
                             strlen(request->unparsed_uri)};
   laghu_http_administrative_options_init(&options);
-  options.metrics_enabled = config->metrics;
-  options.readiness_enabled = config->readiness;
-  options.statistics_enabled = config->statistics;
-  options.purge_method_enabled = config->purge_method;
-  options.purge_query_enabled = config->purge_query;
+  options.metrics_enabled = config->service.metrics;
+  options.readiness_enabled = config->service.readiness;
+  options.statistics_enabled = config->service.statistics;
+  options.purge_method_enabled = config->service.purge_method;
+  options.purge_query_enabled = config->service.purge_query;
   options.purge_query_get_only = false;
   if (!laghu_http_administrative_plan_build(&plan, method, target, &options) ||
       !plan.recognized)
@@ -98,8 +90,8 @@ int laghu_apache_admin_endpoint(request_rec *request,
   }
   apr_table_setn(request->headers_out, "Cache-Control", "no-store");
   ap_set_content_type(request, "application/json");
-  if (!laghu_cache_backend_register_path(config->image_cache,
-                                         &config->cache_limits)) {
+  if (!laghu_cache_backend_register_path(config->service.image_cache,
+                                         &config->service.cache_limits)) {
     request->status = HTTP_SERVICE_UNAVAILABLE;
     ap_rputs("{\"status\":\"unavailable\"}", request);
     return OK;
@@ -118,10 +110,10 @@ int laghu_apache_admin_endpoint(request_rec *request,
     laghu_http_administrative_response response;
     char *rendered = apr_palloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
     if (rendered == NULL) return HTTP_INTERNAL_SERVER_ERROR;
-    if (!laghu_cache_backend_health_path(config->image_cache, &stats))
+    if (!laghu_cache_backend_health_path(config->service.image_cache, &stats))
       return HTTP_SERVICE_UNAVAILABLE;
     if (!laghu_http_administrative_render_stats(
-            &config->cache_limits, &stats, rendered,
+            &config->service.cache_limits, &stats, rendered,
             LAGHU_OPERATIONAL_RENDER_SIZE, &response))
       return HTTP_INTERNAL_SERVER_ERROR;
     return laghu_apache_admin_write(request, &response, rendered);
@@ -144,12 +136,13 @@ int laghu_apache_admin_endpoint(request_rec *request,
     if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS) {
       laghu_cache_stats stats = {0};
       cache_ready =
-          laghu_cache_backend_health_path(config->image_cache, &stats);
+          laghu_cache_backend_health_path(config->service.image_cache, &stats);
       laghu_operational_registry_cache(&laghu_apache_operational, &stats);
     }
     if (!laghu_http_administrative_render_operational(
-            &plan, snapshot, now, true, cache_ready, config->readiness_strict,
-            rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response))
+            &plan, snapshot, now, true, cache_ready,
+            config->service.readiness_strict, rendered,
+            LAGHU_OPERATIONAL_RENDER_SIZE, &response))
       return HTTP_INTERNAL_SERVER_ERROR;
     return laghu_apache_admin_write(request, &response, rendered);
   }
@@ -160,7 +153,7 @@ int laghu_apache_admin_endpoint(request_rec *request,
     uint64_t matched = 0U;
     if (rendered == NULL) return HTTP_INTERNAL_SERVER_ERROR;
     purge_result = laghu_cache_backend_purge_url_path(
-        config->image_cache, plan.normalized_path,
+        config->service.image_cache, plan.normalized_path,
         (uint64_t)apr_time_sec(apr_time_now()), &matched);
     if (!laghu_http_administrative_render_purge(purge_result, matched, rendered,
                                                 LAGHU_OPERATIONAL_RENDER_SIZE,

@@ -285,27 +285,27 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     char snapshot[LAGHU_RUNTIME_PATH_SIZE];
     char rum_error[160U];
     laghu_rum_options_init(&rum_options);
-    if (options->rum_snapshot_path[0] != '\0')
+    if (options->service.rum_snapshot_path[0] != '\0')
       (void)snprintf(snapshot, sizeof(snapshot), "%s",
-                     options->rum_snapshot_path);
+                     options->service.rum_snapshot_path);
     else if (snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
-                      options->cache_path) <= 0)
+                      options->service.image_cache) <= 0)
       goto cleanup;
-    rum_options.store_uri = options->rum_store;
+    rum_options.store_uri = options->service.rum_store;
     rum_options.snapshot_path = snapshot;
-    rum_options.client_library = options->rum_client_library[0] == '\0'
+    rum_options.client_library = options->service.rum_client_library[0] == '\0'
                                      ? NULL
-                                     : options->rum_client_library;
-    rum_options.memory_limit = options->rum_memory_limit;
-    rum_options.pending_limit = options->rum_pending_limit;
-    rum_options.ttl_seconds = options->rum_ttl;
-    rum_options.sync_interval_seconds = options->rum_sync_interval;
-    rum_options.timeout_ms = options->rum_timeout_ms;
-    rum_options.retry_limit = options->rum_retry_limit;
-    rum_options.required = options->rum_store_required;
+                                     : options->service.rum_client_library;
+    rum_options.memory_limit = options->service.rum_memory_limit;
+    rum_options.pending_limit = options->service.rum_pending_limit;
+    rum_options.ttl_seconds = options->service.rum_ttl;
+    rum_options.sync_interval_seconds = options->service.rum_sync_interval;
+    rum_options.timeout_ms = options->service.rum_timeout_ms;
+    rum_options.retry_limit = options->service.rum_retry_limit;
+    rum_options.required = options->service.rum_store_required;
     queue.rum =
         laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
-    if (queue.rum == NULL && options->rum_store_required) goto cleanup;
+    if (queue.rum == NULL && options->service.rum_store_required) goto cleanup;
     if (queue.rum == NULL) {
       proxy_log_event(&queue, "rum_store_fallback", "degraded");
       rum_options.store_uri = "local:";
@@ -316,34 +316,34 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     }
     if (queue.rum == NULL) goto cleanup;
   }
-  if (!proxy_cache_probe(options->cache_path)) {
+  if (!proxy_cache_probe(options->service.image_cache)) {
     proxy_log_startup_failure(&queue, "cache_unavailable");
     goto cleanup;
   }
-  if (!proxy_queue_path_valid(options->worker_queue_path) ||
-      (options->font_providers_loaded &&
-       !proxy_queue_path_valid(options->font_fetch_queue_path)) ||
-      (options->javascript_queue_enabled &&
-       !proxy_queue_path_valid(options->javascript_queue_path))) {
+  if (!proxy_queue_path_valid(options->service.worker_queue) ||
+      (options->service.font_providers != NULL &&
+       !proxy_queue_path_valid(options->service.font_fetch_queue)) ||
+      (options->service.javascript_queue[0] != '\0' &&
+       !proxy_queue_path_valid(options->service.javascript_queue))) {
     proxy_log_startup_failure(&queue, "queue_unavailable");
     goto cleanup;
   }
-  if (options->source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
-      !laghu_source_registry_publish(options->asset_upload_queue_path,
-                                     &options->source_policy)) {
+  if (options->service.source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
+      !laghu_source_registry_publish(options->service.asset_upload_queue,
+                                     &options->service.source_policy)) {
     proxy_log_startup_failure(&queue, "source_registry");
     goto cleanup;
   }
-  if (!laghu_cache_backend_register_path(options->cache_path,
-                                         &options->cache_limits)) {
+  if (!laghu_cache_backend_register_path(options->service.image_cache,
+                                         &options->service.cache_limits)) {
     proxy_log_startup_failure(&queue, "cache_backend");
     goto cleanup;
   }
-  if ((options->metrics || options->readiness) &&
-      !laghu_operational_registry_open(&queue.operational, options->cache_path,
-                                       LAGHU_OPERATIONAL_SURFACE_STANDALONE,
-                                       LAGHU_OPERATIONAL_PROCESS_ADAPTER, true,
-                                       (uint64_t)time(NULL))) {
+  if ((options->service.metrics || options->service.readiness) &&
+      !laghu_operational_registry_open(
+          &queue.operational, options->service.image_cache,
+          LAGHU_OPERATIONAL_SURFACE_STANDALONE,
+          LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)time(NULL))) {
     proxy_log_event(&queue, "observability", "unavailable");
   }
   if (options->origin_tls &&

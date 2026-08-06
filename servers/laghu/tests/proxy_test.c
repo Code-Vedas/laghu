@@ -16,8 +16,31 @@
     }                                                         \
   } while (0)
 
+#ifdef _WIN32
+#define TEST_BACKEND_URI "file:///C:/laghu-cache"
+#else
+#define TEST_BACKEND_URI "file:///tmp/cache"
+#endif
+
+static bool service_apply(laghu_service_config *config,
+                          laghu_service_setting setting, const char *value) {
+  laghu_service_diagnostic diagnostic;
+  return laghu_service_config_apply(config, setting, value, &diagnostic);
+}
+
+static bool service_finalize(laghu_service_config *config) {
+  laghu_service_finalize_options options = {.native_file_loading = false,
+                                            .require_cache = true,
+                                            .require_worker_queue = true,
+                                            .require_admin_authorization = true,
+                                            .respect_x_forwarded_proto = false};
+  laghu_service_diagnostic diagnostic;
+  return laghu_service_config_finalize(config, &options, &diagnostic);
+}
+
 int main(void) {
   laghu_proxy_options options;
+  laghu_service_config expected_service;
   char error[128];
   char *valid[] = {"laghu",
                    "--listen",
@@ -283,8 +306,8 @@ int main(void) {
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
-  CHECK(options.purge_method && options.purge_query && options.statistics &&
-        options.purge_allow_count == 1U);
+  CHECK(options.service.purge_method && options.service.purge_query &&
+        options.service.statistics && options.service.purge_allow_count == 1U);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(20, valid, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
@@ -301,16 +324,16 @@ int main(void) {
   CHECK(laghu_proxy_parse_options(17, backend, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_OK);
 #ifdef _WIN32
-  CHECK(!strcmp(options.cache_backend_uri, "file:///C:/laghu-cache"));
-  CHECK(!strcmp(options.cache_path, "C:\\laghu-cache"));
+  CHECK(!strcmp(options.service.file_cache_backend, "file:///C:/laghu-cache"));
+  CHECK(!strcmp(options.service.image_cache, "C:\\laghu-cache"));
 #else
-  CHECK(!strcmp(options.cache_backend_uri, "file:///tmp/cache"));
-  CHECK(!strcmp(options.cache_path, "/tmp/cache"));
+  CHECK(!strcmp(options.service.file_cache_backend, "file:///tmp/cache"));
+  CHECK(!strcmp(options.service.image_cache, "/tmp/cache"));
 #endif
-  CHECK(options.cache_limits.size_limit == 20U * 1024U * 1024U);
-  CHECK(options.cache_limits.inode_limit == 2000U);
-  CHECK(options.cache_limits.clean_interval == 120U);
-  CHECK(options.cache_limits.metadata_size == 1024U * 1024U);
+  CHECK(options.service.cache_limits.size_limit == 20U * 1024U * 1024U);
+  CHECK(options.service.cache_limits.inode_limit == 2000U);
+  CHECK(options.service.cache_limits.clean_interval == 120U);
+  CHECK(options.service.cache_limits.metadata_size == 1024U * 1024U);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(15, budgets, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_OK);
@@ -325,17 +348,60 @@ int main(void) {
         LAGHU_PROXY_PARSE_OK);
   CHECK(options.origin_tls && !strcmp(options.origin_port, "443"));
   CHECK(options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
-  CHECK(options.trusted_proxy_count == 2U);
+  CHECK(options.service.trusted_proxy_count == 2U);
+  laghu_service_config_init(&expected_service);
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_IMAGE_CACHE,
+                      "/tmp/cache"));
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_WORKER_QUEUE,
+                      "/tmp/jobs"));
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_TRUSTED_PROXY,
+                      "127.0.0.0/8"));
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_TRUSTED_PROXY,
+                      "2001:db8::/32"));
+  CHECK(service_finalize(&expected_service));
+  CHECK(memcmp(&options.service, &expected_service, sizeof(options.service)) ==
+        0);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(26, rum, &options, error, sizeof(error)) ==
         LAGHU_PROXY_PARSE_OK);
-  CHECK(!strcmp(options.rum_store, "local:/tmp/rum"));
-  CHECK(!strcmp(options.rum_snapshot_path, "/tmp/rum.snapshot"));
-  CHECK(options.rum_timeout_ms == 75U && options.rum_ttl == 604800U);
-  CHECK(options.rum_retry_limit == 2U && options.rum_sync_interval == 5U);
-  CHECK(options.rum_memory_limit == 8U * 1024U * 1024U);
-  CHECK(options.rum_pending_limit == 1024U * 1024U &&
-        options.rum_store_required);
+  CHECK(!strcmp(options.service.rum_store, "local:/tmp/rum"));
+  CHECK(!strcmp(options.service.rum_snapshot_path, "/tmp/rum.snapshot"));
+  CHECK(options.service.rum_timeout_ms == 75U &&
+        options.service.rum_ttl == 604800U);
+  CHECK(options.service.rum_retry_limit == 2U &&
+        options.service.rum_sync_interval == 5U);
+  CHECK(options.service.rum_memory_limit == 8U * 1024U * 1024U);
+  CHECK(options.service.rum_pending_limit == 1024U * 1024U &&
+        options.service.rum_store_required);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(17, backend, &options, error,
+                                  sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  laghu_service_config_init(&expected_service);
+  CHECK(service_apply(&expected_service,
+                      LAGHU_SERVICE_SETTING_FILE_CACHE_BACKEND,
+                      TEST_BACKEND_URI));
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_FILE_CACHE_SIZE,
+                      "20m"));
+  CHECK(service_apply(&expected_service,
+                      LAGHU_SERVICE_SETTING_FILE_CACHE_INODE_LIMIT, "2000"));
+  CHECK(service_apply(&expected_service,
+                      LAGHU_SERVICE_SETTING_FILE_CACHE_CLEAN_INTERVAL, "2m"));
+  CHECK(service_apply(&expected_service,
+                      LAGHU_SERVICE_SETTING_FILE_CACHE_METADATA_SIZE, "1m"));
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_WORKER_QUEUE,
+                      "/tmp/jobs"));
+  CHECK(service_finalize(&expected_service));
+  CHECK(memcmp(&options.service, &expected_service, sizeof(options.service)) ==
+        0);
+  laghu_service_config_init(&expected_service);
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_IMAGE_CACHE,
+                      "/tmp/cache"));
+  CHECK(service_apply(&expected_service,
+                      LAGHU_SERVICE_SETTING_FILE_CACHE_BACKEND,
+                      "file:///tmp/other"));
+  CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_WORKER_QUEUE,
+                      "/tmp/jobs"));
+  CHECK(!service_finalize(&expected_service));
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(11, bad_cidr, &options, error,
                                   sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);

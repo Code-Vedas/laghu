@@ -38,6 +38,7 @@
 #include "laghu/operational.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
+#include "laghu/service_config.h"
 #include "laghu/source.h"
 
 #define LAGHU_APACHE_FILTER "LAGHU"
@@ -57,55 +58,10 @@
 
 typedef struct {
   laghu_config core;
-  const char *worker_queue;
-  const char *font_fetch_queue;
-  const char *font_provider_config;
-  const char *javascript_queue;
-  const char *javascript_target;
-  const char *javascript_observation_config;
-  const char *javascript_defer_config;
-  const char *file_cache_backend;
-  const char *image_cache;
-  laghu_cache_limits cache_limits;
-  uint32_t cache_set_mask;
-  bool image_cache_set;
-  bool purge_method;
-  bool purge_query;
-  bool statistics;
-  bool metrics;
-  bool readiness;
-  bool readiness_strict;
-  const char *purge_token_file;
-  const char *cache_flush_file;
-  apr_array_header_t *purge_allow;
-  apr_array_header_t *trusted_proxy;
-  uint32_t admin_set_mask;
-  const char *asset_offload_config;
-  const char *asset_upload_queue;
-  const char *rum_store;
-  const char *rum_snapshot;
-  const char *rum_client_library;
-  size_t rum_memory_limit;
-  size_t rum_pending_limit;
-  unsigned int rum_ttl;
-  unsigned int rum_sync_interval;
-  unsigned int rum_timeout_ms;
-  unsigned int rum_retry_limit;
-  bool rum_required;
-  uint32_t rum_set_mask;
+  laghu_service_config service;
   laghu_runtime_queue queue;
   laghu_runtime_queue font_queue;
   laghu_runtime_queue javascript_runtime_queue;
-  laghu_font_provider_set font_providers;
-  laghu_javascript_observation_set javascript_observations;
-  laghu_javascript_defer_set javascript_defer;
-  laghu_asset_config asset_offload;
-  bool font_providers_loaded;
-  bool javascript_observations_loaded;
-  bool javascript_defer_loaded;
-  bool asset_offload_loaded;
-  laghu_source_policy source_policy;
-  bool source_mode_set;
 } laghu_apache_config;
 
 typedef struct {
@@ -151,12 +107,20 @@ extern bool laghu_apache_operational_enabled;
 void laghu_apache_child_init(apr_pool_t *pool, server_rec *server);
 void *laghu_apache_create_config(apr_pool_t *pool, char *path);
 void *laghu_apache_create_server_config(apr_pool_t *pool, server_rec *server);
+void laghu_apache_service_defaults(laghu_service_config *service);
+bool laghu_apache_service_resolve(laghu_service_config *resolved,
+                                  const laghu_service_config *parent,
+                                  const laghu_service_config *child,
+                                  const laghu_config *core,
+                                  laghu_service_diagnostic *diagnostic);
 void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
                                 void *child_value);
 const char *laghu_apache_command(cmd_parms *command, void *value,
                                  const char *arguments);
 bool laghu_apache_normalize(request_rec *request,
                             laghu_apache_context *context);
+bool laghu_apache_peer_matches(request_rec *request,
+                               const laghu_service_cidr *cidrs, size_t count);
 bool laghu_apache_apply_result(request_rec *request,
                                const laghu_http_transaction_result *result);
 apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,

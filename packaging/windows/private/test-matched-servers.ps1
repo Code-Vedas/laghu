@@ -80,6 +80,27 @@ function Copy-TestServerRoot([string] $Source, [string] $Destination) {
   if ($LASTEXITCODE -gt 7) { throw "server fixture copy failed" }
 }
 
+function Invoke-NativeTestCommand(
+  [string] $Executable,
+  [string[]] $Arguments,
+  [string] $Failure
+) {
+  $stdout = Join-Path $testRoot "native-command.stdout"
+  $stderr = Join-Path $testRoot "native-command.stderr"
+  $commandLine = [string]::Join(" ", [string[]]($Arguments | ForEach-Object {
+    '"' + $_.Replace('"', '\"') + '"'
+  }))
+  Remove-Item -Force $stdout, $stderr -ErrorAction SilentlyContinue
+  $process = Start-Process -FilePath $Executable -ArgumentList $commandLine `
+    -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout `
+    -RedirectStandardError $stderr
+  if ($process.ExitCode -ne 0) {
+    Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
+    throw $Failure
+  }
+  Remove-Item -Force $stdout, $stderr -ErrorAction SilentlyContinue
+}
+
 function Assert-CommonBehavior([int] $Port, $Cold) {
   $laghu = Get-HeaderValue $Cold "X-Laghu"
   if ($Cold.StatusCode -ne 200 -or $laghu -ne "pass") {
@@ -222,11 +243,15 @@ Set-Content -Encoding UTF8 "$web\index.html" '<!doctype html><html><head></head>
 Set-Content -Encoding ASCII "$web\api\data.json" '{"ok":true}'
 Set-Content -Encoding ASCII "$web\blocked.txt" 'origin-only'
 Set-Content -Encoding ASCII -NoNewline -Path $token -Value $purgeToken
-& $vipsPath black "$testRoot\image.v" 512 512 --bands 3
-& $vipsPath pngsave "$testRoot\image.v" "$web\image.png" --compression 0
+Invoke-NativeTestCommand $vipsPath @(
+  "black", "$testRoot\image.v", "512", "512", "--bands", "3"
+) "vips fixture creation failed"
+Invoke-NativeTestCommand $vipsPath @(
+  "pngsave", "$testRoot\image.v", "$web\image.png", "--compression", "0"
+) "vips fixture encoding failed"
 Remove-Item "$testRoot\image.v"
-& $optimizerPath --init $queue $cache
-if ($LASTEXITCODE -ne 0) { throw "optimizer initialization failed" }
+Invoke-NativeTestCommand $optimizerPath @("--init", $queue, $cache) `
+  "optimizer initialization failed"
 $worker = Start-Process -PassThru -WindowStyle Hidden $optimizerPath -ArgumentList @("--serve", $queue, $cache)
 
 try {
@@ -276,8 +301,9 @@ http {
   }
 }
 "@ | Set-Content -Encoding ASCII "$nginxTestRoot\conf\nginx.conf"
-  & "$nginxTestRoot\nginx.exe" -t -p $nginxTestRoot
-  if ($LASTEXITCODE -ne 0) { throw "NGINX matched configuration failed" }
+  Invoke-NativeTestCommand "$nginxTestRoot\nginx.exe" @(
+    "-t", "-p", $nginxTestRoot
+  ) "NGINX matched configuration failed"
   if (-not (Test-Path "$assetQueue.sources")) {
     throw "NGINX source-loader registry was not published"
   }
@@ -285,7 +311,9 @@ http {
   try {
     Assert-CommonBehavior $nginxPort (Wait-ForServer $nginxPort)
   } finally {
-    & "$nginxTestRoot\nginx.exe" -s quit -p $nginxTestRoot
+    Invoke-NativeTestCommand "$nginxTestRoot\nginx.exe" @(
+      "-s", "quit", "-p", $nginxTestRoot
+    ) "NGINX matched shutdown failed"
     $nginx.WaitForExit(10000) | Out-Null
     if (-not $nginx.HasExited) { $nginx.Kill() }
   }
@@ -297,8 +325,9 @@ http {
     & taskkill.exe /PID $worker.Id /T /F 2>$null | Out-Null
     $worker.WaitForExit()
   }
-  & $optimizerPath --init $apacheQueuePath $cache
-  if ($LASTEXITCODE -ne 0) { throw "optimizer reinitialization failed" }
+  Invoke-NativeTestCommand $optimizerPath @(
+    "--init", $apacheQueuePath, $cache
+  ) "optimizer reinitialization failed"
   $worker = Start-Process -PassThru -WindowStyle Hidden $optimizerPath -ArgumentList @("--serve", $apacheQueuePath, $cache)
   Start-Sleep -Seconds 1
   $apacheTestRoot = "$testRoot\apache"
@@ -355,8 +384,9 @@ Laghu Statistics On
 "@
   [IO.File]::WriteAllText("$apacheTestRoot\conf\httpd.conf", $apacheConfig,
                           [Text.ASCIIEncoding]::new())
-  & "$apacheTestRoot\bin\httpd.exe" -t -d $apacheTestRoot
-  if ($LASTEXITCODE -ne 0) { throw "Apache matched configuration failed" }
+  Invoke-NativeTestCommand "$apacheTestRoot\bin\httpd.exe" @(
+    "-t", "-d", $apacheTestRoot
+  ) "Apache matched configuration failed"
   if (-not (Test-Path "$assetQueue.sources")) {
     throw "Apache source-loader registry was not published"
   }

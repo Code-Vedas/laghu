@@ -30,9 +30,9 @@ int laghu_apache_variant_handler(request_rec *request) {
   if (config == NULL || config->core.mode != LAGHU_MODE_ON) {
     return HTTP_NOT_FOUND;
   }
-  if (config->cache_flush_file != NULL)
+  if (config->service.cache_flush_file[0] != '\0')
     (void)laghu_cache_flush_file_poll(
-        config->image_cache, config->cache_flush_file,
+        config->service.image_cache, config->service.cache_flush_file,
         (uint64_t)apr_time_sec(apr_time_now()), NULL);
   {
     int admin_status = laghu_apache_admin_endpoint(request, config);

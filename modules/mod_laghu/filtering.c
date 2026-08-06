@@ -53,6 +53,25 @@
 
 #include "mod_laghu_internal.h"
 
+bool laghu_apache_peer_matches(request_rec *request,
+                               const laghu_service_cidr *cidrs, size_t count) {
+  unsigned char address[16U] = {0};
+  unsigned int family;
+  size_t index;
+  if (request->connection->client_addr == NULL) return false;
+  if (request->connection->client_addr->family == AF_INET) {
+    memcpy(address, &request->connection->client_addr->sa.sin.sin_addr, 4U);
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV4;
+  } else if (request->connection->client_addr->family == AF_INET6) {
+    memcpy(address, &request->connection->client_addr->sa.sin6.sin6_addr, 16U);
+    family = LAGHU_SERVICE_CIDR_FAMILY_IPV6;
+  } else
+    return false;
+  for (index = 0U; index < count; ++index)
+    if (laghu_service_cidr_matches(&cidrs[index], address, family)) return true;
+  return false;
+}
+
 static bool laghu_apache_collect_table(const apr_table_t *table,
                                        laghu_http_header *headers,
                                        size_t capacity, size_t *count) {
@@ -118,20 +137,13 @@ bool laghu_apache_normalize(request_rec *request,
       (laghu_buffer){(const unsigned char *)ap_http_scheme(request),
                      strlen(ap_http_scheme(request))};
   if (context->config->core.respect_x_forwarded_proto == LAGHU_MODE_ON &&
-      context->config->trusted_proxy != NULL) {
-    int subnet_index;
-    bool trusted = false;
+      context->config->service.trusted_proxy_count != 0U) {
+    bool trusted;
     const char *forwarded =
         apr_table_get(request->headers_in, "X-Forwarded-Proto");
-    for (subnet_index = 0; subnet_index < context->config->trusted_proxy->nelts;
-         ++subnet_index) {
-      if (apr_ipsubnet_test(APR_ARRAY_IDX(context->config->trusted_proxy,
-                                          subnet_index, apr_ipsubnet_t *),
-                            request->connection->client_addr)) {
-        trusted = true;
-        break;
-      }
-    }
+    trusted = laghu_apache_peer_matches(
+        request, context->config->service.trusted_proxies,
+        context->config->service.trusted_proxy_count);
     if (trusted && forwarded != NULL && strchr(forwarded, ',') == NULL &&
         (ap_cstr_casecmp(forwarded, "http") == 0 ||
          ap_cstr_casecmp(forwarded, "https") == 0))
@@ -161,21 +173,16 @@ bool laghu_apache_normalize(request_rec *request,
   context->environment.version = LAGHU_HTTP_ABI_VERSION;
   context->environment.struct_size = sizeof(context->environment);
   context->environment.config = context->config->core;
-  context->environment.cache_path = context->config->image_cache != NULL
-                                        ? context->config->image_cache
-                                        : LAGHU_DEFAULT_CACHE;
+  context->environment.cache_path = context->config->service.image_cache;
   context->environment.rum = laghu_apache_rum;
-  context->environment.worker_queue_path = context->config->worker_queue != NULL
-                                               ? context->config->worker_queue
-                                               : LAGHU_DEFAULT_QUEUE;
+  context->environment.worker_queue_path =
+      context->config->service.worker_queue;
   context->environment.queue = &context->config->queue;
   context->environment.font_fetch_queue_path =
-      context->config->font_fetch_queue != NULL
-          ? context->config->font_fetch_queue
-          : LAGHU_DEFAULT_FONT_QUEUE;
+      context->config->service.font_fetch_queue;
   {
     laghu_runtime_queue_snapshot queue_snapshot;
-    if (context->config->font_providers_loaded &&
+    if (context->config->service.font_providers != NULL &&
         (laghu_runtime_queue_snapshot_get(&context->config->font_queue,
                                           &queue_snapshot) ||
          (laghu_runtime_queue_open(
@@ -184,13 +191,12 @@ bool laghu_apache_normalize(request_rec *request,
           laghu_runtime_queue_snapshot_get(&context->config->font_queue,
                                            &queue_snapshot)))) {
       context->environment.font_fetch_queue = &context->config->font_queue;
-      context->environment.font_providers = &context->config->font_providers;
+      context->environment.font_providers =
+          context->config->service.font_providers;
     }
   }
   context->environment.javascript_queue_path =
-      context->config->javascript_queue != NULL
-          ? context->config->javascript_queue
-          : LAGHU_DEFAULT_JAVASCRIPT_QUEUE;
+      context->config->service.javascript_queue;
   {
     laghu_runtime_queue_snapshot queue_snapshot;
     if (laghu_runtime_queue_snapshot_get(
@@ -203,27 +209,12 @@ bool laghu_apache_normalize(request_rec *request,
           &context->config->javascript_runtime_queue;
   }
   context->environment.javascript_target =
-      context->config->javascript_target != NULL
-          ? context->config->javascript_target
-          : "defaults and supports es6-module and not dead";
+      context->config->service.javascript_target;
   context->environment.javascript_observations =
-      context->config->javascript_observations_loaded
-          ? &context->config->javascript_observations
-          : NULL;
+      context->config->service.javascript_observations;
   context->environment.javascript_defer =
-      context->config->javascript_defer_loaded
-          ? &context->config->javascript_defer
-          : NULL;
-  context->environment.asset_offload = context->config->asset_offload_loaded
-                                           ? &context->config->asset_offload
-                                           : NULL;
-  if ((context->config->asset_offload_loaded &&
-       (context->config->asset_upload_queue == NULL ||
-        strcmp(context->config->asset_upload_queue,
-               context->config->asset_offload.queue_path) != 0)) ||
-      (!context->config->asset_offload_loaded &&
-       context->config->asset_upload_queue != NULL))
-    return false;
+      context->config->service.javascript_defer;
+  context->environment.asset_offload = context->config->service.asset_offload;
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;
 }

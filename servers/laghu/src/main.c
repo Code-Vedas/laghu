@@ -68,19 +68,30 @@ int main(int argc, char **argv) {
       laghu_proxy_parse_options(argc, argv, &options, error, sizeof(error));
   if (parsed == LAGHU_PROXY_PARSE_HELP) {
     usage(stdout);
+    laghu_proxy_options_dispose(&options);
     return 0;
   }
   if (parsed == LAGHU_PROXY_PARSE_VERSION) {
     puts("laghu " LAGHU_VERSION);
+    laghu_proxy_options_dispose(&options);
     return 0;
   }
   if (parsed != LAGHU_PROXY_PARSE_OK) {
     fprintf(stderr, "laghu: %s\n", error);
     usage(stderr);
+    laghu_proxy_options_dispose(&options);
     return 2;
   }
 #ifdef _WIN32
-  if (options.service_mode) return laghu_proxy_run_service(&options);
+  if (options.service_mode) {
+    int result = laghu_proxy_run_service(&options);
+    laghu_proxy_options_dispose(&options);
+    return result;
+  }
 #endif
-  return laghu_proxy_run(&options);
+  {
+    int result = laghu_proxy_run(&options);
+    laghu_proxy_options_dispose(&options);
+    return result;
+  }
 }

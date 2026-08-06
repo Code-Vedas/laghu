@@ -59,6 +59,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/persisted_state_wire.h \
     "${REPO_ROOT}"/libs/laghu-runtime/src/csp.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/budget.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/service_config.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/worker.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/catalog.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/asset.c \
@@ -91,6 +92,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/tests/instrumentation_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/lcp_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/budget_test.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/tests/service_config_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/worker_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/runtime_fuzz.c \
     "${REPO_ROOT}"/libs/laghu-http/include/laghu/http.h \

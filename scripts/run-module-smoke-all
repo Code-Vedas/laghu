@@ -585,7 +585,8 @@ if "${NGINX_BIN}" -t -p "${SMOKE_DIR}" \
   echo "NGINX accepted duplicate Laghu worker_queue directives." >&2
   exit 1
 fi
-grep 'is duplicate' "${SMOKE_DIR}/duplicate-worker_queue-config-output" >/dev/null
+grep 'duplicate service setting' \
+  "${SMOKE_DIR}/duplicate-worker_queue-config-output" >/dev/null
 
 sed "s#laghu file_cache_backend [^;]*;#laghu file_cache_backend file:///tmp/one; laghu file_cache_backend file:///tmp/two;#" \
   "${SMOKE_DIR}/nginx.conf" >"${SMOKE_DIR}/duplicate-file-cache-nginx.conf"
