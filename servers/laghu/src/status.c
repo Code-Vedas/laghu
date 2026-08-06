@@ -158,6 +158,151 @@ static int status_connect(const status_origin *origin, unsigned int timeout) {
   return status_socket;
 }
 
+typedef struct {
+  const char *data;
+  size_t length;
+  size_t cursor;
+} status_json;
+
+static void status_json_space(status_json *json) {
+  while (json->cursor < json->length &&
+         (json->data[json->cursor] == ' ' || json->data[json->cursor] == '\n' ||
+          json->data[json->cursor] == '\r' || json->data[json->cursor] == '\t'))
+    ++json->cursor;
+}
+
+static bool status_json_string(status_json *json, const char **start,
+                               size_t *length) {
+  size_t first;
+  if (json->cursor >= json->length || json->data[json->cursor++] != '"')
+    return false;
+  first = json->cursor;
+  while (json->cursor < json->length && json->data[json->cursor] != '"') {
+    unsigned char value = (unsigned char)json->data[json->cursor++];
+    if (value < 0x20U || value == '\\') return false;
+  }
+  if (json->cursor == json->length) return false;
+  if (start != NULL) *start = json->data + first;
+  if (length != NULL) *length = json->cursor - first;
+  ++json->cursor;
+  return true;
+}
+
+static bool status_json_value(status_json *json, unsigned int depth);
+
+static bool status_json_object(status_json *json, unsigned int depth) {
+  const char *keys[32U]; size_t lengths[32U]; unsigned int count = 0U;
+  if (depth > 8U || json->cursor >= json->length || json->data[json->cursor++] != '{') return false;
+  status_json_space(json);
+  if (json->cursor < json->length && json->data[json->cursor] == '}') { ++json->cursor; return true; }
+  for (;;) {
+    const char *key; size_t length; unsigned int index;
+    if (count == 32U || !status_json_string(json, &key, &length)) return false;
+    for (index = 0U; index < count; ++index)
+      if (lengths[index] == length && memcmp(keys[index], key, length) == 0) return false;
+    keys[count] = key; lengths[count++] = length;
+    status_json_space(json);
+    if (json->cursor >= json->length || json->data[json->cursor++] != ':') return false;
+    status_json_space(json);
+    if (!status_json_value(json, depth + 1U)) return false;
+    status_json_space(json);
+    if (json->cursor >= json->length) return false;
+    if (json->data[json->cursor] == '}') { ++json->cursor; return true; }
+    if (json->data[json->cursor++] != ',') return false;
+    status_json_space(json);
+  }
+}
+
+static bool status_json_value(status_json *json, unsigned int depth) {
+  size_t first;
+  status_json_space(json);
+  if (json->cursor >= json->length) return false;
+  if (json->data[json->cursor] == '{') return status_json_object(json, depth);
+  if (json->data[json->cursor] == '"') return status_json_string(json, NULL, NULL);
+  if (json->data[json->cursor] == '-' || isdigit((unsigned char)json->data[json->cursor])) {
+    uint64_t value = 0U;
+    if (json->data[json->cursor] == '-') return false;
+    first = json->cursor;
+    while (json->cursor < json->length && isdigit((unsigned char)json->data[json->cursor])) {
+      unsigned int digit = (unsigned int)(json->data[json->cursor++] - '0');
+      if (value > (UINT64_MAX - digit) / 10U) return false;
+      value = value * 10U + digit;
+    }
+    return json->cursor != first && (json->cursor == json->length ||
+        !strchr(".eE+-", json->data[json->cursor]));
+  }
+  if (json->length - json->cursor >= 4U && memcmp(json->data + json->cursor, "true", 4U) == 0) { json->cursor += 4U; return true; }
+  if (json->length - json->cursor >= 5U && memcmp(json->data + json->cursor, "false", 5U) == 0) { json->cursor += 5U; return true; }
+  return false;
+}
+
+static bool status_json_has_only_fields(const char *body, size_t length,
+                                        const char *const *allowed,
+                                        size_t allowed_count) {
+  status_json json = {body, length, 0U};
+  size_t cursor = 0U;
+  if (!status_json_value(&json, 0U)) return false;
+  status_json_space(&json);
+  if (json.cursor != json.length) return false;
+  while (cursor < length) {
+    size_t start, field_length, check; bool field = false;
+    if (body[cursor++] != '"') continue;
+    start = cursor;
+    while (cursor < length && body[cursor] != '"') {
+      if (body[cursor] == '\\' || (unsigned char)body[cursor] < 0x20U) return false;
+      ++cursor;
+    }
+    if (cursor == length) return false;
+    field_length = cursor++ - start;
+    check = cursor; while (check < length && isspace((unsigned char)body[check])) ++check;
+    if (check < length && body[check] == ':') field = true;
+    if (field) {
+      size_t index;
+      for (index = 0U; index < allowed_count; ++index)
+        if (strlen(allowed[index]) == field_length &&
+            memcmp(body + start, allowed[index], field_length) == 0) break;
+      if (index == allowed_count) return false;
+    }
+  }
+  return true;
+}
+
+static bool status_schema_valid(const char *body, size_t length, bool stats) {
+  static const char *const readiness[] = {"status", "runtime", "cache", "workers", "budgets", "policy", "configured_workers", "healthy_workers"};
+  static const char *const cache_stats[] = {"schema", "backend", "capacity", "usage", "requests", "bytes", "files", "hits", "misses", "hit_ratio_ppm", "publications", "rejected_writes", "evictions", "purges", "url", "full", "artifacts", "generation", "last", "corrupt_removals", "cleaner_active", "rebuilding", "last_maintenance"};
+  const char *schema = "\"schema\":\"laghu-cache-stats-v1\"";
+  return status_json_has_only_fields(body, length, stats ? cache_stats : readiness,
+                                     stats ? sizeof(cache_stats) / sizeof(cache_stats[0]) : sizeof(readiness) / sizeof(readiness[0])) &&
+         (!stats ? strstr(body, "\"status\":") != NULL : strstr(body, schema) != NULL);
+}
+
+static bool status_json_text_field(const char *body, const char *name,
+                                   char *output, size_t capacity) {
+  char needle[80U]; const char *value, *end; int written;
+  written = snprintf(needle, sizeof(needle), "\"%s\":\"", name);
+  if (written < 0 || (size_t)written >= sizeof(needle) ||
+      (value = strstr(body, needle)) == NULL) return false;
+  value += (size_t)written; end = strchr(value, '"');
+  if (end == NULL || (size_t)(end - value) >= capacity) return false;
+  memcpy(output, value, (size_t)(end - value)); output[end - value] = '\0';
+  return true;
+}
+
+static bool status_json_number_field(const char *body, const char *name,
+                                     uint64_t *output) {
+  char needle[80U]; const char *value; int written; uint64_t parsed = 0U;
+  written = snprintf(needle, sizeof(needle), "\"%s\":", name);
+  if (written < 0 || (size_t)written >= sizeof(needle) ||
+      (value = strstr(body, needle)) == NULL || !isdigit((unsigned char)*value)) return false;
+  while (isdigit((unsigned char)*value)) {
+    unsigned int digit = (unsigned int)(*value++ - '0');
+    if (parsed > (UINT64_MAX - digit) / 10U) return false;
+    parsed = parsed * 10U + digit;
+  }
+  *output = parsed;
+  return true;
+}
+
 /* Strict HTTP/1.1 fixed-length JSON fetch.  Returns 0 success, status code or
  * negative local/framing failure. */
 static int status_fetch(const status_origin *origin, SSL_CTX *context,
@@ -253,9 +398,27 @@ int laghu_status_run(int argc, char **argv) {
   if (ready_status < 0 || stats_status < 0) { fputs(ready_status == -2 || stats_status == -2 ? "laghu status: malformed response\n" : "laghu status: connection failed\n", stderr); return ready_status == -2 || stats_status == -2 ? 5 : 4; }
   if (ready_status == 503 || stats_status == 503) { fputs("laghu status: service unavailable\n", stderr); return 6; }
   if (ready_status != 200 || stats_status != 200) { fprintf(stderr, "laghu status: HTTP %d\n", ready_status != 200 ? ready_status : stats_status); return 7; }
-  if (strstr(ready, "\"status\"") == NULL || strstr(stats, "\"schema\":\"laghu-cache-stats-v1\"") == NULL) { fputs("laghu status: malformed response\n", stderr); return 5; }
-  if (json) printf("{\"schema\":\"laghu-status-v1\",\"ready\":%s,\"stats\":%s}\n", ready, stats);
-  else printf("ready: %s\ncache: hits/misses %s/%s\n", strstr(ready, "\"status\":\"") + 10U, strstr(stats, "\"hits\":") + 7U, strstr(stats, "\"misses\":") + 9U);
+  if (!status_schema_valid(ready, ready_length, false) ||
+      !status_schema_valid(stats, stats_length, true)) {
+    fputs("laghu status: malformed response\n", stderr);
+    return 5;
+  }
+  if (json) {
+    printf("{\"schema\":\"laghu-status-v1\",\"ready\":%s,\"stats\":%s}\n", ready, stats);
+  } else {
+    char readiness[32U]; uint64_t hits, misses, used, capacity;
+    if (!status_json_text_field(ready, "status", readiness, sizeof(readiness)) ||
+        !status_json_number_field(stats, "hits", &hits) ||
+        !status_json_number_field(stats, "misses", &misses) ||
+        !status_json_number_field(stats, "bytes", &used) ||
+        !status_json_number_field(stats, "capacity", &capacity)) {
+      fputs("laghu status: malformed response\n", stderr);
+      return 5;
+    }
+    printf("ready: %s\ncache: hits=%llu misses=%llu usage=%llu capacity=%llu\n",
+           readiness, (unsigned long long)hits, (unsigned long long)misses,
+           (unsigned long long)used, (unsigned long long)capacity);
+  }
   return 0;
 usage:
   fputs("Usage: laghu status URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n", stderr);
