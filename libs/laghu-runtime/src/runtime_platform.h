@@ -22,6 +22,10 @@ bool laghu_runtime_directory_ensure(const char *path);
 bool laghu_runtime_directory_exists(const char *path);
 bool laghu_runtime_file_remove(const char *path);
 bool laghu_runtime_file_size(const char *path, uint64_t *size);
+bool laghu_runtime_file_read_exact(const char *path, unsigned char *data,
+                                   size_t length);
+bool laghu_runtime_file_write_atomic(const char *path,
+                                     const unsigned char *data, size_t length);
 bool laghu_runtime_shared_mapping_open(laghu_runtime_shared_mapping *mapping,
                                        const char *path, size_t size);
 bool laghu_runtime_shared_mapping_try_lock(

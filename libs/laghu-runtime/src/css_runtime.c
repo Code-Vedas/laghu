@@ -30,13 +30,15 @@ static bool laghu_runtime_sprite_key(const char *policy_key,
                                      size_t *ordered, size_t count,
                                      char output[LAGHU_RUNTIME_KEY_SIZE]) {
   char material[16384U];
+  laghu_runtime_queue_snapshot snapshot;
   size_t length;
   size_t index;
+  memset(&snapshot, 0, sizeof(snapshot));
+  if (queue != NULL) (void)laghu_runtime_queue_snapshot_get(queue, &snapshot);
   int written =
       snprintf(material, sizeof(material),
                "laghu-sprite-v1\n%s\n%s\n%u\nhorizontal\npng-lossless",
-               policy_key, queue != NULL ? queue->backend_id : "",
-               queue != NULL ? queue->capabilities : 0U);
+               policy_key, snapshot.backend_id, snapshot.capabilities);
   if (written <= 0 || (size_t)written >= sizeof(material)) {
     return false;
   }

@@ -198,6 +198,8 @@ static void test_operational_registry(const char *cache_path) {
                                    observations, ready);
   }
   assert(laghu_operational_registry_heartbeat(&worker, now, true, 64U, 3U));
+  laghu_operational_registry_worker_job(&worker, false, 1000U,
+                                        LAGHU_OPERATIONAL_FAILURE_WORKER);
   assert(laghu_operational_registry_snapshot(&adapter, snapshot));
   {
     unsigned int slot;
@@ -218,6 +220,8 @@ static void test_operational_registry(const char *cache_path) {
   assert(length != 0U && strstr(output, "laghu_requests_total") != NULL);
   assert(strstr(output, "laghu_cache_bytes 4096") != NULL);
   assert(strstr(output, "laghu_cache_rejected_writes_total 2") != NULL);
+  assert(strstr(output, "laghu_failures_total{subsystem=\"worker\"} 1") !=
+         NULL);
   assert(strstr(output, "laghu_variant_occupancy 3") != NULL);
   assert(strstr(output, "laghu_lcp_decisions_total{decision=\"learned\"} 1") !=
          NULL);

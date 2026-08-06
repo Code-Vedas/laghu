@@ -173,28 +173,35 @@ bool laghu_apache_normalize(request_rec *request,
       context->config->font_fetch_queue != NULL
           ? context->config->font_fetch_queue
           : LAGHU_DEFAULT_FONT_QUEUE;
-  if (context->config->font_providers_loaded &&
-      ((context->config->font_queue.mapping != NULL &&
-        laghu_runtime_queue_refresh(&context->config->font_queue)) ||
-       (context->config->font_queue.mapping == NULL &&
-        laghu_runtime_queue_open(
-            &context->config->font_queue,
-            context->environment.font_fetch_queue_path)))) {
-    context->environment.font_fetch_queue = &context->config->font_queue;
-    context->environment.font_providers = &context->config->font_providers;
+  {
+    laghu_runtime_queue_snapshot queue_snapshot;
+    if (context->config->font_providers_loaded &&
+        (laghu_runtime_queue_snapshot_get(&context->config->font_queue,
+                                          &queue_snapshot) ||
+         (laghu_runtime_queue_open(
+              &context->config->font_queue,
+              context->environment.font_fetch_queue_path) &&
+          laghu_runtime_queue_snapshot_get(&context->config->font_queue,
+                                           &queue_snapshot)))) {
+      context->environment.font_fetch_queue = &context->config->font_queue;
+      context->environment.font_providers = &context->config->font_providers;
+    }
   }
   context->environment.javascript_queue_path =
       context->config->javascript_queue != NULL
           ? context->config->javascript_queue
           : LAGHU_DEFAULT_JAVASCRIPT_QUEUE;
-  if ((context->config->javascript_runtime_queue.mapping != NULL &&
-       laghu_runtime_queue_refresh(
-           &context->config->javascript_runtime_queue)) ||
-      (context->config->javascript_runtime_queue.mapping == NULL &&
-       laghu_runtime_queue_open(&context->config->javascript_runtime_queue,
-                                context->environment.javascript_queue_path)))
-    context->environment.javascript_queue =
-        &context->config->javascript_runtime_queue;
+  {
+    laghu_runtime_queue_snapshot queue_snapshot;
+    if (laghu_runtime_queue_snapshot_get(
+            &context->config->javascript_runtime_queue, &queue_snapshot) ||
+        (laghu_runtime_queue_open(&context->config->javascript_runtime_queue,
+                                  context->environment.javascript_queue_path) &&
+         laghu_runtime_queue_snapshot_get(
+             &context->config->javascript_runtime_queue, &queue_snapshot)))
+      context->environment.javascript_queue =
+          &context->config->javascript_runtime_queue;
+  }
   context->environment.javascript_target =
       context->config->javascript_target != NULL
           ? context->config->javascript_target

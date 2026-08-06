@@ -478,6 +478,7 @@ int main(void) {
   unsigned char cached[64];
   laghu_runtime_queue producer = {0};
   laghu_runtime_queue consumer = {0};
+  laghu_runtime_queue_snapshot queue_snapshot;
   laghu_runtime_job submitted;
   laghu_runtime_job taken;
   laghu_runtime_cache_entry entry;
@@ -980,12 +981,14 @@ int main(void) {
   assert(laghu_runtime_queue_set_backend(&producer, 0x55aaU, "test-vips"));
   assert(laghu_runtime_queue_heartbeat(&producer, 123456U));
   assert(laghu_runtime_queue_open(&consumer, queue_path));
-  assert(consumer.capabilities == 0x55aaU);
-  assert(consumer.worker_heartbeat == 123456U);
-  assert(strcmp(consumer.backend_id, "test-vips") == 0);
+  assert(laghu_runtime_queue_snapshot_get(&consumer, &queue_snapshot));
+  assert(queue_snapshot.capabilities == 0x55aaU);
+  assert(queue_snapshot.worker_heartbeat == 123456U);
+  assert(strcmp(queue_snapshot.backend_id, "test-vips") == 0);
   assert(laghu_runtime_queue_heartbeat(&producer, 123457U));
   assert(laghu_runtime_queue_refresh(&consumer));
-  assert(consumer.worker_heartbeat == 123457U);
+  assert(laghu_runtime_queue_snapshot_get(&consumer, &queue_snapshot));
+  assert(queue_snapshot.worker_heartbeat == 123457U);
   memset(&submitted, 0, sizeof(submitted));
   strcpy(submitted.index_key, index_key);
   strcpy(submitted.request_path, "/image.png");

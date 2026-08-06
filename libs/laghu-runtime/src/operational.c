@@ -15,27 +15,27 @@
 #include "laghu/cache.h"
 #include "laghu/lcp.h"
 #include "laghu/types.h"
+#include "persisted_state_wire.h"
 #include "runtime_platform.h"
 
 #ifdef _WIN32
 #include <windows.h>
+typedef volatile LONG64 laghu_local_atomic;
+typedef volatile LONG laghu_local_flag;
+#else
+typedef uint64_t laghu_local_atomic;
+typedef unsigned int laghu_local_flag;
 #endif
-
-#define LAGHU_OPERATIONAL_MAGIC UINT64_C(0x4c414748554f5053)
-
-typedef struct {
-  uint64_t magic;
-  uint32_t version;
-  uint32_t slot_count;
-  uint64_t generation;
-  laghu_operational_slot_snapshot slots[LAGHU_OPERATIONAL_MAX_SLOTS];
-} laghu_operational_header;
 
 typedef struct {
   laghu_runtime_shared_mapping mapping;
-  laghu_operational_header *header;
+  unsigned char *bytes;
   unsigned int slot;
   uint64_t generation;
+  laghu_local_flag healthy;
+  laghu_local_flag publishing;
+  laghu_local_atomic
+      values[LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_SUM_OFFSET / 8U + 1U];
 } laghu_operational_state;
 
 #define LAGHU_OPERATIONAL_STATE(registry) \
@@ -55,7 +55,9 @@ static const uint64_t laghu_latency_limits[] = {
     1000U,   5000U,   10000U,   25000U,   50000U,  100000U,
     250000U, 500000U, 1000000U, 2500000U, 5000000U};
 
-static uint64_t laghu_load(const uint64_t *value) {
+static size_t laghu_local_index(size_t wire_offset) { return wire_offset / 8U; }
+
+static uint64_t laghu_local_atomic_load(const laghu_local_atomic *value) {
 #ifdef _WIN32
   return (uint64_t)InterlockedCompareExchange64((volatile LONG64 *)value, 0, 0);
 #else
@@ -63,51 +65,348 @@ static uint64_t laghu_load(const uint64_t *value) {
 #endif
 }
 
-static void laghu_store(uint64_t *value, uint64_t replacement) {
+static void laghu_local_atomic_store(laghu_local_atomic *value,
+                                     uint64_t replacement) {
 #ifdef _WIN32
-  (void)InterlockedExchange64((volatile LONG64 *)value, (LONG64)replacement);
+  (void)InterlockedExchange64(value, (LONG64)replacement);
 #else
   __atomic_store_n(value, replacement, __ATOMIC_RELAXED);
 #endif
 }
 
-static void laghu_add(uint64_t *value, uint64_t increment) {
+static bool laghu_local_atomic_compare_exchange(laghu_local_atomic *value,
+                                                uint64_t expected,
+                                                uint64_t replacement) {
 #ifdef _WIN32
-  uint64_t current, replacement;
-  do {
-    current = laghu_load(value);
-    replacement =
-        UINT64_MAX - current < increment ? UINT64_MAX : current + increment;
-  } while ((uint64_t)InterlockedCompareExchange64((volatile LONG64 *)value,
-                                                  (LONG64)replacement,
-                                                  (LONG64)current) != current);
+  return (uint64_t)InterlockedCompareExchange64(value, (LONG64)replacement,
+                                                (LONG64)expected) == expected;
 #else
-  uint64_t current = laghu_load(value);
-  while (!__atomic_compare_exchange_n(
-      value, &current,
-      UINT64_MAX - current < increment ? UINT64_MAX : current + increment,
-      false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-  }
+  return __atomic_compare_exchange_n(value, &expected, replacement, true,
+                                     __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 #endif
 }
 
-static laghu_operational_slot_snapshot *laghu_slot(
-    laghu_operational_registry *registry) {
+static bool laghu_local_flag_try_set(laghu_local_flag *value) {
+#ifdef _WIN32
+  return InterlockedCompareExchange(value, 1, 0) == 0;
+#else
+  unsigned int expected = 0U;
+  return __atomic_compare_exchange_n(value, &expected, 1U, false,
+                                     __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+#endif
+}
+
+static void laghu_local_flag_clear(laghu_local_flag *value) {
+#ifdef _WIN32
+  (void)InterlockedExchange(value, 0);
+#else
+  __atomic_store_n(value, 0U, __ATOMIC_RELEASE);
+#endif
+}
+
+static void laghu_local_flag_store(laghu_local_flag *value, bool replacement) {
+#ifdef _WIN32
+  (void)InterlockedExchange(value, replacement ? 1 : 0);
+#else
+  __atomic_store_n(value, replacement ? 1U : 0U, __ATOMIC_RELAXED);
+#endif
+}
+
+static bool laghu_local_flag_load(const laghu_local_flag *value) {
+#ifdef _WIN32
+  return InterlockedCompareExchange((volatile LONG *)value, 0, 0) != 0;
+#else
+  return __atomic_load_n(value, __ATOMIC_RELAXED) != 0U;
+#endif
+}
+
+static uint64_t laghu_local_load(const laghu_operational_state *state,
+                                 size_t wire_offset) {
+  return laghu_local_atomic_load(
+      &state->values[laghu_local_index(wire_offset)]);
+}
+
+static void laghu_local_store(laghu_operational_state *state,
+                              size_t wire_offset, uint64_t value) {
+  laghu_local_atomic_store(&state->values[laghu_local_index(wire_offset)],
+                           value);
+}
+
+static void laghu_local_add(laghu_operational_state *state, size_t wire_offset,
+                            uint64_t increment) {
+  laghu_local_atomic *value = &state->values[laghu_local_index(wire_offset)];
+  uint64_t current = laghu_local_atomic_load(value);
+  while (!laghu_local_atomic_compare_exchange(
+      value, current,
+      UINT64_MAX - current < increment ? UINT64_MAX : current + increment)) {
+    current = laghu_local_atomic_load(value);
+  }
+}
+
+static void laghu_local_max(laghu_operational_state *state, size_t wire_offset,
+                            uint64_t candidate) {
+  laghu_local_atomic *value = &state->values[laghu_local_index(wire_offset)];
+  uint64_t current = laghu_local_atomic_load(value);
+  while (candidate > current &&
+         !laghu_local_atomic_compare_exchange(value, current, candidate)) {
+    current = laghu_local_atomic_load(value);
+  }
+}
+
+static uint64_t laghu_load(const unsigned char *value) {
+  return laghu_wire_u64_read(value);
+}
+
+static void laghu_store(unsigned char *value, uint64_t replacement) {
+  laghu_wire_u64_write(value, replacement);
+}
+
+static unsigned char *laghu_header_generation(unsigned char *bytes) {
+  return bytes + LAGHU_WIRE_OPERATIONAL_HEADER_GENERATION_OFFSET;
+}
+
+static unsigned char *laghu_slot_at(unsigned char *bytes, unsigned int index) {
+  return bytes + LAGHU_WIRE_OPERATIONAL_HEADER_SIZE +
+         (size_t)index * LAGHU_WIRE_OPERATIONAL_SLOT_SIZE;
+}
+
+static unsigned char *laghu_slot_field(unsigned char *slot, size_t offset) {
+  return slot + offset;
+}
+
+static bool laghu_slot_reserved_valid(const unsigned char *slot) {
+  size_t index;
+  for (index = LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_SUM_OFFSET + 8U;
+       index < LAGHU_WIRE_OPERATIONAL_SLOT_SIZE; ++index)
+    if (slot[index] != 0U) return false;
+  return true;
+}
+
+static bool laghu_slot_values_valid(const unsigned char *slot) {
+  uint32_t active =
+      laghu_wire_u32_read(slot + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET);
+  uint32_t surface =
+      laghu_wire_u32_read(slot + LAGHU_WIRE_OPERATIONAL_SLOT_SURFACE_OFFSET);
+  uint32_t kind = laghu_wire_u32_read(
+      slot + LAGHU_WIRE_OPERATIONAL_SLOT_PROCESS_KIND_OFFSET);
+  uint64_t capacity = laghu_wire_u64_read(
+      slot + LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_CAPACITY_OFFSET);
+  uint64_t occupied = laghu_wire_u64_read(
+      slot + LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_OCCUPIED_OFFSET);
+  if (!laghu_slot_reserved_valid(slot) || active > 1U ||
+      slot[LAGHU_WIRE_OPERATIONAL_SLOT_REQUIRED_OFFSET] > 1U ||
+      slot[LAGHU_WIRE_OPERATIONAL_SLOT_HEALTHY_OFFSET] > 1U ||
+      occupied > capacity)
+    return false;
+  return active == 0U || (surface < LAGHU_OPERATIONAL_SURFACE_COUNT &&
+                          kind < LAGHU_OPERATIONAL_PROCESS_COUNT);
+}
+
+static bool laghu_header_valid(const laghu_operational_state *state) {
+  const unsigned char *bytes;
+  if (state == NULL || state->bytes == NULL ||
+      state->mapping.mapping_length !=
+          (size_t)LAGHU_WIRE_OPERATIONAL_HEADER_SIZE +
+              (size_t)LAGHU_WIRE_OPERATIONAL_SLOT_COUNT *
+                  LAGHU_WIRE_OPERATIONAL_SLOT_SIZE)
+    return false;
+  bytes = state->bytes;
+  return laghu_wire_u64_read(bytes +
+                             LAGHU_WIRE_OPERATIONAL_HEADER_MAGIC_OFFSET) ==
+             LAGHU_WIRE_OPERATIONAL_MAGIC &&
+         laghu_wire_u32_read(bytes +
+                             LAGHU_WIRE_OPERATIONAL_HEADER_VERSION_OFFSET) ==
+             LAGHU_WIRE_OPERATIONAL_VERSION &&
+         laghu_wire_u32_read(bytes +
+                             LAGHU_WIRE_OPERATIONAL_HEADER_SLOT_COUNT_OFFSET) ==
+             LAGHU_WIRE_OPERATIONAL_SLOT_COUNT;
+}
+
+static bool laghu_bytes_zero(const unsigned char *bytes, size_t length) {
+  size_t index;
+  for (index = 0U; index < length; ++index)
+    if (bytes[index] != 0U) return false;
+  return true;
+}
+
+static bool laghu_slot_update_begin(unsigned char *slot, uint64_t *sequence) {
+  if (slot == NULL || sequence == NULL) return false;
+  *sequence = laghu_wire_u64_read(
+      laghu_slot_field(slot, LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET));
+  if ((*sequence & 1U) != 0U || *sequence > UINT64_MAX - 2U) return false;
+  laghu_wire_u64_write(
+      laghu_slot_field(slot, LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET),
+      *sequence + 1U);
+  return true;
+}
+
+static void laghu_slot_update_finish(unsigned char *slot, uint64_t sequence) {
+  laghu_wire_u64_write(
+      laghu_slot_field(slot, LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET),
+      sequence + 2U);
+}
+
+static unsigned char *laghu_slot(laghu_operational_registry *registry) {
   laghu_operational_state *state =
       registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
-  return state != NULL && state->header != NULL &&
-                 state->slot < LAGHU_OPERATIONAL_MAX_SLOTS
-             ? &state->header->slots[state->slot]
+  return state != NULL && state->bytes != NULL &&
+                 state->slot < LAGHU_WIRE_OPERATIONAL_SLOT_COUNT
+             ? laghu_slot_at(state->bytes, state->slot)
              : NULL;
+}
+
+static bool laghu_slot_owned_locked(laghu_operational_state *state,
+                                    unsigned char **slot) {
+  unsigned char *value = state != NULL && state->bytes != NULL &&
+                                 state->slot < LAGHU_WIRE_OPERATIONAL_SLOT_COUNT
+                             ? laghu_slot_at(state->bytes, state->slot)
+                             : NULL;
+  if (slot != NULL) *slot = NULL;
+  if (state == NULL || !laghu_header_valid(state) || value == NULL ||
+      laghu_wire_u64_read(value +
+                          LAGHU_WIRE_OPERATIONAL_SLOT_GENERATION_OFFSET) !=
+          state->generation ||
+      laghu_wire_u32_read(value + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET) ==
+          0U)
+    return false;
+  if (slot != NULL) *slot = value;
+  return true;
+}
+
+static void laghu_slot_decode(const unsigned char *source,
+                              laghu_operational_slot_snapshot *target) {
+  unsigned int index;
+  memset(target, 0, sizeof(*target));
+  target->generation =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_GENERATION_OFFSET);
+  target->heartbeat =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET);
+  target->active =
+      laghu_wire_u32_read(source + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET);
+  target->surface =
+      laghu_wire_u32_read(source + LAGHU_WIRE_OPERATIONAL_SLOT_SURFACE_OFFSET);
+  target->process_kind = laghu_wire_u32_read(
+      source + LAGHU_WIRE_OPERATIONAL_SLOT_PROCESS_KIND_OFFSET);
+  target->required = source[LAGHU_WIRE_OPERATIONAL_SLOT_REQUIRED_OFFSET];
+  target->healthy = source[LAGHU_WIRE_OPERATIONAL_SLOT_HEALTHY_OFFSET];
+  target->queue_capacity =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_CAPACITY_OFFSET);
+  target->queue_occupied =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_OCCUPIED_OFFSET);
+  target->requests =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_REQUESTS_OFFSET);
+  for (index = 0U; index < LAGHU_OPERATIONAL_DECISION_COUNT; ++index)
+    target->decisions[index] = laghu_load(
+        source + LAGHU_WIRE_OPERATIONAL_SLOT_DECISIONS_OFFSET + index * 8U);
+  target->cache_hits =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_HITS_OFFSET);
+  target->cache_misses =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_MISSES_OFFSET);
+  target->cache_publications = laghu_load(
+      source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_PUBLICATIONS_OFFSET);
+  target->cache_evictions =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_EVICTIONS_OFFSET);
+  target->cache_bytes =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_BYTES_OFFSET);
+  target->cache_files =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_FILES_OFFSET);
+  target->original_bytes =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_ORIGINAL_BYTES_OFFSET);
+  target->selected_bytes =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_SELECTED_BYTES_OFFSET);
+  target->saved_bytes =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_SAVED_BYTES_OFFSET);
+  for (index = 0U; index < LAGHU_OPERATIONAL_FAILURE_COUNT; ++index)
+    target->failures[index] = laghu_load(
+        source + LAGHU_WIRE_OPERATIONAL_SLOT_FAILURES_OFFSET + index * 8U);
+  for (index = 0U; index < LAGHU_BUDGET_REJECTION_COUNT; ++index)
+    target->budget_rejections[index] = laghu_load(
+        source + LAGHU_WIRE_OPERATIONAL_SLOT_BUDGET_REJECTIONS_OFFSET +
+        index * 8U);
+  target->transform_memory_current =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_MEMORY_CURRENT_OFFSET);
+  target->transform_memory_peak =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_MEMORY_PEAK_OFFSET);
+  target->transform_memory_limit =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_MEMORY_LIMIT_OFFSET);
+  target->transform_deadline_limit_ms =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_DEADLINE_LIMIT_OFFSET);
+  target->cache_rejected_writes = laghu_load(
+      source + LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_REJECTED_WRITES_OFFSET);
+  target->variant_occupancy =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_VARIANT_OCCUPANCY_OFFSET);
+  target->variant_limit =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_VARIANT_LIMIT_OFFSET);
+  for (index = 0U; index < 6U; ++index)
+    target->lcp_decisions[index] = laghu_load(
+        source + LAGHU_WIRE_OPERATIONAL_SLOT_LCP_DECISIONS_OFFSET + index * 8U);
+  target->lcp_applied =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_LCP_APPLIED_OFFSET);
+  for (index = 0U; index < 4U; ++index) {
+    target->lcp_profile_observations[index] = laghu_load(
+        source + LAGHU_WIRE_OPERATIONAL_SLOT_LCP_OBSERVATIONS_OFFSET +
+        index * 8U);
+    target->lcp_profile_ready[index] = laghu_load(
+        source + LAGHU_WIRE_OPERATIONAL_SLOT_LCP_READY_OFFSET + index * 8U);
+  }
+  for (index = 0U; index < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++index)
+    target->latency_buckets[index] =
+        laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_BUCKETS_OFFSET +
+                   index * 8U);
+  target->latency_count =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_COUNT_OFFSET);
+  target->latency_sum_microseconds =
+      laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_SUM_OFFSET);
+}
+
+static void laghu_local_init(laghu_operational_state *state, uint64_t now) {
+  size_t index;
+  for (index = 0U; index < sizeof(state->values) / sizeof(state->values[0]);
+       ++index)
+    laghu_local_atomic_store(&state->values[index], 0U);
+  laghu_local_flag_store(&state->healthy, true);
+  laghu_local_flag_clear(&state->publishing);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET, now);
+}
+
+static bool laghu_publish_locked(laghu_operational_state *state) {
+  unsigned char *slot;
+  uint64_t sequence;
+  size_t offset;
+  if (!laghu_slot_owned_locked(state, &slot) ||
+      !laghu_slot_update_begin(slot, &sequence))
+    return false;
+  slot[LAGHU_WIRE_OPERATIONAL_SLOT_HEALTHY_OFFSET] =
+      laghu_local_flag_load(&state->healthy) ? 1U : 0U;
+  laghu_store(
+      slot + LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET,
+      laghu_local_load(state, LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET));
+  for (offset = LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_CAPACITY_OFFSET;
+       offset <= LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_SUM_OFFSET; offset += 8U)
+    laghu_store(slot + offset, laghu_local_load(state, offset));
+  laghu_slot_update_finish(slot, sequence);
+  return true;
+}
+
+static bool laghu_publish(laghu_operational_state *state) {
+  bool published = false;
+  if (state == NULL || !laghu_local_flag_try_set(&state->publishing))
+    return false;
+  if (laghu_runtime_shared_mapping_try_lock(&state->mapping)) {
+    published = laghu_publish_locked(state);
+    laghu_runtime_shared_mapping_unlock(&state->mapping);
+  }
+  laghu_local_flag_clear(&state->publishing);
+  return published;
 }
 
 static bool laghu_path(const char *cache_path, char *output, size_t capacity) {
   size_t length;
   if (cache_path == NULL || output == NULL || capacity == 0U) return false;
   length = strlen(cache_path);
-  if (length == 0U || length + sizeof(".laghu-operations-v3") > capacity)
+  if (length == 0U || length + sizeof(".laghu-operations-v4") > capacity)
     return false;
-  return snprintf(output, capacity, "%s.laghu-operations-v3", cache_path) > 0;
+  return snprintf(output, capacity, "%s.laghu-operations-v4", cache_path) > 0;
 }
 
 void laghu_operational_registry_init(laghu_operational_registry *registry) {
@@ -120,10 +419,13 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
                                      laghu_operational_surface surface,
                                      laghu_operational_process_kind kind,
                                      bool required, uint64_t now) {
-  laghu_operational_header *header;
+  laghu_operational_state *state;
   char path[LAGHU_RUNTIME_PATH_SIZE];
-  unsigned int index, lock_attempt;
-  unsigned int selected = LAGHU_OPERATIONAL_MAX_SLOTS;
+  unsigned int index, selected = LAGHU_WIRE_OPERATIONAL_SLOT_COUNT;
+  uint64_t generation;
+  const size_t size = (size_t)LAGHU_WIRE_OPERATIONAL_HEADER_SIZE +
+                      (size_t)LAGHU_WIRE_OPERATIONAL_SLOT_COUNT *
+                          LAGHU_WIRE_OPERATIONAL_SLOT_SIZE;
   if (registry == NULL || surface >= LAGHU_OPERATIONAL_SURFACE_COUNT ||
       kind >= LAGHU_OPERATIONAL_PROCESS_COUNT || now == 0U ||
       !laghu_path(cache_path, path, sizeof(path)))
@@ -131,79 +433,107 @@ bool laghu_operational_registry_open(laghu_operational_registry *registry,
   laghu_operational_registry_init(registry);
   registry->implementation = calloc(1U, sizeof(laghu_operational_state));
   if (registry->implementation == NULL) return false;
-  laghu_runtime_shared_mapping_init(
-      &LAGHU_OPERATIONAL_STATE(registry)->mapping);
-  LAGHU_OPERATIONAL_STATE(registry)->slot = LAGHU_OPERATIONAL_MAX_SLOTS;
-  if (!laghu_runtime_shared_mapping_open(
-          &LAGHU_OPERATIONAL_STATE(registry)->mapping, path,
-          sizeof(laghu_operational_header))) {
+  state = LAGHU_OPERATIONAL_STATE(registry);
+  laghu_runtime_shared_mapping_init(&state->mapping);
+  laghu_local_init(state, now);
+  state->slot = LAGHU_WIRE_OPERATIONAL_SLOT_COUNT;
+  if (!laghu_runtime_shared_mapping_open(&state->mapping, path, size) ||
+      !laghu_runtime_shared_mapping_try_lock(&state->mapping)) {
     laghu_operational_state_release(registry);
     return false;
   }
-  for (lock_attempt = 0U; lock_attempt < 64U; ++lock_attempt)
-    if (laghu_runtime_shared_mapping_try_lock(
-            &LAGHU_OPERATIONAL_STATE(registry)->mapping))
-      break;
-  if (lock_attempt == 64U) {
-    laghu_operational_state_release(registry);
-    return false;
+  state->bytes = state->mapping.mapping;
+  if (laghu_bytes_zero(state->bytes, size)) {
+    laghu_wire_u64_write(
+        state->bytes + LAGHU_WIRE_OPERATIONAL_HEADER_MAGIC_OFFSET,
+        LAGHU_WIRE_OPERATIONAL_MAGIC);
+    laghu_wire_u32_write(
+        state->bytes + LAGHU_WIRE_OPERATIONAL_HEADER_VERSION_OFFSET,
+        LAGHU_WIRE_OPERATIONAL_VERSION);
+    laghu_wire_u32_write(
+        state->bytes + LAGHU_WIRE_OPERATIONAL_HEADER_SLOT_COUNT_OFFSET,
+        LAGHU_WIRE_OPERATIONAL_SLOT_COUNT);
+    laghu_store(laghu_header_generation(state->bytes), now);
   }
-  header = LAGHU_OPERATIONAL_STATE(registry)->mapping.mapping;
-  if (header->magic == 0U) {
-    memset(header, 0, sizeof(*header));
-    header->magic = LAGHU_OPERATIONAL_MAGIC;
-    header->version = LAGHU_OPERATIONAL_VERSION;
-    header->slot_count = LAGHU_OPERATIONAL_MAX_SLOTS;
-    header->generation = now;
-  }
-  if (header->magic != LAGHU_OPERATIONAL_MAGIC ||
-      header->version != LAGHU_OPERATIONAL_VERSION ||
-      header->slot_count != LAGHU_OPERATIONAL_MAX_SLOTS) {
-    laghu_runtime_shared_mapping_unlock(
-        &LAGHU_OPERATIONAL_STATE(registry)->mapping);
-    laghu_operational_state_release(registry);
-    return false;
-  }
-  for (index = 0U; index < LAGHU_OPERATIONAL_MAX_SLOTS; ++index) {
-    uint64_t heartbeat = laghu_load(&header->slots[index].heartbeat);
-    if (laghu_load(&header->slots[index].active) == 0U || heartbeat == 0U ||
-        heartbeat > now || now - heartbeat > LAGHU_OPERATIONAL_STALE_SECONDS) {
+  if (!laghu_header_valid(state)) goto fail;
+  for (index = 0U; index < LAGHU_WIRE_OPERATIONAL_SLOT_COUNT; ++index) {
+    unsigned char *slot = laghu_slot_at(state->bytes, index);
+    uint64_t sequence =
+        laghu_load(slot + LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET);
+    uint64_t heartbeat;
+    uint32_t active;
+    if ((sequence & 1U) != 0U) continue;
+    if (!laghu_slot_values_valid(slot)) goto fail;
+    if (laghu_load(slot + LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET) !=
+        sequence)
+      continue;
+    active =
+        laghu_wire_u32_read(slot + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET);
+    heartbeat = laghu_load(slot + LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET);
+    if (active == 0U || heartbeat == 0U || heartbeat > now ||
+        now - heartbeat > LAGHU_OPERATIONAL_STALE_SECONDS) {
       selected = index;
       break;
     }
   }
-  if (selected == LAGHU_OPERATIONAL_MAX_SLOTS) {
-    laghu_runtime_shared_mapping_unlock(
-        &LAGHU_OPERATIONAL_STATE(registry)->mapping);
-    laghu_operational_state_release(registry);
-    return false;
+  if (selected == LAGHU_WIRE_OPERATIONAL_SLOT_COUNT) goto fail;
+  generation = laghu_load(laghu_header_generation(state->bytes));
+  if (generation == UINT64_MAX) goto fail;
+  ++generation;
+  {
+    unsigned char *slot = laghu_slot_at(state->bytes, selected);
+    uint64_t sequence;
+    if (!laghu_slot_update_begin(slot, &sequence)) goto fail;
+    memset(slot + 8U, 0, LAGHU_WIRE_OPERATIONAL_SLOT_SIZE - 8U);
+    laghu_store(laghu_header_generation(state->bytes), generation);
+    laghu_store(slot + LAGHU_WIRE_OPERATIONAL_SLOT_GENERATION_OFFSET,
+                generation);
+    laghu_store(slot + LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET, now);
+    laghu_wire_u32_write(slot + LAGHU_WIRE_OPERATIONAL_SLOT_SURFACE_OFFSET,
+                         (uint32_t)surface);
+    laghu_wire_u32_write(slot + LAGHU_WIRE_OPERATIONAL_SLOT_PROCESS_KIND_OFFSET,
+                         (uint32_t)kind);
+    slot[LAGHU_WIRE_OPERATIONAL_SLOT_REQUIRED_OFFSET] = required ? 1U : 0U;
+    slot[LAGHU_WIRE_OPERATIONAL_SLOT_HEALTHY_OFFSET] = 1U;
+    laghu_wire_u32_write(slot + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET, 1U);
+    laghu_slot_update_finish(slot, sequence);
   }
-  memset(&header->slots[selected], 0, sizeof(header->slots[selected]));
-  header->slots[selected].generation = ++header->generation;
-  header->slots[selected].surface = (uint64_t)surface;
-  header->slots[selected].process_kind = (uint64_t)kind;
-  header->slots[selected].required = required ? 1U : 0U;
-  header->slots[selected].healthy = 1U;
-  header->slots[selected].heartbeat = now;
-  header->slots[selected].active = 1U;
-  LAGHU_OPERATIONAL_STATE(registry)->header = header;
-  LAGHU_OPERATIONAL_STATE(registry)->slot = selected;
-  LAGHU_OPERATIONAL_STATE(registry)->generation =
-      header->slots[selected].generation;
-  (void)laghu_runtime_shared_mapping_sync(
-      &LAGHU_OPERATIONAL_STATE(registry)->mapping);
-  laghu_runtime_shared_mapping_unlock(
-      &LAGHU_OPERATIONAL_STATE(registry)->mapping);
+  state->slot = selected;
+  state->generation = generation;
+  (void)laghu_runtime_shared_mapping_sync(&state->mapping);
+  laghu_runtime_shared_mapping_unlock(&state->mapping);
   return true;
+fail:
+  laghu_runtime_shared_mapping_unlock(&state->mapping);
+  laghu_operational_state_release(registry);
+  return false;
 }
 
 void laghu_operational_registry_close(laghu_operational_registry *registry) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
-  if (slot != NULL && laghu_load(&slot->generation) ==
-                          LAGHU_OPERATIONAL_STATE(registry)->generation) {
-    laghu_store(&slot->healthy, 0U);
-    laghu_store(&slot->active, 0U);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  unsigned char *slot = laghu_slot(registry);
+  bool publishing =
+      state != NULL && laghu_local_flag_try_set(&state->publishing);
+  if (publishing && slot != NULL &&
+      laghu_runtime_shared_mapping_try_lock(&state->mapping) &&
+      laghu_header_valid(state)) {
+    uint64_t sequence;
+    if (laghu_slot_update_begin(slot, &sequence)) {
+      if (laghu_load(slot + LAGHU_WIRE_OPERATIONAL_SLOT_GENERATION_OFFSET) ==
+              state->generation &&
+          laghu_wire_u32_read(
+              slot + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET) != 0U) {
+        slot[LAGHU_WIRE_OPERATIONAL_SLOT_HEALTHY_OFFSET] = 0U;
+        laghu_wire_u32_write(slot + LAGHU_WIRE_OPERATIONAL_SLOT_ACTIVE_OFFSET,
+                             0U);
+      }
+      laghu_slot_update_finish(slot, sequence);
+      (void)laghu_runtime_shared_mapping_sync(&state->mapping);
+    }
+    laghu_runtime_shared_mapping_unlock(&state->mapping);
   }
+  if (publishing) laghu_local_flag_clear(&state->publishing);
   if (registry != NULL) {
     laghu_operational_state_release(registry);
     laghu_operational_registry_init(registry);
@@ -214,19 +544,17 @@ bool laghu_operational_registry_heartbeat(laghu_operational_registry *registry,
                                           uint64_t now, bool healthy,
                                           uint64_t queue_capacity,
                                           uint64_t queue_occupied) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
-  if (slot == NULL || now == 0U ||
-      laghu_load(&slot->generation) !=
-          LAGHU_OPERATIONAL_STATE(registry)->generation ||
-      laghu_load(&slot->active) == 0U)
-    return false;
-  laghu_store(&slot->healthy, healthy ? 1U : 0U);
-  laghu_store(&slot->queue_capacity, queue_capacity);
-  laghu_store(&slot->queue_occupied, queue_occupied > queue_capacity
-                                         ? queue_capacity
-                                         : queue_occupied);
-  laghu_store(&slot->heartbeat, now);
-  return true;
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  if (state == NULL || now == 0U) return false;
+  laghu_local_flag_store(&state->healthy, healthy);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_CAPACITY_OFFSET,
+                    queue_capacity);
+  laghu_local_store(
+      state, LAGHU_WIRE_OPERATIONAL_SLOT_QUEUE_OCCUPIED_OFFSET,
+      queue_occupied > queue_capacity ? queue_capacity : queue_occupied);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_HEARTBEAT_OFFSET, now);
+  return laghu_publish(state);
 }
 
 void laghu_operational_registry_record(laghu_operational_registry *registry,
@@ -234,118 +562,181 @@ void laghu_operational_registry_record(laghu_operational_registry *registry,
                                        size_t original_bytes,
                                        size_t selected_bytes,
                                        uint64_t elapsed_microseconds) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
   size_t index;
-  if (slot == NULL || decision >= LAGHU_OPERATIONAL_DECISION_COUNT) return;
-  laghu_add(&slot->requests, 1U);
-  laghu_add(&slot->decisions[decision], 1U);
-  laghu_add(&slot->original_bytes, (uint64_t)original_bytes);
-  laghu_add(&slot->selected_bytes, (uint64_t)selected_bytes);
+  if (state == NULL || decision >= LAGHU_OPERATIONAL_DECISION_COUNT) return;
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_REQUESTS_OFFSET, 1U);
+  laghu_local_add(
+      state, LAGHU_WIRE_OPERATIONAL_SLOT_DECISIONS_OFFSET + decision * 8U, 1U);
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_ORIGINAL_BYTES_OFFSET,
+                  (uint64_t)original_bytes);
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_SELECTED_BYTES_OFFSET,
+                  (uint64_t)selected_bytes);
   if (selected_bytes < original_bytes)
-    laghu_add(&slot->saved_bytes, (uint64_t)(original_bytes - selected_bytes));
+    laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_SAVED_BYTES_OFFSET,
+                    (uint64_t)(original_bytes - selected_bytes));
   for (index = 0U; index + 1U < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++index)
     if (elapsed_microseconds <= laghu_latency_limits[index])
-      laghu_add(&slot->latency_buckets[index], 1U);
-  laghu_add(&slot->latency_buckets[LAGHU_OPERATIONAL_LATENCY_BUCKETS - 1U], 1U);
-  laghu_add(&slot->latency_count, 1U);
-  laghu_add(&slot->latency_sum_microseconds, elapsed_microseconds);
+      laghu_local_add(
+          state,
+          LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_BUCKETS_OFFSET + index * 8U, 1U);
+  laghu_local_add(state,
+                  LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_BUCKETS_OFFSET +
+                      (LAGHU_OPERATIONAL_LATENCY_BUCKETS - 1U) * 8U,
+                  1U);
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_COUNT_OFFSET, 1U);
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_SUM_OFFSET,
+                  elapsed_microseconds);
+  (void)laghu_publish(state);
 }
 
 void laghu_operational_registry_failure(laghu_operational_registry *registry,
                                         laghu_operational_failure failure) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
-  if (slot != NULL && failure < LAGHU_OPERATIONAL_FAILURE_COUNT)
-    laghu_add(&slot->failures[failure], 1U);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  if (state != NULL && failure < LAGHU_OPERATIONAL_FAILURE_COUNT) {
+    laghu_local_add(
+        state, LAGHU_WIRE_OPERATIONAL_SLOT_FAILURES_OFFSET + failure * 8U, 1U);
+    (void)laghu_publish(state);
+  }
 }
 
 void laghu_operational_registry_worker_job(laghu_operational_registry *registry,
                                            bool success,
                                            uint64_t elapsed_microseconds,
                                            laghu_operational_failure failure) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
   size_t index;
-  if (slot == NULL) return;
+  if (state == NULL) return;
   for (index = 0U; index + 1U < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++index)
     if (elapsed_microseconds <= laghu_latency_limits[index])
-      laghu_add(&slot->latency_buckets[index], 1U);
-  laghu_add(&slot->latency_buckets[LAGHU_OPERATIONAL_LATENCY_BUCKETS - 1U], 1U);
-  laghu_add(&slot->latency_count, 1U);
-  laghu_add(&slot->latency_sum_microseconds, elapsed_microseconds);
+      laghu_local_add(
+          state,
+          LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_BUCKETS_OFFSET + index * 8U, 1U);
+  laghu_local_add(state,
+                  LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_BUCKETS_OFFSET +
+                      (LAGHU_OPERATIONAL_LATENCY_BUCKETS - 1U) * 8U,
+                  1U);
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_COUNT_OFFSET, 1U);
+  laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_LATENCY_SUM_OFFSET,
+                  elapsed_microseconds);
   if (!success && failure < LAGHU_OPERATIONAL_FAILURE_COUNT)
-    laghu_add(&slot->failures[failure], 1U);
+    laghu_local_add(
+        state, LAGHU_WIRE_OPERATIONAL_SLOT_FAILURES_OFFSET + failure * 8U, 1U);
+  (void)laghu_publish(state);
 }
 
 void laghu_operational_registry_cache(laghu_operational_registry *registry,
                                       const laghu_cache_stats *stats) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
-  if (slot == NULL || stats == NULL) return;
-  laghu_store(&slot->cache_hits, stats->hits);
-  laghu_store(&slot->cache_misses, stats->misses);
-  laghu_store(&slot->cache_publications, stats->publications);
-  laghu_store(&slot->cache_evictions, stats->evictions);
-  laghu_store(&slot->cache_bytes, stats->bytes);
-  laghu_store(&slot->cache_files, stats->files);
-  laghu_store(&slot->cache_rejected_writes, stats->rejected_publications);
-  laghu_store(&slot->variant_occupancy, stats->variant_occupancy);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  if (state == NULL || stats == NULL) return;
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_HITS_OFFSET,
+                    stats->hits);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_MISSES_OFFSET,
+                    stats->misses);
+  laghu_local_store(state,
+                    LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_PUBLICATIONS_OFFSET,
+                    stats->publications);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_EVICTIONS_OFFSET,
+                    stats->evictions);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_BYTES_OFFSET,
+                    stats->bytes);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_FILES_OFFSET,
+                    stats->files);
+  laghu_local_store(state,
+                    LAGHU_WIRE_OPERATIONAL_SLOT_CACHE_REJECTED_WRITES_OFFSET,
+                    stats->rejected_publications);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_VARIANT_OCCUPANCY_OFFSET,
+                    stats->variant_occupancy);
+  (void)laghu_publish(state);
 }
 
 void laghu_operational_registry_budget(laghu_operational_registry *registry,
                                        const laghu_transform_budget *budget,
                                        unsigned int deadline_limit_ms) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
-  if (slot == NULL || budget == NULL) return;
-  laghu_store(&slot->transform_memory_current, budget->current_memory);
-  if (budget->peak_memory > laghu_load(&slot->transform_memory_peak))
-    laghu_store(&slot->transform_memory_peak, budget->peak_memory);
-  laghu_store(&slot->transform_memory_limit, budget->memory_limit);
-  laghu_store(&slot->transform_deadline_limit_ms, deadline_limit_ms);
-  laghu_store(&slot->variant_limit, budget->variant_limit);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
+  if (state == NULL || budget == NULL) return;
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_MEMORY_CURRENT_OFFSET,
+                    budget->current_memory);
+  laghu_local_max(state, LAGHU_WIRE_OPERATIONAL_SLOT_MEMORY_PEAK_OFFSET,
+                  budget->peak_memory);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_MEMORY_LIMIT_OFFSET,
+                    budget->memory_limit);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_DEADLINE_LIMIT_OFFSET,
+                    deadline_limit_ms);
+  laghu_local_store(state, LAGHU_WIRE_OPERATIONAL_SLOT_VARIANT_LIMIT_OFFSET,
+                    budget->variant_limit);
   if (budget->rejection > LAGHU_BUDGET_REJECTION_NONE &&
       budget->rejection < LAGHU_BUDGET_REJECTION_COUNT)
-    laghu_add(&slot->budget_rejections[budget->rejection], 1U);
+    laghu_local_add(state,
+                    LAGHU_WIRE_OPERATIONAL_SLOT_BUDGET_REJECTIONS_OFFSET +
+                        budget->rejection * 8U,
+                    1U);
+  (void)laghu_publish(state);
 }
 
 void laghu_operational_registry_lcp(laghu_operational_registry *registry,
                                     laghu_lcp_decision decision, bool applied,
                                     const unsigned int observations[4],
                                     const bool ready[4]) {
-  laghu_operational_slot_snapshot *slot = laghu_slot(registry);
+  laghu_operational_state *state =
+      registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
   unsigned int bucket;
-  if (slot == NULL || decision > LAGHU_LCP_DECISION_CONFLICT) return;
-  laghu_add(&slot->lcp_decisions[decision], 1U);
-  if (applied) laghu_add(&slot->lcp_applied, 1U);
-  if (observations == NULL || ready == NULL) return;
-  for (bucket = 0U; bucket < 4U; ++bucket) {
-    laghu_store(&slot->lcp_profile_observations[bucket], observations[bucket]);
-    laghu_store(&slot->lcp_profile_ready[bucket], ready[bucket] ? 1U : 0U);
+  if (state == NULL || decision > LAGHU_LCP_DECISION_CONFLICT) return;
+  laghu_local_add(
+      state,
+      LAGHU_WIRE_OPERATIONAL_SLOT_LCP_DECISIONS_OFFSET + (size_t)decision * 8U,
+      1U);
+  if (applied)
+    laghu_local_add(state, LAGHU_WIRE_OPERATIONAL_SLOT_LCP_APPLIED_OFFSET, 1U);
+  if (observations != NULL && ready != NULL) {
+    for (bucket = 0U; bucket < 4U; ++bucket) {
+      laghu_local_store(
+          state,
+          LAGHU_WIRE_OPERATIONAL_SLOT_LCP_OBSERVATIONS_OFFSET + bucket * 8U,
+          observations[bucket]);
+      laghu_local_store(
+          state, LAGHU_WIRE_OPERATIONAL_SLOT_LCP_READY_OFFSET + bucket * 8U,
+          ready[bucket] ? 1U : 0U);
+    }
   }
+  (void)laghu_publish(state);
 }
 
 bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
                                          laghu_operational_snapshot *snapshot) {
   laghu_operational_state *state =
       registry != NULL ? LAGHU_OPERATIONAL_STATE(registry) : NULL;
-  laghu_operational_header *header = state != NULL ? state->header : NULL;
-  unsigned int slot, field;
-  if (header == NULL || snapshot == NULL ||
-      header->magic != LAGHU_OPERATIONAL_MAGIC ||
-      header->version != LAGHU_OPERATIONAL_VERSION)
+  unsigned int slot, attempt;
+  if (state == NULL || snapshot == NULL || !laghu_header_valid(state))
     return false;
   memset(snapshot, 0, sizeof(*snapshot));
-  snapshot->version = header->version;
-  snapshot->slot_count = header->slot_count;
-  snapshot->generation = laghu_load(&header->generation);
-  for (slot = 0U; slot < snapshot->slot_count; ++slot) {
-    const laghu_operational_slot_snapshot *source = &header->slots[slot];
-    laghu_operational_slot_snapshot *target = &snapshot->slots[slot];
-    const uint64_t *source_fields = (const uint64_t *)source;
-    uint64_t *target_fields = (uint64_t *)target;
-    for (field = 0U; field < sizeof(*target) / sizeof(uint64_t); ++field)
-      target_fields[field] = laghu_load(&source_fields[field]);
+  snapshot->version = LAGHU_WIRE_OPERATIONAL_VERSION;
+  snapshot->slot_count = LAGHU_WIRE_OPERATIONAL_SLOT_COUNT;
+  snapshot->generation = laghu_load(laghu_header_generation(state->bytes));
+  for (slot = 0U; slot < LAGHU_WIRE_OPERATIONAL_SLOT_COUNT; ++slot) {
+    unsigned char *source = laghu_slot_at(state->bytes, slot);
+    bool stable = false;
+    for (attempt = 0U; attempt < 3U; ++attempt) {
+      uint64_t before =
+          laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET);
+      if ((before & 1U) != 0U) continue;
+      laghu_slot_decode(source, &snapshot->slots[slot]);
+      if (!laghu_slot_values_valid(source)) continue;
+      if (laghu_load(source + LAGHU_WIRE_OPERATIONAL_SLOT_SEQUENCE_OFFSET) ==
+          before) {
+        stable = true;
+        break;
+      }
+    }
+    if (!stable) return false;
   }
   return true;
 }
-
 static bool laghu_append(char *output, size_t capacity, size_t *length,
                          const char *format, ...) {
   va_list arguments;
@@ -412,6 +803,7 @@ bool laghu_operational_render_prometheus(
     return false;
   for (index = 0U; index < snapshot->slot_count; ++index) {
     const laghu_operational_slot_snapshot *slot = &snapshot->slots[index];
+    unsigned int metric;
     bool current = slot->active != 0U && slot->heartbeat != 0U &&
                    slot->heartbeat <= now &&
                    now - slot->heartbeat <= LAGHU_OPERATIONAL_STALE_SECONDS;
@@ -437,27 +829,24 @@ bool laghu_operational_render_prometheus(
     variant_occupancy += slot->variant_occupancy;
     variant_limit += slot->variant_limit;
     lcp_applied += slot->lcp_applied;
-    for (index = 0U; index < 6U; ++index)
-      lcp_decisions[index] += slot->lcp_decisions[index];
-    for (index = 0U; index < 4U; ++index) {
-      if (slot->lcp_profile_observations[index] > lcp_observations[index])
-        lcp_observations[index] = slot->lcp_profile_observations[index];
-      if (slot->lcp_profile_ready[index] > lcp_ready[index])
-        lcp_ready[index] = slot->lcp_profile_ready[index];
+    for (metric = 0U; metric < 6U; ++metric)
+      lcp_decisions[metric] += slot->lcp_decisions[metric];
+    for (metric = 0U; metric < 4U; ++metric) {
+      if (slot->lcp_profile_observations[metric] > lcp_observations[metric])
+        lcp_observations[metric] = slot->lcp_profile_observations[metric];
+      if (slot->lcp_profile_ready[metric] > lcp_ready[metric])
+        lcp_ready[metric] = slot->lcp_profile_ready[metric];
     }
-    {
-      unsigned int metric;
-      for (metric = 0U; metric < LAGHU_OPERATIONAL_DECISION_COUNT; ++metric)
-        decisions[metric] += slot->decisions[metric];
-      for (metric = 0U; metric < LAGHU_OPERATIONAL_FAILURE_COUNT; ++metric)
-        failures[metric] += slot->failures[metric];
-      for (metric = 0U; metric < LAGHU_BUDGET_REJECTION_COUNT; ++metric)
-        budget_rejections[metric] += slot->budget_rejections[metric];
-      for (metric = 0U; metric < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++metric)
-        latency[metric] += slot->latency_buckets[metric];
-      latency_count += slot->latency_count;
-      latency_sum += slot->latency_sum_microseconds;
-    }
+    for (metric = 0U; metric < LAGHU_OPERATIONAL_DECISION_COUNT; ++metric)
+      decisions[metric] += slot->decisions[metric];
+    for (metric = 0U; metric < LAGHU_OPERATIONAL_FAILURE_COUNT; ++metric)
+      failures[metric] += slot->failures[metric];
+    for (metric = 0U; metric < LAGHU_BUDGET_REJECTION_COUNT; ++metric)
+      budget_rejections[metric] += slot->budget_rejections[metric];
+    for (metric = 0U; metric < LAGHU_OPERATIONAL_LATENCY_BUCKETS; ++metric)
+      latency[metric] += slot->latency_buckets[metric];
+    latency_count += slot->latency_count;
+    latency_sum += slot->latency_sum_microseconds;
     if (!laghu_append(output, capacity, &used,
                       "laghu_requests_total{scope=\"process\",surface=\"%s\","
                       "process_kind=\"%s\",worker_slot=\"%u\"} %" PRIu64 "\n",

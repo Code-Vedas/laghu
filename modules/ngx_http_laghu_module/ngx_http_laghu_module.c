@@ -32,23 +32,27 @@ void ngx_http_laghu_queue_cleanup(void *data) {
 
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   laghu_runtime_queue *queue = &conf->font_fetch_runtime_queue;
+  laghu_runtime_queue_snapshot snapshot;
   if (!conf->font_providers_loaded || conf->font_fetch_queue.len == 0U)
     return false;
-  if (queue->mapping == NULL &&
-      !laghu_runtime_queue_open(queue,
-                                (const char *)conf->font_fetch_queue.data))
+  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
+      (!laghu_runtime_queue_open(queue,
+                                 (const char *)conf->font_fetch_queue.data) ||
+       !laghu_runtime_queue_snapshot_get(queue, &snapshot)))
     return false;
-  return laghu_runtime_queue_refresh(queue);
+  return true;
 }
 
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   laghu_runtime_queue *queue = &conf->javascript_runtime_queue;
+  laghu_runtime_queue_snapshot snapshot;
   if (conf->javascript_queue.len == 0U) return false;
-  if (queue->mapping == NULL &&
-      !laghu_runtime_queue_open(queue,
-                                (const char *)conf->javascript_queue.data))
+  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
+      (!laghu_runtime_queue_open(queue,
+                                 (const char *)conf->javascript_queue.data) ||
+       !laghu_runtime_queue_snapshot_get(queue, &snapshot)))
     return false;
-  return laghu_runtime_queue_refresh(queue);
+  return true;
 }
 
 static ngx_command_t ngx_http_laghu_commands[] = {
@@ -83,14 +87,17 @@ ngx_module_t ngx_http_laghu_module = {NGX_MODULE_V1,
 
 bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   laghu_runtime_queue *queue = &conf->runtime_queue;
+  laghu_runtime_queue_snapshot snapshot;
   uint64_t now = (uint64_t)ngx_time();
-  if (queue->mapping == NULL &&
-      !laghu_runtime_queue_open(queue, (const char *)conf->worker_queue.data)) {
+  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
+      (!laghu_runtime_queue_open(queue,
+                                 (const char *)conf->worker_queue.data) ||
+       !laghu_runtime_queue_snapshot_get(queue, &snapshot))) {
     return false;
   }
-  return laghu_runtime_queue_refresh(queue) && queue->capabilities != 0U &&
-         queue->worker_heartbeat != 0U && queue->worker_heartbeat <= now &&
-         now - queue->worker_heartbeat <= 45U;
+  return snapshot.capabilities != 0U && snapshot.worker_heartbeat != 0U &&
+         snapshot.worker_heartbeat <= now &&
+         now - snapshot.worker_heartbeat <= 45U;
 }
 
 static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {

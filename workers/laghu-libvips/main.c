@@ -643,6 +643,7 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
   laghu_worker_lifecycle lifecycle;
   laghu_runtime_job job;
   unsigned char *payload;
+  laghu_runtime_queue_snapshot queue_snapshot;
   int status = 0;
   time_t last_diagnostic = 0;
 
@@ -658,7 +659,11 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     laghu_runtime_queue_close(&queue);
     return 1;
   }
-  payload = malloc(queue.slot_payload_size);
+  if (!laghu_runtime_queue_snapshot_get(&queue, &queue_snapshot)) {
+    laghu_runtime_queue_close(&queue);
+    return 1;
+  }
+  payload = malloc(queue_snapshot.payload_capacity);
   if (payload == NULL) {
     laghu_runtime_queue_close(&queue);
     return 1;
@@ -673,7 +678,7 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), true);
     (void)laghu_cache_backend_maintain_path(cache_path, (uint64_t)time(NULL));
     if (laghu_runtime_queue_try_take(&queue, &job, payload,
-                                     queue.slot_payload_size)) {
+                                     queue_snapshot.payload_capacity)) {
       uint64_t started = laghu_worker_lifecycle_clock();
       int job_status = laghu_libvips_run_isolated(&job, cache_path);
       if (job_status != 0) {

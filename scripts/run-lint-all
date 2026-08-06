@@ -54,6 +54,9 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/include/laghu/*.h \
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_posix.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/runtime_win32.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/queue.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/cache_artifact.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/src/persisted_state_wire.h \
     "${REPO_ROOT}"/libs/laghu-runtime/src/csp.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/budget.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/worker.c \
@@ -78,6 +81,7 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/tests/queue_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/cache_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/operational_test.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/tests/persisted_state_conformance_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/rum_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/source_asset_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/catalog_test.c \

@@ -428,22 +428,23 @@ static bool laghu_http_contract_valid(
 static uint32_t laghu_http_refresh_backend(
     laghu_http_environment *environment) {
   laghu_runtime_queue *queue;
+  laghu_runtime_queue_snapshot snapshot;
   if (environment == NULL || environment->queue == NULL) {
     return 0U;
   }
   queue = environment->queue;
-  if (queue->mapping == NULL &&
+  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot) &&
       (environment->worker_queue_path == NULL ||
-       !laghu_runtime_queue_open(queue, environment->worker_queue_path))) {
+       !laghu_runtime_queue_open(queue, environment->worker_queue_path) ||
+       !laghu_runtime_queue_snapshot_get(queue, &snapshot))) {
     return 0U;
   }
-  if (!laghu_runtime_queue_refresh(queue) || queue->capabilities == 0U ||
-      queue->worker_heartbeat == 0U || environment->now == 0U ||
-      queue->worker_heartbeat > environment->now ||
-      environment->now - queue->worker_heartbeat > 45U) {
+  if (snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U ||
+      environment->now == 0U || snapshot.worker_heartbeat > environment->now ||
+      environment->now - snapshot.worker_heartbeat > 45U) {
     return 0U;
   }
-  return queue->capabilities;
+  return snapshot.capabilities;
 }
 
 static unsigned int laghu_http_parse_uint_header(

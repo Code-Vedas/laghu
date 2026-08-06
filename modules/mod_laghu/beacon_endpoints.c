@@ -10,16 +10,16 @@ static unsigned int laghu_apache_beacon_count;
 
 static bool laghu_apache_backend_available(laghu_apache_config *config) {
   uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
-  if (config->queue.mapping == NULL &&
-      !laghu_runtime_queue_open(&config->queue, config->worker_queue != NULL
-                                                    ? config->worker_queue
-                                                    : LAGHU_DEFAULT_QUEUE))
+  laghu_runtime_queue_snapshot snapshot;
+  if (!laghu_runtime_queue_snapshot_get(&config->queue, &snapshot) &&
+      (!laghu_runtime_queue_open(&config->queue, config->worker_queue != NULL
+                                                     ? config->worker_queue
+                                                     : LAGHU_DEFAULT_QUEUE) ||
+       !laghu_runtime_queue_snapshot_get(&config->queue, &snapshot)))
     return false;
-  return laghu_runtime_queue_refresh(&config->queue) &&
-         config->queue.capabilities != 0U &&
-         config->queue.worker_heartbeat != 0U &&
-         config->queue.worker_heartbeat <= now &&
-         now - config->queue.worker_heartbeat <= 45U;
+  return snapshot.capabilities != 0U && snapshot.worker_heartbeat != 0U &&
+         snapshot.worker_heartbeat <= now &&
+         now - snapshot.worker_heartbeat <= 45U;
 }
 
 int laghu_apache_beacon_endpoint(request_rec *request,
@@ -67,6 +67,7 @@ int laghu_apache_beacon_endpoint(request_rec *request,
     long length;
     long total = 0;
     laghu_image_beacon_record beacon;
+    laghu_runtime_queue_snapshot queue_snapshot;
     laghu_policy policy;
     char policy_key[LAGHU_RUNTIME_KEY_SIZE];
     apr_time_t now = apr_time_sec(apr_time_now());
@@ -105,11 +106,12 @@ int laghu_apache_beacon_endpoint(request_rec *request,
         !laghu_resolve_config_policy(&config->core, &policy) ||
         !laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) ||
         !laghu_apache_backend_available(config) ||
+        !laghu_runtime_queue_snapshot_get(&config->queue, &queue_snapshot) ||
         !laghu_catalog_apply_beacon(
             laghu_apache_rum,
             config->image_cache != NULL ? config->image_cache
                                         : LAGHU_DEFAULT_CACHE,
-            policy_key, config->queue.capabilities, (uint64_t)now,
+            policy_key, queue_snapshot.capabilities, (uint64_t)now,
             config->core.image_metadata_ttl, &beacon)) {
       return HTTP_BAD_REQUEST;
     }

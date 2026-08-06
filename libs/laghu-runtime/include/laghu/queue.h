@@ -18,7 +18,6 @@
 extern "C" {
 #endif
 
-#define LAGHU_QUEUE_VERSION 8U
 #define LAGHU_QUEUE_DEFAULT_SLOTS 4U
 typedef enum {
   LAGHU_RUNTIME_JOB_IMAGE = 0,
@@ -55,15 +54,17 @@ typedef struct {
   laghu_buffer payload;
 } laghu_runtime_job;
 typedef struct {
-  intptr_t platform_file;
-  intptr_t platform_mapping;
-  void *mapping;
-  size_t mapping_length;
-  unsigned int slot_count;
-  size_t slot_payload_size;
   uint32_t capabilities;
   uint64_t worker_heartbeat;
   char backend_id[LAGHU_RUNTIME_BACKEND_SIZE];
+  uint64_t capacity;
+  uint64_t occupied;
+  size_t payload_capacity;
+} laghu_runtime_queue_snapshot;
+
+/* Queue storage and its native mapping are private to the runtime. */
+typedef struct {
+  void *implementation;
 } laghu_runtime_queue;
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
 bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
@@ -76,6 +77,8 @@ bool laghu_runtime_queue_set_backend(laghu_runtime_queue *queue,
                                      const char *backend_id);
 bool laghu_runtime_queue_heartbeat(laghu_runtime_queue *queue,
                                    uint64_t epoch_seconds);
+bool laghu_runtime_queue_snapshot_get(const laghu_runtime_queue *queue,
+                                      laghu_runtime_queue_snapshot *snapshot);
 bool laghu_runtime_queue_status(laghu_runtime_queue *queue, uint64_t *capacity,
                                 uint64_t *occupied);
 void laghu_runtime_queue_close(laghu_runtime_queue *queue);

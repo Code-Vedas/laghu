@@ -16,6 +16,7 @@ void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
   laghu_critical_css_beacon critical;
   laghu_instrumentation_beacon instrumentation;
   laghu_policy policy;
+  laghu_runtime_queue_snapshot queue_snapshot;
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
   unsigned char *body;
   size_t length = (size_t)request->headers_in.content_length_n;
@@ -53,14 +54,18 @@ void ngx_http_laghu_beacon_body(ngx_http_request_t *request) {
                   ngx_http_laghu_rum, (const char *)conf->image_cache.data,
                   policy_key, (uint64_t)ngx_time(),
                   conf->core.image_metadata_ttl, &critical);
-    else if (valid)
+    else if (valid) {
+      memset(&queue_snapshot, 0, sizeof(queue_snapshot));
       valid = laghu_runtime_parse_image_beacon((laghu_buffer){body, length},
                                                &beacon) &&
               ngx_http_laghu_queue_refresh(conf) &&
+              laghu_runtime_queue_snapshot_get(&conf->runtime_queue,
+                                               &queue_snapshot) &&
               laghu_catalog_apply_beacon(
                   ngx_http_laghu_rum, (const char *)conf->image_cache.data,
-                  policy_key, conf->runtime_queue.capabilities,
-                  (uint64_t)ngx_time(), conf->core.image_metadata_ttl, &beacon);
+                  policy_key, queue_snapshot.capabilities, (uint64_t)ngx_time(),
+                  conf->core.image_metadata_ttl, &beacon);
+    }
   }
   request->headers_out.status =
       valid ? NGX_HTTP_NO_CONTENT : NGX_HTTP_BAD_REQUEST;
