@@ -71,6 +71,8 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-runtime/src/css_imports.c \
     "${REPO_ROOT}"/libs/laghu-runtime/src/beacon.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/integration_test.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/tests/lcp_integration_test.c \
+    "${REPO_ROOT}"/libs/laghu-runtime/tests/operational_integration_test.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/test_fixture.c \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/test_fixture.h \
     "${REPO_ROOT}"/libs/laghu-runtime/tests/queue_test.c \
@@ -113,11 +115,17 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/modules/mod_laghu/registration.c \
     "${REPO_ROOT}"/modules/mod_laghu/filtering.c \
     "${REPO_ROOT}"/modules/mod_laghu/endpoints.c \
+    "${REPO_ROOT}"/modules/mod_laghu/admin_endpoints.c \
+    "${REPO_ROOT}"/modules/mod_laghu/beacon_endpoints.c \
+    "${REPO_ROOT}"/modules/mod_laghu/asset_endpoints.c \
     "${REPO_ROOT}"/modules/mod_laghu/configuration.c \
     "${REPO_ROOT}"/modules/mod_laghu/logging.c \
     "${REPO_ROOT}"/modules/mod_laghu/lifecycle.c \
     "${REPO_ROOT}"/modules/mod_laghu/mod_laghu_internal.h \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/ngx_http_laghu_module.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/filtering.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/transaction_adaptation.c \
+    "${REPO_ROOT}"/modules/ngx_http_laghu_module/response_adaptation.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/logging.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/lifecycle.c \
     "${REPO_ROOT}"/modules/ngx_http_laghu_module/beacon.c \

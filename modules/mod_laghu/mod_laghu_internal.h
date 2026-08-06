@@ -163,6 +163,12 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
                                              apr_bucket_brigade *brigade);
 void laghu_apache_insert_filter(request_rec *request);
 int laghu_apache_variant_handler(request_rec *request);
+int laghu_apache_admin_endpoint(request_rec *request,
+                                laghu_apache_config *config);
+int laghu_apache_beacon_endpoint(request_rec *request,
+                                 laghu_apache_config *config);
+int laghu_apache_asset_endpoint(request_rec *request,
+                                laghu_apache_config *config);
 int laghu_apache_post_config(apr_pool_t *configuration_pool,
                              apr_pool_t *log_pool, apr_pool_t *temporary_pool,
                              server_rec *server);

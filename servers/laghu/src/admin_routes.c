@@ -11,12 +11,13 @@
 #include "laghu/cache.h"
 #include "server_internal.h"
 
-#define PROXY_FAIL(status_value, reason_value, failure_value)     \
-  do {                                                            \
-    proxy_error_response(client, (status_value), (reason_value)); \
-    access.status = (status_value);                               \
-    access.failure = (failure_value);                             \
-  } while (0)
+static void proxy_admin_fail(laghu_socket client, proxy_access_log *access,
+                             unsigned int status, const char *reason,
+                             const char *failure) {
+  proxy_error_response(client, status, reason);
+  access->status = status;
+  access->failure = failure;
+}
 
 bool proxy_handle_administrative_routes(const proxy_connection *connection,
                                         proxy_worker *worker,
@@ -24,16 +25,15 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
                                         proxy_access_log *access_value) {
   const laghu_proxy_options *options = worker->queue->options;
   laghu_socket client = connection->socket;
-#define request (*request_value)
-#define access (*access_value)
   {
     bool purge_control = false;
     char purge_target[LAGHU_RUNTIME_PATH_SIZE];
-    bool normalized = laghu_cache_source_normalize(
-        request.target, purge_target, sizeof(purge_target), &purge_control);
-    bool purge_request = strcmp(request.method, "PURGE") == 0 ||
+    bool normalized =
+        laghu_cache_source_normalize(request_value->target, purge_target,
+                                     sizeof(purge_target), &purge_control);
+    bool purge_request = strcmp(request_value->method, "PURGE") == 0 ||
                          purge_control ||
-                         strstr(request.target, "laghu=purge") != NULL;
+                         strstr(request_value->target, "laghu=purge") != NULL;
     bool stats_request =
         normalized && strcmp(purge_target, "/.laghu/stats") == 0;
     bool metrics_request =
@@ -42,25 +42,26 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
         normalized && strcmp(purge_target, "/.laghu/ready") == 0;
     if ((metrics_request && !options->metrics) ||
         (readiness_request && !options->readiness)) {
-      PROXY_FAIL(404U, "Not Found", "request_limit");
+      proxy_admin_fail(client, access_value, 404U, "Not Found",
+                       "request_limit");
       return true;
     }
     if (purge_request || stats_request || metrics_request ||
         readiness_request) {
-      bool head = strcmp(request.method, "HEAD") == 0;
+      bool head = strcmp(request_value->method, "HEAD") == 0;
       bool authorized = proxy_peer_in_cidrs(connection, options->purge_allow,
                                             options->purge_allow_count) &&
-                        proxy_admin_token(options, &request);
+                        proxy_admin_token(options, request_value);
       if (!normalized) {
         proxy_send_admin_json(client, 400U, "Bad Request",
                               "{\"status\":\"malformed\"}", false);
-        access.status = 400U;
-        access.failure = "admin_malformed";
+        access_value->status = 400U;
+        access_value->failure = "admin_malformed";
       } else if (!authorized) {
         proxy_send_admin_json(client, 403U, "Forbidden",
                               "{\"status\":\"forbidden\"}", head);
-        access.status = 403U;
-        access.failure = "admin_auth";
+        access_value->status = 403U;
+        access_value->failure = "admin_auth";
       } else if (metrics_request || readiness_request) {
         (void)laghu_operational_registry_heartbeat(
             &worker->queue->operational, (uint64_t)time(NULL), true, 0U, 0U);
@@ -69,31 +70,31 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
         laghu_cache_stats stats = {0};
         size_t output_length = 0U;
         bool enabled = metrics_request ? options->metrics : options->readiness;
-        bool method = strcmp(request.method, "GET") == 0 || head;
+        bool method = strcmp(request_value->method, "GET") == 0 || head;
         if (operational == NULL) {
           proxy_send_admin_json(client, 503U, "Service Unavailable",
                                 "{\"status\":\"unavailable\"}", head);
-          access.status = 503U;
-          access.failure = "runtime";
+          access_value->status = 503U;
+          access_value->failure = "runtime";
         } else if (!enabled || !method) {
           proxy_send_admin_json(client, 405U, "Method Not Allowed",
                                 "{\"status\":\"method_not_allowed\"}", head);
-          access.status = 405U;
-          access.failure = "admin_method";
+          access_value->status = 405U;
+          access_value->failure = "admin_method";
         } else if (!laghu_operational_registry_snapshot(
                        &worker->queue->operational, &operational->snapshot)) {
           proxy_send_admin_json(client, 503U, "Service Unavailable",
                                 "{\"status\":\"unavailable\"}", head);
-          access.status = 503U;
-          access.failure = "runtime";
+          access_value->status = 503U;
+          access_value->failure = "runtime";
         } else if (metrics_request &&
                    laghu_operational_render_prometheus(
                        &operational->snapshot, (uint64_t)time(NULL),
                        operational->output, sizeof(operational->output),
                        &output_length)) {
           proxy_send_metrics(client, operational->output, output_length, head);
-          access.status = 200U;
-          access.output_bytes = head ? 0U : output_length;
+          access_value->status = 200U;
+          access_value->output_bytes = head ? 0U : output_length;
         } else if (readiness_request) {
           laghu_operational_readiness readiness;
           bool cache_ready =
@@ -109,8 +110,8 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
                   sizeof(operational->output), &output_length)) {
             proxy_send_admin_json(client, 503U, "Service Unavailable",
                                   "{\"status\":\"unavailable\"}", head);
-            access.status = 503U;
-            access.failure = "runtime";
+            access_value->status = 503U;
+            access_value->failure = "runtime";
           } else {
             unsigned int status = readiness.runtime_ready &&
                                           readiness.cache_ready &&
@@ -120,15 +121,15 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
             proxy_send_admin_json(client, status,
                                   status == 200U ? "OK" : "Service Unavailable",
                                   operational->output, head);
-            access.status = status;
-            access.output_bytes = head ? 0U : output_length;
-            access.failure = status == 200U ? "none" : "readiness";
+            access_value->status = status;
+            access_value->output_bytes = head ? 0U : output_length;
+            access_value->failure = status == 200U ? "none" : "readiness";
           }
         } else {
           proxy_send_admin_json(client, 503U, "Service Unavailable",
                                 "{\"status\":\"unavailable\"}", head);
-          access.status = 503U;
-          access.failure = "runtime";
+          access_value->status = 503U;
+          access_value->failure = "runtime";
         }
         free(operational);
       } else if (stats_request) {
@@ -136,17 +137,17 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
         char json[1536];
         uint64_t requests;
         if (!options->statistics ||
-            (strcmp(request.method, "GET") != 0 && !head)) {
+            (strcmp(request_value->method, "GET") != 0 && !head)) {
           proxy_send_admin_json(client, 405U, "Method Not Allowed",
                                 "{\"status\":\"method_not_allowed\"}", head);
-          access.status = 405U;
-          access.failure = "admin_method";
+          access_value->status = 405U;
+          access_value->failure = "admin_method";
         } else if (!laghu_cache_backend_health_path(options->cache_path,
                                                     &stats)) {
           proxy_send_admin_json(client, 503U, "Service Unavailable",
                                 "{\"status\":\"unavailable\"}", head);
-          access.status = 503U;
-          access.failure = "cache";
+          access_value->status = 503U;
+          access_value->failure = "cache";
         } else {
           requests = stats.hits + stats.misses;
           (void)snprintf(
@@ -184,18 +185,18 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
               stats.rebuilding ? "true" : "false",
               (unsigned long long)stats.last_cleanup);
           proxy_send_admin_json(client, 200U, "OK", json, head);
-          access.status = 200U;
-          access.output_bytes = head ? 0U : strlen(json);
+          access_value->status = 200U;
+          access_value->output_bytes = head ? 0U : strlen(json);
         }
-      } else if ((strcmp(request.method, "PURGE") == 0 &&
+      } else if ((strcmp(request_value->method, "PURGE") == 0 &&
                   !options->purge_method) ||
                  (purge_control && !options->purge_query) ||
-                 (strcmp(request.method, "PURGE") != 0 &&
-                  strcmp(request.method, "GET") != 0)) {
+                 (strcmp(request_value->method, "PURGE") != 0 &&
+                  strcmp(request_value->method, "GET") != 0)) {
         proxy_send_admin_json(client, 405U, "Method Not Allowed",
                               "{\"status\":\"method_not_allowed\"}", false);
-        access.status = 405U;
-        access.failure = "admin_method";
+        access_value->status = 405U;
+        access_value->failure = "admin_method";
       } else {
         uint64_t matched = 0U;
         laghu_cache_purge_result purged = laghu_cache_backend_purge_url_path(
@@ -216,16 +217,12 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
                        status == 202U ? "accepted" : "rejected",
                        (unsigned long long)matched);
         proxy_send_admin_json(client, status, reason, json, false);
-        access.status = status;
-        access.failure = status == 202U ? "none" : "cache";
-        access.output_bytes = strlen(json);
+        access_value->status = status;
+        access_value->failure = status == 202U ? "none" : "cache";
+        access_value->output_bytes = strlen(json);
       }
       return true;
     }
   }
   return false;
-#undef access
-#undef request
 }
-
-#undef PROXY_FAIL

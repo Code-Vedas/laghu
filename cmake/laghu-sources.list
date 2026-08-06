@@ -42,11 +42,17 @@ nginx|ngx_http_laghu_module.c|modules/ngx_http_laghu_module/ngx_http_laghu_modul
 nginx|laghu_nginx_logging.c|modules/ngx_http_laghu_module/logging.c
 nginx|laghu_nginx_lifecycle.c|modules/ngx_http_laghu_module/lifecycle.c
 nginx|laghu_nginx_beacon.c|modules/ngx_http_laghu_module/beacon.c
+nginx|laghu_nginx_filtering.c|modules/ngx_http_laghu_module/filtering.c
+nginx|laghu_nginx_transaction_adaptation.c|modules/ngx_http_laghu_module/transaction_adaptation.c
+nginx|laghu_nginx_response_adaptation.c|modules/ngx_http_laghu_module/response_adaptation.c
 nginx|laghu_nginx_configuration.c|modules/ngx_http_laghu_module/configuration.c
 nginx|laghu_nginx_endpoints.c|modules/ngx_http_laghu_module/endpoints.c
 apache|mod_laghu.c|modules/mod_laghu/registration.c
 apache|laghu_apache_filtering.c|modules/mod_laghu/filtering.c
 apache|laghu_apache_endpoints.c|modules/mod_laghu/endpoints.c
+apache|laghu_apache_admin_endpoints.c|modules/mod_laghu/admin_endpoints.c
+apache|laghu_apache_beacon_endpoints.c|modules/mod_laghu/beacon_endpoints.c
+apache|laghu_apache_asset_endpoints.c|modules/mod_laghu/asset_endpoints.c
 apache|laghu_apache_logging.c|modules/mod_laghu/logging.c
 apache|laghu_apache_lifecycle.c|modules/mod_laghu/lifecycle.c
 apache|laghu_apache_configuration.c|modules/mod_laghu/configuration.c
