@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define LAGHU_NORMALIZED_URL_SIZE 4096U
@@ -726,7 +727,20 @@ bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
     }
   if (group == NULL) {
     if (policy->group_count >= LAGHU_DOMAIN_POLICY_MAX_GROUPS) return false;
+    if (policy->group_count == policy->group_capacity) {
+      unsigned int capacity = policy->group_capacity == 0U
+                                  ? 1U
+                                  : policy->group_capacity * 2U;
+      laghu_domain_shard_group *grown;
+      if (capacity > LAGHU_DOMAIN_POLICY_MAX_GROUPS)
+        capacity = LAGHU_DOMAIN_POLICY_MAX_GROUPS;
+      grown = realloc(policy->groups, capacity * sizeof(*grown));
+      if (grown == NULL) return false;
+      policy->groups = grown;
+      policy->group_capacity = capacity;
+    }
     group = &policy->groups[policy->group_count++];
+    memset(group, 0, sizeof(*group));
     (void)snprintf(group->public_origin, sizeof(group->public_origin), "%s",
                    public_origin);
   }
@@ -743,7 +757,9 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
   if (policy == NULL ||
       policy->domain_count > LAGHU_DOMAIN_POLICY_MAX_DOMAINS ||
       policy->mapping_count > LAGHU_DOMAIN_POLICY_MAX_MAPPINGS ||
-      policy->group_count > LAGHU_DOMAIN_POLICY_MAX_GROUPS)
+      policy->group_count > LAGHU_DOMAIN_POLICY_MAX_GROUPS ||
+      policy->group_capacity > LAGHU_DOMAIN_POLICY_MAX_GROUPS ||
+      (policy->group_count != 0U && policy->groups == NULL))
     return false;
   for (index = 0U; index < policy->domain_count; ++index)
     if (!laghu_domain_origin_valid(policy->domains[index]) ||

@@ -153,8 +153,9 @@ typedef struct {
   unsigned int domain_count;
   laghu_domain_mapping mappings[LAGHU_DOMAIN_POLICY_MAX_MAPPINGS];
   unsigned int mapping_count;
-  laghu_domain_shard_group groups[LAGHU_DOMAIN_POLICY_MAX_GROUPS];
+  laghu_domain_shard_group *groups;
   unsigned int group_count;
+  unsigned int group_capacity;
 } laghu_domain_policy;
 
 typedef struct {
