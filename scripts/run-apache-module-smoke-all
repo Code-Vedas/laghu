@@ -91,7 +91,7 @@ printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="i
   >"${work}/htdocs/missing-head-page.html"
 printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><audio src="/asset.mp3?q=1#hero"></audio><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
   >"${work}/htdocs/minify-page.html"
-printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
+printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"><link rel="preconnect" href="https://reserved.example.test"></head><body><script src="https://cdn.example.test/app.js?token=secret#part"></script></body></html>' \
   >"${work}/htdocs/hints-page.html"
 printf '%s\n' 'function publicName(longLocal) { return longLocal + 1; }' \
   >"${work}/htdocs/app.js"
@@ -152,6 +152,7 @@ load_first_mpm() {
   load_if_present authz_core mod_authz_core.so
   load_if_present mime mod_mime.so
   load_if_present log_config mod_log_config.so
+  load_if_present headers mod_headers.so
   load_if_present proxy mod_proxy.so
   load_if_present proxy_http mod_proxy_http.so
   load_if_present http2 mod_http2.so
@@ -187,7 +188,7 @@ load_first_mpm() {
   printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
   printf '<Location "/minify-page.html">\nLaghu RewriteLevel bandwidth\n</Location>\n'
-  printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\n</Location>\n'
+  printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\nHeader always add Link "<https://origin.example.test>; rel=preload"\n</Location>\n'
   printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-external.html">\nLaghu RewriteLevel all\n</Location>\n'
@@ -594,8 +595,11 @@ grep -i '^ETag: "laghu-html-' "${work}/minify-page-warm.headers" >/dev/null
 curl --fail --silent --dump-header "${work}/hints-page-cold.headers" \
   http://127.0.0.1:18081/hints-page.html >"${work}/hints-page-cold"
 cmp "${work}/htdocs/hints-page.html" "${work}/hints-page-cold"
-if grep -iE '^(Content-Language|Link):' \
-  "${work}/hints-page-cold.headers" >/dev/null; then
+grep -i '^Link: <https://origin.example.test>; rel=preload' \
+  "${work}/hints-page-cold.headers" >/dev/null
+if grep -i '<https://cdn.example.test>; rel=' \
+  "${work}/hints-page-cold.headers" >/dev/null ||
+    grep -i '^Content-Language:' "${work}/hints-page-cold.headers" >/dev/null; then
   echo "Apache emitted Laghu discovery headers on the cold response." >&2
   exit 1
 fi
@@ -606,8 +610,17 @@ if grep -i 'http-equiv' "${work}/hints-page-warm" >/dev/null; then
   exit 1
 fi
 grep -i '^Content-Language: en-CA' "${work}/hints-page-warm.headers" >/dev/null
+grep -F 'reserved.example.test' "${work}/hints-page-warm" >/dev/null
+grep -i '^Link: <https://origin.example.test>; rel=preload' \
+  "${work}/hints-page-warm.headers" >/dev/null
+grep -i '^Link: <https://cdn.example.test>; rel=preconnect' \
+  "${work}/hints-page-warm.headers" >/dev/null
 grep -i '^Link: <https://cdn.example.test>; rel=dns-prefetch' \
   "${work}/hints-page-warm.headers" >/dev/null
+if grep -i 'token=secret\|#part' "${work}/hints-page-warm.headers" >/dev/null; then
+  echo "Apache leaked a resource URL suffix into a hint header." >&2
+  exit 1
+fi
 grep -i '^ETag: "laghu-html-' "${work}/hints-page-warm.headers" >/dev/null
 
 curl --fail --silent http://127.0.0.1:18081/missing-head-page.html \

@@ -498,6 +498,10 @@ finished:
 
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result) {
   if (result != NULL) {
+    unsigned int index;
+    for (index = 0U; index < result->link_header_count; ++index) {
+      free(result->link_headers[index]);
+    }
     free(result->data);
     memset(result, 0, sizeof(*result));
   }

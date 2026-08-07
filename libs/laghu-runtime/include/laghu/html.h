@@ -24,8 +24,9 @@ extern "C" {
 #define LAGHU_HTML_MAX_TOKENS 4096U
 #define LAGHU_HTML_MAX_HEADS 16U
 #define LAGHU_HTML_MAX_PRELOADS 4U
+#define LAGHU_HTML_MAX_PRECONNECT 4U
 #define LAGHU_HTML_MAX_DNS_PREFETCH 8U
-#define LAGHU_HTML_MAX_LINK_HEADERS 12U
+#define LAGHU_HTML_MAX_LINK_HEADERS 16U
 #define LAGHU_HTML_HEADER_VALUE_SIZE 1152U
 #define LAGHU_HTML_LANGUAGE_SIZE 128U
 typedef uint32_t laghu_html_planner_mask;
@@ -50,7 +51,7 @@ typedef struct {
   size_t length;
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
   char content_language[LAGHU_HTML_LANGUAGE_SIZE];
-  char link_headers[LAGHU_HTML_MAX_LINK_HEADERS][LAGHU_HTML_HEADER_VALUE_SIZE];
+  char *link_headers[LAGHU_HTML_MAX_LINK_HEADERS];
   unsigned int link_header_count;
   bool set_content_language;
   bool invalid;

@@ -298,10 +298,13 @@ static void test_image_markup_and_headers(laghu_rum_engine *rum,
         NULL, NULL, 2048U, 8192U, false, &hints));
     assert(hints.rewritten && hints.set_content_language);
     assert(strcmp(hints.content_language, "en-CA") == 0);
-    assert(hints.link_header_count == 3U);
+    assert(hints.link_header_count == 4U);
     assert(strstr(hints.link_headers[0], "/.laghu/css/") != NULL);
     assert(strstr(hints.link_headers[1], "/.laghu/image/") != NULL);
-    assert(strstr(hints.link_headers[2], "https://cdn.example.test") != NULL);
+    assert(strcmp(hints.link_headers[2],
+                  "<https://cdn.example.test>; rel=preconnect") == 0);
+    assert(strcmp(hints.link_headers[3],
+                  "<https://cdn.example.test>; rel=dns-prefetch") == 0);
     assert(strstr((const char *)hints.data, "Content-Language") == NULL);
     laghu_runtime_html_result_release(&hints);
     assert(laghu_runtime_finalize_html_headers(
@@ -335,6 +338,50 @@ static void test_image_markup_and_headers(laghu_rum_engine *rum,
           NULL, "malformed", 2048U, 8192U, true, &hints));
       assert(hints.rewritten && hints.set_content_language &&
              hints.link_header_count == 0U);
+      laghu_runtime_html_result_release(&hints);
+    }
+    {
+      static const unsigned char bounded[] =
+          "<html><head><link rel=preconnect "
+          "href=https://reserved.example.test></head><body>"
+          "<script src=https://cdn-1.example.test/a.js?token=secret#part>"
+          "</script><script src=https://CDN-1.example.test:443/repeat.js>"
+          "</script><script src=https://example.test/same.js></script>"
+          "<script src=https://user:pass@credentials.example.test/a.js>"
+          "</script><script src=https://cdn-2.example.test/a.js></script>"
+          "<script src=https://cdn-3.example.test/a.js></script>"
+          "<script src=https://cdn-4.example.test/a.js></script>"
+          "<script src=https://cdn-5.example.test/a.js></script>"
+          "<script src=https://cdn-6.example.test/a.js></script>"
+          "<script src=https://cdn-7.example.test/a.js></script>"
+          "<script src=https://cdn-8.example.test/a.js></script>"
+          "<script src=https://cdn-9.example.test/a.js></script></body></html>";
+      assert(laghu_runtime_finalize_html_headers(
+          temporary, (laghu_buffer){bounded, sizeof(bounded) - 1U},
+          "/index.html", "https://example.test", policy_key, 0x55aaU, 2001U,
+          604800U, LAGHU_HTML_PLAN_RESOURCE_HINTS, NULL, NULL, 2048U, 8192U,
+          true, &hints));
+      assert(!hints.invalid && !hints.rewritten &&
+             hints.link_header_count == 12U);
+      assert(hints.length == sizeof(bounded) - 1U &&
+             memcmp(hints.data, bounded, sizeof(bounded) - 1U) == 0);
+      assert(strcmp(hints.link_headers[0],
+                    "<https://cdn-1.example.test>; rel=preconnect") == 0);
+      assert(strcmp(hints.link_headers[1],
+                    "<https://cdn-1.example.test>; rel=dns-prefetch") == 0);
+      assert(strcmp(hints.link_headers[6],
+                    "<https://cdn-4.example.test>; rel=preconnect") == 0);
+      assert(strcmp(hints.link_headers[7],
+                    "<https://cdn-4.example.test>; rel=dns-prefetch") == 0);
+      assert(strcmp(hints.link_headers[8],
+                    "<https://cdn-5.example.test>; rel=dns-prefetch") == 0);
+      assert(strcmp(hints.link_headers[11],
+                    "<https://cdn-8.example.test>; rel=dns-prefetch") == 0);
+      assert(strstr(hints.link_headers[0], "token") == NULL &&
+             strstr(hints.link_headers[0], "?") == NULL &&
+             strstr(hints.link_headers[0], "#") == NULL &&
+             strstr(hints.link_headers[0], "credentials") == NULL &&
+             strstr(hints.link_headers[0], "example.test/same") == NULL);
       laghu_runtime_html_result_release(&hints);
     }
   }

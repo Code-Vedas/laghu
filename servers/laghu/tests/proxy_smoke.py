@@ -64,6 +64,14 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 b'height="240"></body></html>'
             )
             content_type = "text/html"
+        elif self.path == "/hints.html":
+            body = (
+                b'<html><head><link rel="preconnect" '
+                b'href="https://reserved.example.test"></head><body>'
+                b'<script src="https://cdn.example.test/app.js?token=secret#part">'
+                b"</script></body></html>"
+            )
+            content_type = "text/html"
         elif self.path == "/site.css":
             body = b"body { color: red; }"
             content_type = "text/css"
@@ -174,6 +182,8 @@ class Origin(http.server.BaseHTTPRequestHandler):
             "ETag", '"trim-v1"' if self.path == "/trim-urls.html" else '"origin-v1"'
         )
         self.send_header("Connection", "close")
+        if self.path == "/hints.html":
+            self.send_header("Link", "<https://origin.example.test>; rel=preload")
         if self.path == "/private":
             self.send_header("Cache-Control", "private")
         if self.path == "/encoded":
@@ -973,6 +983,27 @@ def main():
             assert b'fetchpriority="high"' in lcp_body
             assert b'</image.png>; rel=preload; as=image' in lcp_head
             assert b'/logo.png>; rel=preload' not in lcp_head
+            hints_head, hints_cold = request(proxy_port, "/hints.html")
+            assert b'<https://origin.example.test>; rel=preload' in hints_head
+            assert b'<https://cdn.example.test>; rel=' not in hints_head
+            assert b'token=secret' in hints_cold
+            for _ in range(warm_attempts):
+                hints_head, hints_warm = request(proxy_port, "/hints.html")
+                if (
+                    b'<https://cdn.example.test>; rel=preconnect' in hints_head
+                    and b'<https://cdn.example.test>; rel=dns-prefetch' in hints_head
+                ):
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("standalone resource hints did not become warm")
+            assert b"reserved.example.test" in hints_cold
+            assert b"reserved.example.test" in hints_warm
+            assert b"token=secret" in hints_warm
+            assert b'<https://origin.example.test>; rel=preload' in hints_head
+            assert b'token=secret' not in hints_head
+            assert b'#part' not in hints_head
+            assert b'etag: "laghu-html-' in hints_head
             for _ in range(warm_attempts):
                 trim_head, trim_body = request(proxy_port, "/trim-urls.html")
                 if (

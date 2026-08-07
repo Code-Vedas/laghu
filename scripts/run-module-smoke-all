@@ -92,7 +92,7 @@ printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="i
   >"${SMOKE_DIR}/html/missing-head-page.html"
 printf '%s\n' "<html><body><!-- remove --><p class=\"safe\" title=\"two words\">one   two</p><audio src=\"http://127.0.0.1:${PORT}/asset.mp3?q=1#hero\"></audio><script type=\"text/javascript\"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>" \
   >"${SMOKE_DIR}/html/minify-page.html"
-printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"></head><body><script src="https://cdn.example.test/app.js"></script></body></html>' \
+printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"><link rel="preconnect" href="https://reserved.example.test"></head><body><script src="https://cdn.example.test/app.js?token=secret#part"></script></body></html>' \
   >"${SMOKE_DIR}/html/hints-page.html"
 printf '%s\n' 'function publicName(longLocal) { return longLocal + 1; }' \
   >"${SMOKE_DIR}/html/app.js"
@@ -314,6 +314,7 @@ http {
     location = /hints-page.html {
       laghu rewrite_level core;
       default_type text/html;
+      add_header Link '<https://origin.example.test>; rel=preload' always;
       try_files /hints-page.html =404;
     }
 
@@ -1181,8 +1182,11 @@ curl --fail --silent --dump-header "${SMOKE_DIR}/hints-page-cold.headers" \
   --output "${SMOKE_DIR}/hints-page-cold" \
   "http://127.0.0.1:${PORT}/hints-page.html"
 cmp "${SMOKE_DIR}/html/hints-page.html" "${SMOKE_DIR}/hints-page-cold"
-if grep -iE '^(Content-Language|Link):' \
-  "${SMOKE_DIR}/hints-page-cold.headers" >/dev/null; then
+grep -i '^Link: <https://origin.example.test>; rel=preload' \
+  "${SMOKE_DIR}/hints-page-cold.headers" >/dev/null
+if grep -i '<https://cdn.example.test>; rel=' \
+  "${SMOKE_DIR}/hints-page-cold.headers" >/dev/null ||
+    grep -i '^Content-Language:' "${SMOKE_DIR}/hints-page-cold.headers" >/dev/null; then
   echo "NGINX emitted Laghu discovery headers on the cold response." >&2
   exit 1
 fi
@@ -1195,8 +1199,17 @@ if grep -i 'http-equiv' "${SMOKE_DIR}/hints-page-warm" >/dev/null; then
 fi
 grep -i '^Content-Language: en-CA' \
   "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
+grep -F 'reserved.example.test' "${SMOKE_DIR}/hints-page-warm" >/dev/null
+grep -i '^Link: <https://origin.example.test>; rel=preload' \
+  "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
+grep -i '^Link: <https://cdn.example.test>; rel=preconnect' \
+  "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
 grep -i '^Link: <https://cdn.example.test>; rel=dns-prefetch' \
   "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
+if grep -i 'token=secret\|#part' "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null; then
+  echo "NGINX leaked a resource URL suffix into a hint header." >&2
+  exit 1
+fi
 grep -i '^ETag: "laghu-html-' "${SMOKE_DIR}/hints-page-warm.headers" >/dev/null
 
 curl --fail --silent --output "${SMOKE_DIR}/missing-head-cold" \

@@ -564,6 +564,77 @@ static void test_html_cold_warm_headers(void) {
   CHECK(saw_language);
 }
 
+static void test_html_preconnect_headers(void) {
+  const laghu_http_header headers[] = {
+      {VIEW("Content-Type"), VIEW("text/html")},
+      {VIEW("Link"), VIEW("<https://origin.example.test>; rel=preload")}};
+  static const unsigned char html[] =
+      "<html><head><link rel=preconnect "
+      "href=https://reserved.example.test></head><body>"
+      "<script src=https://cdn.example.test/app.js?token=secret#part>"
+      "</script></body></html>";
+  laghu_http_environment environment = test_environment(test_cache_path, NULL);
+  char warm_etag[LAGHU_HTTP_MAX_HEADER_VALUE + 1U] = "";
+  unsigned int pass;
+  environment.config.disabled_filters =
+      LAGHU_FILTER_ALL_MASK & ~LAGHU_FILTER_RESOURCE_HINTS;
+  for (pass = 0U; pass < 3U; ++pass) {
+    laghu_http_request request = test_request(NULL, 0U, VIEW("/hints.html"));
+    laghu_http_response response =
+        test_response(headers, 2U, sizeof(html) - 1U);
+    laghu_http_transaction transaction;
+    laghu_http_transaction_result finalized;
+    size_t index;
+    unsigned int preconnect = 0U;
+    unsigned int dns = 0U;
+    const char *etag = NULL;
+    laghu_http_transaction_init(&transaction);
+    CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                         &environment, &finalized));
+    laghu_http_transaction_result_release(&finalized);
+    CHECK(laghu_http_transaction_finalize(
+        &transaction, (laghu_buffer){html, sizeof(html) - 1U}, &finalized));
+    CHECK(finalized.selected.data == html &&
+          finalized.selected.length == sizeof(html) - 1U);
+    for (index = 0U; index < finalized.header_operation_count; ++index) {
+      const laghu_http_header_operation *operation =
+          &finalized.header_operations[index];
+      if (operation->kind == LAGHU_HTTP_HEADER_APPEND &&
+          strcmp(operation->name, "Link") == 0) {
+        if (strcmp(operation->value,
+                   "<https://cdn.example.test>; rel=preconnect") == 0) {
+          ++preconnect;
+        }
+        if (strcmp(operation->value,
+                   "<https://cdn.example.test>; rel=dns-prefetch") == 0) {
+          ++dns;
+        }
+        CHECK(strstr(operation->value, "token") == NULL &&
+              strstr(operation->value, "?") == NULL &&
+              strstr(operation->value, "#") == NULL);
+      }
+      if (operation->kind == LAGHU_HTTP_HEADER_SET &&
+          strcmp(operation->name, "ETag") == 0) {
+        etag = operation->value;
+      }
+    }
+    if (pass == 0U) {
+      CHECK(preconnect == 0U && dns == 0U && etag == NULL);
+    } else {
+      CHECK(preconnect == 1U);
+      CHECK(dns == 1U);
+      CHECK(etag != NULL);
+      if (pass == 1U) {
+        CHECK(strlen(etag) < sizeof(warm_etag));
+        memcpy(warm_etag, etag, strlen(etag) + 1U);
+      } else {
+        CHECK(strcmp(warm_etag, etag) == 0);
+      }
+    }
+    laghu_http_transaction_result_release(&finalized);
+  }
+}
+
 static void test_validator_hints_and_worker_liveness(void) {
   const laghu_http_header request_headers[] = {
       {VIEW("Viewport-Width"), VIEW("640")}, {VIEW("DPR"), VIEW("2.5")}};
@@ -878,6 +949,7 @@ int main(void) {
   test_css_cold_warm();
   test_javascript_cold_publication();
   test_html_cold_warm_headers();
+  test_html_preconnect_headers();
   test_validator_hints_and_worker_liveness();
   test_mime_driven_opaque_resource_cache();
   test_request_policy_enforcement();

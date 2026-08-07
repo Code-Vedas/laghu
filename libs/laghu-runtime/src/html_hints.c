@@ -272,14 +272,19 @@ static bool laghu_hint_origin(const unsigned char *url, size_t length,
   return true;
 }
 
-static bool laghu_hint_seen(const laghu_runtime_html_result *result,
-                            const char *existing, const char *target) {
+static bool laghu_hint_existing_seen(const char *existing, const char *target) {
+  return existing != NULL && strstr(existing, target) != NULL;
+}
+
+static bool laghu_hint_added(const laghu_runtime_html_result *result,
+                             const char *target, const char *relation) {
   unsigned int index;
-  if (existing != NULL && strstr(existing, target) != NULL) {
-    return true;
-  }
   for (index = 0U; index < result->link_header_count; ++index) {
-    if (strstr(result->link_headers[index], target) != NULL) {
+    char expected[LAGHU_HTML_HEADER_VALUE_SIZE];
+    int length =
+        snprintf(expected, sizeof(expected), "<%s>; %s", target, relation);
+    if (length > 0 && (size_t)length < sizeof(expected) &&
+        strcmp(result->link_headers[index], expected) == 0) {
       return true;
     }
   }
@@ -390,17 +395,54 @@ static void laghu_hint_existing_markup(laghu_buffer html, char *output,
 static bool laghu_hint_add(laghu_runtime_html_result *result,
                            const char *existing, const char *target,
                            const char *relation) {
+  char value[LAGHU_HTML_HEADER_VALUE_SIZE];
+  char *owned;
   int length;
   if (result->link_header_count == LAGHU_HTML_MAX_LINK_HEADERS ||
-      laghu_hint_seen(result, existing, target)) {
+      laghu_hint_existing_seen(existing, target) ||
+      laghu_hint_added(result, target, relation)) {
     return true;
   }
-  length = snprintf(result->link_headers[result->link_header_count],
-                    LAGHU_HTML_HEADER_VALUE_SIZE, "<%s>; %s", target, relation);
+  length = snprintf(value, sizeof(value), "<%s>; %s", target, relation);
   if (length <= 0 || (size_t)length >= LAGHU_HTML_HEADER_VALUE_SIZE) {
     return false;
   }
+  owned = malloc((size_t)length + 1U);
+  if (owned == NULL) {
+    return false;
+  }
+  memcpy(owned, value, (size_t)length + 1U);
+  result->link_headers[result->link_header_count] = owned;
   ++result->link_header_count;
+  return true;
+}
+
+static bool laghu_hint_add_third_party(laghu_runtime_html_result *result,
+                                       const char *existing, const char *target,
+                                       unsigned int *preconnect_count,
+                                       unsigned int *dns_count) {
+  unsigned int before;
+  if (laghu_hint_existing_seen(existing, target)) {
+    return true;
+  }
+  if (*preconnect_count < LAGHU_HTML_MAX_PRECONNECT) {
+    before = result->link_header_count;
+    if (!laghu_hint_add(result, existing, target, "rel=preconnect")) {
+      return false;
+    }
+    if (result->link_header_count != before) {
+      ++*preconnect_count;
+    }
+  }
+  if (*dns_count < LAGHU_HTML_MAX_DNS_PREFETCH) {
+    before = result->link_header_count;
+    if (!laghu_hint_add(result, existing, target, "rel=dns-prefetch")) {
+      return false;
+    }
+    if (result->link_header_count != before) {
+      ++*dns_count;
+    }
+  }
   return true;
 }
 
@@ -441,6 +483,7 @@ bool laghu_runtime_finalize_html_headers(
   unsigned int tokens = 0U;
   unsigned int head_depth = 0U;
   unsigned int preload_count = 0U;
+  unsigned int preconnect_count = 0U;
   unsigned int dns_count = 0U;
   unsigned int image_index = 0U;
   bool changed = false;
@@ -615,18 +658,20 @@ bool laghu_runtime_finalize_html_headers(
           invalid = true;
           break;
         }
-        if (matches == 1U && dns_count < LAGHU_HTML_MAX_DNS_PREFETCH &&
-            laghu_hint_origin(url, url_length, page_origin, origin) &&
-            !laghu_hint_seen(result, existing_link_headers, origin)) {
-          if (!laghu_hint_add(result, existing_link_headers, origin,
-                              "rel=dns-prefetch")) {
+        if (matches == 1U &&
+            (preconnect_count < LAGHU_HTML_MAX_PRECONNECT ||
+             dns_count < LAGHU_HTML_MAX_DNS_PREFETCH) &&
+            laghu_hint_origin(url, url_length, page_origin, origin)) {
+          if (!laghu_hint_add_third_party(result, existing_link_headers, origin,
+                                          &preconnect_count, &dns_count)) {
             invalid = true;
             break;
           }
-          ++dns_count;
         }
       }
-      if (resource_tag && dns_count < LAGHU_HTML_MAX_DNS_PREFETCH &&
+      if (resource_tag &&
+          (preconnect_count < LAGHU_HTML_MAX_PRECONNECT ||
+           dns_count < LAGHU_HTML_MAX_DNS_PREFETCH) &&
           (laghu_hint_equal(name, name_length, "img") ||
            laghu_hint_equal(name, name_length, "source"))) {
         const unsigned char *srcset;
@@ -659,14 +704,13 @@ bool laghu_runtime_finalize_html_headers(
             }
             if (url_end > url_start &&
                 laghu_hint_origin(srcset + url_start, url_end - url_start,
-                                  page_origin, origin) &&
-                !laghu_hint_seen(result, existing_link_headers, origin)) {
-              if (!laghu_hint_add(result, existing_link_headers, origin,
-                                  "rel=dns-prefetch")) {
+                                  page_origin, origin)) {
+              if (!laghu_hint_add_third_party(result, existing_link_headers,
+                                              origin, &preconnect_count,
+                                              &dns_count)) {
                 invalid = true;
                 break;
               }
-              ++dns_count;
             }
           }
         }
@@ -783,7 +827,7 @@ bool laghu_runtime_finalize_html_headers(
   }
   if (invalid || head_depth != 0U) {
     free(builder.data);
-    memset(result, 0, sizeof(*result));
+    laghu_runtime_html_result_release(result);
     result->invalid = true;
     return true;
   }
@@ -805,6 +849,7 @@ bool laghu_runtime_finalize_html_headers(
     int written;
     if (!laghu_sha256_hex(html, source_hash)) {
       free(builder.data);
+      laghu_runtime_html_result_release(result);
       return false;
     }
     written = snprintf(
@@ -815,6 +860,7 @@ bool laghu_runtime_finalize_html_headers(
         existing_link_headers == NULL ? "" : existing_link_headers);
     if (written <= 0 || (size_t)written >= sizeof(material)) {
       free(builder.data);
+      laghu_runtime_html_result_release(result);
       return false;
     }
     material_length = (size_t)written;
@@ -822,6 +868,7 @@ bool laghu_runtime_finalize_html_headers(
       size_t length = strlen(result->link_headers[index]);
       if (length + 1U > sizeof(material) - material_length) {
         free(builder.data);
+        laghu_runtime_html_result_release(result);
         return false;
       }
       memcpy(material + material_length, result->link_headers[index], length);
@@ -832,6 +879,7 @@ bool laghu_runtime_finalize_html_headers(
             (laghu_buffer){(const unsigned char *)material, material_length},
             result->dependency_key)) {
       free(builder.data);
+      laghu_runtime_html_result_release(result);
       return false;
     }
     if (!already_warm && !laghu_runtime_cache_lookup_variant(
@@ -841,13 +889,11 @@ bool laghu_runtime_finalize_html_headers(
               source_hash, "text/html", "laghu-html-hints-v1",
               (laghu_buffer){builder.data, builder.length}, &entry)) {
         free(builder.data);
+        laghu_runtime_html_result_release(result);
         return false;
       }
       free(builder.data);
-      memset(result->content_language, 0, sizeof(result->content_language));
-      memset(result->link_headers, 0, sizeof(result->link_headers));
-      result->link_header_count = 0U;
-      result->set_content_language = false;
+      laghu_runtime_html_result_release(result);
       result->dependencies_pending = true;
       return true;
     }
