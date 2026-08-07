@@ -30,6 +30,10 @@ laghu \
   --worker-queue /run/laghu/jobs.queue \
   --font-fetch-queue /run/laghu/fonts.queue \
   --font-provider-config /etc/laghu/font-providers.conf \
+  --html-refresh-queue /run/laghu/html-refresh-application.queue \
+  --html-cache-origin https://origin.example.com \
+  --html-cache-ttl 30 \
+  --html-cache-stale-ttl 300 \
   --javascript-queue /run/laghu/javascript.queue \
   --javascript-target "defaults and supports es6-module and not dead" \
   --javascript-observation-config /etc/laghu/javascript-observation.conf \
@@ -64,7 +68,16 @@ The default fail-open mode restores the local snapshot, keeps request decisions 
 
 ## Service Lifecycle
 
-Run `laghu-libvips`, `laghu-resource-fetch`, and `laghu-js-optimize` as independently supervised services.
+Run `laghu-libvips`, `laghu-resource-fetch`, `laghu-js-optimize`, and (when HTML micro-caching is configured) `laghu-html-refresh` as independently supervised services. The refresh worker must use the exact same queue, cache directory, and HTTPS origin as the server:
+
+```bash
+laghu-html-refresh --init /run/laghu/html-refresh-application.queue \
+  /var/cache/laghu/images https://origin.example.com
+laghu-html-refresh --serve /run/laghu/html-refresh-application.queue \
+  /var/cache/laghu/images https://origin.example.com
+```
+
+`laghu-html-refresh` is Unix/Linux-packaged only; Windows service support is not provided or validated.
 Configure graceful termination to allow at least the selected drain timeout and expose readiness only after listener, origin trust, cache, and required dependencies validate.
 
 ## Validation

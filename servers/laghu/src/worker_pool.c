@@ -64,6 +64,11 @@ laghu_runtime_queue *proxy_runtime_queue(proxy_worker *worker) {
                                      &worker->queue->runtime_queue_ready);
 }
 
+laghu_runtime_queue *proxy_html_refresh_queue(proxy_worker *worker) {
+  return proxy_worker_queue_if_ready(worker, &worker->queue->html_refresh_queue,
+                                     &worker->queue->html_refresh_queue_ready);
+}
+
 laghu_runtime_queue *proxy_font_fetch_queue(proxy_worker *worker) {
   return proxy_worker_queue_if_ready(worker, &worker->queue->font_fetch_queue,
                                      &worker->queue->font_fetch_queue_ready);

@@ -1,0 +1,29 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+[Unit]
+Description=Laghu HTML cache refresh worker (%i)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/laghu/html-refresh/%i.conf
+
+[Service]
+Type=simple
+User=laghu
+Group=laghu
+EnvironmentFile=/etc/laghu/html-refresh/%i.conf
+ExecStartPre=/usr/bin/laghu-html-refresh --init ${LAGHU_HTML_REFRESH_QUEUE} ${LAGHU_HTML_REFRESH_CACHE} ${LAGHU_HTML_REFRESH_ORIGIN}
+ExecStart=/usr/bin/laghu-html-refresh --serve ${LAGHU_HTML_REFRESH_QUEUE} ${LAGHU_HTML_REFRESH_CACHE} ${LAGHU_HTML_REFRESH_ORIGIN}
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/run/laghu /var/cache/laghu/images
+
+[Install]
+WantedBy=multi-user.target

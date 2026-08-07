@@ -1,0 +1,11 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# One systemd instance owns one administrator-configured HTTPS origin and its
+# matching adapter queue. Copy to /etc/laghu/html-refresh/NAME.conf, replace
+# the placeholder, then enable laghu-html-refresh@NAME.
+LAGHU_HTML_REFRESH_QUEUE=/run/laghu/html-refresh-www.queue
+LAGHU_HTML_REFRESH_CACHE=/var/cache/laghu/images
+LAGHU_HTML_REFRESH_ORIGIN=https://origin.example.com

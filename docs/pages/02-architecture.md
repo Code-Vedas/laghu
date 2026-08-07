@@ -68,6 +68,7 @@ flowchart TB
   subgraph async[Asynchronous execution]
     vips[laghu-libvips<br/>image codecs and sprites]
     fetch[laghu-resource-fetch<br/>verified provider HTTPS]
+    refresh[laghu-html-refresh<br/>HTTPS HTML revalidation]
     swc[laghu-js-optimize<br/>pinned SWC transforms]
   end
 
@@ -82,6 +83,8 @@ flowchart TB
   runtime --> image
   runtime -. image queue .-> vips
   runtime -. font queue .-> fetch
+  runtime -. HTML refresh queue .-> refresh
+  refresh --> origin
   runtime -. JavaScript queue .-> swc
 ```
 
@@ -171,7 +174,7 @@ A background thread restores state, rotates bounded deltas, performs backend I/O
 
 - Native modules execute with their web-server process privileges and therefore treat all response parsing as privileged input handling.
 - Codec and SWC workers accept bounded versioned jobs and publish only validated content-addressed output.
-- `laghu-resource-fetch` contacts configured font providers, while `laghu-asset-upload` contacts the configured S3-compatible endpoint. Both require verified HTTPS and administrator-owned allowlists; neither exposes credentials to request workers.
+- `laghu-resource-fetch` contacts configured font providers, `laghu-html-refresh` contacts one explicitly configured public HTTPS origin per queue, and `laghu-asset-upload` contacts the configured S3-compatible endpoint. They require verified HTTPS and administrator-owned configuration; neither lets a request select a network target or exposes credentials to request workers.
 - The standalone server verifies origin and downstream TLS according to administrator-owned trust configuration.
 - Beacon endpoints require same-origin bounded JSON and store opaque aggregates rather than raw browser reports.
 - Laghu never changes an application's CSP headers, generates a nonce, or adds an unsafe source. Existing nonces are compared through fixed-size hashes and preserved only on the element being transformed; raw nonce values never enter shared state, cache keys, metrics, or diagnostics.

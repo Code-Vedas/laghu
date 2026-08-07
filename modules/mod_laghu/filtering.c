@@ -28,6 +28,7 @@
 #include "laghu/core.h"
 #include "laghu/css.h"
 #include "laghu/fonts.h"
+#include "laghu/html_cache.h"
 #include "laghu/http.h"
 #include "laghu/image.h"
 #include "laghu/instrumentation.h"
@@ -52,6 +53,101 @@
 #define LAGHU_ADMIN_SET_READINESS_POLICY (1U << 7U)
 
 #include "mod_laghu_internal.h"
+
+static bool laghu_apache_html_cache_token_equal(const unsigned char *value,
+                                                size_t length,
+                                                const char *expected) {
+  return strlen(expected) == length &&
+         ap_cstr_casecmpn((const char *)value, expected, length) == 0;
+}
+
+static bool laghu_apache_html_cache_control_prohibits(laghu_buffer value) {
+  size_t cursor = 0U;
+  while (cursor < value.length) {
+    size_t end = cursor;
+    size_t token_start;
+    size_t token_end;
+    while (end < value.length && value.data[end] != ',') ++end;
+    token_start = cursor;
+    while (token_start < end &&
+           (value.data[token_start] == ' ' || value.data[token_start] == '\t'))
+      ++token_start;
+    token_end = token_start;
+    while (token_end < end && value.data[token_end] != '=') ++token_end;
+    while (token_end > token_start && (value.data[token_end - 1U] == ' ' ||
+                                       value.data[token_end - 1U] == '\t'))
+      --token_end;
+    if (laghu_apache_html_cache_token_equal(
+            value.data + token_start, token_end - token_start, "private") ||
+        laghu_apache_html_cache_token_equal(
+            value.data + token_start, token_end - token_start, "no-store") ||
+        laghu_apache_html_cache_token_equal(
+            value.data + token_start, token_end - token_start, "no-cache"))
+      return true;
+    cursor = end + 1U;
+  }
+  return false;
+}
+
+static bool laghu_apache_html_cache_response_safe(
+    const laghu_apache_context *context) {
+  size_t index;
+  bool html = false;
+  if (context == NULL || context->response.status != HTTP_OK ||
+      context->request.method.length != 3U ||
+      memcmp(context->request.method.data, "GET", 3U) != 0)
+    return false;
+  for (index = 0U; index < context->request.header_count; ++index)
+    if ((context->request.headers[index].name.length == 6U &&
+         ap_cstr_casecmpn(
+             (const char *)context->request.headers[index].name.data, "Cookie",
+             6U) == 0) ||
+        (context->request.headers[index].name.length == 13U &&
+         ap_cstr_casecmpn(
+             (const char *)context->request.headers[index].name.data,
+             "Authorization", 13U) == 0))
+      return false;
+  for (index = 0U; index < context->response.header_count; ++index) {
+    const laghu_http_header *header = &context->response.headers[index];
+    if ((header->name.length == 10U &&
+         ap_cstr_casecmpn((const char *)header->name.data, "Set-Cookie", 10U) ==
+             0) ||
+        (header->name.length == 4U &&
+         ap_cstr_casecmpn((const char *)header->name.data, "Vary", 4U) == 0) ||
+        (header->name.length == 16U &&
+         ap_cstr_casecmpn((const char *)header->name.data, "Content-Encoding",
+                          16U) == 0))
+      return false;
+    if (header->name.length == 13U &&
+        ap_cstr_casecmpn((const char *)header->name.data, "Cache-Control",
+                         13U) == 0 &&
+        laghu_apache_html_cache_control_prohibits(header->value))
+      return false;
+    if (header->name.length == 12U &&
+        ap_cstr_casecmpn((const char *)header->name.data, "Content-Type",
+                         12U) == 0 &&
+        header->value.length >= 9U &&
+        ap_cstr_casecmpn((const char *)header->value.data, "text/html", 9U) ==
+            0)
+      html = true;
+  }
+  return html;
+}
+
+static void laghu_apache_publish_html_cache(laghu_apache_context *context) {
+  const laghu_apache_config *config;
+  if (context == NULL || (config = context->config) == NULL ||
+      config->core.html_cache_origin[0] == '\0' ||
+      config->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
+      !laghu_apache_html_cache_response_safe(context))
+    return;
+  (void)laghu_html_cache_publish(
+      config->service.image_cache, config->core.html_cache_origin,
+      (const char *)context->request.normalized_path.data,
+      (const char *)context->response.source_validator.data,
+      (laghu_buffer){context->capture, context->capture_length},
+      (uint64_t)apr_time_sec(apr_time_now()), NULL);
+}
 
 bool laghu_apache_peer_matches(request_rec *request,
                                const laghu_service_cidr *cidrs, size_t count) {
@@ -199,6 +295,7 @@ void laghu_apache_send_early_hints(
   apr_table_t *headers;
   apr_table_t *original;
   int status;
+  const char *status_line;
   size_t index;
   if (request == NULL || result == NULL ||
       request->proto_num < HTTP_VERSION(1, 1))
@@ -213,11 +310,14 @@ void laghu_apache_send_early_hints(
   }
   if (apr_is_empty_table(headers)) return;
   status = request->status;
+  status_line = request->status_line;
   original = request->headers_out;
   request->headers_out = headers;
   request->status = HTTP_EARLY_HINTS;
+  request->status_line = "103 Early Hints";
   ap_send_interim_response(request, 1);
   request->status = status;
+  request->status_line = status_line;
   request->headers_out = original;
 }
 
@@ -303,6 +403,19 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
       return ap_pass_brigade(filter->next, brigade);
     }
     if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
+      prepared.not_modified =
+          laghu_http_request_matches_result_etag(&context->request, &prepared);
+      if (prepared.not_modified) {
+        request->status = HTTP_NOT_MODIFIED;
+        apr_table_unset(request->headers_out, "Content-Length");
+        laghu_apache_log_transaction(request, context, &prepared, "none");
+        laghu_http_transaction_result_release(&prepared);
+        ap_remove_output_filter(filter);
+        apr_brigade_cleanup(brigade);
+        APR_BRIGADE_INSERT_TAIL(
+            brigade, apr_bucket_eos_create(request->connection->bucket_alloc));
+        return ap_pass_brigade(filter->next, brigade);
+      }
       context->selected_body = apr_pmemdup(
           request->pool, prepared.selected.data, prepared.selected.length);
       context->selected_length = prepared.selected.length;
@@ -377,6 +490,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
   }
   if (eos && context->capture_enabled) {
     laghu_http_transaction_result result;
+    laghu_apache_publish_html_cache(context);
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
@@ -394,10 +508,23 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
       apr_bucket_brigade *replacement;
       unsigned char *selected = apr_pmemdup(request->pool, result.selected.data,
                                             result.selected.length);
-      laghu_apache_send_early_hints(request, &result);
-      if (selected == NULL || !laghu_apache_apply_result(request, &result)) {
+      result.not_modified =
+          laghu_http_request_matches_result_etag(&context->request, &result);
+      if (!result.not_modified) laghu_apache_send_early_hints(request, &result);
+      if ((!result.not_modified && selected == NULL) ||
+          !laghu_apache_apply_result(request, &result)) {
         laghu_http_transaction_result_release(&result);
         ap_remove_output_filter(filter);
+        return ap_pass_brigade(filter->next, brigade);
+      }
+      if (result.not_modified) {
+        request->status = HTTP_NOT_MODIFIED;
+        apr_table_unset(request->headers_out, "Content-Length");
+        laghu_http_transaction_result_release(&result);
+        apr_brigade_cleanup(brigade);
+        ap_remove_output_filter(filter);
+        APR_BRIGADE_INSERT_TAIL(
+            brigade, apr_bucket_eos_create(request->connection->bucket_alloc));
         return ap_pass_brigade(filter->next, brigade);
       }
       context->selected_length = result.selected.length;

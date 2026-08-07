@@ -16,6 +16,7 @@ class NgxLaghu < Formula
   url "https://github.com/Code-Vedas/laghu.git", tag: "v0.1.0"
   license "MIT"
 
+  depends_on "laghu-html-refresh"
   depends_on "laghu-js-optimize"
   depends_on "laghu-libvips"
   depends_on "laghu-resource-fetch"

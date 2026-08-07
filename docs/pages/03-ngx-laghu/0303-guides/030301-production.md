@@ -8,7 +8,7 @@ permalink: /ngx-laghu/guides/production/
 
 # ngx-laghu Production Configuration
 
-This example enables the balanced policy, every asynchronous worker, persistent immutable storage, RUM instrumentation, and a durable remote Redis/Valkey backend over verified TLS.
+This example enables the balanced policy, workers, persistent immutable storage, HTML stale-while-revalidate, RUM instrumentation, and a durable remote Redis/Valkey backend over verified TLS.
 Replace paths and endpoints with values managed by your deployment system.
 
 ## Filesystem and Services
@@ -17,8 +17,18 @@ The NGINX worker account needs read/write access to the immutable cache and read
 The `laghu` service account owns the queue and cache directories.
 
 ```bash
-systemctl enable --now laghu-libvips laghu-resource-fetch laghu-js-optimize
-systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize
+install -d -o root -g laghu -m 0750 /etc/laghu/html-refresh
+cat >/etc/laghu/html-refresh/www.conf <<'EOF'
+LAGHU_HTML_REFRESH_QUEUE=/run/laghu/html-refresh-www.queue
+LAGHU_HTML_REFRESH_CACHE=/var/cache/laghu/images
+LAGHU_HTML_REFRESH_ORIGIN=https://origin.example.com
+EOF
+chown root:laghu /etc/laghu/html-refresh/www.conf
+chmod 0640 /etc/laghu/html-refresh/www.conf
+systemctl enable --now laghu-libvips laghu-resource-fetch laghu-js-optimize \
+  laghu-html-refresh@www
+systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize \
+  laghu-html-refresh@www
 ```
 
 Persist `/var/cache/laghu/images` and `/var/lib/laghu/rum` across host or container replacement.
@@ -53,6 +63,7 @@ http {
   laghu javascript_target "defaults and supports es6-module and not dead";
   laghu javascript_observation_config /etc/laghu/javascript-observation.conf;
   laghu file_cache_backend file:///var/cache/laghu/images;
+  laghu html_refresh_queue /run/laghu/html-refresh-www.queue;
 
   server {
     listen 443 ssl http2;
@@ -72,6 +83,11 @@ http {
     laghu css_outline_threshold 8192;
     laghu javascript_inline_limit 2048;
     laghu javascript_outline_threshold 8192;
+    # Same values as /etc/laghu/html-refresh/www.conf. TTL is 1..3600 seconds;
+    # the stale interval is 0..86400 seconds.
+    laghu html_cache_origin https://origin.example.com;
+    laghu html_cache_ttl 30;
+    laghu html_cache_stale_ttl 300;
 
     # Opt-in learning. Sampling occurs in the browser.
     laghu image_beacon on;
@@ -108,3 +124,5 @@ curl -sS -H "X-Laghu-Purge-Token: $LAGHU_OPERATIONS_TOKEN" https://www.example.c
 
 Begin with one canary server or location, compare cold and warm responses, inspect `X-Laghu`, validators, cache metrics, worker health, and Core Web Vitals, then expand the rollout.
 If a dependency fails, keep serving traffic and diagnose the affected optimization rather than disabling the entire server.
+
+The refresh worker is optional and Unix/Linux-packaged only. For each additional origin, create a distinct queue, `/etc/laghu/html-refresh/NAME.conf`, and `laghu-html-refresh@NAME` service; do not share a queue across origins.

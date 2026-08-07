@@ -54,6 +54,7 @@ static void test_descriptor_matrix(void) {
       {LAGHU_SERVICE_SETTING_FILE_CACHE_CLEAN_INTERVAL, "1s"},
       {LAGHU_SERVICE_SETTING_FILE_CACHE_METADATA_SIZE, "16k"},
       {LAGHU_SERVICE_SETTING_WORKER_QUEUE, "/tmp/jobs.queue"},
+      {LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE, "/tmp/html-refresh.queue"},
       {LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE, "/tmp/fonts.queue"},
       {LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG, "/tmp/fonts.conf"},
       {LAGHU_SERVICE_SETTING_JAVASCRIPT_QUEUE, "/tmp/javascript.queue"},
@@ -117,6 +118,9 @@ static void test_apply_and_merge(void) {
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_METRICS,
                                     "on", &diagnostic));
   assert(laghu_service_config_apply(
+      &parent, LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
+      "/tmp/parent-html-refresh.queue", &diagnostic));
+  assert(laghu_service_config_apply(
       &parent, LAGHU_SERVICE_SETTING_LOAD_FROM_FILE, "mapped", &diagnostic));
   assert(laghu_service_config_apply_pair(
       &parent, LAGHU_SERVICE_SETTING_FILE_SOURCE_MAP, "https://assets.example/",
@@ -125,10 +129,15 @@ static void test_apply_and_merge(void) {
       &child, LAGHU_SERVICE_SETTING_FILE_CACHE_SIZE, "4m", &diagnostic));
   assert(laghu_service_config_apply(
       &child, LAGHU_SERVICE_SETTING_READINESS_POLICY, "strict", &diagnostic));
+  assert(laghu_service_config_apply(
+      &child, LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
+      "/tmp/child-html-refresh.queue", &diagnostic));
   assert(laghu_service_config_merge(&merged, &parent, &child, &diagnostic));
   assert(merged.cache_limits.size_limit == 4U * 1024U * 1024U);
   assert(merged.metrics);
   assert(merged.readiness_strict);
+  assert(strcmp(merged.html_refresh_queue, "/tmp/child-html-refresh.queue") ==
+         0);
   assert(merged.source_policy.mapping_count == 1U);
   assert(laghu_service_config_apply(&child, LAGHU_SERVICE_SETTING_METRICS,
                                     "off", &diagnostic));

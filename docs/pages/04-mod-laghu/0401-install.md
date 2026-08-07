@@ -21,7 +21,7 @@ sudo apt install mod-laghu laghu-libvips
 sudo dnf install mod-laghu laghu-libvips
 ```
 
-Packages install and load the matched module, leave optimization disabled, and install workers, provider files, services, and runtime directories.
+Packages install and load the matched module, leave optimization disabled, and install workers, provider files, services, and runtime directories. The per-origin HTML refresh worker is packaged but remains inactive until an operator configures an instance.
 
 Validate after installation:
 
@@ -38,7 +38,7 @@ On RPM-family systems use the server-provided `httpd -t` command instead of `apa
 brew install Code-Vedas/tap/mod-laghu
 ```
 
-The formula builds with the supported Homebrew `apxs`, installs a disabled include, starts workers, and validates HTTP Server configuration.
+The formula builds with the supported Homebrew `apxs`, installs a disabled include, starts default workers, and validates HTTP Server configuration. The per-origin HTML refresh worker is configured and supervised separately.
 
 ## Container
 
@@ -46,6 +46,8 @@ The formula builds with the supported Homebrew `apxs`, installs a disabled inclu
 docker pull ghcr.io/code-vedas/mod-laghu:latest
 docker run --rm ghcr.io/code-vedas/mod-laghu:latest apache2ctl configtest
 ```
+
+Set `LAGHU_HTML_CACHE_ORIGIN` and `LAGHU_HTML_REFRESH_QUEUE` only with matching Apache HTML-cache directives to start the optional refresh worker.
 
 ## Source Build
 

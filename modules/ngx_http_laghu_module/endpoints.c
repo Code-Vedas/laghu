@@ -5,12 +5,134 @@
 
 #include <ngx_config.h>
 
+#include "laghu/html_cache.h"
 #include "ngx_http_laghu_internal.h"
+
+static void ngx_http_laghu_enqueue_html_refresh(
+    ngx_http_laghu_loc_conf_t *conf, const ngx_str_t *path,
+    const laghu_html_cache_record *record) {
+  laghu_runtime_queue *queue;
+  laghu_runtime_job job = {0};
+  unsigned int index, candidate = 0U;
+  ngx_atomic_t now;
+  if (conf == NULL || path == NULL || record == NULL ||
+      path->len >= sizeof(job.request_path) ||
+      !laghu_html_cache_key(conf->core.html_cache_origin,
+                            (const char *)path->data, job.index_key)) {
+    return;
+  }
+  queue = ngx_http_laghu_html_refresh_queue(conf);
+  if (queue == NULL) return;
+  job.kind = LAGHU_RUNTIME_JOB_HTML_REFRESH;
+  ngx_memcpy(job.request_path, path->data, path->len);
+  ngx_memcpy(job.policy_key, job.index_key, sizeof(job.policy_key));
+  ngx_cpystrn((u_char *)job.validator, (u_char *)record->entry.validator,
+              sizeof(job.validator));
+  now = (ngx_atomic_t)ngx_time();
+  if (!ngx_atomic_cmp_set(&conf->html_refresh_dedup_lock, 0U, 1U)) return;
+  for (index = 0U; index < LAGHU_NGINX_HTML_REFRESH_DEDUP; ++index) {
+    if (conf->html_refresh_until[index] > now &&
+        memcmp(conf->html_refresh_keys[index], job.index_key,
+               sizeof(job.index_key)) == 0) {
+      (void)ngx_atomic_cmp_set(&conf->html_refresh_dedup_lock, 1U, 0U);
+      return;
+    }
+    if (conf->html_refresh_until[index] < conf->html_refresh_until[candidate])
+      candidate = index;
+  }
+  if (laghu_runtime_queue_try_publish(queue, &job)) {
+    ngx_memcpy(conf->html_refresh_keys[candidate], job.index_key,
+               sizeof(job.index_key));
+    conf->html_refresh_until[candidate] = now + 1U;
+  }
+  (void)ngx_atomic_cmp_set(&conf->html_refresh_dedup_lock, 1U, 0U);
+}
+
+static ngx_int_t ngx_http_laghu_html_cache_handler(
+    ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf) {
+  laghu_html_cache_record record;
+  ngx_str_t path;
+  unsigned char *body;
+  u_char *content_type;
+  ngx_buf_t *buffer;
+  ngx_chain_t output;
+  ngx_int_t status;
+  size_t content_type_length;
+  if (request == NULL || conf == NULL || conf->core.mode != LAGHU_MODE_ON ||
+      request->method != NGX_HTTP_GET ||
+      conf->core.html_cache_origin[0] == '\0' ||
+      conf->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
+      request->headers_in.authorization != NULL ||
+#if (nginx_version >= 1023000)
+      request->headers_in.cookie != NULL ||
+#else
+      request->headers_in.cookies.nelts != 0U ||
+#endif
+      (request->uri.len >= sizeof("/.laghu/") - 1U &&
+       ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) ==
+           0)) {
+    return NGX_DECLINED;
+  }
+  path.len = request->uri.len +
+             (request->args.len == 0U ? 0U : 1U + request->args.len);
+  if (path.len == 0U || request->uri.data[0] != '/' ||
+      (path.data = ngx_pnalloc(request->pool, path.len + 1U)) == NULL) {
+    return NGX_DECLINED;
+  }
+  ngx_memcpy(path.data, request->uri.data, request->uri.len);
+  if (request->args.len != 0U) {
+    path.data[request->uri.len] = '?';
+    ngx_memcpy(path.data + request->uri.len + 1U, request->args.data,
+               request->args.len);
+  }
+  path.data[path.len] = '\0';
+  if (!laghu_html_cache_lookup(conf->service.image_cache,
+                               conf->core.html_cache_origin,
+                               (const char *)path.data, (uint64_t)ngx_time(),
+                               conf->core.html_cache_ttl,
+                               conf->core.html_cache_stale_ttl, &record) ||
+      record.state == LAGHU_HTML_CACHE_MISS || record.entry.length == 0U ||
+      record.entry.content_type[0] == '\0') {
+    return NGX_DECLINED;
+  }
+  if (record.state == LAGHU_HTML_CACHE_STALE)
+    ngx_http_laghu_enqueue_html_refresh(conf, &path, &record);
+  content_type_length = ngx_strlen(record.entry.content_type);
+  if (content_type_length >= sizeof(record.entry.content_type) ||
+      (body = ngx_pnalloc(request->pool, record.entry.length)) == NULL ||
+      (content_type = ngx_pnalloc(request->pool, content_type_length + 1U)) ==
+          NULL ||
+      (buffer = ngx_calloc_buf(request->pool)) == NULL ||
+      !laghu_runtime_cache_read(&record.entry, body, record.entry.length)) {
+    return NGX_DECLINED;
+  }
+  ngx_memcpy(content_type, record.entry.content_type, content_type_length);
+  content_type[content_type_length] = '\0';
+  request->headers_out.status = NGX_HTTP_OK;
+  request->headers_out.content_type =
+      (ngx_str_t){content_type_length, content_type};
+  request->headers_out.content_length_n = (off_t)record.entry.length;
+  buffer->pos = body;
+  buffer->last = body + record.entry.length;
+  buffer->memory = 1U;
+  buffer->last_buf = request == request->main;
+  buffer->last_in_chain = 1U;
+  output.buf = buffer;
+  output.next = NULL;
+  status = ngx_http_send_header(request);
+  if (status == NGX_ERROR || status > NGX_OK || request->header_only) {
+    return status;
+  }
+  return ngx_http_output_filter(request, &output);
+}
 
 ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   ngx_http_laghu_loc_conf_t *conf =
       ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
-  ngx_int_t status = ngx_http_laghu_admin_endpoint(request, conf);
+  ngx_int_t status = ngx_http_laghu_html_cache_handler(request, conf);
+
+  if (status != NGX_DECLINED) return status;
+  status = ngx_http_laghu_admin_endpoint(request, conf);
 
   if (status != NGX_DECLINED) return status;
   status = ngx_http_laghu_beacon_endpoint(request, conf);

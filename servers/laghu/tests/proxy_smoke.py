@@ -219,22 +219,26 @@ class QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
         pass
 
 
-def one_shot_tcp_server(payload=None, hold=0):
+def one_shot_tcp_server(payload=None, hold=0, connections=1):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
-    listener.listen(1)
+    listener.listen(connections)
     port = listener.getsockname()[1]
 
     def serve():
-        connection, _ = listener.accept()
+        accepted = []
         try:
-            if payload is not None:
-                connection.sendall(payload)
+            for _ in range(connections):
+                connection, _ = listener.accept()
+                accepted.append(connection)
+                if payload is not None:
+                    connection.sendall(payload)
             if hold:
                 time.sleep(hold)
         finally:
-            connection.close()
+            for connection in accepted:
+                connection.close()
             listener.close()
 
     threading.Thread(target=serve, daemon=True).start()
@@ -384,7 +388,7 @@ def status_smoke(executable, root):
 
     result = run(free_port(), "--json")
     assert result.returncode == 4
-    timeout_port = one_shot_tcp_server(hold=2)
+    timeout_port = one_shot_tcp_server(hold=2, connections=2)
     result = run(timeout_port, "--timeout", "1", "--json")
     assert result.returncode == 4
     token.chmod(0o644)
@@ -1352,7 +1356,21 @@ def main():
             assert saturated.startswith(b"http/1.1 503 "), saturated
             active.close()
             queued.close()
-            time.sleep(2.2)
+            for _ in range(warm_attempts):
+                try:
+                    recovered_head, recovered_body = request(
+                        proxy_port, "/api/data", timeout=0.25
+                    )
+                    if (
+                        recovered_body == b'{"ok":true}'
+                        and b"x-laghu: bypass-api" in recovered_head
+                    ):
+                        break
+                except (AssertionError, OSError):
+                    pass
+                time.sleep(0.05)
+            else:
+                raise AssertionError("proxy did not recover from saturation")
             duplicate_host = raw_request(
                 proxy_port,
                 b"GET / HTTP/1.1\r\nHost: one\r\nHost: two\r\n\r\n",
@@ -1371,7 +1389,21 @@ def main():
             abandoned = socket.create_connection(("127.0.0.1", proxy_port), timeout=5)
             abandoned.sendall(b"GET /index.html HTTP/1.1\r\nHost:")
             abandoned.close()
-            recovered_head, recovered_body = request(proxy_port, "/api/data")
+            for _ in range(warm_attempts):
+                try:
+                    recovered_head, recovered_body = request(
+                        proxy_port, "/api/data", timeout=0.25
+                    )
+                    if (
+                        recovered_body == b'{"ok":true}'
+                        and b"x-laghu: bypass-api" in recovered_head
+                    ):
+                        break
+                except (AssertionError, OSError):
+                    pass
+                time.sleep(0.05)
+            else:
+                raise AssertionError("proxy did not recover after abandoned client")
             assert recovered_body == b'{"ok":true}'
             assert b"x-laghu: bypass-api" in recovered_head
             missing_head, _ = request(proxy_port, "/.laghu/image/not-a-hash")

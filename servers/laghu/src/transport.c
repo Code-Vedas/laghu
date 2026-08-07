@@ -113,8 +113,14 @@ bool proxy_send_headers(laghu_socket client, const proxy_response *origin,
                         size_t content_length, bool has_content_length) {
   char line[16384];
   size_t index;
-  int count = snprintf(line, sizeof(line), "HTTP/1.1 %u %s\r\n", origin->status,
-                       origin->reason[0] ? origin->reason : "OK");
+  unsigned int status =
+      result != NULL && result->not_modified ? 304U : origin->status;
+  const char *reason = result != NULL && result->not_modified
+                           ? "Not Modified"
+                           : (origin->reason[0] ? origin->reason : "OK");
+  int count =
+      snprintf(line, sizeof(line), "HTTP/1.1 %u %s\r\n", status, reason);
+  if (result != NULL && result->not_modified) has_content_length = false;
   if (count <= 0 || !proxy_send_all(client, line, (size_t)count)) return false;
   for (index = 0U; index < origin->header_count; ++index) {
     if (proxy_hop(origin->headers[index].name) ||
@@ -179,6 +185,7 @@ bool proxy_send_early_hints(laghu_socket client, const char *request_version,
 bool proxy_send_result(laghu_socket client, const proxy_response *origin,
                        const laghu_http_transaction_result *result,
                        laghu_buffer body) {
+  if (result != NULL && result->not_modified) body.length = 0U;
   return proxy_send_headers(client, origin, result, body.length, true) &&
          (body.length == 0U || proxy_send_all(client, body.data, body.length));
 }

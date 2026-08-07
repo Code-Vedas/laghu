@@ -49,6 +49,10 @@ static const laghu_service_descriptor_entry laghu_service_descriptors[] = {
       LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"workerqueue", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE, "html_refresh_queue",
+      LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"htmlrefreshqueue", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE, "font_fetch_queue",
       LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
@@ -556,6 +560,11 @@ bool laghu_service_config_apply(laghu_service_config *config,
                               sizeof(config->worker_queue), value))
         goto format;
       break;
+    case LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE:
+      if (!laghu_service_copy(config->html_refresh_queue,
+                              sizeof(config->html_refresh_queue), value))
+        goto format;
+      break;
     case LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE:
       if (!laghu_service_copy(config->font_fetch_queue,
                               sizeof(config->font_fetch_queue), value))
@@ -815,6 +824,8 @@ bool laghu_service_config_merge(laghu_service_config *merged,
   LAGHU_SERVICE_MERGE_FIELD(LAGHU_SERVICE_SETTING_FILE_CACHE_METADATA_SIZE,
                             cache_limits.metadata_size);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_WORKER_QUEUE, worker_queue);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
+                             html_refresh_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE,
                              font_fetch_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG,

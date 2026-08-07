@@ -19,7 +19,7 @@ case "${PACKAGE_FAMILY}" in
     fi
     ;;
   dnf)
-    dnf install -y bsdtar httpd-devel cmake gcc git gzip httpd make openssl-devel \
+    dnf install -y bsdtar cargo httpd-devel cmake gcc git gzip httpd make openssl-devel rust \
       nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
       tar which
     [ "${LAGHU_WITH_VIPS}" = OFF ] || dnf install -y vips-devel vips-tools
@@ -31,7 +31,7 @@ case "${PACKAGE_FAMILY}" in
       yum install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm
       yum config-manager --set-enabled remi-safe
     fi
-    yum install -y bsdtar cmake gcc git gzip httpd httpd-devel make openssl-devel \
+    yum install -y bsdtar cargo cmake gcc git gzip httpd httpd-devel make openssl-devel rust \
       nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
       tar which
     if [ "${LAGHU_WITH_VIPS}" != OFF ]; then

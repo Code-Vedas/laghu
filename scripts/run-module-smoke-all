@@ -166,6 +166,7 @@ http {
   server {
     listen 127.0.0.1:${PORT};
     root ${SMOKE_DIR}/html;
+    early_hints 1;
     laghu on;
     laghu preset balanced;
     laghu transform_memory_limit 32m;
@@ -642,31 +643,38 @@ fi
 nginx_pid=$!
 printf '%s\n' "${nginx_pid}" >"${SMOKE_DIR}/nginx.pid"
 
+ready=0
 attempt=0
 while [ "${attempt}" -lt 50 ]; do
-  if curl --fail --silent --show-error \
+  if curl --noproxy '*' --fail --silent --show-error \
       --output "${SMOKE_DIR}/body" \
       --dump-header "${SMOKE_DIR}/headers" \
-      "http://127.0.0.1:${PORT}/"; then
+      "http://127.0.0.1:${PORT}/" &&
+    grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null &&
+    grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/headers" >/dev/null &&
+    grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/headers" >/dev/null; then
+    ready=1
     break
   fi
   attempt=$((attempt + 1))
   sleep 0.1
 done
 
-if [ "${attempt}" -eq 50 ]; then
+if [ "${ready}" -ne 1 ]; then
   echo "NGINX did not become ready for the Laghu smoke test." >&2
-  cat "${SMOKE_DIR}/logs/error.log" >&2
+  if [ -f "${SMOKE_DIR}/headers" ]; then
+    echo "Last response headers:" >&2
+    cat "${SMOKE_DIR}/headers" >&2
+  fi
+  if [ -f "${SMOKE_DIR}/body" ]; then
+    echo "Last response body:" >&2
+    cat "${SMOKE_DIR}/body" >&2
+  fi
+  if [ -f "${SMOKE_DIR}/logs/error.log" ]; then
+    cat "${SMOKE_DIR}/logs/error.log" >&2
+  fi
   exit 1
 fi
-
-grep -i '^X-Laghu: pass' "${SMOKE_DIR}/headers" >/dev/null || {
-  echo "Unexpected Laghu decision for the base NGINX response:" >&2
-  cat "${SMOKE_DIR}/headers" >&2
-  exit 1
-}
-grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/headers" >/dev/null
-grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/headers" >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/stats" | \

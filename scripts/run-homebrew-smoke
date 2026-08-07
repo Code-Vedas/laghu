@@ -24,6 +24,9 @@ nginx_config_existed=0
 httpd_config_existed=0
 ngx_config_existed=0
 mod_config_existed=0
+service_queue="$(brew --prefix)/var/run/laghu/jobs.queue"
+service_queue_backup="${work}/laghu-libvips.jobs.queue"
+service_queue_backed_up=0
 
 brew list --formula nginx >/dev/null 2>&1 && nginx_was_installed=1
 [ -f "$(brew --prefix)/etc/nginx/nginx.conf" ] && nginx_config_existed=1
@@ -49,7 +52,12 @@ cleanup() {
     return
   fi
   brew services stop laghu-libvips >/dev/null 2>&1 || true
-  for formula in ngx-laghu mod-laghu laghu-libvips; do
+  if [ "${service_queue_backed_up}" = 1 ]; then
+    rm -f "${service_queue}"
+    mv "${service_queue_backup}" "${service_queue}"
+  fi
+  for formula in ngx-laghu mod-laghu laghu-libvips laghu-html-refresh \
+    laghu-js-optimize laghu-resource-fetch; do
     brew uninstall --force "${formula}" >/dev/null 2>&1 || true
   done
   if [ "${nginx_config_existed}" = 1 ]; then
@@ -78,6 +86,21 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+wait_for_libvips_service() {
+  attempt=0
+  while [ "${attempt}" -lt 50 ] &&
+      ! launchctl print "${service_target}" 2>/dev/null |
+        grep -q 'state = running'; do
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 50 ] || {
+    brew services info laghu-libvips >&2 || true
+    launchctl print "${service_target}" >&2 || true
+    return 1
+  }
+}
+
 brew untap "${tap}" >/dev/null 2>&1 || true
 brew tap-new --no-git "${tap}" >/dev/null
 tap_repo=$(brew --repo "${tap}")
@@ -100,16 +123,19 @@ done
 brew style "${formula_dir}"/*.rb
 brew install --build-from-source "${tap}/laghu-libvips"
 brew test laghu-libvips
+if [ -e "${service_queue}" ]; then
+  [ -f "${service_queue}" ] || {
+    echo "Expected Homebrew service queue is not a file." >&2
+    exit 1
+  }
+  mv "${service_queue}" "${service_queue_backup}"
+  service_queue_backed_up=1
+fi
 brew services start laghu-libvips
 service_target="gui/$(id -u)/homebrew.mxcl.laghu-libvips"
-attempt=0
-while [ "${attempt}" -lt 50 ] &&
-    ! launchctl print "${service_target}" 2>/dev/null | grep -q 'state = running'; do
-  attempt=$((attempt + 1))
-  sleep 0.1
-done
-[ "${attempt}" -lt 50 ]
+wait_for_libvips_service
 brew services restart laghu-libvips
+wait_for_libvips_service
 brew services stop laghu-libvips
 
 brew install --build-from-source "${tap}/ngx-laghu"
@@ -126,8 +152,10 @@ brew test mod-laghu
 brew reinstall --build-from-source "${tap}/mod-laghu"
 "$(brew --prefix httpd)/bin/httpd" -t
 
-brew uninstall ngx-laghu mod-laghu laghu-libvips
-for formula in ngx-laghu mod-laghu laghu-libvips; do
+brew uninstall ngx-laghu mod-laghu laghu-libvips laghu-html-refresh \
+  laghu-js-optimize laghu-resource-fetch
+for formula in ngx-laghu mod-laghu laghu-libvips laghu-html-refresh \
+  laghu-js-optimize laghu-resource-fetch; do
   if brew list --formula "${formula}" >/dev/null 2>&1; then
     echo "Homebrew retained ${formula} after uninstall." >&2
     exit 1

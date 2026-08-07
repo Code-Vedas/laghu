@@ -48,6 +48,14 @@ When a configured provider stylesheet is safely inlined, Laghu adds `font-displa
 HTML minification includes bounded resource URL trimming. The planner considers only same-origin script, stylesheet, preload, image, media, track, manifest, and icon attributes; navigation, forms, embedded documents, metadata redirects, and application URL schemes remain unchanged.
 It resolves the original and every shorter root-relative or document-relative candidate against the first effective `<base href>` and accepts a replacement only when both absolute results are identical. Queries, fragments, percent encoding, path case, ports, and trailing slashes are preserved, while malformed or ambiguous URL and `srcset` input fails open.
 
+### HTML Micro-cache and Revalidation
+
+HTML micro-caching is off until an operator configures matching file-cache, `html_cache_origin`, `html_cache_ttl`, `html_cache_stale_ttl`, and `html_refresh_queue` values. Only anonymous `GET` HTML requests can use it; requests carrying `Authorization` or `Cookie` always pass to the origin. The cache key is the configured HTTPS origin plus the complete request path and query, so a client-controlled host never selects the refresh target.
+
+A fresh entry is served immediately. During `html_cache_stale_ttl`, Laghu serves the last valid entry and publishes at most one bounded refresh job; `laghu-html-refresh` revalidates against the configured HTTPS origin with `If-None-Match`, preserves a `304`, and atomically replaces the entry only with a valid cacheable HTML `200`. A miss, a full queue, an invalid response, a DNS/TLS failure, or a stopped worker falls through to normal origin delivery.
+
+Run one refresh-worker instance per origin and queue. It requires verified public HTTPS and rejects origins with paths, ports, credentials, queries, or fragments. The worker uses POSIX networking and service primitives; Windows package and service support are not provided or validated.
+
 ## JavaScript
 
 `laghu-js-optimize` builds pinned SWC crates from `Cargo.lock` without Node or network access.

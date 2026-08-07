@@ -17,6 +17,8 @@ int main(void) {
   assert(laghu_config_setting_find("Preset") == LAGHU_CONFIG_SETTING_PRESET);
   assert(laghu_config_setting_find("--rewrite-level") ==
          LAGHU_CONFIG_SETTING_REWRITE_LEVEL);
+  assert(laghu_config_setting_find("HtmlCacheOrigin") ==
+         LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN);
   assert(laghu_config_setting_find("--not-a-setting") ==
          LAGHU_CONFIG_SETTING_UNKNOWN);
 
@@ -37,6 +39,40 @@ int main(void) {
   assert(laghu_config_setting_apply(&config,
                                     LAGHU_CONFIG_SETTING_TRANSFORM_DEADLINE_MS,
                                     "50", error, sizeof(error)));
+
+  assert(laghu_config_setting_apply(&config,
+                                    LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
+                                    "https://origin.example", error,
+                                    sizeof(error)));
+  assert(laghu_config_setting_apply(&config,
+                                    LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "30",
+                                    error, sizeof(error)));
+  assert(laghu_config_setting_apply(
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "300", error,
+      sizeof(error)));
+  assert(config.html_cache_ttl == 30U);
+  assert(config.html_cache_stale_ttl == 300U);
+  assert(!laghu_config_setting_apply(
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
+      "https://other.example", error, sizeof(error)));
+  laghu_config_init(&config);
+  assert(!laghu_config_setting_apply(&config,
+                                     LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
+                                     "http://origin.example", error,
+                                     sizeof(error)));
+  assert(!laghu_config_setting_apply(&config,
+                                     LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
+                                     "https://origin.example/path", error,
+                                     sizeof(error)));
+  assert(!laghu_config_setting_apply(&config,
+                                     LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "0",
+                                     error, sizeof(error)));
+  assert(!laghu_config_setting_apply(
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "3601", error,
+      sizeof(error)));
+  assert(!laghu_config_setting_apply(
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "86401", error,
+      sizeof(error)));
 
   laghu_config_init(&config);
   assert(laghu_config_setting_apply(&config,

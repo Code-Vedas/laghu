@@ -57,6 +57,17 @@ laghu_runtime_queue *ngx_http_laghu_javascript_queue(
   return &conf->javascript_runtime_queue;
 }
 
+laghu_runtime_queue *ngx_http_laghu_html_refresh_queue(
+    ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue_snapshot snapshot;
+  if (conf == NULL || !conf->html_refresh_runtime_queue_attached ||
+      !laghu_runtime_queue_snapshot_get(&conf->html_refresh_runtime_queue,
+                                        &snapshot)) {
+    return NULL;
+  }
+  return &conf->html_refresh_runtime_queue;
+}
+
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
   return ngx_http_laghu_font_queue(conf) != NULL;
 }

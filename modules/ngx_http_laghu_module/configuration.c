@@ -79,6 +79,7 @@ void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration) {
   laghu_runtime_queue_init(&conf->runtime_queue);
   laghu_runtime_queue_init(&conf->font_fetch_runtime_queue);
   laghu_runtime_queue_init(&conf->javascript_runtime_queue);
+  laghu_runtime_queue_init(&conf->html_refresh_runtime_queue);
   return conf;
 }
 

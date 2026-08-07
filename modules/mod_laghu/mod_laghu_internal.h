@@ -33,6 +33,7 @@
 #include "laghu/core.h"
 #include "laghu/css.h"
 #include "laghu/fonts.h"
+#include "laghu/html_cache.h"
 #include "laghu/http.h"
 #include "laghu/image.h"
 #include "laghu/instrumentation.h"
@@ -46,6 +47,7 @@
 #define LAGHU_APACHE_FILTER "LAGHU"
 #define LAGHU_APACHE_INITIAL_CAPTURE (64U * 1024U)
 #define LAGHU_APACHE_QUEUE_CONFIG_LIMIT 128U
+#define LAGHU_APACHE_HTML_REFRESH_DEDUP 16U
 
 #ifndef HTTP_EARLY_HINTS
 #define HTTP_EARLY_HINTS 103
@@ -122,6 +124,11 @@ laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(
 laghu_runtime_queue *laghu_apache_image_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_javascript_queue(laghu_apache_config *config);
+laghu_runtime_queue *laghu_apache_html_refresh_queue(
+    laghu_apache_config *config);
+bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config,
+                                           const laghu_runtime_job *job,
+                                           uint64_t now);
 void *laghu_apache_create_config(apr_pool_t *pool, char *path);
 void *laghu_apache_create_server_config(apr_pool_t *pool, server_rec *server);
 void laghu_apache_service_defaults(laghu_service_config *service);

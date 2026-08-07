@@ -5,6 +5,68 @@
 
 #include "mod_laghu_internal.h"
 
+static void laghu_apache_enqueue_html_refresh(
+    laghu_apache_config *config, const char *request_path,
+    const laghu_html_cache_record *record) {
+  laghu_runtime_queue *queue;
+  laghu_runtime_job job = {0};
+  size_t length;
+  if (config == NULL || request_path == NULL || record == NULL ||
+      (length = strlen(request_path)) >= sizeof(job.request_path) ||
+      !laghu_html_cache_key(config->core.html_cache_origin, request_path,
+                            job.index_key)) {
+    return;
+  }
+  queue = laghu_apache_html_refresh_queue(config);
+  if (queue == NULL) return;
+  job.kind = LAGHU_RUNTIME_JOB_HTML_REFRESH;
+  memcpy(job.request_path, request_path, length);
+  memcpy(job.policy_key, job.index_key, sizeof(job.policy_key));
+  (void)snprintf(job.validator, sizeof(job.validator), "%s",
+                 record->entry.validator);
+  (void)laghu_apache_html_refresh_try_publish(
+      config, &job, (uint64_t)apr_time_sec(apr_time_now()));
+}
+
+static int laghu_apache_html_cache_handler(request_rec *request,
+                                           laghu_apache_config *config) {
+  laghu_html_cache_record record;
+  unsigned char *body;
+  if (request == NULL || config == NULL || config->core.mode != LAGHU_MODE_ON ||
+      request->method_number != M_GET || request->unparsed_uri == NULL ||
+      request->unparsed_uri[0] != '/' ||
+      strncmp(request->unparsed_uri, "/.laghu/", sizeof("/.laghu/") - 1U) ==
+          0 ||
+      apr_table_get(request->headers_in, "Authorization") != NULL ||
+      apr_table_get(request->headers_in, "Cookie") != NULL ||
+      config->core.html_cache_origin[0] == '\0' ||
+      config->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
+      !laghu_html_cache_lookup(
+          config->service.image_cache, config->core.html_cache_origin,
+          request->unparsed_uri, (uint64_t)apr_time_sec(apr_time_now()),
+          config->core.html_cache_ttl, config->core.html_cache_stale_ttl,
+          &record) ||
+      record.state == LAGHU_HTML_CACHE_MISS || record.entry.length == 0U ||
+      record.entry.content_type[0] == '\0' || record.entry.length > INT_MAX) {
+    return DECLINED;
+  }
+  if (record.state == LAGHU_HTML_CACHE_STALE)
+    laghu_apache_enqueue_html_refresh(config, request->unparsed_uri, &record);
+  body = apr_palloc(request->pool, record.entry.length);
+  if (body == NULL ||
+      !laghu_runtime_cache_read(&record.entry, body, record.entry.length)) {
+    return DECLINED;
+  }
+  request->status = HTTP_OK;
+  ap_set_content_type(request, record.entry.content_type);
+  ap_set_content_length(request, (apr_off_t)record.entry.length);
+  if (request->header_only) return OK;
+  return ap_rwrite(body, (int)record.entry.length, request) ==
+                 (int)record.entry.length
+             ? OK
+             : HTTP_INTERNAL_SERVER_ERROR;
+}
+
 int laghu_apache_variant_handler(request_rec *request) {
   laghu_apache_config *server_config;
   laghu_apache_config *directory_config;
@@ -16,17 +78,21 @@ int laghu_apache_variant_handler(request_rec *request) {
       (request->uri != NULL && (strcmp(request->uri, "/.laghu/stats") == 0 ||
                                 strcmp(request->uri, "/.laghu/metrics") == 0 ||
                                 strcmp(request->uri, "/.laghu/ready") == 0));
-  if (request->uri == NULL ||
-      (strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
-       !administration_candidate)) {
-    return DECLINED;
-  }
+  if (request->uri == NULL) return DECLINED;
   server_config =
       ap_get_module_config(request->server->module_config, &laghu_module);
   directory_config =
       ap_get_module_config(request->per_dir_config, &laghu_module);
   config =
       laghu_apache_merge_config(request->pool, server_config, directory_config);
+  {
+    int cache_status = laghu_apache_html_cache_handler(request, config);
+    if (cache_status != DECLINED) return cache_status;
+  }
+  if (strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
+      !administration_candidate) {
+    return DECLINED;
+  }
   if (config == NULL || config->core.mode != LAGHU_MODE_ON) {
     return HTTP_NOT_FOUND;
   }

@@ -7,11 +7,107 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include "laghu/html_cache.h"
 #include "ngx_http_laghu_internal.h"
 
 ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;
 ngx_http_output_body_filter_pt ngx_http_laghu_next_body_filter;
 time_t ngx_http_laghu_last_queue_warning;
+
+static bool ngx_http_laghu_html_cache_token_equal(const unsigned char *value,
+                                                  size_t length,
+                                                  const char *expected) {
+  return ngx_strlen(expected) == length &&
+         ngx_strncasecmp((u_char *)value, (u_char *)expected, length) == 0;
+}
+
+static bool ngx_http_laghu_html_cache_control_prohibits(laghu_buffer value) {
+  size_t cursor = 0U;
+  while (cursor < value.length) {
+    size_t end = cursor;
+    size_t token_start;
+    size_t token_end;
+    while (end < value.length && value.data[end] != ',') ++end;
+    token_start = cursor;
+    while (token_start < end &&
+           (value.data[token_start] == ' ' || value.data[token_start] == '\t'))
+      ++token_start;
+    token_end = token_start;
+    while (token_end < end && value.data[token_end] != '=') ++token_end;
+    while (token_end > token_start && (value.data[token_end - 1U] == ' ' ||
+                                       value.data[token_end - 1U] == '\t'))
+      --token_end;
+    if (ngx_http_laghu_html_cache_token_equal(
+            value.data + token_start, token_end - token_start, "private") ||
+        ngx_http_laghu_html_cache_token_equal(
+            value.data + token_start, token_end - token_start, "no-store") ||
+        ngx_http_laghu_html_cache_token_equal(
+            value.data + token_start, token_end - token_start, "no-cache"))
+      return true;
+    cursor = end + 1U;
+  }
+  return false;
+}
+
+static bool ngx_http_laghu_html_cache_response_safe(
+    const ngx_http_laghu_request_ctx_t *context) {
+  size_t index;
+  bool html = false;
+  if (context == NULL || context->response.status != NGX_HTTP_OK ||
+      context->request.method.length != 3U ||
+      memcmp(context->request.method.data, "GET", 3U) != 0) {
+    return false;
+  }
+  for (index = 0U; index < context->request.header_count; ++index)
+    if ((context->request.headers[index].name.length == 6U &&
+         ngx_strncasecmp((u_char *)context->request.headers[index].name.data,
+                         (u_char *)"Cookie", 6U) == 0) ||
+        (context->request.headers[index].name.length == 13U &&
+         ngx_strncasecmp((u_char *)context->request.headers[index].name.data,
+                         (u_char *)"Authorization", 13U) == 0))
+      return false;
+  for (index = 0U; index < context->response.header_count; ++index) {
+    const laghu_http_header *header = &context->response.headers[index];
+    if ((header->name.length == 10U &&
+         ngx_strncasecmp((u_char *)header->name.data, (u_char *)"Set-Cookie",
+                         10U) == 0) ||
+        (header->name.length == 4U &&
+         ngx_strncasecmp((u_char *)header->name.data, (u_char *)"Vary", 4U) ==
+             0) ||
+        (header->name.length == 16U &&
+         ngx_strncasecmp((u_char *)header->name.data,
+                         (u_char *)"Content-Encoding", 16U) == 0))
+      return false;
+    if (header->name.length == 13U &&
+        ngx_strncasecmp((u_char *)header->name.data, (u_char *)"Cache-Control",
+                        13U) == 0 &&
+        ngx_http_laghu_html_cache_control_prohibits(header->value))
+      return false;
+    if (header->name.length == 12U &&
+        ngx_strncasecmp((u_char *)header->name.data, (u_char *)"Content-Type",
+                        12U) == 0 &&
+        header->value.length >= 9U &&
+        ngx_strncasecmp((u_char *)header->value.data, (u_char *)"text/html",
+                        9U) == 0)
+      html = true;
+  }
+  return html;
+}
+
+static void ngx_http_laghu_publish_html_cache(
+    ngx_http_laghu_request_ctx_t *context, ngx_http_laghu_loc_conf_t *conf) {
+  if (context == NULL || conf == NULL ||
+      conf->core.html_cache_origin[0] == '\0' ||
+      conf->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
+      !ngx_http_laghu_html_cache_response_safe(context))
+    return;
+  (void)laghu_html_cache_publish(
+      conf->service.image_cache, conf->core.html_cache_origin,
+      (const char *)context->request.normalized_path.data,
+      (const char *)context->response.source_validator.data,
+      (laghu_buffer){context->capture, context->capture_length},
+      (uint64_t)ngx_time(), NULL);
+}
 
 ngx_int_t ngx_http_laghu_transaction_header_filter(
     ngx_http_request_t *request) {
@@ -62,6 +158,15 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
   }
   if (result.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
     ngx_buf_t *buffer;
+    result.not_modified =
+        laghu_http_request_matches_result_etag(&context->request, &result);
+    if (result.not_modified) {
+      request->headers_out.status = NGX_HTTP_NOT_MODIFIED;
+      ngx_http_laghu_remove_header(request, "Content-Length");
+      ngx_http_laghu_log_transaction(request, context, &result, "none");
+      laghu_http_transaction_result_release(&result);
+      return ngx_http_laghu_next_header_filter(request);
+    }
     context->cached_body = ngx_pnalloc(request->pool, result.selected.length);
     context->cached_output = ngx_alloc_chain_link(request->pool);
     buffer = ngx_calloc_buf(request->pool);
@@ -168,6 +273,9 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
   }
   if (context->capture_enabled) {
     laghu_http_transaction_result result;
+    ngx_http_laghu_loc_conf_t *conf =
+        ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
+    ngx_http_laghu_publish_html_cache(context, conf);
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
@@ -184,12 +292,25 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
       size_t selected_length = result.selected.length;
       ngx_buf_t *buffer;
       ngx_chain_t output;
-      unsigned char *copy = ngx_pnalloc(request->pool, selected_length);
-      if (copy == NULL ||
-          ngx_http_laghu_send_early_hints(request, &result) != NGX_OK ||
+      unsigned char *copy;
+      result.not_modified =
+          laghu_http_request_matches_result_etag(&context->request, &result);
+      copy = result.not_modified ? NULL
+                                 : ngx_pnalloc(request->pool, selected_length);
+      if ((!result.not_modified && copy == NULL) ||
+          (!result.not_modified &&
+           ngx_http_laghu_send_early_hints(request, &result) != NGX_OK) ||
           ngx_http_laghu_apply_result(request, &result) != NGX_OK) {
         laghu_http_transaction_result_release(&result);
         return NGX_ERROR;
+      }
+      if (result.not_modified) {
+        request->headers_out.status = NGX_HTTP_NOT_MODIFIED;
+        ngx_http_laghu_remove_header(request, "Content-Length");
+        laghu_http_transaction_result_release(&result);
+        context->header_deferred = false;
+        context->capture_enabled = false;
+        return ngx_http_laghu_next_header_filter(request);
       }
       ngx_memcpy(copy, selected, selected_length);
       laghu_http_transaction_result_release(&result);

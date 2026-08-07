@@ -32,6 +32,7 @@ typedef socklen_t laghu_socklen;
 
 #define LAGHU_PROXY_MAX_BODY LAGHU_IMAGE_MAX_INPUT_BYTES
 #define LAGHU_PROXY_BEACON_BODY 16384U
+#define LAGHU_PROXY_HTML_REFRESH_DEDUP 16U
 
 typedef struct {
   char *name;
@@ -96,11 +97,16 @@ typedef struct proxy_queue {
   laghu_rum_engine *rum;
   laghu_operational_registry operational;
   laghu_runtime_queue runtime_queue;
+  laghu_runtime_queue html_refresh_queue;
   laghu_runtime_queue font_fetch_queue;
   laghu_runtime_queue javascript_queue;
   bool runtime_queue_ready;
+  bool html_refresh_queue_ready;
   bool font_fetch_queue_ready;
   bool javascript_queue_ready;
+  char html_refresh_keys[LAGHU_PROXY_HTML_REFRESH_DEDUP]
+                        [LAGHU_RUNTIME_KEY_SIZE];
+  uint64_t html_refresh_until[LAGHU_PROXY_HTML_REFRESH_DEDUP];
   pthread_mutex_t lock;
   pthread_cond_t ready;
   pthread_cond_t drained;
@@ -239,6 +245,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker);
 bool queue_push(proxy_queue *queue, const proxy_connection *connection);
 void proxy_maintain_queue_attachments(proxy_queue *queue);
 laghu_runtime_queue *proxy_runtime_queue(proxy_worker *worker);
+laghu_runtime_queue *proxy_html_refresh_queue(proxy_worker *worker);
 laghu_runtime_queue *proxy_font_fetch_queue(proxy_worker *worker);
 laghu_runtime_queue *proxy_javascript_queue(proxy_worker *worker);
 bool proxy_cache_probe(const char *cache_path);

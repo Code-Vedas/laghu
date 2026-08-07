@@ -135,6 +135,10 @@ void proxy_maintain_queue_attachments(proxy_queue *queue) {
   service = &queue->options->service;
   (void)proxy_attach_queue(queue, &queue->runtime_queue,
                            &queue->runtime_queue_ready, service->worker_queue);
+  if (service->html_refresh_queue[0] != '\0')
+    (void)proxy_attach_queue(queue, &queue->html_refresh_queue,
+                             &queue->html_refresh_queue_ready,
+                             service->html_refresh_queue);
   if (service->font_providers != NULL)
     (void)proxy_attach_queue(queue, &queue->font_fetch_queue,
                              &queue->font_fetch_queue_ready,
@@ -214,6 +218,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   memset(&queue, 0, sizeof(queue));
   laghu_operational_registry_init(&queue.operational);
   laghu_runtime_queue_init(&queue.runtime_queue);
+  laghu_runtime_queue_init(&queue.html_refresh_queue);
   laghu_runtime_queue_init(&queue.font_fetch_queue);
   laghu_runtime_queue_init(&queue.javascript_queue);
   queue.options = options;
@@ -273,6 +278,8 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     goto cleanup;
   }
   if (!proxy_queue_path_valid(options->service.worker_queue) ||
+      (options->service.html_refresh_queue[0] != '\0' &&
+       !proxy_queue_path_valid(options->service.html_refresh_queue)) ||
       (options->service.font_providers != NULL &&
        !proxy_queue_path_valid(options->service.font_fetch_queue)) ||
       (options->service.javascript_queue[0] != '\0' &&
@@ -375,6 +382,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   result = started == options->workers ? 0 : 1;
 cleanup:
   laghu_runtime_queue_close(&queue.runtime_queue);
+  laghu_runtime_queue_close(&queue.html_refresh_queue);
   laghu_runtime_queue_close(&queue.font_fetch_queue);
   laghu_runtime_queue_close(&queue.javascript_queue);
   laghu_operational_registry_close(&queue.operational);

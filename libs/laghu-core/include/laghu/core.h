@@ -52,6 +52,12 @@ extern "C" {
 #define LAGHU_DOMAIN_POLICY_MAX_DOMAINS 8U
 #define LAGHU_DOMAIN_POLICY_MAX_MAPPINGS 8U
 #define LAGHU_DOMAIN_ORIGIN_SIZE 256U
+#define LAGHU_HTML_CACHE_ORIGIN_SIZE LAGHU_DOMAIN_ORIGIN_SIZE
+#define LAGHU_HTML_CACHE_TTL_UNSET 0U
+#define LAGHU_HTML_CACHE_TTL_MIN 1U
+#define LAGHU_HTML_CACHE_TTL_MAX 3600U
+#define LAGHU_HTML_CACHE_STALE_TTL_UNSET 0U
+#define LAGHU_HTML_CACHE_STALE_TTL_MAX 86400U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -183,6 +189,11 @@ typedef struct {
   unsigned int transform_memory_limit;
   unsigned int transform_deadline_ms;
   unsigned int variants_per_source;
+  /* HTML caching remains disabled until both an explicit HTTPS origin and a
+   * positive TTL are configured.  Stale TTL zero disables stale serving. */
+  char html_cache_origin[LAGHU_HTML_CACHE_ORIGIN_SIZE];
+  unsigned int html_cache_ttl;
+  unsigned int html_cache_stale_ttl;
   char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
   laghu_mode respect_vary;
   laghu_mode respect_x_forwarded_proto;

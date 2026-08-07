@@ -26,6 +26,7 @@
 #define LAGHU_NGINX_DEFAULT_JAVASCRIPT_QUEUE "/run/laghu/javascript.queue"
 
 #define LAGHU_NGINX_QUEUE_CONFIG_LIMIT 128U
+#define LAGHU_NGINX_HTML_REFRESH_DEDUP 16U
 
 typedef struct {
   laghu_config core;
@@ -33,10 +34,16 @@ typedef struct {
   laghu_runtime_queue runtime_queue;
   laghu_runtime_queue font_fetch_runtime_queue;
   laghu_runtime_queue javascript_runtime_queue;
+  laghu_runtime_queue html_refresh_runtime_queue;
   bool runtime_queue_attached;
   bool font_fetch_runtime_queue_attached;
   bool javascript_runtime_queue_attached;
+  bool html_refresh_runtime_queue_attached;
   bool queue_registered;
+  ngx_atomic_t html_refresh_dedup_lock;
+  ngx_atomic_t html_refresh_until[LAGHU_NGINX_HTML_REFRESH_DEDUP];
+  char html_refresh_keys[LAGHU_NGINX_HTML_REFRESH_DEDUP]
+                        [LAGHU_RUNTIME_KEY_SIZE];
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
@@ -102,6 +109,8 @@ laghu_runtime_queue *ngx_http_laghu_image_queue(
     ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_javascript_queue(
+    ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_html_refresh_queue(
     ngx_http_laghu_loc_conf_t *conf);
 void ngx_http_laghu_beacon_body(ngx_http_request_t *request);
 void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration);

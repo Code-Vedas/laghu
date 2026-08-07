@@ -17,7 +17,7 @@ class LaghuJsOptimize < Formula
 
   def install
     cd "workers/laghu-js-optimize" do
-      system "cargo", "install", *std_cargo_args(path: ".", locked: true)
+      system "cargo", "install", *std_cargo_args(path: ".")
     end
   end
 

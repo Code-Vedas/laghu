@@ -177,7 +177,7 @@
 - [ ] Reserve layout space for images, ads, embeds, and fonts to reduce CLS.
 - [x] Add appropriate font-display behavior and font preloads.
 - [ ] Defer non-critical JavaScript, safely split long tasks, and delay eligible third-party scripts until interaction to improve INP.
-- [ ] Add HTML micro-caching, conditional revalidation (`304`), and stale-while-revalidate to improve TTFB.
+- [x] Add HTML micro-caching, conditional revalidation (`304`), and stale-while-revalidate to improve TTFB.
 - [ ] Learn and apply optimization profiles by DOM-template hash.
 - [ ] Add an optional headless-Chrome analysis tier for critical CSS, viewport state, LCP, and rendered image dimensions.
 - [x] Provide a non-blocking heuristic fallback when browser analysis is absent or fails.

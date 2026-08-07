@@ -14,6 +14,7 @@ class ModLaghu < Formula
   license "MIT"
 
   depends_on "httpd"
+  depends_on "laghu-html-refresh"
   depends_on "laghu-js-optimize"
   depends_on "laghu-libvips"
   depends_on "laghu-resource-fetch"

@@ -57,7 +57,9 @@ ngx_int_t ngx_http_laghu_send_early_hints(
     ngx_memcpy(header->value.data, operation->value, header->value.len);
     header->hash = 1U;
   }
+#if (nginx_version >= 1029000)
   if (ngx_http_send_early_hints(request) == NGX_ERROR) goto restore_error;
+#endif
   count = 0U;
   for (part = &request->headers_out.headers.part; part != NULL;
        part = part->next) {

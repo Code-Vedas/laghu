@@ -78,7 +78,7 @@ static bool laghu_queue_javascript_valid(const laghu_runtime_job *job) {
 
 static bool laghu_queue_job_valid(const laghu_runtime_job *job,
                                   size_t payload_limit) {
-  return job != NULL && job->kind <= LAGHU_RUNTIME_JOB_JAVASCRIPT &&
+  return job != NULL && job->kind <= LAGHU_RUNTIME_JOB_HTML_REFRESH &&
          job->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
          job->sprite_count <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
          laghu_queue_hash_valid(job->index_key) &&
@@ -557,7 +557,7 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
       if (payload_length <= payload_capacity &&
           payload_length <= state->slot_payload_size &&
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_KIND_OFFSET) <=
-              LAGHU_RUNTIME_JOB_JAVASCRIPT &&
+              LAGHU_RUNTIME_JOB_HTML_REFRESH &&
           laghu_wire_u32_read(slot +
                               LAGHU_WIRE_QUEUE_SLOT_TARGET_COUNT_OFFSET) <=
               LAGHU_RUNTIME_MAX_TARGETS &&

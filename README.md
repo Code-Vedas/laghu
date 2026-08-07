@@ -25,6 +25,7 @@ Laghu keeps explicit ownership boundaries:
 - `laghu-runtime` owns caches, queues, catalogs, RUM, operational state, and transformation services.
 - `laghu-http` solely owns normalized transactions, transformation sequencing, cache selection, headers, publication, budgets, and fail-open results.
 - `laghu-libvips` owns isolated libvips execution and deadline enforcement.
+- `laghu-html-refresh` owns verified-HTTPS stale-while-revalidate HTML refreshes for one configured origin and queue.
 - `laghu-js-optimize` owns isolated SWC parsing, target lowering, compression, and local mangling.
 - `ngx_http_laghu_module` owns NGINX configuration, filter integration, and fail-open request handling.
 - `mod_laghu` owns Apache configuration, bucket-brigade integration, and fail-open request handling.
@@ -40,6 +41,7 @@ Laghu keeps explicit ownership boundaries:
 - `libs/laghu-runtime/`: shared queue and content-addressed cache protocol
 - `libs/laghu-http/`: shared HTTP transaction engine and conformance tests
 - `workers/laghu-libvips/`: asynchronous libvips worker
+- `workers/laghu-html-refresh/`: HTTPS HTML stale-while-revalidate worker
 - `workers/laghu-js-optimize/`: native Rust SWC queue worker
 - `modules/ngx_http_laghu_module/`: NGINX dynamic module integration
 - `modules/mod_laghu/`: Apache HTTP Server output-filter integration
@@ -63,6 +65,7 @@ The three adapters:
 - provides stable SHA-256 variant keys and an original-preserving, never-larger candidate-selection contract
 - probes explicit JPEG, PNG, GIF, animated-image, and WebP operations
 - queues bounded image jobs without waiting and publishes cache files atomically
+- serves configured anonymous HTML cache entries fresh or stale and revalidates stale entries through a separate explicit-origin worker
 - normalizes eligible document heads and places CSS through one bounded planner shared by NGINX and Apache
 - safely collapses ordinary HTML whitespace, removes unprotected comments, unquotes safe values, and elides exact default MIME attributes through that same cold-original planner
 - converts only conflict-free `Content-Language` metadata and emits bounded, deduplicated preload, third-party preconnect, and DNS-prefetch response hints from validated catalog state without fetching resources

@@ -484,6 +484,30 @@ static void test_css_cold_warm(void) {
       CHECK(find_operation_header(&finalized, "ETag", &etag) != NULL);
       CHECK(etag.value.length ==
             sizeof("\"laghu-css-\"") - 1U + LAGHU_SHA256_HEX_LENGTH);
+      {
+        laghu_http_header condition = {VIEW("If-None-Match"), etag.value};
+        char weak[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
+        laghu_http_header conditions[2];
+        request.headers = &condition;
+        request.header_count = 1U;
+        CHECK(laghu_http_request_matches_result_etag(&request, &finalized));
+        CHECK(snprintf(weak, sizeof(weak), "W/%.*s", (int)etag.value.length,
+                       etag.value.data) > 0);
+        condition.value =
+            (laghu_buffer){(const unsigned char *)weak, strlen(weak)};
+        CHECK(laghu_http_request_matches_result_etag(&request, &finalized));
+        condition.value = VIEW("W/\"other\", \"none\"");
+        CHECK(!laghu_http_request_matches_result_etag(&request, &finalized));
+        conditions[0] = condition;
+        conditions[1] = (laghu_http_header){VIEW("If-None-Match"), etag.value};
+        request.headers = conditions;
+        request.header_count = 2U;
+        CHECK(laghu_http_request_matches_result_etag(&request, &finalized));
+        condition.value = VIEW("*");
+        request.headers = &condition;
+        request.header_count = 1U;
+        CHECK(laghu_http_request_matches_result_etag(&request, &finalized));
+      }
     }
     laghu_http_transaction_result_release(&finalized);
   }

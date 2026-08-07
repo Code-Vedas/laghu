@@ -240,6 +240,71 @@ bool laghu_http_add_status(laghu_http_transaction_result *result,
                                          "X-Laghu-Transform", transform);
 }
 
+static bool laghu_http_etag_equal(laghu_buffer candidate, const char *etag) {
+  size_t etag_length;
+  size_t offset = 0U;
+  if (etag == NULL) return false;
+  etag_length = strlen(etag);
+  while (offset < candidate.length &&
+         (candidate.data[offset] == ' ' || candidate.data[offset] == '\t'))
+    ++offset;
+  if (offset + 2U <= candidate.length &&
+      (candidate.data[offset] == 'W' || candidate.data[offset] == 'w') &&
+      candidate.data[offset + 1U] == '/')
+    offset += 2U;
+  while (offset < candidate.length &&
+         (candidate.data[offset] == ' ' || candidate.data[offset] == '\t'))
+    ++offset;
+  return candidate.length - offset == etag_length &&
+         memcmp(candidate.data + offset, etag, etag_length) == 0;
+}
+
+bool laghu_http_request_matches_result_etag(
+    const laghu_http_request *request,
+    const laghu_http_transaction_result *result) {
+  const char *etag = NULL;
+  size_t index;
+  if (request == NULL || result == NULL ||
+      !laghu_http_header_name_equal(request->method, "GET"))
+    return false;
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    const laghu_http_header_operation *operation =
+        &result->header_operations[index];
+    if (operation->kind != LAGHU_HTTP_HEADER_REMOVE &&
+        strcmp(operation->name, "ETag") == 0) {
+      etag = operation->value;
+    }
+  }
+  if (etag == NULL) return false;
+  for (index = 0U; index < request->header_count; ++index) {
+    laghu_buffer value;
+    size_t offset = 0U;
+    if (!laghu_http_header_name_equal(request->headers[index].name,
+                                      "If-None-Match"))
+      continue;
+    value = request->headers[index].value;
+    while (offset < value.length) {
+      size_t start, end;
+      while (offset < value.length &&
+             (value.data[offset] == ' ' || value.data[offset] == '\t' ||
+              value.data[offset] == ','))
+        ++offset;
+      if (offset == value.length) break;
+      if (value.data[offset] == '*') return true;
+      start = offset;
+      while (offset < value.length && value.data[offset] != ',') ++offset;
+      end = offset;
+      while (end > start &&
+             (value.data[end - 1U] == ' ' || value.data[end - 1U] == '\t'))
+        --end;
+      if (laghu_http_etag_equal((laghu_buffer){value.data + start, end - start},
+                                etag))
+        return true;
+    }
+  }
+  return false;
+}
+
 static laghu_image_filter_mask laghu_http_image_filters(
     const laghu_policy *policy) {
   laghu_image_filter_mask filters =

@@ -22,7 +22,7 @@ sudo apt install ngx-laghu laghu-libvips
 sudo dnf install ngx-laghu laghu-libvips
 ```
 
-Packages install the matched module, three worker executables, services, provider files, runtime directories, and disabled-by-default NGINX configuration.
+Packages install the matched module, workers, services, provider files, runtime directories, and disabled-by-default NGINX configuration. The per-origin HTML refresh worker is packaged but remains inactive until an operator configures an instance.
 
 After installation, validate before reload:
 
@@ -37,11 +37,11 @@ systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize
 brew install Code-Vedas/tap/ngx-laghu
 ```
 
-The formula builds against the supported Homebrew NGINX, installs a disabled configuration, starts worker services, and validates `nginx -t`.
+The formula builds against the supported Homebrew NGINX, installs a disabled configuration, starts its default worker services, and validates `nginx -t`. The per-origin HTML refresh worker is configured and supervised separately.
 
 ## Container
 
-The production image contains matched NGINX, the adapter, workers, providers, entrypoint, health probes, and persistent cache/RUM mount points.
+The production image contains matched NGINX, the adapter, workers, providers, entrypoint, health probes, and persistent cache/RUM mount points. Set `LAGHU_HTML_CACHE_ORIGIN` and `LAGHU_HTML_REFRESH_QUEUE` only with matching NGINX HTML-cache settings to start the optional refresh worker.
 
 ```bash
 docker pull ghcr.io/code-vedas/ngx-laghu:latest

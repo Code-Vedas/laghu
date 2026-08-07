@@ -111,6 +111,9 @@ static void test_config_defaults_and_inheritance(void) {
          LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT);
   assert(result.javascript_outline_threshold ==
          LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT);
+  assert(result.html_cache_origin[0] == '\0');
+  assert(result.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET);
+  assert(result.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET);
   assert(result.respect_vary == LAGHU_MODE_ON);
   assert(result.respect_x_forwarded_proto == LAGHU_MODE_OFF);
   assert(result.query_filter_overrides == LAGHU_MODE_OFF);
@@ -132,6 +135,10 @@ static void test_config_defaults_and_inheritance(void) {
   parent.css_outline_threshold = 16384U;
   parent.javascript_inline_limit = 4096U;
   parent.javascript_outline_threshold = 32768U;
+  (void)snprintf(parent.html_cache_origin, sizeof(parent.html_cache_origin),
+                 "%s", "https://origin.example");
+  parent.html_cache_ttl = 30U;
+  parent.html_cache_stale_ttl = 300U;
   child.preset = LAGHU_PRESET_STATIC;
   laghu_config_merge(&result, &parent, &child);
   assert(result.mode == LAGHU_MODE_ON);
@@ -152,15 +159,22 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.css_outline_threshold == 16384U);
   assert(result.javascript_inline_limit == 4096U);
   assert(result.javascript_outline_threshold == 32768U);
+  assert(strcmp(result.html_cache_origin, "https://origin.example") == 0);
+  assert(result.html_cache_ttl == 30U);
+  assert(result.html_cache_stale_ttl == 300U);
 
   child.mode = LAGHU_MODE_OFF;
   child.allow_api = LAGHU_MODE_OFF;
+  child.html_cache_ttl = 60U;
   laghu_config_merge(&result, &parent, &child);
   assert(result.mode == LAGHU_MODE_OFF);
   assert(result.preset == LAGHU_PRESET_STATIC);
   assert(result.rewrite_level == LAGHU_REWRITE_LEVEL_UNSET);
   assert(result.allow_api == LAGHU_MODE_OFF);
   assert(result.image_quality == 91U);
+  assert(strcmp(result.html_cache_origin, "https://origin.example") == 0);
+  assert(result.html_cache_ttl == 60U);
+  assert(result.html_cache_stale_ttl == 300U);
 
   laghu_config_init(&child);
   child.rewrite_level = LAGHU_REWRITE_LEVEL_BANDWIDTH;

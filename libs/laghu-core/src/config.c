@@ -61,6 +61,11 @@ static const laghu_config_name laghu_config_names[] = {
      "TransformDeadlineMs"},
     {LAGHU_CONFIG_SETTING_VARIANTS_PER_SOURCE, "variants_per_source",
      "VariantsPerSource"},
+    {LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "html_cache_origin",
+     "HtmlCacheOrigin"},
+    {LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "html_cache_ttl", "HtmlCacheTtl"},
+    {LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "html_cache_stale_ttl",
+     "HtmlCacheStaleTtl"},
     {LAGHU_CONFIG_SETTING_CACHE_MIME_TYPES, "cache_mime_types",
      "CacheMimeTypes"},
     {LAGHU_CONFIG_SETTING_DOMAIN, "domain", "Domain"},
@@ -88,6 +93,11 @@ static bool laghu_config_domain_present(const laghu_domain_policy *policy,
   for (index = 0U; index < policy->domain_count; ++index)
     if (strcmp(policy->domains[index], origin) == 0) return true;
   return false;
+}
+
+static bool laghu_config_html_cache_origin(const char *value) {
+  laghu_domain_policy policy = {0};
+  return laghu_domain_policy_add_domain(&policy, value);
 }
 
 static bool laghu_config_fail(char *error, size_t size, const char *message) {
@@ -279,6 +289,23 @@ bool laghu_config_setting_apply(laghu_config *config,
       minimum = LAGHU_VARIANTS_PER_SOURCE_MIN;
       maximum = LAGHU_VARIANTS_PER_SOURCE_MAX;
       break;
+    case LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN:
+      if (config->html_cache_origin[0] != '\0' ||
+          !laghu_config_html_cache_origin(value) ||
+          !laghu_base_string_copy(config->html_cache_origin,
+                                  sizeof(config->html_cache_origin), value))
+        return laghu_config_fail(error, error_size,
+                                 "invalid or duplicate HTML cache origin");
+      return true;
+    case LAGHU_CONFIG_SETTING_HTML_CACHE_TTL:
+      number = &config->html_cache_ttl;
+      minimum = LAGHU_HTML_CACHE_TTL_MIN;
+      maximum = LAGHU_HTML_CACHE_TTL_MAX;
+      break;
+    case LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL:
+      number = &config->html_cache_stale_ttl;
+      maximum = LAGHU_HTML_CACHE_STALE_TTL_MAX;
+      break;
     case LAGHU_CONFIG_SETTING_TRANSFORM_MEMORY_LIMIT:
       if (config->transform_memory_limit !=
               LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET ||
@@ -373,8 +400,7 @@ bool laghu_config_setting_apply_pair(laghu_config *config,
     char *cursor;
     bool mapped = false;
     unsigned int mapping;
-    for (mapping = 0U; mapping < config->domain_policy.mapping_count;
-         ++mapping)
+    for (mapping = 0U; mapping < config->domain_policy.mapping_count; ++mapping)
       if (strcmp(config->domain_policy.mappings[mapping].public_origin,
                  first) == 0) {
         mapped = true;
@@ -391,8 +417,7 @@ bool laghu_config_setting_apply_pair(laghu_config *config,
       char *next = strchr(cursor, ',');
       if (next != NULL) *next++ = '\0';
       if (cursor[0] == '\0' ||
-          !laghu_domain_policy_add_shard(&config->domain_policy, first,
-                                         cursor))
+          !laghu_domain_policy_add_shard(&config->domain_policy, first, cursor))
         return laghu_config_fail(error, error_size,
                                  "invalid, duplicate, or conflicting shard");
       cursor = next;
@@ -407,7 +432,8 @@ bool laghu_config_setting_apply_pair(laghu_config *config,
   public_origin = first;
   source = second;
   if ((!laghu_config_domain_present(&config->domain_policy, public_origin) &&
-       !laghu_domain_policy_add_domain(&config->domain_policy, public_origin)) ||
+       !laghu_domain_policy_add_domain(&config->domain_policy,
+                                       public_origin)) ||
       !laghu_domain_policy_add_mapping(&config->domain_policy, source,
                                        public_origin))
     return laghu_config_fail(error, error_size,

@@ -397,7 +397,7 @@ jobs:
     steps:
       - name: Install package dependencies
         run: >-
-          dnf install -y cmake gcc git gzip httpd httpd-devel make nginx nginx-mod-devel
+          dnf install -y cargo cmake gcc git gzip httpd httpd-devel make nginx nginx-mod-devel rust
           pkgconf-pkg-config rpm-build shadow-utils systemd-rpm-macros tar
           vips-devel
       - uses: actions/checkout@v7

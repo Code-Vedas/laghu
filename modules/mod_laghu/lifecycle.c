@@ -20,13 +20,20 @@ struct laghu_apache_queue_binding {
   laghu_runtime_queue image_queue;
   laghu_runtime_queue font_queue;
   laghu_runtime_queue javascript_queue;
+  laghu_runtime_queue html_refresh_queue;
   char image_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char font_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+  char html_refresh_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   bool font_enabled;
   volatile apr_uint32_t image_attached;
   volatile apr_uint32_t font_attached;
   volatile apr_uint32_t javascript_attached;
+  volatile apr_uint32_t html_refresh_attached;
+  volatile apr_uint32_t html_refresh_dedup_lock;
+  uint64_t html_refresh_until[LAGHU_APACHE_HTML_REFRESH_DEDUP];
+  char html_refresh_keys[LAGHU_APACHE_HTML_REFRESH_DEDUP]
+                        [LAGHU_RUNTIME_KEY_SIZE];
 };
 
 static laghu_apache_queue_binding
@@ -56,6 +63,8 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent,
         strcmp(existing->image_queue_path, service->worker_queue) == 0 &&
         strcmp(existing->javascript_queue_path, service->javascript_queue) ==
             0 &&
+        strcmp(existing->html_refresh_queue_path,
+               service->html_refresh_queue) == 0 &&
         (!existing->font_enabled ||
          strcmp(existing->font_queue_path, service->font_fetch_queue) == 0))
       return true;
@@ -73,9 +82,13 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent,
   (void)snprintf(binding->javascript_queue_path,
                  sizeof(binding->javascript_queue_path), "%s",
                  service->javascript_queue);
+  (void)snprintf(binding->html_refresh_queue_path,
+                 sizeof(binding->html_refresh_queue_path), "%s",
+                 service->html_refresh_queue);
   laghu_runtime_queue_init(&binding->image_queue);
   laghu_runtime_queue_init(&binding->font_queue);
   laghu_runtime_queue_init(&binding->javascript_queue);
+  laghu_runtime_queue_init(&binding->html_refresh_queue);
   return true;
 }
 
@@ -90,6 +103,8 @@ laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(
     if (binding->font_enabled == font_enabled &&
         strcmp(binding->image_queue_path, service->worker_queue) == 0 &&
         strcmp(binding->javascript_queue_path, service->javascript_queue) ==
+            0 &&
+        strcmp(binding->html_refresh_queue_path, service->html_refresh_queue) ==
             0 &&
         (!font_enabled ||
          strcmp(binding->font_queue_path, service->font_fetch_queue) == 0))
@@ -108,6 +123,8 @@ static laghu_runtime_queue *laghu_apache_attached_queue(
     return (laghu_runtime_queue *)&binding->font_queue;
   if (kind == 2U && apr_atomic_read32(&binding->javascript_attached) != 0U)
     return (laghu_runtime_queue *)&binding->javascript_queue;
+  if (kind == 3U && apr_atomic_read32(&binding->html_refresh_attached) != 0U)
+    return (laghu_runtime_queue *)&binding->html_refresh_queue;
   return NULL;
 }
 
@@ -128,6 +145,49 @@ laghu_runtime_queue *laghu_apache_javascript_queue(
   return config == NULL
              ? NULL
              : laghu_apache_attached_queue(config->queue_binding, 2U);
+}
+
+laghu_runtime_queue *laghu_apache_html_refresh_queue(
+    laghu_apache_config *config) {
+  return config == NULL
+             ? NULL
+             : laghu_apache_attached_queue(config->queue_binding, 3U);
+}
+
+bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config,
+                                           const laghu_runtime_job *job,
+                                           uint64_t now) {
+  laghu_apache_queue_binding *binding;
+  laghu_runtime_queue *queue;
+  unsigned int index, candidate = 0U;
+  bool published = false;
+  if (config == NULL || job == NULL ||
+      job->kind != LAGHU_RUNTIME_JOB_HTML_REFRESH)
+    return false;
+  binding = config->queue_binding;
+  queue = laghu_apache_html_refresh_queue(config);
+  if (binding == NULL || queue == NULL ||
+      apr_atomic_cas32(&binding->html_refresh_dedup_lock, 1U, 0U) != 0U)
+    return false;
+  for (index = 0U; index < LAGHU_APACHE_HTML_REFRESH_DEDUP; ++index) {
+    if (binding->html_refresh_until[index] > now &&
+        memcmp(binding->html_refresh_keys[index], job->index_key,
+               sizeof(job->index_key)) == 0) {
+      goto done;
+    }
+    if (binding->html_refresh_until[index] <
+        binding->html_refresh_until[candidate])
+      candidate = index;
+  }
+  if (laghu_runtime_queue_try_publish(queue, job)) {
+    memcpy(binding->html_refresh_keys[candidate], job->index_key,
+           sizeof(job->index_key));
+    binding->html_refresh_until[candidate] = now + 1U;
+    published = true;
+  }
+done:
+  apr_atomic_set32(&binding->html_refresh_dedup_lock, 0U);
+  return published;
 }
 
 static bool laghu_apache_attach_queue(laghu_runtime_queue *queue,
@@ -163,6 +223,11 @@ static bool laghu_apache_attach_all_queues(void) {
                                    &binding->javascript_attached,
                                    binding->javascript_queue_path))
       complete = false;
+    if (binding->html_refresh_queue_path[0] != '\0' &&
+        !laghu_apache_attach_queue(&binding->html_refresh_queue,
+                                   &binding->html_refresh_attached,
+                                   binding->html_refresh_queue_path))
+      complete = false;
   }
   return complete;
 }
@@ -192,9 +257,12 @@ static void laghu_apache_close_all_queues(void) {
       laghu_runtime_queue_close(&binding->font_queue);
     if (apr_atomic_read32(&binding->javascript_attached) != 0U)
       laghu_runtime_queue_close(&binding->javascript_queue);
+    if (apr_atomic_read32(&binding->html_refresh_attached) != 0U)
+      laghu_runtime_queue_close(&binding->html_refresh_queue);
     apr_atomic_set32(&binding->image_attached, 0U);
     apr_atomic_set32(&binding->font_attached, 0U);
     apr_atomic_set32(&binding->javascript_attached, 0U);
+    apr_atomic_set32(&binding->html_refresh_attached, 0U);
   }
 }
 

@@ -10,15 +10,24 @@ queue=${LAGHU_QUEUE_PATH:-/run/laghu/jobs.queue}
 cache=${LAGHU_CACHE_PATH:-/var/cache/laghu/images}
 font_queue=${LAGHU_FONT_FETCH_QUEUE:-/run/laghu/fonts.queue}
 font_config=${LAGHU_FONT_PROVIDER_CONFIG:-/etc/laghu/font-providers.conf}
+html_refresh_queue=${LAGHU_HTML_REFRESH_QUEUE:-/run/laghu/html-refresh.queue}
+html_cache_origin=${LAGHU_HTML_CACHE_ORIGIN:-}
 
 runuser -u laghu -- laghu-libvips --init "${queue}" "${cache}"
 runuser -u laghu -- laghu-libvips --serve "${queue}" "${cache}" &
 service_pid=$!
 runuser -u laghu -- laghu-resource-fetch --init "${font_queue}" "${cache}" "${font_config}"
 runuser -u laghu -- laghu-resource-fetch --serve "${font_queue}" "${cache}" "${font_config}" &
+font_fetch_pid=$!
 runuser -u laghu -- laghu-js-optimize --init /run/laghu/javascript.queue "${cache}"
 runuser -u laghu -- laghu-js-optimize --serve /run/laghu/javascript.queue "${cache}" &
-font_pid=$!
+javascript_pid=$!
+html_refresh_pid=""
+if [ -n "${html_cache_origin}" ]; then
+  runuser -u laghu -- laghu-html-refresh --init "${html_refresh_queue}" "${cache}" "${html_cache_origin}"
+  runuser -u laghu -- laghu-html-refresh --serve "${html_refresh_queue}" "${cache}" "${html_cache_origin}" &
+  html_refresh_pid=$!
+fi
 asset_pid=""
 if [ -f /etc/laghu/asset-offload.conf ]; then
   runuser -u laghu -- laghu-asset-upload --serve /etc/laghu/asset-offload.conf &
@@ -27,10 +36,14 @@ fi
 
 cleanup() {
   kill "${service_pid}" 2>/dev/null || true
-  kill "${font_pid}" 2>/dev/null || true
+  kill "${font_fetch_pid}" 2>/dev/null || true
+  kill "${javascript_pid}" 2>/dev/null || true
+  [ "${html_refresh_pid}" = "" ] || kill "${html_refresh_pid}" 2>/dev/null || true
   [ "${asset_pid}" = "" ] || kill "${asset_pid}" 2>/dev/null || true
   wait "${service_pid}" 2>/dev/null || true
-  wait "${font_pid}" 2>/dev/null || true
+  wait "${font_fetch_pid}" 2>/dev/null || true
+  wait "${javascript_pid}" 2>/dev/null || true
+  [ "${html_refresh_pid}" = "" ] || wait "${html_refresh_pid}" 2>/dev/null || true
   [ "${asset_pid}" = "" ] || wait "${asset_pid}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM

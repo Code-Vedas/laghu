@@ -215,6 +215,9 @@ void laghu_config_init(laghu_config *config) {
   config->transform_memory_limit = LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET;
   config->transform_deadline_ms = LAGHU_TRANSFORM_DEADLINE_MS_UNSET;
   config->variants_per_source = LAGHU_VARIANTS_PER_SOURCE_UNSET;
+  config->html_cache_origin[0] = '\0';
+  config->html_cache_ttl = LAGHU_HTML_CACHE_TTL_UNSET;
+  config->html_cache_stale_ttl = LAGHU_HTML_CACHE_STALE_TTL_UNSET;
   config->cache_mime_types[0] = '\0';
   config->respect_vary = LAGHU_MODE_UNSET;
   config->respect_x_forwarded_proto = LAGHU_MODE_UNSET;
@@ -429,6 +432,26 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
               child->variants_per_source != LAGHU_VARIANTS_PER_SOURCE_UNSET
           ? child->variants_per_source
           : parent_variants_per_source;
+  result->html_cache_ttl =
+      child != NULL && child->html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET
+          ? child->html_cache_ttl
+      : parent != NULL ? parent->html_cache_ttl
+                       : LAGHU_HTML_CACHE_TTL_UNSET;
+  result->html_cache_stale_ttl =
+      child != NULL &&
+              child->html_cache_stale_ttl != LAGHU_HTML_CACHE_STALE_TTL_UNSET
+          ? child->html_cache_stale_ttl
+      : parent != NULL ? parent->html_cache_stale_ttl
+                       : LAGHU_HTML_CACHE_STALE_TTL_UNSET;
+  if (child != NULL && child->html_cache_origin[0] != '\0') {
+    (void)snprintf(result->html_cache_origin, sizeof(result->html_cache_origin),
+                   "%s", child->html_cache_origin);
+  } else if (parent != NULL) {
+    (void)snprintf(result->html_cache_origin, sizeof(result->html_cache_origin),
+                   "%s", parent->html_cache_origin);
+  } else {
+    result->html_cache_origin[0] = '\0';
+  }
   result->respect_vary =
       child != NULL && child->respect_vary != LAGHU_MODE_UNSET
           ? child->respect_vary
@@ -663,13 +686,12 @@ static bool laghu_domain_origin_valid(const char *origin) {
          authority[strlen(authority) - 1U] != '.';
 }
 
-static bool laghu_domain_contains(
-    const char domains[LAGHU_DOMAIN_POLICY_MAX_DOMAINS]
-                      [LAGHU_DOMAIN_ORIGIN_SIZE],
-    unsigned int count, const char *origin) {
+static bool laghu_domain_contains(const char *domains, unsigned int count,
+                                  const char *origin) {
   unsigned int index;
   for (index = 0U; index < count; ++index)
-    if (strcmp(domains[index], origin) == 0) return true;
+    if (strcmp(domains + index * LAGHU_DOMAIN_ORIGIN_SIZE, origin) == 0)
+      return true;
   return false;
 }
 
@@ -677,7 +699,8 @@ bool laghu_domain_policy_add_domain(laghu_domain_policy *policy,
                                     const char *origin) {
   if (policy == NULL || !laghu_domain_origin_valid(origin) ||
       policy->domain_count >= LAGHU_DOMAIN_POLICY_MAX_DOMAINS ||
-      laghu_domain_contains(policy->domains, policy->domain_count, origin))
+      laghu_domain_contains(&policy->domains[0][0], policy->domain_count,
+                            origin))
     return false;
   (void)snprintf(policy->domains[policy->domain_count++],
                  LAGHU_DOMAIN_ORIGIN_SIZE, "%s", origin);
@@ -744,7 +767,7 @@ bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
                    public_origin);
   }
   if (group->shard_count >= LAGHU_DOMAIN_POLICY_MAX_SHARDS ||
-      laghu_domain_contains(group->shards, group->shard_count, origin))
+      laghu_domain_contains(&group->shards[0][0], group->shard_count, origin))
     return false;
   (void)snprintf(group->shards[group->shard_count++], LAGHU_DOMAIN_ORIGIN_SIZE,
                  "%s", origin);
@@ -762,13 +785,14 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
     return false;
   for (index = 0U; index < policy->domain_count; ++index)
     if (!laghu_domain_origin_valid(policy->domains[index]) ||
-        laghu_domain_contains(policy->domains, index, policy->domains[index]))
+        laghu_domain_contains(&policy->domains[0][0], index,
+                              policy->domains[index]))
       return false;
   for (index = 0U; index < policy->mapping_count; ++index) {
     unsigned int prior;
     if (!laghu_domain_origin_valid(policy->mappings[index].source_origin) ||
         !laghu_domain_origin_valid(policy->mappings[index].public_origin) ||
-        !laghu_domain_contains(policy->domains, policy->domain_count,
+        !laghu_domain_contains(&policy->domains[0][0], policy->domain_count,
                                policy->mappings[index].public_origin))
       return false;
     for (prior = 0U; prior < index; ++prior)
@@ -783,7 +807,7 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
     if (!laghu_domain_origin_valid(group->public_origin) ||
         group->shard_count == 0U ||
         group->shard_count > LAGHU_DOMAIN_POLICY_MAX_SHARDS ||
-        !laghu_domain_contains(policy->domains, policy->domain_count,
+        !laghu_domain_contains(&policy->domains[0][0], policy->domain_count,
                                group->public_origin))
       return false;
     for (prior = 0U; prior < index; ++prior)
@@ -799,7 +823,8 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
     if (!mapped) return false;
     for (shard = 0U; shard < group->shard_count; ++shard) {
       if (!laghu_domain_origin_valid(group->shards[shard]) ||
-          laghu_domain_contains(group->shards, shard, group->shards[shard]))
+          laghu_domain_contains(&group->shards[0][0], shard,
+                                group->shards[shard]))
         return false;
     }
   }

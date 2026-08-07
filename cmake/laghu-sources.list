@@ -14,6 +14,7 @@ runtime|laghu_budget.c|libs/laghu-runtime/src/budget.c
 runtime|laghu_service_config.c|libs/laghu-runtime/src/service_config.c
 runtime|laghu_cache.c|libs/laghu-runtime/src/cache.c
 runtime|laghu_cache_artifact.c|libs/laghu-runtime/src/cache_artifact.c
+runtime|laghu_html_cache.c|libs/laghu-runtime/src/html_cache.c
 runtime|laghu_operational.c|libs/laghu-runtime/src/operational.c
 runtime|laghu_queue.c|libs/laghu-runtime/src/queue.c
 runtime|laghu_worker.c|libs/laghu-runtime/src/worker.c
@@ -41,6 +42,8 @@ runtime|laghu_javascript_defer.c|libs/laghu-runtime/src/javascript_defer.c
 runtime|laghu_instrumentation.c|libs/laghu-runtime/src/instrumentation.c
 runtime|laghu_lcp.c|libs/laghu-runtime/src/lcp.c
 runtime|laghu_beacon.c|libs/laghu-runtime/src/beacon.c
+worker|laghu_html_refresh.c|workers/laghu-html-refresh/main.c
+worker_test|laghu_html_refresh|workers/laghu-html-refresh/tests/refresh_fixture.c
 http|laghu_http.c|libs/laghu-http/src/http.c
 http|laghu_http_administrative.c|libs/laghu-http/src/administrative.c
 http|laghu_http_beacon.c|libs/laghu-http/src/http_beacon.c
@@ -102,6 +105,7 @@ runtime_test|cache_fixture|libs/laghu-runtime/tests/cache_fixture.c
 runtime_test|html_integration|libs/laghu-runtime/tests/html_integration_test.c
 runtime_test|asset_integration|libs/laghu-runtime/tests/asset_integration_test.c
 runtime_test|cache_catalog_integration|libs/laghu-runtime/tests/cache_catalog_integration_test.c
+runtime_test|html_cache|libs/laghu-runtime/tests/html_cache_test.c
 runtime_test|css_critical_integration|libs/laghu-runtime/tests/css_critical_integration_test.c
 runtime_test|javascript_integration|libs/laghu-runtime/tests/javascript_integration_test.c
 runtime_test|instrumentation_lcp_integration|libs/laghu-runtime/tests/instrumentation_lcp_integration_test.c

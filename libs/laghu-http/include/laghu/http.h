@@ -216,6 +216,7 @@ typedef struct {
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
   char cache_key[LAGHU_RUNTIME_KEY_SIZE];
   bool job_published;
+  bool not_modified;
   bool javascript_defer_recommended;
   bool javascript_defer_rollback_recommended;
   char javascript_defer_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -292,6 +293,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
 bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
                                      laghu_buffer captured_body,
                                      laghu_http_transaction_result *result);
+/* Implements HTTP weak comparison for If-None-Match against a generated ETag.
+ * Call after finalize, because transformed representations own their validator.
+ */
+bool laghu_http_request_matches_result_etag(
+    const laghu_http_request *request,
+    const laghu_http_transaction_result *result);
 void laghu_http_transaction_result_release(
     laghu_http_transaction_result *result);
 

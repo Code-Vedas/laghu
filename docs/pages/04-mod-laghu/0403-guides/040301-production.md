@@ -8,13 +8,23 @@ permalink: /mod-laghu/guides/production/
 
 # mod-laghu Production Configuration
 
-This example configures process-wide RUM, all workers, a persistent cache, one optimized virtual host, and verified remote Redis/Valkey synchronization.
+This example configures process-wide RUM, workers, a persistent cache, one optimized virtual host with HTML stale-while-revalidate, and verified remote Redis/Valkey synchronization.
 
 ## Services and Permissions
 
 ```bash
-systemctl enable --now laghu-libvips laghu-resource-fetch laghu-js-optimize
-systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize
+install -d -o root -g laghu -m 0750 /etc/laghu/html-refresh
+cat >/etc/laghu/html-refresh/www.conf <<'EOF'
+LAGHU_HTML_REFRESH_QUEUE=/run/laghu/html-refresh-www.queue
+LAGHU_HTML_REFRESH_CACHE=/var/cache/laghu/images
+LAGHU_HTML_REFRESH_ORIGIN=https://origin.example.com
+EOF
+chown root:laghu /etc/laghu/html-refresh/www.conf
+chmod 0640 /etc/laghu/html-refresh/www.conf
+systemctl enable --now laghu-libvips laghu-resource-fetch laghu-js-optimize \
+  laghu-html-refresh@www
+systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize \
+  laghu-html-refresh@www
 ```
 
 Grant the Apache worker account access through the `laghu` group and persist `/var/cache/laghu/images` and `/var/lib/laghu/rum`.
@@ -44,6 +54,7 @@ Laghu JavaScriptQueue /run/laghu/javascript.queue
 Laghu JavaScriptTarget "defaults and supports es6-module and not dead"
 Laghu JavaScriptObservationConfig /etc/laghu/javascript-observation.conf
 Laghu ImageCache /var/cache/laghu/images
+Laghu HtmlRefreshQueue /run/laghu/html-refresh-www.queue
 
 <VirtualHost *:443>
   ServerName www.example.com
@@ -62,6 +73,11 @@ Laghu ImageCache /var/cache/laghu/images
   Laghu CssOutlineThreshold 8192
   Laghu JavaScriptInlineLimit 2048
   Laghu JavaScriptOutlineThreshold 8192
+  # Same values as /etc/laghu/html-refresh/www.conf. TTL is 1..3600 seconds;
+  # the stale interval is 0..86400 seconds.
+  Laghu HtmlCacheOrigin https://origin.example.com
+  Laghu HtmlCacheTtl 30
+  Laghu HtmlCacheStaleTtl 300
   Laghu ImageBeacon On
   Laghu CriticalCssBeacon On
   Laghu InstrumentationBeacon On
@@ -89,3 +105,4 @@ curl -sS -H "X-Laghu-Purge-Token: $LAGHU_OPERATIONS_TOKEN" https://www.example.c
 
 On RPM-family systems use `httpd -t` when that is the packaged command.
 Start with one virtual host, verify cold/warm behavior and application semantics, then expand after metrics and RUM stabilize.
+The refresh worker is optional and Unix/Linux-packaged only. Give every origin its own queue, `NAME.conf`, and `laghu-html-refresh@NAME` service.

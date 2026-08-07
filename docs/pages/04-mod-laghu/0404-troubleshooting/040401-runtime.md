@@ -37,4 +37,4 @@ Codec, SWC, provider, and Redis work must remain outside Apache children; a depe
 | Immutable routes return 404 | Confirm the catalog and payload were atomically published. | Repair cache access; never create route files manually. |
 | RUM learning stays local | Inspect beacon CSP, snapshot access, hiredis loading, TLS trust, and backend health. | Request handling remains memory-backed while background retry continues. |
 
-On systemd packages, inspect `laghu-libvips`, `laghu-resource-fetch`, and `laghu-js-optimize` service status.
+On systemd packages, inspect `laghu-libvips`, `laghu-resource-fetch`, and `laghu-js-optimize` service status. When HTML micro-caching is enabled, also inspect its matching `laghu-html-refresh@NAME` instance and ensure its queue, cache, and origin equal the Apache settings.

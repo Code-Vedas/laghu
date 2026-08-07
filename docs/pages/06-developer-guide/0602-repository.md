@@ -20,6 +20,7 @@ permalink: /developer-guide/repository/
 | `servers/laghu` | Standalone reverse proxy. |
 | `workers/laghu-libvips` | Image encoding and sprite work. |
 | `workers/laghu-resource-fetch` | Provider-configured font stylesheet fetching. |
+| `workers/laghu-html-refresh` | HTTPS stale-while-revalidate HTML cache refreshes. |
 | `workers/laghu-js-optimize` | Locked native SWC processing. |
 | `packaging` | Package, service, container, and Homebrew definitions. |
 | `scripts` | Canonical build and validation entry points. |

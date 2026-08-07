@@ -41,5 +41,5 @@ Capture `nginx -T`, authenticated metrics/readiness output, and representative r
 | Immutable `/.laghu/` route returns 404 | Confirm the catalog entry and cached payload are ready and uncorrupted. | Allow normal traffic to republish; do not fabricate cache files. |
 | RUM does not converge | Check beacon opt-in/CSP, snapshot directory, hiredis path, TLS trust, and backend availability. | Request traffic continues from memory; repair background storage and let the retained batch retry. |
 
-Use `systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize` on systemd packages.
+Use `systemctl status laghu-libvips laghu-resource-fetch laghu-js-optimize` on systemd packages. When HTML micro-caching is enabled, also inspect its matching `laghu-html-refresh@NAME` instance and ensure its queue, cache, and origin equal the NGINX settings.
 Laghu intentionally preserves original responses when a queue is full, a worker is absent, a candidate is invalid, or a transformation is not smaller.
