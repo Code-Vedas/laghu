@@ -587,6 +587,7 @@ static void test_html_preconnect_headers(void) {
     size_t index;
     unsigned int preconnect = 0U;
     unsigned int dns = 0U;
+    unsigned int early_hints = 0U;
     const char *etag = NULL;
     laghu_http_transaction_init(&transaction);
     CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
@@ -601,6 +602,8 @@ static void test_html_preconnect_headers(void) {
           &finalized.header_operations[index];
       if (operation->kind == LAGHU_HTTP_HEADER_APPEND &&
           strcmp(operation->name, "Link") == 0) {
+        CHECK(operation->early_hint);
+        ++early_hints;
         if (strcmp(operation->value,
                    "<https://cdn.example.test>; rel=preconnect") == 0) {
           ++preconnect;
@@ -619,10 +622,9 @@ static void test_html_preconnect_headers(void) {
       }
     }
     if (pass == 0U) {
-      CHECK(preconnect == 0U && dns == 0U && etag == NULL);
+      CHECK(preconnect == 0U && dns == 0U && early_hints == 0U && etag == NULL);
     } else {
-      CHECK(preconnect == 1U);
-      CHECK(dns == 1U);
+      CHECK(preconnect == 1U && dns == 1U && early_hints == 2U);
       CHECK(etag != NULL);
       if (pass == 1U) {
         CHECK(strlen(etag) < sizeof(warm_etag));

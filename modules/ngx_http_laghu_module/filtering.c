@@ -186,6 +186,7 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
       ngx_chain_t output;
       unsigned char *copy = ngx_pnalloc(request->pool, selected_length);
       if (copy == NULL ||
+          ngx_http_laghu_send_early_hints(request, &result) != NGX_OK ||
           ngx_http_laghu_apply_result(request, &result) != NGX_OK) {
         laghu_http_transaction_result_release(&result);
         return NGX_ERROR;

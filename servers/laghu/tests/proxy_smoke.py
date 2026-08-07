@@ -613,7 +613,8 @@ def create_tls_certificate(root):
     return ca_file, server_file, server_key
 
 
-def request(port, path, method="GET", headers=None, body=b"", timeout=10):
+def request(port, path, method="GET", headers=None, body=b"", timeout=10,
+            include_interim=False):
     sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     extra = ""
     for name, value in (headers or {}).items():
@@ -662,7 +663,18 @@ def request(port, path, method="GET", headers=None, body=b"", timeout=10):
     response = b"".join(chunks)
     if b"\r\n\r\n" not in response:
         raise OSError("incomplete HTTP response")
-    head, body = response.split(b"\r\n\r\n", 1)
+    interim = []
+    while True:
+        head, body = response.split(b"\r\n\r\n", 1)
+        status = head.split(b"\r\n", 1)[0]
+        if not status.startswith(b"HTTP/") or not status[9:12].startswith(b"1"):
+            break
+        interim.append(head.lower())
+        if b"\r\n\r\n" not in body:
+            raise OSError("missing final HTTP response")
+        response = body
+    if include_interim:
+        return head.lower(), body, interim
     return head.lower(), body
 
 
@@ -1021,9 +1033,16 @@ def main():
             assert b"/.laghu/beacon/instrumentation.js" in first_body
             assert b'data-laghu-sample="100"' in first_body
             assert b"x-laghu: pass" in first_head, first_head
-            lcp_head, lcp_body = request(proxy_port, "/lcp.html")
+            lcp_head, lcp_body, lcp_interim = request(
+                proxy_port, "/lcp.html", include_interim=True
+            )
             assert b'fetchpriority="high"' in lcp_body
             assert b'</image.png>; rel=preload; as=image' in lcp_head
+            assert any(
+                b"103 early hints" in header
+                and b'</image.png>; rel=preload; as=image' in header
+                for header in lcp_interim
+            )
             assert b'/logo.png>; rel=preload' not in lcp_head
             hints_head, hints_cold = request(proxy_port, "/hints.html")
             assert b'<https://origin.example.test>; rel=preload' in hints_head

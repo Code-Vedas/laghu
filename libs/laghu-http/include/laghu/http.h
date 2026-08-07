@@ -186,6 +186,9 @@ typedef struct {
   laghu_http_header_operation_kind kind;
   char name[LAGHU_HTTP_MAX_HEADER_NAME + 1U];
   char *value;
+  /* Send this generated Link field in an informational 103 when transport can.
+   */
+  bool early_hint;
 } laghu_http_header_operation;
 
 typedef enum {

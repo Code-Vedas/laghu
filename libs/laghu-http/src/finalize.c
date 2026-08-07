@@ -12,8 +12,8 @@
 #include "laghu/budget.h"
 #include "laghu/cache.h"
 #include "laghu/csp.h"
-#include "laghu/domain.h"
 #include "laghu/css.h"
+#include "laghu/domain.h"
 #include "laghu/html.h"
 #include "laghu/instrumentation.h"
 #include "laghu/javascript.h"
@@ -75,9 +75,9 @@ static bool laghu_http_finalize_css(laghu_http_transaction *transaction,
   changed = rewritten.rewritten;
   selected = changed ? rewritten.data : body.data;
   selected_length = changed ? rewritten.length : body.length;
-  if (!laghu_domain_rewrite_css(
-          (laghu_buffer){selected, selected_length},
-          &transaction->environment.config.domain_policy, &domains)) {
+  if (!laghu_domain_rewrite_css((laghu_buffer){selected, selected_length},
+                                &transaction->environment.config.domain_policy,
+                                &domains)) {
     laghu_runtime_css_result_release(&rewritten);
     return false;
   }
@@ -480,8 +480,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       header_changed = true;
     }
     if (lcp.link_header != NULL && lcp.link_header[0] != '\0') {
-      if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_APPEND,
-                                           "Link", lcp.link_header)) {
+      if (!laghu_http_add_early_hint(result, lcp.link_header)) {
         laghu_runtime_html_result_release(&hinted);
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
@@ -492,9 +491,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       header_changed = true;
     }
     for (index = 0U; index < hinted.link_header_count; ++index) {
-      if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_APPEND,
-                                           "Link",
-                                           hinted.link_headers[index])) {
+      if (!laghu_http_add_early_hint(result, hinted.link_headers[index])) {
         laghu_runtime_html_result_release(&hinted);
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
@@ -593,9 +590,9 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
                                dependency);
     }
   }
-  if (!laghu_domain_rewrite_html(
-          (laghu_buffer){selected, selected_length},
-          &transaction->environment.config.domain_policy, &domains)) {
+  if (!laghu_domain_rewrite_html((laghu_buffer){selected, selected_length},
+                                 &transaction->environment.config.domain_policy,
+                                 &domains)) {
     laghu_runtime_html_result_release(&hinted);
     laghu_runtime_html_result_release(&finalized);
     laghu_runtime_html_result_release(&rewritten);
@@ -626,8 +623,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       laghu_lcp_result_release(&lcp);
       return false;
     }
-    material_length = snprintf(material, sizeof(material), "%s\n%s", dependency,
-                               domain_hash);
+    material_length =
+        snprintf(material, sizeof(material), "%s\n%s", dependency, domain_hash);
     if (material_length > 0 && (size_t)material_length < sizeof(material))
       (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
                                             (size_t)material_length},

@@ -9,6 +9,79 @@
 
 #include "ngx_http_laghu_internal.h"
 
+ngx_int_t ngx_http_laghu_send_early_hints(
+    ngx_http_request_t *request, const laghu_http_transaction_result *result) {
+  ngx_list_part_t *part;
+  ngx_table_elt_t *headers;
+  ngx_uint_t *hashes;
+  size_t count = 0U;
+  size_t original_count;
+  size_t index;
+  bool emitted = false;
+  if (request == NULL || result == NULL || request != request->main ||
+      request->http_version < NGX_HTTP_VERSION_11) {
+    return NGX_OK;
+  }
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    if (result->header_operations[index].early_hint) emitted = true;
+  }
+  if (!emitted) return NGX_OK;
+  for (part = &request->headers_out.headers.part; part != NULL;
+       part = part->next) {
+    count += part->nelts;
+  }
+  original_count = count;
+  hashes = ngx_palloc(request->pool, count * sizeof(*hashes));
+  if (count != 0U && hashes == NULL) return NGX_ERROR;
+  count = 0U;
+  for (part = &request->headers_out.headers.part; part != NULL;
+       part = part->next) {
+    headers = part->elts;
+    for (index = 0U; index < part->nelts; ++index) {
+      hashes[count++] = headers[index].hash;
+      headers[index].hash = 0U;
+    }
+  }
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    const laghu_http_header_operation *operation =
+        &result->header_operations[index];
+    ngx_table_elt_t *header;
+    if (!operation->early_hint) continue;
+    header = ngx_list_push(&request->headers_out.headers);
+    if (header == NULL) goto restore_error;
+    ngx_memzero(header, sizeof(*header));
+    ngx_str_set(&header->key, "Link");
+    header->value.len = strlen(operation->value);
+    header->value.data = ngx_pnalloc(request->pool, header->value.len);
+    if (header->value.data == NULL) goto restore_error;
+    ngx_memcpy(header->value.data, operation->value, header->value.len);
+    header->hash = 1U;
+  }
+  if (ngx_http_send_early_hints(request) == NGX_ERROR) goto restore_error;
+  count = 0U;
+  for (part = &request->headers_out.headers.part; part != NULL;
+       part = part->next) {
+    headers = part->elts;
+    for (index = 0U; index < part->nelts; ++index) {
+      headers[index].hash = count < original_count ? hashes[count] : 0U;
+      ++count;
+    }
+  }
+  return NGX_OK;
+
+restore_error:
+  count = 0U;
+  for (part = &request->headers_out.headers.part; part != NULL;
+       part = part->next) {
+    headers = part->elts;
+    for (index = 0U; index < part->nelts; ++index) {
+      headers[index].hash = count < original_count ? hashes[count] : 0U;
+      ++count;
+    }
+  }
+  return NGX_ERROR;
+}
+
 ngx_int_t ngx_http_laghu_apply_result(
     ngx_http_request_t *request, const laghu_http_transaction_result *result) {
   ngx_table_elt_t **staged;

@@ -14,6 +14,8 @@ void laghu_http_result_init(laghu_http_transaction_result *result);
 bool laghu_http_add_header_operation(laghu_http_transaction_result *result,
                                      laghu_http_header_operation_kind kind,
                                      const char *name, const char *value);
+bool laghu_http_add_early_hint(laghu_http_transaction_result *result,
+                               const char *value);
 bool laghu_http_add_status(laghu_http_transaction_result *result,
                            laghu_decision decision);
 bool laghu_http_add_length(laghu_http_transaction_result *result,

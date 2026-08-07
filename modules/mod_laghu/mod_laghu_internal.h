@@ -47,6 +47,10 @@
 #define LAGHU_APACHE_INITIAL_CAPTURE (64U * 1024U)
 #define LAGHU_APACHE_QUEUE_CONFIG_LIMIT 128U
 
+#ifndef HTTP_EARLY_HINTS
+#define HTTP_EARLY_HINTS 103
+#endif
+
 #define LAGHU_DEFAULT_QUEUE "/run/laghu/jobs.queue"
 #define LAGHU_DEFAULT_CACHE "/var/cache/laghu/images"
 #define LAGHU_DEFAULT_FONT_QUEUE "/run/laghu/fonts.queue"
@@ -102,6 +106,8 @@ void laghu_apache_log_transaction(request_rec *request,
                                   laghu_apache_context *context,
                                   const laghu_http_transaction_result *result,
                                   const char *failure);
+void laghu_apache_send_early_hints(request_rec *request,
+                                   const laghu_http_transaction_result *result);
 extern laghu_rum_engine *laghu_apache_rum;
 extern laghu_operational_registry laghu_apache_operational;
 extern const char *laghu_apache_operational_cache;

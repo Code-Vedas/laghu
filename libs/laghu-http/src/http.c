@@ -204,6 +204,18 @@ bool laghu_http_add_header_operation(laghu_http_transaction_result *result,
   return true;
 }
 
+bool laghu_http_add_early_hint(laghu_http_transaction_result *result,
+                               const char *value) {
+  laghu_http_header_operation *operation;
+  if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_APPEND, "Link",
+                                       value)) {
+    return false;
+  }
+  operation = &result->header_operations[result->header_operation_count - 1U];
+  operation->early_hint = true;
+  return true;
+}
+
 bool laghu_http_add_status(laghu_http_transaction_result *result,
                            laghu_decision decision) {
   const char *cache = "bypass";

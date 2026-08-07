@@ -194,6 +194,33 @@ bool laghu_apache_normalize(request_rec *request,
   return true;
 }
 
+void laghu_apache_send_early_hints(
+    request_rec *request, const laghu_http_transaction_result *result) {
+  apr_table_t *headers;
+  apr_table_t *original;
+  int status;
+  size_t index;
+  if (request == NULL || result == NULL ||
+      request->proto_num < HTTP_VERSION(1, 1))
+    return;
+  headers = apr_table_make(request->pool, (int)result->header_operation_count);
+  if (headers == NULL) return;
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    const laghu_http_header_operation *operation =
+        &result->header_operations[index];
+    if (operation->early_hint)
+      apr_table_addn(headers, "Link", operation->value);
+  }
+  if (apr_is_empty_table(headers)) return;
+  status = request->status;
+  original = request->headers_out;
+  request->headers_out = headers;
+  request->status = HTTP_EARLY_HINTS;
+  ap_send_interim_response(request, 1);
+  request->status = status;
+  request->headers_out = original;
+}
+
 bool laghu_apache_apply_result(request_rec *request,
                                const laghu_http_transaction_result *result) {
   const char **names = apr_pcalloc(
@@ -367,6 +394,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
       apr_bucket_brigade *replacement;
       unsigned char *selected = apr_pmemdup(request->pool, result.selected.data,
                                             result.selected.length);
+      laghu_apache_send_early_hints(request, &result);
       if (selected == NULL || !laghu_apache_apply_result(request, &result)) {
         laghu_http_transaction_result_release(&result);
         ap_remove_output_filter(filter);

@@ -149,6 +149,33 @@ bool proxy_send_headers(laghu_socket client, const proxy_response *origin,
   return count > 0 && proxy_send_all(client, line, (size_t)count);
 }
 
+bool proxy_send_early_hints(laghu_socket client, const char *request_version,
+                            const laghu_http_transaction_result *result) {
+  char line[16384];
+  size_t index;
+  bool emitted = false;
+  if (result == NULL) return false;
+  if (request_version == NULL || strcmp(request_version, "HTTP/1.1") != 0)
+    return true;
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    const laghu_http_header_operation *operation =
+        &result->header_operations[index];
+    int count;
+    if (!operation->early_hint) continue;
+    if (!emitted) {
+      if (!proxy_send_all(client, "HTTP/1.1 103 Early Hints\r\n",
+                          sizeof("HTTP/1.1 103 Early Hints\r\n") - 1U))
+        return false;
+      emitted = true;
+    }
+    count = snprintf(line, sizeof(line), "Link: %s\r\n", operation->value);
+    if (count <= 0 || (size_t)count >= sizeof(line) ||
+        !proxy_send_all(client, line, (size_t)count))
+      return false;
+  }
+  return !emitted || proxy_send_all(client, "\r\n", 2U);
+}
+
 bool proxy_send_result(laghu_socket client, const proxy_response *origin,
                        const laghu_http_transaction_result *result,
                        laghu_buffer body) {

@@ -366,6 +366,12 @@ grep 'fetchpriority=\("\)\?high\("\)\?' "${work}/lcp.html" >/dev/null
 grep 'later.jpg.*loading=.*lazy' "${work}/lcp.html" >/dev/null
 tr -d '\r' <"${work}/lcp.headers" | \
   grep -i -E -x 'Link: </hero.jpg>; rel=preload; as=image' >/dev/null
+tr -d '\r' <"${work}/lcp.headers" | awk '
+  /^HTTP\/1\.1 103 Early Hints$/ { early = 1; next }
+  early && /^Link: <\/hero\.jpg>; rel=preload; as=image$/ { link = 1 }
+  early && /^$/ { exit link ? 0 : 1 }
+  END { exit early && link ? 0 : 1 }
+'
 curl --fail --silent -X PURGE \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/site.css | grep 'accepted' >/dev/null

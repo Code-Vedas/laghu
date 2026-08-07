@@ -119,6 +119,8 @@ ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request,
                                         ngx_http_laghu_loc_conf_t *conf);
 ngx_int_t ngx_http_laghu_apply_result(
     ngx_http_request_t *request, const laghu_http_transaction_result *result);
+ngx_int_t ngx_http_laghu_send_early_hints(
+    ngx_http_request_t *request, const laghu_http_transaction_result *result);
 void ngx_http_laghu_remove_header(ngx_http_request_t *request,
                                   const char *name);
 bool ngx_http_laghu_normalize(ngx_http_request_t *request,

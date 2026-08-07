@@ -346,14 +346,16 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       goto done;
     }
     if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
-      if (!proxy_send_result(client, &response, &prepared, prepared.selected))
+      if (!proxy_send_early_hints(client, request.version, &prepared) ||
+          !proxy_send_result(client, &response, &prepared, prepared.selected))
         access.failure = "client_disconnect";
       goto done;
     }
     if (prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
       size_t expected = bodyless ? 0U : response.content_length;
       bool until_close = !bodyless && !response.has_content_length;
-      if (!proxy_send_headers(client, &response, &prepared,
+      if (!proxy_send_early_hints(client, request.version, &prepared) ||
+          !proxy_send_headers(client, &response, &prepared,
                               response.content_length,
                               response.has_content_length) ||
           !proxy_stream_body(origin, origin_tls, client, initial,
@@ -411,7 +413,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     }
   }
   if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
-    if (!proxy_send_result(client, &response, &prepared, prepared.selected))
+    if (!proxy_send_early_hints(client, request.version, &prepared) ||
+        !proxy_send_result(client, &response, &prepared, prepared.selected))
       access.failure = "client_disconnect";
   } else if (prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
     if (!proxy_send_result(client, &response, &prepared,
@@ -428,7 +431,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         &worker->queue->operational, finalized.lcp_decision,
         finalized.lcp_applied, finalized.lcp_profile_observations,
         finalized.lcp_profile_ready);
-    if (!proxy_send_result(client, &response, &finalized, finalized.selected))
+    if (!proxy_send_early_hints(client, request.version, &finalized) ||
+        !proxy_send_result(client, &response, &finalized, finalized.selected))
       access.failure = "client_disconnect";
   } else {
     if (prepared_ok)

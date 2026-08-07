@@ -151,7 +151,7 @@
 - [x] Bound and expose memory use, cache growth, and optimizer failure reasons.
 - [ ] Replace text-only operational surfaces with metrics, structured logs, and traces.
 - [ ] Keep configuration understandable through presets, validation, and explainability despite the complete filter surface.
-- [ ] Use Early Hints and modern resource hints instead of HTTP/2 push.
+- [x] Use Early Hints and modern resource hints instead of HTTP/2 push.
 
 ## 4. Modern Optimization Features
 
@@ -183,7 +183,7 @@
 - [x] Provide a non-blocking heuristic fallback when browser analysis is absent or fails.
 
 ### 4.3 Delivery and Protocols
-- [ ] Emit `103 Early Hints` for eligible preload and preconnect targets.
+- [x] Emit `103 Early Hints` for eligible preload and preconnect targets.
 - [x] Inject preconnect and DNS-prefetch hints for detected third-party origins.
 - [ ] Validate all transforms and caching behavior under HTTP/2.
 - [ ] Validate all transforms and caching behavior under HTTP/3/QUIC.

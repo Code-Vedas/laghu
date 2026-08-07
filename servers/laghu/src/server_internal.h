@@ -179,6 +179,8 @@ bool proxy_beacon_allowed(proxy_queue *queue, uint64_t now);
 bool proxy_send_headers(laghu_socket client, const proxy_response *origin,
                         const laghu_http_transaction_result *result,
                         size_t content_length, bool has_content_length);
+bool proxy_send_early_hints(laghu_socket client, const char *request_version,
+                            const laghu_http_transaction_result *result);
 bool proxy_send_result(laghu_socket client, const proxy_response *origin,
                        const laghu_http_transaction_result *result,
                        laghu_buffer body);
