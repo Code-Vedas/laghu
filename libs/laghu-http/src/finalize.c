@@ -490,6 +490,17 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       }
       header_changed = true;
     }
+    for (index = 0U; index < font.link_header_count; ++index) {
+      if (!laghu_http_add_early_hint(result, font.link_headers[index])) {
+        laghu_runtime_html_result_release(&hinted);
+        laghu_runtime_html_result_release(&finalized);
+        laghu_runtime_html_result_release(&rewritten);
+        laghu_runtime_html_result_release(&font);
+        laghu_lcp_result_release(&lcp);
+        return false;
+      }
+      header_changed = true;
+    }
     for (index = 0U; index < hinted.link_header_count; ++index) {
       if (!laghu_http_add_early_hint(result, hinted.link_headers[index])) {
         laghu_runtime_html_result_release(&hinted);

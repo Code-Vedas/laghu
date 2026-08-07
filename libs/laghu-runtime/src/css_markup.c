@@ -77,6 +77,120 @@ static const unsigned char *laghu_css_markup_find(const unsigned char *data,
   return NULL;
 }
 
+static bool laghu_css_markup_font_display(laghu_buffer css,
+                                          unsigned char **output,
+                                          size_t *output_length) {
+  laghu_css_markup_builder builder = {0};
+  size_t cursor = 0U;
+  bool has_display = false;
+  if (output == NULL || output_length == NULL) return false;
+  while (cursor < css.length) {
+    if (cursor + 1U < css.length && css.data[cursor] == '/' &&
+        css.data[cursor + 1U] == '*') {
+      size_t end = cursor + 2U;
+      while (end + 1U < css.length &&
+             !(css.data[end] == '*' && css.data[end + 1U] == '/'))
+        ++end;
+      if (end + 1U >= css.length ||
+          !laghu_css_markup_append(&builder, css.data + cursor,
+                                   end + 2U - cursor)) {
+        free(builder.data);
+        return false;
+      }
+      cursor = end + 2U;
+      continue;
+    }
+    if (css.data[cursor] == '\'' || css.data[cursor] == '"') {
+      unsigned char quote = css.data[cursor];
+      size_t end = cursor + 1U;
+      while (end < css.length && css.data[end] != quote) {
+        if (css.data[end] == '\\') ++end;
+        ++end;
+      }
+      if (end >= css.length ||
+          !laghu_css_markup_append(&builder, css.data + cursor,
+                                   end + 1U - cursor)) {
+        free(builder.data);
+        return false;
+      }
+      cursor = end + 1U;
+      continue;
+    }
+    if (cursor + sizeof("font-display") - 1U <= css.length &&
+        laghu_css_markup_equal(css.data + cursor, sizeof("font-display") - 1U,
+                               "font-display")) {
+      size_t end = cursor + sizeof("font-display") - 1U;
+      while (end < css.length && isspace(css.data[end])) ++end;
+      if (end < css.length && css.data[end] == ':') has_display = true;
+    }
+    if (css.data[cursor] == '}') {
+      if ((!has_display &&
+           !laghu_css_markup_append(&builder, "font-display:swap;", 18U)) ||
+          !laghu_css_markup_append(&builder, "}", 1U)) {
+        free(builder.data);
+        return false;
+      }
+      has_display = false;
+      ++cursor;
+      continue;
+    }
+    if (!laghu_css_markup_append(&builder, css.data + cursor, 1U)) {
+      free(builder.data);
+      return false;
+    }
+    ++cursor;
+  }
+  if (builder.length == 0U) {
+    free(builder.data);
+    return false;
+  }
+  *output = builder.data;
+  *output_length = builder.length;
+  return true;
+}
+
+static bool laghu_css_markup_font_asset(const laghu_font_provider *provider,
+                                        laghu_buffer css,
+                                        char output[LAGHU_RUNTIME_PATH_SIZE],
+                                        const char **type) {
+  size_t cursor = 0U;
+  if (provider == NULL || output == NULL || type == NULL) return false;
+  while (cursor + 4U <= css.length) {
+    const unsigned char *url =
+        laghu_css_markup_find(css.data + cursor, css.length - cursor, "url(");
+    size_t start, end;
+    unsigned char quote = 0U;
+    if (url == NULL) return false;
+    start = (size_t)(url - css.data) + 4U;
+    while (start < css.length && isspace(css.data[start])) ++start;
+    if (start < css.length &&
+        (css.data[start] == '\'' || css.data[start] == '"'))
+      quote = css.data[start++];
+    end = start;
+    while (end < css.length &&
+           (quote != 0U ? css.data[end] != quote : css.data[end] != ')'))
+      ++end;
+    if (end >= css.length || end == start ||
+        end - start >= LAGHU_RUNTIME_PATH_SIZE)
+      return false;
+    memcpy(output, css.data + start, end - start);
+    output[end - start] = '\0';
+    if (laghu_font_provider_url_allowed(provider, output, false, true)) {
+      const char *suffix = strrchr(output, '.');
+      if (suffix != NULL && strcmp(suffix, ".woff2") == 0) {
+        *type = "font/woff2";
+        return true;
+      }
+      if (suffix != NULL && strcmp(suffix, ".woff") == 0) {
+        *type = "font/woff";
+        return true;
+      }
+    }
+    cursor = end + 1U;
+  }
+  return false;
+}
+
 static bool laghu_css_markup_attribute(const unsigned char *tag, size_t length,
                                        const char *name,
                                        const unsigned char **value,
@@ -652,6 +766,7 @@ bool laghu_runtime_rewrite_font_css(
   laghu_css_markup_builder builder = {0};
   size_t cursor = 0U;
   size_t original_bundle = html.length;
+  unsigned int font_preloads = 0U;
   bool changed = false;
   if (result == NULL || cache_path == NULL || providers == NULL ||
       html.length > LAGHU_IMAGE_MAX_INPUT_BYTES) {
@@ -760,6 +875,10 @@ bool laghu_runtime_rewrite_font_css(
         if (record.ready && record.css_length <= inline_limit) {
           laghu_runtime_cache_entry entry;
           unsigned char *css = NULL;
+          unsigned char *display_css = NULL;
+          size_t display_length = 0U;
+          char asset[LAGHU_RUNTIME_PATH_SIZE];
+          const char *asset_type = NULL;
           if (!laghu_runtime_cache_lookup_variant(cache_path,
                                                   record.variant_key, &entry) ||
               entry.length != record.css_length ||
@@ -772,17 +891,40 @@ bool laghu_runtime_rewrite_font_css(
           css[entry.length] = '\0';
           if (!laghu_font_css_validate(provider,
                                        (laghu_buffer){css, entry.length}) ||
+              !laghu_css_markup_font_display((laghu_buffer){css, entry.length},
+                                             &display_css, &display_length) ||
               !laghu_css_markup_append(&builder, "<style", 6U) ||
               (has_media &&
                (!laghu_css_markup_append(&builder, " media=\"", 8U) ||
                 !laghu_css_markup_append(&builder, media, media_length) ||
                 !laghu_css_markup_append(&builder, "\"", 1U))) ||
               !laghu_css_markup_append(&builder, ">", 1U) ||
-              !laghu_css_markup_append(&builder, css, entry.length) ||
+              !laghu_css_markup_append(&builder, display_css, display_length) ||
               !laghu_css_markup_append(&builder, "</style>", 8U)) {
+            free(display_css);
             free(css);
             goto failed;
           }
+          if (font_preloads < 2U &&
+              laghu_css_markup_font_asset(provider,
+                                          (laghu_buffer){css, entry.length},
+                                          asset, &asset_type)) {
+            char relation[LAGHU_HTML_HEADER_VALUE_SIZE];
+            int length = snprintf(relation, sizeof(relation),
+                                  "<%s>; rel=preload; as=font; type=\"%s\"; "
+                                  "crossorigin",
+                                  asset, asset_type);
+            if (length <= 0 || (size_t)length >= sizeof(relation) ||
+                (result->link_headers[font_preloads] = strdup(relation)) ==
+                    NULL) {
+              free(display_css);
+              free(css);
+              goto failed;
+            }
+            ++font_preloads;
+            result->link_header_count = font_preloads;
+          }
+          free(display_css);
           free(css);
           original_bundle += entry.length;
           cursor = end + 1U;
@@ -822,6 +964,7 @@ unchanged:
   return true;
 failed:
   free(builder.data);
+  laghu_runtime_html_result_release(result);
   memset(result, 0, sizeof(*result));
   return false;
 }

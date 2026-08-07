@@ -106,6 +106,9 @@ static void test_font_css(const laghu_test_workspace *workspace) {
                                         101U, true, NULL, 2048U, &rewritten));
   assert(rewritten.rewritten && !rewritten.dependencies_pending);
   assert(strstr((const char *)rewritten.data, "<style>@font-face") != NULL);
+  assert(strstr((const char *)rewritten.data, "font-display:swap") != NULL);
+  assert(rewritten.link_header_count == 1U);
+  assert(strstr(rewritten.link_headers[0], "rel=preload; as=font") != NULL);
   assert(strstr((const char *)rewritten.data, "fonts.googleapis.com") == NULL);
   laghu_runtime_html_result_release(&rewritten);
   laghu_test_queue_pair_close(&queue);

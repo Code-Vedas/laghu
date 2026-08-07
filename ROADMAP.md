@@ -175,7 +175,7 @@
 ### 4.2 Core Web Vitals
 - [x] Detect, preload, prioritize, and exclude the LCP element from lazy loading.
 - [ ] Reserve layout space for images, ads, embeds, and fonts to reduce CLS.
-- [ ] Add appropriate font-display behavior and font preloads.
+- [x] Add appropriate font-display behavior and font preloads.
 - [ ] Defer non-critical JavaScript, safely split long tasks, and delay eligible third-party scripts until interaction to improve INP.
 - [ ] Add HTML micro-caching, conditional revalidation (`304`), and stale-while-revalidate to improve TTFB.
 - [ ] Learn and apply optimization profiles by DOM-template hash.

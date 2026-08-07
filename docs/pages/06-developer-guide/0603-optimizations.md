@@ -41,6 +41,7 @@ Operational output classifies skips in `laghu_transform_rejections_total` with o
 
 External font CSS uses a separate provider configuration and `laghu-resource-fetch` queue.
 The worker permits verified HTTPS GETs only, revalidates DNS and redirects, accepts font-only CSS, and never downloads or rewrites font binaries.
+When a configured provider stylesheet is safely inlined, Laghu adds `font-display: swap` to each validated face and emits at most two provider-allowlisted WOFF/WOFF2 preload headers with `crossorigin`; unsupported, stale, CSP-blocked, or oversized input remains unchanged.
 
 ## HTML
 
