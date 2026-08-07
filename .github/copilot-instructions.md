@@ -1,66 +1,54 @@
 # Laghu Repository Instructions
 
-## Placement
+## Priority
 
-- `libs/laghu-base` owns dependency-free bounded primitives; `libs/laghu-markup` owns shared bounded tokenization.
-- `libs/laghu-core` owns the shared configuration schema, resolved policy, eligibility, selection, and direct C tests.
-- `libs/laghu-image` owns explicit-loader image transforms, probes, and image-markup decisions; libvips remains private to this library and its worker consumer.
-- `libs/laghu-runtime` owns caches, queues, catalogs, RUM, operational state, and transformation services.
-- `libs/laghu-http` owns normalized transactions, sequencing, cache selection, headers, publications, budgets, and fail-open results.
-- `workers/laghu-libvips` owns codec probing, isolated execution, and atomic publication. Server adapters must never link codec libraries or invoke codec commands.
-- `modules/ngx_http_laghu_module` owns NGINX types, directives, lifecycle, and response-filter integration.
-- `modules/mod_laghu` owns Apache types, directives, lifecycle, APR pools, and bucket-brigade integration.
-- `ngx-laghu` and `mod-laghu` are equal product surfaces. Shared filters belong in libraries; never implement a filter only inside one module.
-- `docs/` owns supported public product behavior.
-- `scripts/` owns repository-wide local and CI entrypoints.
-- `cmake/laghu-sources.list` is the canonical native source inventory for build and packaging consumers.
+- Minimize context/output: search/filter first; read only relevant ranges; never dump large files, logs, diffs, JSONL, schemas, docs, config, or tool metadata unless required.
+- Reuse known context; do not reread unchanged content, restate history, repeat output, or carry completed investigation forward.
+- Ignore generated/vendor/lock/build/cache/coverage/minified content unless relevant.
+- Keep updates/reports terse; show output only as evidence.
 
-## Planning and Progress Tracking
+## Ownership
 
-- `1-pager.md` is the private north-star product specification. Keep it timeless: no milestones, completion status, delivery phases, or incremental scheduling.
-- `ROADMAP.md` is a temporary internal execution tracker, not public product documentation. Keep the complete work inventory there until the tracker is intentionally retired.
-- `ROADMAP.md` is the only Markdown file allowed to describe pending work, milestones, sequencing, or incomplete validation. Every other Markdown file is production documentation and must state implemented behavior only.
-- Use `[x]` only for implemented work backed by executable validation. Leave incomplete or partially scaffolded work as `[ ]`.
-- Never delete an unchecked item to make progress appear complete. Add new scope to the tracker before implementing it and return invalidated claims to `[ ]`.
-- Temporary private planning inputs are reference material only. Never link, cite, import, or mention them in README files, public documentation, code, tests, comments, examples, generated documentation, or agent reports.
-- Public documentation and code must remain correct after all temporary planning and tracking files are deleted.
-- Write one source line per prose paragraph or list item. Do not hard-wrap Markdown at an arbitrary column; preserve blank lines only where Markdown structure requires them.
+- `laghu-base`: bounded dependency-free primitives.
+- `laghu-markup`: bounded tokenization.
+- `laghu-core`: config/policy, eligibility, selection, C tests.
+- `laghu-image`: image transforms/probes/markup; libvips private.
+- `laghu-runtime`: caches, queues, catalogs, RUM, state, transformation services.
+- `laghu-http`: transactions, sequencing, caching, headers, publication, budgets, fail-open results.
+- `laghu-libvips`: isolated codec probing/execution/publication; server modules never link/invoke codecs.
+- NGINX/Apache modules contain server-specific integration only; shared filters belong in libraries and both servers remain equal product surfaces.
+- `docs/` = public behavior; `scripts/` = repo/CI entrypoints; `cmake/laghu-sources.list` = canonical native sources.
 
-## Runtime Rules
+## Truth
 
-- Preserve the original response on every service failure.
-- Never perform blocking fetch, codec, or service waits in a server request.
-- Keep NGINX allocation lifetimes explicit and use request/configuration pools.
-- Keep Apache allocation lifetimes explicit and preserve brigade metadata, `FLUSH`, and `EOS` behavior.
-- Validate raw directive input before applying defaults or inheritance.
-- Bound content size, memory, time, cache growth, and variant fanout.
-- Do not add outbound fetching without SSRF-safe defaults and threat modeling.
+- `1-pager.md`: timeless private product specification.
+- `ROADMAP.md`: only Markdown allowed to contain pending work, milestones, sequencing, or incomplete validation.
+- `[x]` requires executable validation; never hide unfinished or invalidated work.
+- Temporary planning material must never leak into public artifacts.
+- Public docs describe implemented behavior only and must stay synchronized with code/scripts/CI.
+- Public namespace is `laghu`; packages are `ngx-laghu` and `mod-laghu`; `laghu-libvips` is internal.
+- Markdown: one source line per paragraph/list item; no hard wrapping.
 
-## Product Truth
+## Runtime
 
-- Do not present a roadmap filter, endpoint, CLI command, package, or server target as available until executable validation exists.
-- Keep public runtime namespaces under `laghu`; historical names may appear only in the dedicated background page and internal progress tracker.
-- Update README, docs, scripts, and CI together when ownership or commands move.
-- Expose `ngx-laghu` and `mod-laghu` as user-facing package identities. `laghu-libvips` is their internal shared dependency.
+- Fail open; preserve original responses on service failure.
+- Never block requests on fetches, codecs, or services.
+- Respect NGINX pool and Apache APR/brigade lifetimes, metadata, `FLUSH`, and `EOS`.
+- Validate raw directives before inheritance/defaults.
+- Bound content, memory, time, cache growth, and variant fanout.
+- Outbound fetching requires SSRF-safe defaults and threat modeling.
 
-## License Headers
+## License
 
-- Every source file and every comment-capable script, build definition, workflow, template, style, and deployment or packaging configuration must carry the repository's full Codevedas MIT license header.
-- Keep the shebang, Ruby magic comment, or Jekyll front matter first when the file format requires it. Prose, legal texts, generated lockfiles, CNAME, and strict package-format metadata do not receive a synthetic comment header.
-- Run `scripts/run-license-headers-all`; `scripts/run-lint-all` and `scripts/run-all` enforce the same audit.
+- All comment-capable source/config/build/workflow/deployment files require the full Codevedas MIT header.
+- Preserve required shebang/magic/front matter first; exclude prose, legal text, lockfiles, CNAME, and strict package metadata.
+- License checks are enforced by `run-license-headers-all`, `run-lint-all`, and `run-all`.
 
 ## Verification
 
-Run `scripts/run-all` for the full repository lane. Use the focused scripts under `scripts/` while iterating.
-
-## High-Priority Validation Efficiency
-
-- Treat bounded validation output and avoiding redundant work as a priority for every agent run; this must not weaken the required acceptance bar.
-- Redirect verbose compiler, dependency, matched-server, packaging, and installer output to per-phase log files. Report a concise phase result and print only a bounded failure tail with the first actionable error.
-- Do not stream successful file-by-file compilation, installation, staging, or compression output into the conversation.
-- Run focused build and test targets while iterating. Run the full repository and cross-platform acceptance lanes once after focused checks pass or when a shared contract requires them.
-- Preserve verified dependency and matched-server artifacts between retries. Restart only the failed phase; do not rebuild APR, Apache, NGINX, Rust dependencies, runtime staging, or installers when their inputs are unchanged.
-- Prefer one bounded status poll over frequent empty polling. For long remote work, launch a logged job and inspect its status and failure tail rather than holding or repeatedly reopening a verbose output stream.
-- Before transferring a working tree, verify exclusion patterns against required scripts and sources. Never use broad patterns such as `build*` that can omit tracked build scripts.
-- Transfer only tracked files plus intentional modified and untracked source files to remote builders. Exclude generated dependency and build trees, including `tmp/`, top-level `build/`, `workers/laghu-js-optimize/target/`, `node_modules/`, `.bundle/`, and `.git/`.
-- Keep final reports concise: list exact commands or named phases, outcomes, and unresolved failures; do not reproduce routine build logs.
+- Iterate with focused targets; run `scripts/run-all` after they pass or shared contracts require it.
+- Log verbose build/install/package output; report only phase results and bounded actionable failures.
+- Reuse unchanged artifacts and retry only failed phases.
+- Prefer bounded polling and logged remote jobs.
+- Transfer only tracked + intentional source changes; exclude generated/build/dependency trees and `.git/`.
+- Final reports: commands/phases, outcomes, unresolved failures—no routine logs.
