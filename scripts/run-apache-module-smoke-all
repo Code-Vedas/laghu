@@ -354,6 +354,9 @@ fi
 "${status_bin}" status http://127.0.0.1:18081 \
   --token-file "${work}/purge.token" --json | \
   grep '"schema":"laghu-status-v1"' >/dev/null
+"${status_bin}" doctor http://127.0.0.1:18081 \
+  --token-file "${work}/purge.token" --json | \
+  grep '"schema":"laghu-doctor-v1"' >/dev/null
 "${status_bin}" purge http://127.0.0.1:18081/site.css \
   --token-file "${work}/purge.token" --json | \
   grep '"schema":"laghu-purge-v1"' >/dev/null

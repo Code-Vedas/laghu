@@ -425,6 +425,47 @@ def status_smoke(executable, root):
         server.server_close()
 
 
+def doctor_smoke(executable, root):
+    token = root / "doctor.token"
+    token.write_text("0123456789abcdef\n")
+    token.chmod(0o600)
+
+    def run(port, *options):
+        return subprocess.run(
+            [str(executable), "doctor", f"http://127.0.0.1:{port}",
+             "--token-file", str(token), *options],
+            capture_output=True, text=True,
+        )
+
+    server = QuietThreadingHTTPServer(("127.0.0.1", 0), StatusOrigin)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = run(server.server_port, "--json")
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert payload["schema"] == "laghu-doctor-v1"
+        assert payload["runtime"] == "ready"
+        assert payload["cache"] == "ready"
+        assert payload["workers"] == "ready"
+        assert payload["budgets"] == "ready"
+        assert payload["policy"] == "degraded"
+        assert payload["stats"]["requests"]["hits"] == 1
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+        result = run(server.server_port)
+        assert result.returncode == 0
+        assert result.stdout == (
+            "runtime: ready\ncache: ready\nworkers: ready\nbudgets: ready\n"
+            "policy: degraded\ncache_stats: hits=1 misses=2 usage=2 capacity=10\n"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    result = run(free_port(), "--json")
+    assert result.returncode == 4
+
+
 def purge_smoke(executable, root):
     token = root / "purge-client.token"
     token.write_text("0123456789abcdef\n")
@@ -670,6 +711,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="laghu-proxy-") as directory:
         root = pathlib.Path(directory)
         status_smoke(executable, root)
+        doctor_smoke(executable, root)
         purge_smoke(executable, root)
         (root / "cache").mkdir()
         subprocess.run(

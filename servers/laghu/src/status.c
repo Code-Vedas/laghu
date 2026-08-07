@@ -526,10 +526,16 @@ static int status_fetch(const status_origin *origin, SSL_CTX *context,
   return (int)status;
 }
 
-int laghu_status_run(int argc, char **argv) {
+typedef enum {
+  STATUS_COMMAND_STATUS,
+  STATUS_COMMAND_DOCTOR
+} status_command;
+
+static int status_run(int argc, char **argv, status_command command) {
   status_origin origin; char token[257], ready[STATUS_BODY_LIMIT + 1U], stats[STATUS_BODY_LIMIT + 1U];
   const char *token_file = NULL, *ca_file = NULL; unsigned int timeout = 5U; bool json = false; SSL_CTX *context = NULL;
   int index, ready_status, stats_status; size_t ready_length, stats_length;
+  const char *name = command == STATUS_COMMAND_DOCTOR ? "doctor" : "status";
   if (argc < 2 || !status_origin_parse(argv[1], &origin)) goto usage;
   for (index = 2; index < argc; ++index) {
     if (strcmp(argv[index], "--token-file") == 0 && index + 1 < argc) token_file = argv[++index];
@@ -542,7 +548,7 @@ int laghu_status_run(int argc, char **argv) {
   if (origin.tls) {
     context = SSL_CTX_new(TLS_client_method());
     if (context == NULL || !SSL_CTX_set_default_verify_paths(context) ||
-        (ca_file != NULL && !SSL_CTX_load_verify_locations(context, ca_file, NULL))) { SSL_CTX_free(context); fputs("laghu status: connection failed\n", stderr); return 4; }
+        (ca_file != NULL && !SSL_CTX_load_verify_locations(context, ca_file, NULL))) { SSL_CTX_free(context); fprintf(stderr, "laghu %s: connection failed\n", name); return 4; }
     SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
   }
   ready_status = status_fetch(&origin, context, token, "GET", "/.laghu/ready",
@@ -550,35 +556,69 @@ int laghu_status_run(int argc, char **argv) {
   stats_status = status_fetch(&origin, context, token, "GET", "/.laghu/stats",
                               timeout, true, stats, &stats_length, NULL);
   SSL_CTX_free(context);
-  if (ready_status == 401 || ready_status == 403 || stats_status == 401 || stats_status == 403) { fputs("laghu status: authorization failed\n", stderr); return 3; }
-  if (ready_status < 0 || stats_status < 0) { fputs(ready_status == -2 || stats_status == -2 ? "laghu status: malformed response\n" : "laghu status: connection failed\n", stderr); return ready_status == -2 || stats_status == -2 ? 5 : 4; }
-  if (ready_status == 503 || stats_status == 503) { fputs("laghu status: service unavailable\n", stderr); return 6; }
-  if (ready_status != 200 || stats_status != 200) { fprintf(stderr, "laghu status: HTTP %d\n", ready_status != 200 ? ready_status : stats_status); return 7; }
+  if (ready_status == 401 || ready_status == 403 || stats_status == 401 || stats_status == 403) { fprintf(stderr, "laghu %s: authorization failed\n", name); return 3; }
+  if (ready_status < 0 || stats_status < 0) { fprintf(stderr, "laghu %s: %s\n", name, ready_status == -2 || stats_status == -2 ? "malformed response" : "connection failed"); return ready_status == -2 || stats_status == -2 ? 5 : 4; }
+  if (ready_status == 503 || stats_status == 503) { fprintf(stderr, "laghu %s: service unavailable\n", name); return 6; }
+  if (ready_status != 200 || stats_status != 200) { fprintf(stderr, "laghu %s: HTTP %d\n", name, ready_status != 200 ? ready_status : stats_status); return 7; }
   if (!status_schema_valid(ready, ready_length, false) ||
       !status_schema_valid(stats, stats_length, true)) {
-    fputs("laghu status: malformed response\n", stderr);
+    fprintf(stderr, "laghu %s: malformed response\n", name);
     return 5;
   }
-  if (json) {
+  if (json && command == STATUS_COMMAND_STATUS) {
     printf("{\"schema\":\"laghu-status-v1\",\"ready\":%s,\"stats\":%s}\n", ready, stats);
+  } else if (json) {
+    char runtime[32U], cache[32U], workers[32U], budgets[32U], policy[32U];
+    if (!status_json_text_field(ready, "runtime", runtime, sizeof(runtime)) ||
+        !status_json_text_field(ready, "cache", cache, sizeof(cache)) ||
+        !status_json_text_field(ready, "workers", workers, sizeof(workers)) ||
+        !status_json_text_field(ready, "budgets", budgets, sizeof(budgets)) ||
+        !status_json_text_field(ready, "policy", policy, sizeof(policy))) {
+      fprintf(stderr, "laghu %s: malformed response\n", name);
+      return 5;
+    }
+    printf("{\"schema\":\"laghu-doctor-v1\",\"runtime\":\"%s\",\"cache\":\"%s\",\"workers\":\"%s\",\"budgets\":\"%s\",\"policy\":\"%s\",\"stats\":%s}\n",
+           runtime, cache, workers, budgets, policy, stats);
   } else {
-    char readiness[32U]; uint64_t hits, misses, used, capacity;
+    char readiness[32U], runtime[32U], cache[32U], workers[32U], budgets[32U], policy[32U]; uint64_t hits, misses, used, capacity;
     if (!status_json_text_field(ready, "status", readiness, sizeof(readiness)) ||
         !status_json_number_field(stats, "hits", 1U, &hits) ||
         !status_json_number_field(stats, "misses", 1U, &misses) ||
         !status_json_number_field(stats, "bytes", 2U, &used) ||
         !status_json_number_field(stats, "bytes", 1U, &capacity)) {
-      fputs("laghu status: malformed response\n", stderr);
+      fprintf(stderr, "laghu %s: malformed response\n", name);
       return 5;
     }
-    printf("ready: %s\ncache: hits=%llu misses=%llu usage=%llu capacity=%llu\n",
-           readiness, (unsigned long long)hits, (unsigned long long)misses,
-           (unsigned long long)used, (unsigned long long)capacity);
+    if (command == STATUS_COMMAND_STATUS)
+      printf("ready: %s\ncache: hits=%llu misses=%llu usage=%llu capacity=%llu\n",
+             readiness, (unsigned long long)hits, (unsigned long long)misses,
+             (unsigned long long)used, (unsigned long long)capacity);
+    else if (status_json_text_field(ready, "runtime", runtime, sizeof(runtime)) &&
+             status_json_text_field(ready, "cache", cache, sizeof(cache)) &&
+             status_json_text_field(ready, "workers", workers, sizeof(workers)) &&
+             status_json_text_field(ready, "budgets", budgets, sizeof(budgets)) &&
+             status_json_text_field(ready, "policy", policy, sizeof(policy)))
+      printf("runtime: %s\ncache: %s\nworkers: %s\nbudgets: %s\npolicy: %s\ncache_stats: hits=%llu misses=%llu usage=%llu capacity=%llu\n",
+             runtime, cache, workers, budgets, policy,
+             (unsigned long long)hits, (unsigned long long)misses,
+             (unsigned long long)used, (unsigned long long)capacity);
+    else {
+      fprintf(stderr, "laghu %s: malformed response\n", name);
+      return 5;
+    }
   }
   return 0;
 usage:
-  fputs("Usage: laghu status URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n", stderr);
+  fprintf(stderr, "Usage: laghu %s URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n", name);
   return 2;
+}
+
+int laghu_status_run(int argc, char **argv) {
+  return status_run(argc, argv, STATUS_COMMAND_STATUS);
+}
+
+int laghu_doctor_run(int argc, char **argv) {
+  return status_run(argc, argv, STATUS_COMMAND_DOCTOR);
 }
 
 static bool status_purge_schema_valid(const char *body, size_t length,

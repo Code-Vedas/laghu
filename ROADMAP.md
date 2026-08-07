@@ -211,7 +211,7 @@
 ### 4.6 CLI and Usability
 - [x] Implement `laghu status` with authenticated ready/stats checks for standalone, NGINX, and Apache endpoints.
 - [x] Implement `laghu purge <url>`.
-- [ ] Implement `laghu doctor`.
+- [x] Implement `laghu doctor`.
 - [ ] Implement `laghu bench`.
 - [ ] Implement `laghu explain <url>`.
 - [ ] Implement `laghu migrate` as a one-way legacy configuration converter.

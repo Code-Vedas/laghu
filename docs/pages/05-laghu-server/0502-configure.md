@@ -135,6 +135,19 @@ hit/miss/usage/capacity line.
 | 6 | Either route returned `503`; stats is still queried after readiness `503`. |
 | 7 | Another HTTP status. |
 
+## Doctor client
+
+`laghu doctor URL --token-file PATH` uses the same authenticated, bounded
+transport as `laghu status`, then reports runtime, cache, worker, budget, and
+policy readiness alongside cache hit/miss/capacity statistics. It works
+unchanged against standalone, NGINX, and Apache routes. `--json` emits the
+versioned `laghu-doctor-v1` object. Its token, URL, timeout, CA, and exit-code
+rules are identical to `laghu status`.
+
+```sh
+laghu doctor https://edge.example.com --token-file /etc/laghu/status.token
+```
+
 ## Purge client
 
 `laghu purge URL --token-file PATH` sends authenticated `PURGE` to the full `http://` or `https://` resource URL on standalone, NGINX, or Apache.

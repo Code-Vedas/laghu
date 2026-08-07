@@ -686,6 +686,9 @@ fi
 "${STATUS_BIN}" status "http://127.0.0.1:${PORT}" \
   --token-file "${SMOKE_DIR}/purge.token" --json | \
   grep '"schema":"laghu-status-v1"' >/dev/null
+"${STATUS_BIN}" doctor "http://127.0.0.1:${PORT}" \
+  --token-file "${SMOKE_DIR}/purge.token" --json | \
+  grep '"schema":"laghu-doctor-v1"' >/dev/null
 "${STATUS_BIN}" purge "http://127.0.0.1:${PORT}/site.css" \
   --token-file "${SMOKE_DIR}/purge.token" --json | \
   grep '"schema":"laghu-purge-v1"' >/dev/null

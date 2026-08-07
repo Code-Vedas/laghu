@@ -130,6 +130,7 @@ Query an authenticated Laghu endpoint without exposing its token:
 
 ```sh
 laghu status https://laghu.example --token-file /etc/laghu/purge.token
+laghu doctor https://laghu.example --token-file /etc/laghu/purge.token
 ```
 
 `status` reads only an absolute, owner-only token file, sends it as
