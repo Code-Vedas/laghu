@@ -50,6 +50,10 @@ typedef struct {
 } laghu_javascript_observation_set;
 
 typedef struct {
+  enum {
+    LAGHU_JAVASCRIPT_DELAY_DEFER = 0,
+    LAGHU_JAVASCRIPT_DELAY_INTERACTION
+  } mode;
   char script_path[LAGHU_RUNTIME_PATH_SIZE];
   char template_path[LAGHU_RUNTIME_PATH_SIZE];
 } laghu_javascript_defer_rule;
@@ -76,6 +80,12 @@ bool laghu_runtime_rewrite_javascript_html(
     bool allow_inline, bool allow_outline, bool include_source_maps,
     unsigned int inline_limit, unsigned int outline_threshold,
     laghu_runtime_html_result *result);
+/* Adds an explicit cooperative-yield helper before an application-owned
+ * script marked data-laghu-yield="cooperative".  The marker nonce is both
+ * validated and copied, so this is fail-open when CSP cannot authorize it. */
+bool laghu_runtime_add_javascript_yield(laghu_buffer html,
+                                        const laghu_csp_policy *csp, bool allow,
+                                        laghu_runtime_html_result *result);
 void laghu_runtime_javascript_result_release(
     laghu_runtime_javascript_result *result);
 bool laghu_javascript_observations_load(const char *path,
@@ -87,6 +97,9 @@ bool laghu_javascript_defer_load(const char *path,
 bool laghu_javascript_defer_approved(const laghu_javascript_defer_set *set,
                                      const char *script_path,
                                      const char *template_path);
+bool laghu_javascript_interaction_approved(
+    const laghu_javascript_defer_set *set, const char *script_url,
+    const char *template_path);
 bool laghu_javascript_defer_recommended(
     const laghu_rum_instrumentation_record *record, unsigned int bucket,
     unsigned int script_index);

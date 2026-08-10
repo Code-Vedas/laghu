@@ -60,7 +60,7 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--javascript-inline-limit N` | `0..65536` | `2048` | Caps JavaScript inlining. |
 | `--javascript-outline-threshold N` | `1024..1048576` | `8192` | Selects inline scripts for outlining. |
 | `--javascript-observation-config PATH` | valid observation file | unset | Adds exact third-party script candidates. |
-| `--javascript-defer-config PATH` | valid approval file | unset | Approves exact same-origin scripts for evidence-gated deferral. |
+| `--javascript-defer-config PATH` | valid approval file | unset | Approves exact same-origin deferrals and exact third-party interaction delays. |
 | `--workers N` | `1..256` | `4` | Sets request worker threads. |
 | `--connection-queue N` | `1..65536` | `64` | Bounds accepted connections waiting for workers. |
 | `--connect-timeout SECONDS` | `1..300` | `5` | Bounds origin connection establishment. |
@@ -167,13 +167,16 @@ The URL may include its cache source path and query; a missing path becomes `/`.
 | 7 | `404`, `405`, or another unexpected HTTP status. |
 | 8 | `429` purge table saturated; retry after maintenance. |
 
-## JavaScript deferral approvals
+## JavaScript deferral, interaction approvals, and task yields
 
-The approval file accepts exact, root-relative, query-free script paths, optionally scoped to one exact template:
+The approval file accepts exact, root-relative, query-free same-origin deferrals and exact HTTPS third-party interaction delays, each optionally scoped to one exact template:
 
 ```text
 defer /assets/analytics.js
 defer /assets/checkout.js template=/checkout/
+interaction https://cdn.example.test/analytics.js template=/checkout/
 ```
 
-Instrumentation and the defer filter must both be enabled. Suggestions require 100 fresh bucket observations, at least 90 percent script coverage, current SWC safety metadata, and safe ordering. Reload the service after editing the file. Approval never bypasses current evidence; rollback notices require 50 post-enable observations, and removing the line plus reloading performs the rollback.
+Interaction URLs must be default-port HTTPS URLs without credentials, query, or fragment, and must exactly match a third-party script already present in the response. Laghu delays only a classic external script with no body and no attributes except `src` and an optional safe nonce. The defer filter and CSP must permit both the original external script and Laghu's nonce-bearing loader; otherwise markup passes through unchanged. First `pointerdown`, `keydown`, or `touchstart` loads the approved script in document order. Instrumentation and the defer filter must both be enabled. Deferral suggestions require 100 fresh bucket observations, at least 90 percent script coverage, current SWC safety metadata, and safe ordering. Reload the service after editing the file. Approval never bypasses current evidence; rollback notices require 50 post-enable observations, and removing the line plus reloading performs the rollback.
+
+To split an application-owned long task, mark its inline script `<script data-laghu-yield="cooperative" nonce="…">` and explicitly `await window.Laghu.yield()` between independent chunks. With the defer filter enabled, Laghu inserts a nonce-preserving helper before that script. The helper prefers `scheduler.postTask`, then `requestIdleCallback`, then `setTimeout`, and preserves an existing `Laghu.yield`. Missing or invalid marker, missing/invalid nonce, or CSP denial leaves markup unchanged.

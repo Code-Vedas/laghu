@@ -277,6 +277,109 @@ static bool laghu_tag_attributes_allowed(const unsigned char *start,
   return true;
 }
 
+static bool laghu_javascript_interaction_attributes(const unsigned char *start,
+                                                    const unsigned char *end) {
+  bool source_seen = false, nonce_seen = false;
+  while (start < end) {
+    const unsigned char *key;
+    size_t length;
+    bool source, nonce;
+    while (start < end && isspace(*start)) ++start;
+    key = start;
+    while (start < end && (isalnum(*start) || *start == '-' || *start == '_'))
+      ++start;
+    length = (size_t)(start - key);
+    source = length == 3U && laghu_find_ascii(key, start, "src") == key;
+    nonce = length == 5U && laghu_find_ascii(key, start, "nonce") == key;
+    if (length == 0U || (!source && !nonce) || (source && source_seen) ||
+        (nonce && nonce_seen))
+      return false;
+    source_seen |= source;
+    nonce_seen |= nonce;
+    while (start < end && isspace(*start)) ++start;
+    if (start == end || *start++ != '=') return false;
+    while (start < end && isspace(*start)) ++start;
+    if (start == end) return false;
+    if (*start == '\'' || *start == '\"') {
+      unsigned char quote = *start++;
+      while (start < end && *start != quote) ++start;
+      if (start == end) return false;
+      ++start;
+    } else {
+      while (start < end && !isspace(*start) && *start != '>') ++start;
+    }
+  }
+  return source_seen;
+}
+
+static bool laghu_javascript_interaction_nonce_safe(const unsigned char *value,
+                                                    size_t length) {
+  size_t index;
+  if (value == NULL || length == 0U || length > 128U) return false;
+  for (index = 0U; index < length; ++index)
+    if (!(isalnum(value[index]) || value[index] == '+' || value[index] == '/' ||
+          value[index] == '=' || value[index] == '-' || value[index] == '_'))
+      return false;
+  return true;
+}
+
+static bool laghu_javascript_interaction_url_safe(const char *url) {
+  size_t index;
+  if (url == NULL || strncmp(url, "https://", 8U) != 0 ||
+      strpbrk(url, "?#\\*[]\\\"'<>") != NULL || strstr(url, "..") != NULL)
+    return false;
+  for (index = 0U; url[index] != '\0'; ++index)
+    if ((unsigned char)url[index] <= 32U || (unsigned char)url[index] >= 127U)
+      return false;
+  return index > 9U && index < LAGHU_RUNTIME_PATH_SIZE;
+}
+
+static bool laghu_javascript_interaction_markup(const char *url,
+                                                const unsigned char *nonce,
+                                                size_t nonce_length,
+                                                unsigned char **output,
+                                                size_t *output_length) {
+  static const char loader[] =
+      "(function(){var "
+      "p=document.querySelector('script[data-laghu-interaction-src]:not([data-"
+      "laghu-interaction-ready])'),done=0,events=['pointerdown','keydown','"
+      "touchstart'],i,load=function(){var "
+      "s,n;if(done)return;done=1;for(i=0;i<events.length;i++)document."
+      "removeEventListener(events[i],load,true);s=document.createElement('"
+      "script');s.src=p.getAttribute('data-laghu-interaction-src');s.async="
+      "false;n=p.getAttribute('data-laghu-interaction-nonce');if(n)s."
+      "setAttribute('nonce',n);(document.head||document.documentElement)."
+      "appendChild(s);p.parentNode.removeChild(p)};if(!p)return;p.setAttribute("
+      "'data-laghu-interaction-ready','');for(i=0;i<events.length;i++)document."
+      "addEventListener(events[i],load,true)}())";
+  char markup[LAGHU_RUNTIME_PATH_SIZE * 2U + sizeof(loader) + 384U];
+  char deferred_nonce[192U] = "", loader_nonce[160U] = "";
+  int length;
+  if (url == NULL || output == NULL || output_length == NULL) return false;
+  *output = NULL;
+  *output_length = 0U;
+  if (nonce != NULL && nonce_length != 0U) {
+    if (!laghu_javascript_interaction_nonce_safe(nonce, nonce_length) ||
+        snprintf(deferred_nonce, sizeof(deferred_nonce),
+                 " data-laghu-interaction-nonce=\"%.*s\"", (int)nonce_length,
+                 nonce) <= 0 ||
+        snprintf(loader_nonce, sizeof(loader_nonce), " nonce=\"%.*s\"",
+                 (int)nonce_length, nonce) <= 0)
+      return false;
+  }
+  length = snprintf(markup, sizeof(markup),
+                    "<script type=\"application/x-laghu-interaction\" "
+                    "data-laghu-interaction-src=\"%s\"%s></script>"
+                    "<script%s data-laghu-interaction-loader>%s</script>",
+                    url, deferred_nonce, loader_nonce, loader);
+  if (length <= 0 || (size_t)length >= sizeof(markup)) return false;
+  *output = malloc((size_t)length);
+  if (*output == NULL) return false;
+  memcpy(*output, markup, (size_t)length);
+  *output_length = (size_t)length;
+  return true;
+}
+
 static bool laghu_tag_attribute_span(const unsigned char *tag,
                                      const unsigned char *tag_end,
                                      const unsigned char *value,
@@ -331,6 +434,96 @@ static bool laghu_javascript_csp_allows_external(const laghu_csp_policy *csp,
   size_t nonce_length;
   laghu_javascript_nonce(tag, tag_end, &nonce, &nonce_length);
   return laghu_csp_allows_external_script(csp, nonce, nonce_length);
+}
+
+static bool laghu_javascript_safe_nonce(const unsigned char *nonce,
+                                        size_t nonce_length) {
+  size_t index;
+  unsigned int padding = 0U;
+  if (nonce == NULL || nonce_length == 0U || nonce_length > 128U) return false;
+  for (index = 0U; index < nonce_length; ++index) {
+    unsigned char value = nonce[index];
+    if (value == '=') {
+      size_t suffix;
+      padding = (unsigned int)(nonce_length - index);
+      if (padding > 2U) return false;
+      for (suffix = index; suffix < nonce_length; ++suffix)
+        if (nonce[suffix] != '=') return false;
+      break;
+    }
+    if (padding != 0U || !(isalnum(value) || value == '+' || value == '/' ||
+                           value == '-' || value == '_'))
+      return false;
+  }
+  return true;
+}
+
+bool laghu_runtime_add_javascript_yield(laghu_buffer html,
+                                        const laghu_csp_policy *csp, bool allow,
+                                        laghu_runtime_html_result *result) {
+  static const char helper[] =
+      "<script nonce=\"%.*s\">(function(){var g=window,l=g.Laghu;if(l&&"
+      "typeof l!==\"object\"&&typeof l!==\"function\")return;l=l||{};if("
+      "typeof l.yield===\"function\"||typeof g.Promise!==\"function\")return;"
+      "var q=function(d){if(g.scheduler&&typeof g.scheduler.postTask===\""
+      "function\"){try{g.scheduler.postTask(d,{priority:\"background\"})."
+      "catch(function(){g.setTimeout(d,0)});return}catch(_){}}if(typeof g."
+      "requestIdleCallback===\"function\"){try{g.requestIdleCallback(d,{"
+      "timeout:50});return}catch(_){}}g.setTimeout(d,0)};l.yield=function(){"
+      "return new g.Promise(function(d){q(d)})};g.Laghu=l})()</script>";
+  const unsigned char *cursor, *end;
+  if (result == NULL) return false;
+  memset(result, 0, sizeof(*result));
+  if (!allow || html.data == NULL || html.length == 0U) return true;
+  cursor = html.data;
+  end = html.data + html.length;
+  while ((cursor = laghu_find_ascii(cursor, end, "<script")) != NULL) {
+    const unsigned char *open_end = memchr(cursor, '>', (size_t)(end - cursor));
+    const unsigned char *marker = NULL;
+    const unsigned char *nonce = NULL;
+    size_t marker_length = 0U, nonce_length = 0U;
+    int helper_length;
+    unsigned char *output;
+    size_t prefix, output_length;
+    if (open_end == NULL) return true;
+    if (cursor + 7U < end && !isspace(cursor[7U]) && cursor[7U] != '>' &&
+        cursor[7U] != '/') {
+      cursor += 7U;
+      continue;
+    }
+    if (!laghu_tag_attribute(cursor + 7U, open_end, "data-laghu-yield", &marker,
+                             &marker_length) ||
+        marker == NULL || marker_length != sizeof("cooperative") - 1U ||
+        memcmp(marker, "cooperative", sizeof("cooperative") - 1U) != 0 ||
+        !laghu_tag_attribute(cursor + 7U, open_end, "nonce", &nonce,
+                             &nonce_length) ||
+        !laghu_javascript_safe_nonce(nonce, nonce_length) ||
+        !laghu_csp_allows_inline_script(csp, nonce, nonce_length)) {
+      cursor = open_end + 1U;
+      continue;
+    }
+    helper_length = snprintf(NULL, 0U, helper, (int)nonce_length, nonce);
+    if (helper_length <= 0 || (size_t)helper_length > SIZE_MAX - html.length)
+      return true;
+    prefix = (size_t)(cursor - html.data);
+    output_length = html.length + (size_t)helper_length;
+    output = malloc(output_length + 1U);
+    if (output == NULL) return true;
+    memcpy(output, html.data, prefix);
+    (void)snprintf((char *)output + prefix, (size_t)helper_length + 1U, helper,
+                   (int)nonce_length, nonce);
+    memcpy(output + prefix + (size_t)helper_length, cursor,
+           html.length - prefix);
+    output[output_length] = '\0';
+    result->data = output;
+    result->length = output_length;
+    result->rewritten = true;
+    (void)laghu_sha256_hex(
+        (laghu_buffer){(const unsigned char *)helper, sizeof(helper) - 1U},
+        result->dependency_key);
+    return true;
+  }
+  return true;
 }
 
 static bool laghu_javascript_external_lookup(
@@ -893,6 +1086,7 @@ bool laghu_runtime_rewrite_javascript_html(
   size_t original_bundle = html.length;
   size_t rewritten_external = 0U;
   size_t defer_growth = 0U;
+  bool interaction_rewritten = false;
   char normalized_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   char dependencies[LAGHU_JAVASCRIPT_MAX_SCRIPTS][LAGHU_RUNTIME_KEY_SIZE];
   size_t dependency_count = 0U;
@@ -975,6 +1169,48 @@ bool laghu_runtime_rewrite_javascript_html(
         laghu_javascript_catalog_record record;
         char route[LAGHU_RUNTIME_KEY_SIZE + 16U];
         int route_length;
+        if (accepted && allow_defer && !module && source_attribute != NULL &&
+            source_length > 0U && source_length < sizeof(url) &&
+            source_attribute[0] != '/' &&
+            laghu_javascript_interaction_attributes(cursor + 7U, open_end) &&
+            close == open_end + 1U &&
+            laghu_javascript_csp_allows_external(csp, cursor + 7U, open_end) &&
+            laghu_javascript_csp_allows_inline(csp, cursor + 7U, open_end)) {
+          const unsigned char *nonce = NULL;
+          size_t nonce_length = 0U;
+          unsigned char *markup;
+          size_t markup_length;
+          size_t prefix = (size_t)(cursor - html.data);
+          size_t suffix = html.length - (size_t)(close + 9U - html.data);
+          memcpy(url, source_attribute, source_length);
+          url[source_length] = '\0';
+          (void)laghu_tag_attribute(cursor + 7U, open_end, "nonce", &nonce,
+                                    &nonce_length);
+          if (laghu_javascript_interaction_url_safe(url) &&
+              laghu_javascript_interaction_approved(defer_set, url,
+                                                    page_path) &&
+              laghu_javascript_interaction_markup(url, nonce, nonce_length,
+                                                  &markup, &markup_length)) {
+            unsigned char *next = malloc(prefix + markup_length + suffix);
+            if (next == NULL) {
+              free(markup);
+              free(output);
+              return false;
+            }
+            memcpy(next, html.data, prefix);
+            memcpy(next + prefix, markup, markup_length);
+            memcpy(next + prefix + markup_length, close + 9U, suffix);
+            free(markup);
+            free(output);
+            output = next;
+            output_length = prefix + markup_length + suffix;
+            html = (laghu_buffer){output, output_length};
+            cursor = html.data + prefix + markup_length;
+            end = html.data + html.length;
+            interaction_rewritten = true;
+            continue;
+          }
+        }
         if (accepted && source_attribute != NULL && source_length > 0U &&
             source_length < sizeof(url) && source_attribute[0] == '/') {
           memcpy(url, source_attribute, source_length);
@@ -1229,7 +1465,8 @@ bool laghu_runtime_rewrite_javascript_html(
     }
   }
   if (output != NULL) {
-    if (output_length - defer_growth + rewritten_external >= original_bundle) {
+    if (!interaction_rewritten &&
+        output_length - defer_growth + rewritten_external >= original_bundle) {
       free(output);
       return true;
     }

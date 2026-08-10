@@ -71,7 +71,9 @@ static void test_javascript_defer(const laghu_test_workspace *workspace) {
   static const char config[] =
       "# administrator approvals\n"
       "defer /assets/analytics.js\n"
-      "defer /assets/checkout.js template=/checkout/\n";
+      "defer /assets/checkout.js template=/checkout/\n"
+      "interaction https://cdn.example.test/analytics.js "
+      "template=/checkout/\n";
   static laghu_javascript_defer_set defer;
   laghu_rum_instrumentation_record baseline = {0}, current = {0};
   char path[LAGHU_RUNTIME_PATH_SIZE], error[128];
@@ -82,13 +84,32 @@ static void test_javascript_defer(const laghu_test_workspace *workspace) {
                                     (const unsigned char *)config,
                                     sizeof(config) - 1U));
   assert(laghu_javascript_defer_load(path, &defer, error, sizeof(error)));
-  assert(defer.count == 2U && strlen(defer.digest) == 64U);
+  assert(defer.count == 3U && strlen(defer.digest) == 64U);
   assert(laghu_javascript_defer_approved(&defer, "/assets/analytics.js",
                                          "/anywhere/"));
   assert(laghu_javascript_defer_approved(&defer, "/assets/checkout.js",
                                          "/checkout/"));
   assert(!laghu_javascript_defer_approved(&defer, "/assets/checkout.js",
                                           "/account/"));
+  assert(laghu_javascript_interaction_approved(
+      &defer, "https://cdn.example.test/analytics.js", "/checkout/"));
+  assert(!laghu_javascript_interaction_approved(
+      &defer, "https://cdn.example.test/analytics.js", "/account/"));
+  assert(!laghu_javascript_interaction_approved(
+      &defer, "https://cdn.example.test/analytics.js?debug=1", "/checkout/"));
+  assert(laghu_test_workspace_write(
+      workspace, "javascript-defer-invalid.conf",
+      (const unsigned char
+           *)"interaction https://cdn.example.test/a.js?bad=1\n",
+      sizeof("interaction https://cdn.example.test/a.js?bad=1\n") - 1U));
+  assert(laghu_test_workspace_path(workspace, "javascript-defer-invalid.conf",
+                                   path, sizeof(path)));
+  assert(!laghu_javascript_defer_load(path, &defer, error, sizeof(error)));
+  assert(laghu_test_workspace_write(
+      workspace, "javascript-defer-invalid.conf",
+      (const unsigned char *)"interaction https://cdn.example.test:8443/a.js\n",
+      sizeof("interaction https://cdn.example.test:8443/a.js\n") - 1U));
+  assert(!laghu_javascript_defer_load(path, &defer, error, sizeof(error)));
   baseline.version = current.version = LAGHU_INSTRUMENTATION_VERSION;
   baseline.script_count = current.script_count = 1U;
   baseline.observations[1] = 100U;
@@ -98,6 +119,55 @@ static void test_javascript_defer(const laghu_test_workspace *workspace) {
   baseline.errors[1] = 1U;
   current.errors[1] = 2U;
   assert(laghu_javascript_defer_rollback_recommended(&baseline, &current, 1U));
+}
+
+static void test_javascript_yield(void) {
+  static const unsigned char cooperative[] =
+      "<html><body><script data-laghu-yield=\"cooperative\" "
+      "nonce=\"yieldNonce-1\">async function render(){await "
+      "window.Laghu.yield()}</script></body></html>";
+  static const unsigned char unmarked[] =
+      "<html><body><script nonce=\"yieldNonce-1\">app()</script></body>"
+      "</html>";
+  static const unsigned char missing_nonce[] =
+      "<html><body><script data-laghu-yield=\"cooperative\">app()</script>"
+      "</body></html>";
+  laghu_csp_policy csp;
+  laghu_runtime_html_result result;
+
+  laghu_csp_policy_init(&csp, "https://example.test");
+  assert(laghu_csp_policy_add(&csp, "script-src 'nonce-yieldNonce-1'",
+                              strlen("script-src 'nonce-yieldNonce-1'")));
+  assert(laghu_runtime_add_javascript_yield(
+      (laghu_buffer){cooperative, sizeof(cooperative) - 1U}, &csp, true,
+      &result));
+  assert(result.rewritten && result.length > sizeof(cooperative) - 1U);
+  assert(strstr((const char *)result.data, "nonce=\"yieldNonce-1\"") != NULL);
+  assert(strstr((const char *)result.data, "scheduler.postTask") != NULL);
+  assert(strstr((const char *)result.data, "requestIdleCallback") != NULL);
+  assert(strstr((const char *)result.data, "g.setTimeout(d,0)") != NULL);
+  assert(strstr((const char *)result.data,
+                "data-laghu-yield=\"cooperative\"") != NULL);
+  laghu_runtime_html_result_release(&result);
+
+  assert(laghu_runtime_add_javascript_yield(
+      (laghu_buffer){unmarked, sizeof(unmarked) - 1U}, &csp, true, &result));
+  assert(!result.rewritten && result.data == NULL);
+  assert(laghu_runtime_add_javascript_yield(
+      (laghu_buffer){missing_nonce, sizeof(missing_nonce) - 1U}, &csp, true,
+      &result));
+  assert(!result.rewritten && result.data == NULL);
+  assert(laghu_runtime_add_javascript_yield(
+      (laghu_buffer){cooperative, sizeof(cooperative) - 1U}, &csp, false,
+      &result));
+  assert(!result.rewritten && result.data == NULL);
+  laghu_csp_policy_init(&csp, "https://example.test");
+  assert(laghu_csp_policy_add(&csp, "script-src 'none'",
+                              strlen("script-src 'none'")));
+  assert(laghu_runtime_add_javascript_yield(
+      (laghu_buffer){cooperative, sizeof(cooperative) - 1U}, &csp, true,
+      &result));
+  assert(!result.rewritten && result.data == NULL);
 }
 
 static void test_javascript_rewrite(const laghu_test_workspace *workspace,
@@ -170,6 +240,96 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace,
     assert(strstr((const char *)javascript_page.data,
                   "function publicName(n){return n+1}") != NULL);
     laghu_runtime_html_result_release(&javascript_page);
+  }
+  {
+    static const unsigned char html[] =
+        "<html><body><script "
+        "src=\"https://cdn.example.test/analytics.js\" "
+        "nonce=\"abc_DEF-123=\"></script><script "
+        "src=\"https://cdn.example.test/chat.js\" "
+        "nonce=\"abc_DEF-123=\"></script></body></html>";
+    static laghu_javascript_defer_set interaction;
+    static laghu_csp_policy csp;
+    laghu_runtime_html_result page;
+    strcpy(interaction.rules[0].script_path,
+           "https://cdn.example.test/analytics.js");
+    strcpy(interaction.rules[0].template_path, "/checkout/");
+    interaction.rules[0].mode = LAGHU_JAVASCRIPT_DELAY_INTERACTION;
+    strcpy(interaction.rules[1].script_path,
+           "https://cdn.example.test/chat.js");
+    interaction.rules[1].mode = LAGHU_JAVASCRIPT_DELAY_INTERACTION;
+    interaction.count = 2U;
+    laghu_csp_policy_init(&csp, "https://example.test");
+    assert(laghu_csp_policy_add(
+        &csp, "script-src 'nonce-abc_DEF-123=' 'strict-dynamic'",
+        sizeof("script-src 'nonce-abc_DEF-123=' 'strict-dynamic'") - 1U));
+    assert(laghu_runtime_rewrite_javascript_html(
+        &pair.producer, workspace->path,
+        (laghu_buffer){html, sizeof(html) - 1U}, "/checkout/", policy_key,
+        "last 2 chrome versions", &csp, 101U, 60U, NULL, NULL, NULL, 1U,
+        &interaction, true, false, false, false, false, false, 2048U, 8192U,
+        &page));
+    assert(page.rewritten);
+    assert(strstr((const char *)page.data,
+                  "type=\"application/x-laghu-interaction\"") != NULL);
+    assert(strstr((const char *)page.data,
+                  "data-laghu-interaction-src=\"https://cdn.example.test/"
+                  "analytics.js\"") != NULL);
+    assert(strstr((const char *)page.data,
+                  "data-laghu-interaction-src=\"https://cdn.example.test/"
+                  "chat.js\"") != NULL);
+    assert(strstr((const char *)page.data, "data-laghu-interaction-loader") !=
+           NULL);
+    assert(strstr(strstr((const char *)page.data,
+                         "data-laghu-interaction-loader") +
+                      1U,
+                  "data-laghu-interaction-loader") != NULL);
+    assert(strstr((const char *)page.data, "nonce=\"abc_DEF-123=\"") != NULL);
+    laghu_runtime_html_result_release(&page);
+  }
+  {
+    static const unsigned char html[] =
+        "<html><body><script "
+        "src=\"https://cdn.example.test/analytics.js\"></script>"
+        "</body></html>";
+    static laghu_javascript_defer_set interaction;
+    static laghu_csp_policy csp;
+    laghu_runtime_html_result page;
+    strcpy(interaction.rules[0].script_path,
+           "https://cdn.example.test/analytics.js");
+    interaction.rules[0].mode = LAGHU_JAVASCRIPT_DELAY_INTERACTION;
+    interaction.count = 1U;
+    laghu_csp_policy_init(&csp, "https://example.test");
+    assert(laghu_csp_policy_add(&csp, "script-src 'self'",
+                                sizeof("script-src 'self'") - 1U));
+    assert(laghu_runtime_rewrite_javascript_html(
+        &pair.producer, workspace->path,
+        (laghu_buffer){html, sizeof(html) - 1U}, "/checkout/", policy_key,
+        "last 2 chrome versions", &csp, 101U, 60U, NULL, NULL, NULL, 1U,
+        &interaction, true, false, false, false, false, false, 2048U, 8192U,
+        &page));
+    assert(!page.rewritten);
+    laghu_runtime_html_result_release(&page);
+  }
+  {
+    static const unsigned char html[] =
+        "<html><body><script "
+        "src=\"https://cdn.example.test/analytics.js\" async></script>"
+        "</body></html>";
+    static laghu_javascript_defer_set interaction;
+    laghu_runtime_html_result page;
+    strcpy(interaction.rules[0].script_path,
+           "https://cdn.example.test/analytics.js");
+    interaction.rules[0].mode = LAGHU_JAVASCRIPT_DELAY_INTERACTION;
+    interaction.count = 1U;
+    assert(laghu_runtime_rewrite_javascript_html(
+        &pair.producer, workspace->path,
+        (laghu_buffer){html, sizeof(html) - 1U}, "/checkout/", policy_key,
+        "last 2 chrome versions", NULL, 101U, 60U, NULL, NULL, NULL, 1U,
+        &interaction, true, false, false, false, false, false, 2048U, 8192U,
+        &page));
+    assert(!page.rewritten);
+    laghu_runtime_html_result_release(&page);
   }
   {
     static const char source[] =
@@ -342,6 +502,7 @@ int main(void) {
   assert(laghu_sha256_hex((laghu_buffer){payload, sizeof(payload) - 1U},
                           policy_key));
   test_javascript_defer(&workspace);
+  test_javascript_yield();
   test_javascript_rewrite(&workspace, policy_key);
   assert(laghu_test_workspace_remove(&workspace));
   puts("laghu_runtime_javascript_integration_test: all tests passed");

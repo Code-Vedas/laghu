@@ -23,6 +23,33 @@ static bool laghu_defer_path(const char *value) {
   return i > 1U && i < LAGHU_RUNTIME_PATH_SIZE;
 }
 
+static bool laghu_interaction_url(const char *value) {
+  const char *host, *path;
+  size_t index, host_length;
+  bool dot = false;
+  if (value == NULL || strncmp(value, "https://", 8U) != 0) return false;
+  host = value + 8U;
+  path = strchr(host, '/');
+  if (path == NULL || path == host || strchr(host, '@') != NULL ||
+      strchr(host, ':') != NULL || strstr(value, "..") != NULL ||
+      strpbrk(value, "?#\\*[]\\\"'<>") != NULL)
+    return false;
+  host_length = (size_t)(path - host);
+  if (host_length < 3U || host[0] == '.' || host[host_length - 1U] == '.')
+    return false;
+  for (index = 0U; index < host_length; ++index) {
+    unsigned char value_byte = (unsigned char)host[index];
+    if (!(isalnum(value_byte) || value_byte == '-' || value_byte == '.'))
+      return false;
+    dot |= value_byte == '.';
+  }
+  for (index = 0U; value[index] != '\0'; ++index) {
+    unsigned char value_byte = (unsigned char)value[index];
+    if (value_byte <= 32U || value_byte >= 127U) return false;
+  }
+  return dot && path[1] != '\0' && index < LAGHU_RUNTIME_PATH_SIZE;
+}
+
 bool laghu_javascript_defer_load(const char *path,
                                  laghu_javascript_defer_set *set, char *error,
                                  size_t error_size) {
@@ -36,18 +63,23 @@ bool laghu_javascript_defer_load(const char *path,
   }
   memset(set, 0, sizeof(*set));
   while (fgets(line, sizeof(line), file) != NULL) {
-    char script[LAGHU_RUNTIME_PATH_SIZE], scope[LAGHU_RUNTIME_PATH_SIZE] = "";
+    char directive[16U], script[LAGHU_RUNTIME_PATH_SIZE];
+    char scope[LAGHU_RUNTIME_PATH_SIZE] = "";
     char second[LAGHU_RUNTIME_PATH_SIZE + 16U] = "", extra[2U];
     unsigned int fields, i;
     int length;
     ++line_no;
     if (line[0] == '#' || strspn(line, " \t\r\n") == strlen(line)) continue;
-    fields = (unsigned int)sscanf(line, " defer %1023s %1039s %1s", script,
-                                  second, extra);
-    if ((fields != 1U && fields != 2U) || !laghu_defer_path(script) ||
+    fields = (unsigned int)sscanf(line, " %15s %1023s %1039s %1s", directive,
+                                  script, second, extra);
+    if ((fields != 2U && fields != 3U) ||
+        (strcmp(directive, "defer") != 0 &&
+         strcmp(directive, "interaction") != 0) ||
+        (strcmp(directive, "defer") == 0 ? !laghu_defer_path(script)
+                                         : !laghu_interaction_url(script)) ||
         set->count == LAGHU_JAVASCRIPT_DEFER_MAX_RULES)
       goto invalid;
-    if (fields == 2U) {
+    if (fields == 3U) {
       if (strncmp(second, "template=", 9U) != 0 ||
           !laghu_defer_path(second + 9U))
         goto invalid;
@@ -55,12 +87,17 @@ bool laghu_javascript_defer_load(const char *path,
     }
     for (i = 0U; i < set->count; ++i)
       if (strcmp(set->rules[i].script_path, script) == 0 &&
-          strcmp(set->rules[i].template_path, scope) == 0)
+          strcmp(set->rules[i].template_path, scope) == 0 &&
+          strcmp(directive, "interaction") ==
+              (set->rules[i].mode == LAGHU_JAVASCRIPT_DELAY_INTERACTION))
         goto invalid;
+    set->rules[set->count].mode = strcmp(directive, "interaction") == 0
+                                      ? LAGHU_JAVASCRIPT_DELAY_INTERACTION
+                                      : LAGHU_JAVASCRIPT_DELAY_DEFER;
     strcpy(set->rules[set->count].script_path, script);
     strcpy(set->rules[set->count].template_path, scope);
     length = snprintf(material + used, sizeof(material) - used,
-                      "defer %s template=%s\n", script, scope);
+                      "%s %s template=%s\n", directive, script, scope);
     if (length <= 0 || (size_t)length >= sizeof(material) - used) goto invalid;
     used += (size_t)length;
     ++set->count;
@@ -86,7 +123,22 @@ bool laghu_javascript_defer_approved(const laghu_javascript_defer_set *set,
   unsigned int i;
   if (set == NULL || script_path == NULL || template_path == NULL) return false;
   for (i = 0U; i < set->count; ++i)
-    if (strcmp(set->rules[i].script_path, script_path) == 0 &&
+    if (set->rules[i].mode == LAGHU_JAVASCRIPT_DELAY_DEFER &&
+        strcmp(set->rules[i].script_path, script_path) == 0 &&
+        (set->rules[i].template_path[0] == '\0' ||
+         strcmp(set->rules[i].template_path, template_path) == 0))
+      return true;
+  return false;
+}
+
+bool laghu_javascript_interaction_approved(
+    const laghu_javascript_defer_set *set, const char *script_url,
+    const char *template_path) {
+  unsigned int i;
+  if (set == NULL || script_url == NULL || template_path == NULL) return false;
+  for (i = 0U; i < set->count; ++i)
+    if (set->rules[i].mode == LAGHU_JAVASCRIPT_DELAY_INTERACTION &&
+        strcmp(set->rules[i].script_path, script_url) == 0 &&
         (set->rules[i].template_path[0] == '\0' ||
          strcmp(set->rules[i].template_path, template_path) == 0))
       return true;
