@@ -37,5 +37,7 @@ scripts/run-docs-build-all
 git diff --check
 ```
 
+Headless-browser analysis is an optional external dependency. The normal build and production images neither install nor require Chrome/Chromium. On Linux, `scripts/run-in-docker --target debian-nginx-chrome-analysis` installs Chromium and exercises the browser-enabled validation lane. Packages and containers provide `laghu-chrome-analyze`, but operators must separately provision `chromium` and enable the matching analysis queue before starting the worker.
+
 Do not publish platform support from a cross-compiled object or emulated container alone.
 Release evidence requires the applicable native build, runtime, service-lifecycle, and package-install lanes.

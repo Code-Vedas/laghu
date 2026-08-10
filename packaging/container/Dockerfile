@@ -21,7 +21,7 @@ COPY --from=rust:1.95-bookworm /usr/local/rustup /usr/local/rustup
 ENV PATH=/usr/local/cargo/bin:${PATH} RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 RUN cmake -S . -B build -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
       -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build --target laghu-libvips laghu-resource-fetch laghu-html-refresh laghu-asset-upload laghu-js-optimize --parallel
+    cmake --build build --target laghu-libvips laghu-resource-fetch laghu-html-refresh laghu-asset-upload laghu-js-optimize laghu-chrome-analyze --parallel
 
 RUN curl --fail --location --retry 3 \
       --output /tmp/nginx.tar.gz \
@@ -73,7 +73,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system laghu && useradd --system --gid laghu laghu && \
     install -d -o laghu -g laghu -m 0750 \
-      /run/laghu /var/cache/laghu/images /var/cache/nginx/client_temp \
+      /run/laghu /var/cache/laghu/images /var/cache/laghu/chrome-analysis /var/cache/nginx/client_temp \
       /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp \
       /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp \
       /usr/share/nginx/html && \
@@ -93,6 +93,8 @@ COPY --from=build /src/build/workers/laghu-asset-upload/laghu-asset-upload \
   /usr/bin/laghu-asset-upload
 COPY --from=build /src/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize \
   /usr/bin/laghu-js-optimize
+COPY --from=build /src/build/workers/laghu-chrome-analyze/laghu-chrome-analyze \
+  /usr/bin/laghu-chrome-analyze
 COPY LICENSE packaging/NOTICE-libvips.md /usr/share/licenses/laghu/
 COPY packaging/font-providers.conf /etc/laghu/font-providers.conf
 COPY packaging/javascript-observation.conf /etc/laghu/javascript-observation.conf

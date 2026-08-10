@@ -101,6 +101,21 @@ int main(void) {
   strcpy(job.sprite_variant_keys[1], "not-a-content-key");
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
 
+  memset(&job, 0, sizeof(job));
+  job.kind = LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS;
+  laghu_test_hash(job.index_key, 'a');
+  laghu_test_hash(job.policy_key, 'b');
+  strcpy(job.request_path, "/fixture.html");
+  strcpy(job.content_type, "text/html");
+  job.analysis_timeout_ms = 1500U;
+  job.payload = (laghu_buffer){payload, sizeof(payload) - 1U};
+  assert(laghu_runtime_queue_try_publish(&queue, &job));
+  assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
+  assert(taken.kind == LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS &&
+         taken.analysis_timeout_ms == 1500U);
+  job.analysis_timeout_ms = 99U;
+  assert(!laghu_runtime_queue_try_publish(&queue, &job));
+
   job = laghu_test_job(payload, sizeof(payload) - 1U);
   laghu_runtime_shared_mapping_init(&lock);
   assert(laghu_runtime_shared_mapping_open(&lock, path, mapping_size));

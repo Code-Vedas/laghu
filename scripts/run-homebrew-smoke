@@ -57,7 +57,7 @@ cleanup() {
     mv "${service_queue_backup}" "${service_queue}"
   fi
   for formula in ngx-laghu mod-laghu laghu-libvips laghu-html-refresh \
-    laghu-js-optimize laghu-resource-fetch; do
+    laghu-js-optimize laghu-resource-fetch laghu-chrome-analyze; do
     brew uninstall --force "${formula}" >/dev/null 2>&1 || true
   done
   if [ "${nginx_config_existed}" = 1 ]; then
@@ -123,6 +123,8 @@ done
 brew style "${formula_dir}"/*.rb
 brew install --build-from-source "${tap}/laghu-libvips"
 brew test laghu-libvips
+brew install --build-from-source "${tap}/laghu-chrome-analyze"
+brew test laghu-chrome-analyze
 if [ -e "${service_queue}" ]; then
   [ -f "${service_queue}" ] || {
     echo "Expected Homebrew service queue is not a file." >&2
@@ -153,9 +155,9 @@ brew reinstall --build-from-source "${tap}/mod-laghu"
 "$(brew --prefix httpd)/bin/httpd" -t
 
 brew uninstall ngx-laghu mod-laghu laghu-libvips laghu-html-refresh \
-  laghu-js-optimize laghu-resource-fetch
+  laghu-js-optimize laghu-resource-fetch laghu-chrome-analyze
 for formula in ngx-laghu mod-laghu laghu-libvips laghu-html-refresh \
-  laghu-js-optimize laghu-resource-fetch; do
+  laghu-js-optimize laghu-resource-fetch laghu-chrome-analyze; do
   if brew list --formula "${formula}" >/dev/null 2>&1; then
     echo "Homebrew retained ${formula} after uninstall." >&2
     exit 1

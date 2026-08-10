@@ -39,6 +39,8 @@ typedef enum {
   LAGHU_SERVICE_SETTING_FILE_CACHE_METADATA_SIZE,
   LAGHU_SERVICE_SETTING_WORKER_QUEUE,
   LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
+  LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE,
+  LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT,
   LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE,
   LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG,
   LAGHU_SERVICE_SETTING_JAVASCRIPT_QUEUE,
@@ -141,6 +143,8 @@ typedef struct {
   laghu_cache_limits cache_limits;
   char worker_queue[LAGHU_RUNTIME_PATH_SIZE];
   char html_refresh_queue[LAGHU_RUNTIME_PATH_SIZE];
+  /* An explicit queue opts in to asynchronous browser analysis. */
+  char chrome_analysis_queue[LAGHU_RUNTIME_PATH_SIZE];
   char font_fetch_queue[LAGHU_RUNTIME_PATH_SIZE];
   char font_provider_config[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_queue[LAGHU_RUNTIME_PATH_SIZE];
@@ -166,6 +170,7 @@ typedef struct {
   size_t purge_allow_count;
   size_t trusted_proxy_count;
   unsigned int rum_timeout_ms;
+  unsigned int chrome_analysis_timeout_ms;
   unsigned int rum_ttl;
   unsigned int rum_retry_limit;
   unsigned int rum_sync_interval;

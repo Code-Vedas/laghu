@@ -57,6 +57,8 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu FontFetchQueue PATH` | inherited | bounded path | `/run/laghu/fonts.queue` | Selects the font-fetch queue. |
 | `Laghu FontProviderConfig PATH` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `Laghu JavaScriptQueue PATH` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
+| `Laghu ChromeAnalysisQueue PATH` | inherited | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
+| `Laghu ChromeAnalysisTimeout MS` | inherited | `100..10000` | `1500` | Bounds one analysis job; requires `ChromeAnalysisQueue`. |
 | `Laghu JavaScriptTarget QUERY` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering. |
 | `Laghu JavaScriptObservationConfig PATH` | inherited | valid observation file | unset | Adds exact third-party script candidates. |
 | `Laghu JavaScriptDeferConfig PATH` | inherited | valid approval file | unset | Approves exact same-origin deferrals and exact third-party interaction delays. |

@@ -1,0 +1,11 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# These values must match the enabled Laghu ChromeAnalysisQueue setting.
+LAGHU_CHROME_ANALYSIS_QUEUE=/run/laghu/chrome-analysis.queue
+LAGHU_CHROME_ANALYSIS_OUTPUT=/var/cache/laghu/chrome-analysis
+
+# Set this to the executable provided by the distribution or local policy.
+LAGHU_CHROME_ANALYSIS_BROWSER=/usr/bin/chromium

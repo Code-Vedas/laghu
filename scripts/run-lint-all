@@ -23,6 +23,7 @@ run_cmd shell-syntax sh -c '
 
 run_cmd python-syntax env PYTHONPYCACHEPREFIX="${REPO_ROOT}/tmp/pycache" \
   "${PYTHON:-python3}" -m py_compile \
+  "${REPO_ROOT}/workers/laghu-chrome-analyze/tests/analysis_test.py" \
   "${REPO_ROOT}/workers/laghu-libvips/tests/worker_test.py" \
   "${REPO_ROOT}/workers/laghu-html-refresh/tests/refresh_test.py"
 
@@ -108,6 +109,8 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/servers/laghu/src/main.c \
     "${REPO_ROOT}"/servers/laghu/tests/proxy_test.c \
     "${REPO_ROOT}"/workers/laghu-asset-upload/main.c \
+    "${REPO_ROOT}"/workers/laghu-chrome-analyze/main.c \
+    "${REPO_ROOT}"/workers/laghu-chrome-analyze/tests/analysis_fixture.c \
     "${REPO_ROOT}"/workers/laghu-html-refresh/main.c \
     "${REPO_ROOT}"/workers/laghu-html-refresh/tests/refresh_fixture.c \
     "${REPO_ROOT}"/workers/laghu-libvips/main.c \

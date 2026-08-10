@@ -23,6 +23,8 @@
 #include "laghu/rum.h"
 #include "laghu/types.h"
 
+#define LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML (1024U * 1024U)
+
 static bool laghu_http_select_owned(laghu_http_transaction_result *result,
                                     const unsigned char *data, size_t length) {
   if (length == 0U) {
@@ -731,6 +733,29 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
          laghu_http_add_entity_headers(result, "laghu-html-", dependency);
 }
 
+/* This is deliberately post-finalization: Chrome receives precisely the body
+ * that will leave the HTTP layer. Queue contention, saturation, and malformed
+ * optional configuration all leave the response untouched. */
+static void laghu_http_publish_chrome_analysis(
+    const laghu_http_transaction *transaction, laghu_buffer snapshot) {
+  laghu_runtime_job job;
+  if (transaction->environment.chrome_analysis_queue == NULL ||
+      snapshot.length == 0U ||
+      snapshot.length > LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML)
+    return;
+  memset(&job, 0, sizeof(job));
+  job.kind = LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS;
+  if (!laghu_sha256_hex(snapshot, job.index_key)) return;
+  memcpy(job.policy_key, transaction->policy_key, sizeof(job.policy_key));
+  memcpy(job.request_path, transaction->path, sizeof(job.request_path));
+  memcpy(job.validator, transaction->validator, sizeof(job.validator));
+  memcpy(job.content_type, "text/html", sizeof("text/html"));
+  job.analysis_timeout_ms = transaction->environment.chrome_analysis_timeout_ms;
+  job.payload = snapshot;
+  (void)laghu_runtime_queue_try_publish(
+      transaction->environment.chrome_analysis_queue, &job);
+}
+
 static bool laghu_http_finalize_image(laghu_http_transaction *transaction,
                                       laghu_buffer body,
                                       laghu_http_transaction_result *result) {
@@ -962,5 +987,7 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
       (void)laghu_http_add_length(result, rewritten_length);
     }
   }
+  if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML)
+    laghu_http_publish_chrome_analysis(transaction, result->selected);
   return laghu_http_add_status(result, LAGHU_DECISION_PASS);
 }

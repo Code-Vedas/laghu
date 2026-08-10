@@ -76,9 +76,18 @@ static bool laghu_queue_javascript_valid(const laghu_runtime_job *job) {
              NULL;
 }
 
+static bool laghu_queue_browser_analysis_valid(const laghu_runtime_job *job) {
+  if (job->kind != LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS)
+    return job->analysis_timeout_ms == 0U;
+  return job->payload.length > 0U && job->payload.length <= 1024U * 1024U &&
+         job->analysis_timeout_ms >= 100U &&
+         job->analysis_timeout_ms <= 10000U &&
+         strcmp(job->content_type, "text/html") == 0;
+}
+
 static bool laghu_queue_job_valid(const laghu_runtime_job *job,
                                   size_t payload_limit) {
-  return job != NULL && job->kind <= LAGHU_RUNTIME_JOB_HTML_REFRESH &&
+  return job != NULL && job->kind <= LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS &&
          job->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
          job->sprite_count <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
          laghu_queue_hash_valid(job->index_key) &&
@@ -91,6 +100,7 @@ static bool laghu_queue_job_valid(const laghu_runtime_job *job,
                                  sizeof(job->content_type)) &&
          laghu_queue_sprite_valid(job) && laghu_queue_font_valid(job) &&
          laghu_queue_javascript_valid(job) &&
+         laghu_queue_browser_analysis_valid(job) &&
          job->payload.length <= payload_limit &&
          (job->payload.data != NULL || job->payload.length == 0U);
 }
@@ -432,6 +442,8 @@ static void laghu_queue_job_encode(unsigned char *slot,
   }
   slot[LAGHU_WIRE_QUEUE_SLOT_ALLOW_LOSSY_OFFSET] = job->allow_lossy ? 1U : 0U;
   slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_WEBP_OFFSET] = job->accept_webp ? 1U : 0U;
+  laghu_wire_u32_write(slot + LAGHU_WIRE_QUEUE_SLOT_ANALYSIS_TIMEOUT_MS_OFFSET,
+                       job->analysis_timeout_ms);
 }
 
 bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
@@ -526,6 +538,8 @@ static void laghu_queue_job_decode(const unsigned char *slot,
   }
   job->allow_lossy = slot[LAGHU_WIRE_QUEUE_SLOT_ALLOW_LOSSY_OFFSET] != 0U;
   job->accept_webp = slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_WEBP_OFFSET] != 0U;
+  job->analysis_timeout_ms = laghu_wire_u32_read(
+      slot + LAGHU_WIRE_QUEUE_SLOT_ANALYSIS_TIMEOUT_MS_OFFSET);
   if (payload_length != 0U)
     memcpy(payload, laghu_queue_payload((unsigned char *)slot), payload_length);
   job->payload = (laghu_buffer){payload, payload_length};
@@ -557,7 +571,7 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
       if (payload_length <= payload_capacity &&
           payload_length <= state->slot_payload_size &&
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_KIND_OFFSET) <=
-              LAGHU_RUNTIME_JOB_HTML_REFRESH &&
+              LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS &&
           laghu_wire_u32_read(slot +
                               LAGHU_WIRE_QUEUE_SLOT_TARGET_COUNT_OFFSET) <=
               LAGHU_RUNTIME_MAX_TARGETS &&
@@ -565,7 +579,7 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
                               LAGHU_WIRE_QUEUE_SLOT_SPRITE_COUNT_OFFSET) <=
               LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
           laghu_queue_slot_strings_valid(slot) &&
-          laghu_wire_zeroes(slot + 4534U, 10U)) {
+          laghu_wire_zeroes(slot + 4538U, 6U)) {
         laghu_queue_job_decode(slot, job, payload, (size_t)payload_length);
         if (!laghu_queue_job_valid(job, state->slot_payload_size))
           memset(job, 0, sizeof(*job));

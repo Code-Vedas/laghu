@@ -203,6 +203,7 @@ jobs:
           - ubuntu-apache-worker
           - ubuntu-apache-prefork
           - ubuntu-nginx-no-libvips
+          - debian-nginx-chrome-analysis
           - fedora-nginx
           - fedora-apache
           - rocky-nginx

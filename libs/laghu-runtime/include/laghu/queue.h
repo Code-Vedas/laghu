@@ -24,7 +24,10 @@ typedef enum {
   LAGHU_RUNTIME_JOB_SPRITE = 1,
   LAGHU_RUNTIME_JOB_FONT_CSS = 2,
   LAGHU_RUNTIME_JOB_JAVASCRIPT = 3,
-  LAGHU_RUNTIME_JOB_HTML_REFRESH = 4
+  LAGHU_RUNTIME_JOB_HTML_REFRESH = 4,
+  /* Browser work is deliberately a separate, opt-in queue.  Request workers
+   * only publish a bounded HTML snapshot and never wait for its result. */
+  LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS = 5
 } laghu_runtime_job_kind;
 
 typedef struct {
@@ -52,6 +55,7 @@ typedef struct {
   unsigned int sprite_height[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
   bool allow_lossy;
   bool accept_webp;
+  unsigned int analysis_timeout_ms;
   laghu_buffer payload;
 } laghu_runtime_job;
 typedef struct {

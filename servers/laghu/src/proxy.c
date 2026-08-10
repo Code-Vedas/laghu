@@ -336,6 +336,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         .javascript_queue = options->service.javascript_queue[0] != '\0'
                                 ? proxy_javascript_queue(worker)
                                 : NULL,
+        .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0'
+                                     ? proxy_chrome_analysis_queue(worker)
+                                     : NULL,
+        .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
         .javascript_target = options->service.javascript_target,
         .javascript_observations = options->service.javascript_observations,
         .javascript_defer = options->service.javascript_defer,
@@ -441,6 +445,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
           .javascript_queue = options->service.javascript_queue[0] != '\0'
                                   ? proxy_javascript_queue(worker)
                                   : NULL,
+          .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0'
+                                       ? proxy_chrome_analysis_queue(worker)
+                                       : NULL,
+          .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
           .javascript_target = options->service.javascript_target,
           .javascript_observations = options->service.javascript_observations,
           .javascript_defer = options->service.javascript_defer,
@@ -628,6 +636,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       .javascript_queue = options->service.javascript_queue[0] != '\0'
                               ? proxy_javascript_queue(worker)
                               : NULL,
+      .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0'
+                                   ? proxy_chrome_analysis_queue(worker)
+                                   : NULL,
+      .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
       .javascript_target = options->service.javascript_target,
       .javascript_observations = options->service.javascript_observations,
       .javascript_defer = options->service.javascript_defer,

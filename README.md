@@ -90,7 +90,7 @@ make module
 make docs
 ```
 
-Use `scripts/run-in-docker` for the default Linux test or `--all` for the complete local distro/server matrix. Set `NGINX_VERSION` to build another NGINX release.
+Use `scripts/run-in-docker` for the default Linux test or `--all` for the complete local distro/server matrix. `--target debian-nginx-chrome-analysis` installs Chromium solely for the optional headless-browser analysis lane; production images do not include a browser. Set `NGINX_VERSION` to build another NGINX release.
 
 Run the standalone proxy from a development build with one plaintext origin:
 

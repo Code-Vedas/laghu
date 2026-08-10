@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_HTTP_ABI_VERSION 5U
+#define LAGHU_HTTP_ABI_VERSION 6U
 #define LAGHU_HTTP_MAX_REQUEST_HEADERS 64U
 #define LAGHU_HTTP_MAX_RESPONSE_HEADERS 64U
 #define LAGHU_HTTP_MAX_HEADER_OPERATIONS 32U
@@ -168,6 +168,9 @@ typedef struct {
   laghu_runtime_queue *queue;
   laghu_runtime_queue *font_fetch_queue;
   laghu_runtime_queue *javascript_queue;
+  /* Already-attached optional queue; HTTP finalization only try-publishes. */
+  laghu_runtime_queue *chrome_analysis_queue;
+  unsigned int chrome_analysis_timeout_ms;
   const char *javascript_target;
   const laghu_font_provider_set *font_providers;
   const laghu_javascript_observation_set *javascript_observations;

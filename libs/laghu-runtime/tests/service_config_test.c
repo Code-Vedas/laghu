@@ -55,6 +55,8 @@ static void test_descriptor_matrix(void) {
       {LAGHU_SERVICE_SETTING_FILE_CACHE_METADATA_SIZE, "16k"},
       {LAGHU_SERVICE_SETTING_WORKER_QUEUE, "/tmp/jobs.queue"},
       {LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE, "/tmp/html-refresh.queue"},
+      {LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "/tmp/chrome.queue"},
+      {LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT, "1500"},
       {LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE, "/tmp/fonts.queue"},
       {LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG, "/tmp/fonts.conf"},
       {LAGHU_SERVICE_SETTING_JAVASCRIPT_QUEUE, "/tmp/javascript.queue"},
@@ -120,6 +122,9 @@ static void test_apply_and_merge(void) {
   assert(laghu_service_config_apply(
       &parent, LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
       "/tmp/parent-html-refresh.queue", &diagnostic));
+  assert(laghu_service_config_apply(&parent,
+                                    LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE,
+                                    "/tmp/parent-chrome.queue", &diagnostic));
   assert(laghu_service_config_apply(
       &parent, LAGHU_SERVICE_SETTING_LOAD_FROM_FILE, "mapped", &diagnostic));
   assert(laghu_service_config_apply_pair(
@@ -138,6 +143,7 @@ static void test_apply_and_merge(void) {
   assert(merged.readiness_strict);
   assert(strcmp(merged.html_refresh_queue, "/tmp/child-html-refresh.queue") ==
          0);
+  assert(strcmp(merged.chrome_analysis_queue, "/tmp/parent-chrome.queue") == 0);
   assert(merged.source_policy.mapping_count == 1U);
   assert(laghu_service_config_apply(&child, LAGHU_SERVICE_SETTING_METRICS,
                                     "off", &diagnostic));
@@ -225,6 +231,18 @@ static void test_cidrs_and_dependencies(void) {
   laghu_service_finalize_options options = {0};
   laghu_service_cidr cidr;
   unsigned char address[16] = {192U, 0U, 2U, 17U};
+  laghu_service_config_init(&config);
+  assert(laghu_service_config_apply(
+      &config, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT, "1500",
+      &diagnostic));
+  assert(!laghu_service_config_finalize(&config, &options, &diagnostic));
+  assert(diagnostic.code == LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY);
+  laghu_service_config_init(&config);
+  assert(laghu_service_config_apply(&config,
+                                    LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE,
+                                    "/tmp/chrome.queue", &diagnostic));
+  assert(laghu_service_config_finalize(&config, &options, &diagnostic));
+  assert(config.chrome_analysis_timeout_ms == 1500U);
   laghu_service_config_init(&config);
   assert(laghu_service_cidr_parse("192.0.2.0/24", &cidr));
   assert(laghu_service_cidr_matches(&cidr, address,

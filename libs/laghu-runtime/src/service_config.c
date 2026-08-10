@@ -53,6 +53,14 @@ static const laghu_service_descriptor_entry laghu_service_descriptors[] = {
       LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"htmlrefreshqueue", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "chrome_analysis_queue",
+      LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"chromeanalysisqueue", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT, "chrome_analysis_timeout",
+      LAGHU_SERVICE_VALUE_UNSIGNED, LAGHU_SERVICE_INHERIT_SCALAR, 100U, 10000U,
+      false},
+     {"chromeanalysistimeout", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE, "font_fetch_queue",
       LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
@@ -408,6 +416,7 @@ void laghu_service_config_init(laghu_service_config *config) {
   (void)laghu_base_string_copy(config->rum_store, sizeof(config->rum_store),
                                "local:");
   config->rum_timeout_ms = LAGHU_RUM_DEFAULT_TIMEOUT_MS;
+  config->chrome_analysis_timeout_ms = 1500U;
   config->rum_ttl = LAGHU_IMAGE_METADATA_TTL_DEFAULT;
   config->rum_retry_limit = LAGHU_RUM_DEFAULT_RETRY_LIMIT;
   config->rum_sync_interval = LAGHU_RUM_DEFAULT_SYNC_SECONDS;
@@ -564,6 +573,17 @@ bool laghu_service_config_apply(laghu_service_config *config,
       if (!laghu_service_copy(config->html_refresh_queue,
                               sizeof(config->html_refresh_queue), value))
         goto format;
+      break;
+    case LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE:
+      if (!laghu_service_copy(config->chrome_analysis_queue,
+                              sizeof(config->chrome_analysis_queue), value))
+        goto format;
+      break;
+    case LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT:
+      if (!laghu_service_unsigned(value, descriptor->minimum,
+                                  descriptor->maximum,
+                                  &config->chrome_analysis_timeout_ms))
+        goto range;
       break;
     case LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE:
       if (!laghu_service_copy(config->font_fetch_queue,
@@ -826,6 +846,10 @@ bool laghu_service_config_merge(laghu_service_config *merged,
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_WORKER_QUEUE, worker_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
                              html_refresh_queue);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE,
+                             chrome_analysis_queue);
+  LAGHU_SERVICE_MERGE_FIELD(LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT,
+                            chrome_analysis_timeout_ms);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE,
                              font_fetch_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG,
@@ -1072,6 +1096,13 @@ bool laghu_service_config_validate(
     return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY,
                               LAGHU_SERVICE_SETTING_WORKER_QUEUE,
                               "worker queue is required");
+  if (laghu_service_present(config,
+                            LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT) &&
+      config->chrome_analysis_queue[0] == '\0')
+    return laghu_service_fail(
+        diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY,
+        LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT,
+        "chrome analysis timeout requires chrome analysis queue");
   if ((config->font_provider_config[0] != '\0' &&
        config->font_providers == NULL) ||
       (config->javascript_observation_config[0] != '\0' &&

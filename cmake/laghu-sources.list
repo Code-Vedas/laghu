@@ -44,6 +44,8 @@ runtime|laghu_profile.c|libs/laghu-runtime/src/profile.c
 runtime|laghu_lcp.c|libs/laghu-runtime/src/lcp.c
 runtime|laghu_beacon.c|libs/laghu-runtime/src/beacon.c
 worker|laghu_html_refresh.c|workers/laghu-html-refresh/main.c
+worker|laghu_chrome_analyze.c|workers/laghu-chrome-analyze/main.c
+worker_test|laghu_chrome_analyze|workers/laghu-chrome-analyze/tests/analysis_fixture.c
 worker_test|laghu_html_refresh|workers/laghu-html-refresh/tests/refresh_fixture.c
 http|laghu_http.c|libs/laghu-http/src/http.c
 http|laghu_http_administrative.c|libs/laghu-http/src/administrative.c

@@ -39,6 +39,18 @@ brew install Code-Vedas/tap/ngx-laghu
 
 The formula builds against the supported Homebrew NGINX, installs a disabled configuration, starts its default worker services, and validates `nginx -t`. The per-origin HTML refresh worker is configured and supervised separately.
 
+### Optional Chrome analysis
+
+Only enable `chrome_analysis_queue` when browser analysis is wanted. Install Chromium and the separate worker, then start its user service:
+
+```bash
+brew install --cask chromium
+brew install Code-Vedas/tap/laghu-chrome-analyze
+brew services start laghu-chrome-analyze
+```
+
+Set `chrome_analysis_queue` to the queue path shown by `brew info laghu-chrome-analyze`. The server publishes no browser work until that directive is set; the worker must remain running while it is set.
+
 ## Container
 
 The production image contains matched NGINX, the adapter, workers, providers, entrypoint, health probes, and persistent cache/RUM mount points. Set `LAGHU_HTML_CACHE_ORIGIN` and `LAGHU_HTML_REFRESH_QUEUE` only with matching NGINX HTML-cache settings to start the optional refresh worker.

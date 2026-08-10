@@ -34,7 +34,17 @@ target "ubuntu-nginx-no-libvips" {
     BASE_IMAGE = "ubuntu:24.04"
     PACKAGE_FAMILY = "apt"
     SERVER = "nginx"
+    LAGHU_SKIP_PACKAGE = "ON"
+  }
+}
+target "debian-nginx-chrome-analysis" {
+  inherits = ["base"]
+  args = {
+    BASE_IMAGE = "debian:13"
+    PACKAGE_FAMILY = "apt"
+    SERVER = "nginx"
     LAGHU_WITH_VIPS = "OFF"
+    LAGHU_WITH_CHROME = "ON"
   }
 }
 target "ubuntu-apache-event" {

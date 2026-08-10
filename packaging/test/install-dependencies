@@ -17,6 +17,9 @@ case "${PACKAGE_FAMILY}" in
     if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
       apt-get install --no-install-recommends -y libvips-dev libvips-tools
     fi
+    if [ "${LAGHU_WITH_CHROME}" = ON ]; then
+      apt-get install --no-install-recommends -y chromium
+    fi
     ;;
   dnf)
     dnf install -y bsdtar cargo httpd-devel cmake gcc git gzip httpd make openssl-devel rust \

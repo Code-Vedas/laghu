@@ -1,0 +1,31 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+[Unit]
+Description=Laghu optional headless Chrome analysis worker
+After=local-fs.target
+ConditionPathExists=/etc/laghu/chrome-analysis.conf
+
+[Service]
+Type=simple
+User=laghu
+Group=laghu
+EnvironmentFile=/etc/laghu/chrome-analysis.conf
+RuntimeDirectory=laghu
+RuntimeDirectoryMode=0770
+CacheDirectory=laghu/chrome-analysis
+CacheDirectoryMode=0750
+ExecStartPre=/usr/bin/test -x ${LAGHU_CHROME_ANALYSIS_BROWSER}
+ExecStartPre=/usr/bin/laghu-chrome-analyze --init ${LAGHU_CHROME_ANALYSIS_QUEUE} ${LAGHU_CHROME_ANALYSIS_OUTPUT} ${LAGHU_CHROME_ANALYSIS_BROWSER}
+ExecStart=/usr/bin/laghu-chrome-analyze --serve ${LAGHU_CHROME_ANALYSIS_QUEUE} ${LAGHU_CHROME_ANALYSIS_OUTPUT} ${LAGHU_CHROME_ANALYSIS_BROWSER}
+Restart=on-failure
+RestartSec=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

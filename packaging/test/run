@@ -6,6 +6,11 @@
 
 set -eu
 
+if [ "${LAGHU_WITH_CHROME:-OFF}" = ON ]; then
+  command -v chromium >/dev/null 2>&1
+  chromium --version
+fi
+
 if command -v bsdtar >/dev/null 2>&1; then
   export TAR=bsdtar
 fi
@@ -34,7 +39,7 @@ else
   scripts/run-apache-module-smoke-all
 fi
 
-if [ "${LAGHU_WITH_VIPS}" = OFF ]; then
+if [ "${LAGHU_SKIP_PACKAGE:-OFF}" = ON ] || [ "${LAGHU_WITH_VIPS}" = OFF ]; then
   echo "Custom no-libvips build passed; official package construction is intentionally skipped."
   exit 0
 fi
@@ -122,3 +127,13 @@ else
     "${installed_config}"
 fi
 test -d /var/lib/laghu/rum
+test -x /usr/bin/laghu-chrome-analyze
+chrome_unit=/lib/systemd/system/laghu-chrome-analyze.service
+[ -f "${chrome_unit}" ] || chrome_unit=/usr/lib/systemd/system/laghu-chrome-analyze.service
+grep -q '^EnvironmentFile=/etc/laghu/chrome-analysis.conf$' "${chrome_unit}"
+grep -q 'LAGHU_CHROME_ANALYSIS_QUEUE' "${chrome_unit}"
+grep -q 'LAGHU_CHROME_ANALYSIS_OUTPUT' "${chrome_unit}"
+grep -q 'LAGHU_CHROME_ANALYSIS_BROWSER' "${chrome_unit}"
+chrome_example=/usr/share/doc/laghu-libvips/chrome-analysis.conf.example
+[ -f "${chrome_example}" ] || chrome_example=/usr/share/doc/laghu/chrome-analysis.conf.example
+grep -q '^LAGHU_CHROME_ANALYSIS_QUEUE=' "${chrome_example}"

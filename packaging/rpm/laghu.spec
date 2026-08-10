@@ -78,6 +78,8 @@ install -D -m 0755 %{__cmake_builddir}/workers/laghu-html-refresh/laghu-html-ref
   %{buildroot}%{_bindir}/laghu-html-refresh
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-js-optimize/cargo/release/laghu-js-optimize \
   %{buildroot}%{_bindir}/laghu-js-optimize
+install -D -m 0755 %{__cmake_builddir}/workers/laghu-chrome-analyze/laghu-chrome-analyze \
+  %{buildroot}%{_bindir}/laghu-chrome-analyze
 install -D -m 0755 %{_nginx_modbuilddir}/ngx_http_laghu_module.so \
   %{buildroot}%{nginx_moddir}/ngx_http_laghu_module.so
 install -D -m 0644 packaging/nginx/mod-http-laghu.conf \
@@ -100,10 +102,14 @@ install -D -m 0644 packaging/systemd/laghu-html-refresh@.service \
   %{buildroot}%{_unitdir}/laghu-html-refresh@.service
 install -D -m 0644 packaging/systemd/laghu-js-optimize.service \
   %{buildroot}%{_unitdir}/laghu-js-optimize.service
+install -D -m 0644 packaging/systemd/laghu-chrome-analyze.service \
+  %{buildroot}%{_unitdir}/laghu-chrome-analyze.service
 install -D -m 0644 packaging/font-providers.conf \
   %{buildroot}%{_sysconfdir}/laghu/font-providers.conf
 install -D -m 0644 packaging/html-refresh.conf.example \
   %{buildroot}%{_docdir}/laghu/html-refresh.conf.example
+install -D -m 0644 packaging/chrome-analysis.conf.example \
+  %{buildroot}%{_docdir}/laghu/chrome-analysis.conf.example
 install -D -m 0644 packaging/javascript-observation.conf \
   %{buildroot}%{_sysconfdir}/laghu/javascript-observation.conf
 install -D -m 0644 packaging/javascript-defer.conf \
@@ -121,6 +127,7 @@ getent passwd laghu >/dev/null || \
 %systemd_post laghu-resource-fetch.service
 %systemd_post laghu-html-refresh@.service
 %systemd_post laghu-js-optimize.service
+%systemd_post laghu-chrome-analyze.service
 for account in nginx apache; do
   if getent passwd "$account" >/dev/null; then
     usermod -a -G laghu "$account"
@@ -133,12 +140,14 @@ systemd-tmpfiles --create laghu.conf >/dev/null 2>&1 || :
 %systemd_preun laghu-resource-fetch.service
 %systemd_preun laghu-html-refresh@.service
 %systemd_preun laghu-js-optimize.service
+%systemd_preun laghu-chrome-analyze.service
 
 %postun
 %systemd_postun_with_restart laghu-libvips.service
 %systemd_postun_with_restart laghu-resource-fetch.service
 %systemd_postun_with_restart laghu-html-refresh@.service
 %systemd_postun_with_restart laghu-js-optimize.service
+%systemd_postun_with_restart laghu-chrome-analyze.service
 
 %post -n ngx-laghu
 nginx -t
@@ -152,12 +161,15 @@ httpd -t
 %{_bindir}/laghu-resource-fetch
 %{_bindir}/laghu-html-refresh
 %{_bindir}/laghu-js-optimize
+%{_bindir}/laghu-chrome-analyze
 %{_unitdir}/laghu-libvips.service
 %{_unitdir}/laghu-resource-fetch.service
 %{_unitdir}/laghu-html-refresh@.service
 %{_unitdir}/laghu-js-optimize.service
+%{_unitdir}/laghu-chrome-analyze.service
 %config(noreplace) %{_sysconfdir}/laghu/font-providers.conf
 %doc %{_docdir}/laghu/html-refresh.conf.example
+%doc %{_docdir}/laghu/chrome-analysis.conf.example
 %config(noreplace) %{_sysconfdir}/laghu/javascript-observation.conf
 %config(noreplace) %{_sysconfdir}/laghu/javascript-defer.conf
 %{_tmpfilesdir}/laghu.conf

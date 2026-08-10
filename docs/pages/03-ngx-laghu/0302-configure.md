@@ -57,6 +57,8 @@ Laghu transaction records use the configured NGINX error_log sink. Each native e
 | `laghu font_fetch_queue PATH;` | inherited | bounded path | `/run/laghu/fonts.queue` | Selects the external-font queue. |
 | `laghu font_provider_config PATH;` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `laghu javascript_queue PATH;` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
+| `laghu chrome_analysis_queue PATH;` | inherited | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
+| `laghu chrome_analysis_timeout MS;` | inherited | `100..10000` | `1500` | Bounds one analysis job; requires `chrome_analysis_queue`. |
 | `laghu javascript_target QUERY;` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering without polyfills. |
 | `laghu javascript_observation_config PATH;` | inherited | valid observation file | unset | Adds exact third-party script candidates. |
 | `laghu javascript_defer_config PATH;` | inherited | valid approval file | unset | Approves exact same-origin deferrals and exact third-party interaction delays. |

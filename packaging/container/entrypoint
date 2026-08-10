@@ -13,11 +13,15 @@ FONT_PROVIDER_CONFIG=${LAGHU_FONT_PROVIDER_CONFIG:-/etc/laghu/font-providers.con
 CACHE_PATH=${LAGHU_IMAGE_CACHE:-/var/cache/laghu/images}
 HTML_REFRESH_QUEUE_PATH=${LAGHU_HTML_REFRESH_QUEUE:-/run/laghu/html-refresh.queue}
 HTML_CACHE_ORIGIN=${LAGHU_HTML_CACHE_ORIGIN:-}
+CHROME_ANALYSIS_QUEUE_PATH=${LAGHU_CHROME_ANALYSIS_QUEUE:-}
+CHROME_ANALYSIS_OUTPUT=${LAGHU_CHROME_ANALYSIS_OUTPUT:-/var/cache/laghu/chrome-analysis}
+CHROME_ANALYSIS_BROWSER=${LAGHU_CHROME_ANALYSIS_BROWSER:-chromium}
 OPTIMIZER_PID=""
 FONT_FETCH_PID=""
 JAVASCRIPT_PID=""
 HTML_REFRESH_PID=""
 ASSET_PID=""
+CHROME_ANALYSIS_PID=""
 NGINX_PID=""
 
 terminate() {
@@ -26,6 +30,7 @@ terminate() {
   [ "${JAVASCRIPT_PID}" = "" ] || kill -TERM "${JAVASCRIPT_PID}" 2>/dev/null || true
   [ "${FONT_FETCH_PID}" = "" ] || kill -TERM "${FONT_FETCH_PID}" 2>/dev/null || true
   [ "${ASSET_PID}" = "" ] || kill -TERM "${ASSET_PID}" 2>/dev/null || true
+  [ "${CHROME_ANALYSIS_PID}" = "" ] || kill -TERM "${CHROME_ANALYSIS_PID}" 2>/dev/null || true
   [ "${OPTIMIZER_PID}" = "" ] || kill -TERM "${OPTIMIZER_PID}" 2>/dev/null || true
 }
 trap terminate EXIT HUP INT QUIT TERM
@@ -48,6 +53,16 @@ if [ -f /etc/laghu/asset-offload.conf ]; then
   laghu-asset-upload --serve /etc/laghu/asset-offload.conf &
   ASSET_PID=$!
 fi
+if [ -n "${CHROME_ANALYSIS_QUEUE_PATH}" ]; then
+  if ! command -v "${CHROME_ANALYSIS_BROWSER}" >/dev/null 2>&1; then
+    echo "LAGHU_CHROME_ANALYSIS_QUEUE is set, but ${CHROME_ANALYSIS_BROWSER} is not executable." >&2
+    exit 1
+  fi
+  mkdir -p "${CHROME_ANALYSIS_OUTPUT}"
+  laghu-chrome-analyze --init "${CHROME_ANALYSIS_QUEUE_PATH}" "${CHROME_ANALYSIS_OUTPUT}" "${CHROME_ANALYSIS_BROWSER}"
+  laghu-chrome-analyze --serve "${CHROME_ANALYSIS_QUEUE_PATH}" "${CHROME_ANALYSIS_OUTPUT}" "${CHROME_ANALYSIS_BROWSER}" &
+  CHROME_ANALYSIS_PID=$!
+fi
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 
@@ -56,6 +71,7 @@ while kill -0 "${OPTIMIZER_PID}" 2>/dev/null &&
       kill -0 "${JAVASCRIPT_PID}" 2>/dev/null &&
       { [ "${HTML_REFRESH_PID}" = "" ] || kill -0 "${HTML_REFRESH_PID}" 2>/dev/null; } &&
       { [ "${ASSET_PID}" = "" ] || kill -0 "${ASSET_PID}" 2>/dev/null; } &&
+      { [ "${CHROME_ANALYSIS_PID}" = "" ] || kill -0 "${CHROME_ANALYSIS_PID}" 2>/dev/null; } &&
       kill -0 "${NGINX_PID}" 2>/dev/null; do
   sleep 1
 done
@@ -73,5 +89,7 @@ elif [ "${HTML_REFRESH_PID}" != "" ] && ! kill -0 "${HTML_REFRESH_PID}" 2>/dev/n
   wait "${HTML_REFRESH_PID}" || status=$?
 elif [ "${ASSET_PID}" != "" ] && ! kill -0 "${ASSET_PID}" 2>/dev/null; then
   wait "${ASSET_PID}" || status=$?
+elif [ "${CHROME_ANALYSIS_PID}" != "" ] && ! kill -0 "${CHROME_ANALYSIS_PID}" 2>/dev/null; then
+  wait "${CHROME_ANALYSIS_PID}" || status=$?
 fi
 exit "${status}"

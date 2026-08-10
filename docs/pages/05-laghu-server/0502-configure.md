@@ -53,6 +53,8 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--font-fetch-queue PATH` | bounded path | unset | Enables the font-fetch queue; requires provider config. |
 | `--font-provider-config PATH` | valid provider file | unset | Enables providers; requires font queue. |
 | `--javascript-queue PATH` | bounded path | unset | Enables the SWC queue. |
+| `--chrome-analysis-queue PATH` | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
+| `--chrome-analysis-timeout MS` | `100..10000` | `1500` | Bounds one analysis job; requires `--chrome-analysis-queue`. |
 | `--asset-offload-config PATH` | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `--asset-upload-queue PATH` | policy-matching path | unset | Selects the asynchronous asset spool. |
 | `--load-from-file off\|mapped` | source-loader mode | `off` | Enables asynchronous explicitly mapped file acquisition. |

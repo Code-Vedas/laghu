@@ -40,6 +40,18 @@ brew install Code-Vedas/tap/mod-laghu
 
 The formula builds with the supported Homebrew `apxs`, installs a disabled include, starts default workers, and validates HTTP Server configuration. The per-origin HTML refresh worker is configured and supervised separately.
 
+### Optional Chrome analysis
+
+Only enable `ChromeAnalysisQueue` when browser analysis is wanted. Install Chromium and the separate worker, then start its user service:
+
+```bash
+brew install --cask chromium
+brew install Code-Vedas/tap/laghu-chrome-analyze
+brew services start laghu-chrome-analyze
+```
+
+Set `ChromeAnalysisQueue` to the queue path shown by `brew info laghu-chrome-analyze`. Apache publishes no browser work until that directive is set; the worker must remain running while it is set.
+
 ## Container
 
 ```bash

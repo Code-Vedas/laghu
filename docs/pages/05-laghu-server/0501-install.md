@@ -26,6 +26,18 @@ brew install Code-Vedas/tap/laghu
 brew services start laghu
 ```
 
+### Optional Chrome analysis
+
+Only pass `--chrome-analysis-queue` when browser analysis is wanted. Install Chromium and the separate worker, then start its user service:
+
+```bash
+brew install --cask chromium
+brew install Code-Vedas/tap/laghu-chrome-analyze
+brew services start laghu-chrome-analyze
+```
+
+Use the queue path shown by `brew info laghu-chrome-analyze` for `--chrome-analysis-queue`. Laghu publishes no browser work without that option; worker must remain running while it is set.
+
 ## Containers
 
 ```bash

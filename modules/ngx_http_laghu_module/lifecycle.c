@@ -53,6 +53,12 @@ static bool ngx_http_laghu_attach_config_queues(
                                    &conf->html_refresh_runtime_queue_attached,
                                    conf->service.html_refresh_queue))
     complete = false;
+  if (conf->service.chrome_analysis_queue[0] != '\0' &&
+      !ngx_http_laghu_attach_queue(
+          &conf->chrome_analysis_runtime_queue,
+          &conf->chrome_analysis_runtime_queue_attached,
+          conf->service.chrome_analysis_queue))
+    complete = false;
   return complete;
 }
 
@@ -86,10 +92,13 @@ static void ngx_http_laghu_close_config_queues(
     laghu_runtime_queue_close(&conf->javascript_runtime_queue);
   if (conf->html_refresh_runtime_queue_attached)
     laghu_runtime_queue_close(&conf->html_refresh_runtime_queue);
+  if (conf->chrome_analysis_runtime_queue_attached)
+    laghu_runtime_queue_close(&conf->chrome_analysis_runtime_queue);
   conf->runtime_queue_attached = false;
   conf->font_fetch_runtime_queue_attached = false;
   conf->javascript_runtime_queue_attached = false;
   conf->html_refresh_runtime_queue_attached = false;
+  conf->chrome_analysis_runtime_queue_attached = false;
 }
 
 static void ngx_http_laghu_close_all_queues(ngx_cycle_t *cycle) {

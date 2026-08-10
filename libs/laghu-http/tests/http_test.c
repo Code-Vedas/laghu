@@ -551,6 +551,61 @@ static void test_javascript_cold_publication(void) {
   (void)remove(test_queue_path);
 }
 
+static void test_html_chrome_analysis_publication(void) {
+  const laghu_http_header headers[] = {
+      {VIEW("Content-Type"), VIEW("text/html")}};
+  static const unsigned char html[] =
+      "<!doctype html><html><head></head><body>  analysis  "
+      "snapshot  </body></html>";
+  laghu_runtime_queue queue;
+  laghu_http_environment environment = test_environment(test_cache_path, NULL);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result prepared, finalized;
+  laghu_http_request request = test_request(NULL, 0U, VIEW("/analysis.html"));
+  laghu_http_response response =
+      test_response(headers, 1U, sizeof(html) - 1U);
+  laghu_runtime_job job;
+  char snapshot_key[LAGHU_RUNTIME_KEY_SIZE];
+  static unsigned char payload[4096U];
+  laghu_runtime_queue_init(&queue);
+  (void)remove(test_queue_path);
+  CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 1U,
+                                   1024U * 1024U));
+  environment.chrome_analysis_queue = &queue;
+  environment.chrome_analysis_timeout_ms = 1750U;
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &prepared));
+  CHECK(prepared.action == LAGHU_HTTP_ACTION_CAPTURE_HTML);
+  laghu_http_transaction_result_release(&prepared);
+  CHECK(laghu_http_transaction_finalize(
+      &transaction, (laghu_buffer){html, sizeof(html) - 1U}, &finalized));
+  CHECK(laghu_sha256_hex(finalized.selected, snapshot_key));
+  CHECK(laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload)));
+  CHECK(job.kind == LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS);
+  CHECK(strcmp(job.index_key, snapshot_key) == 0);
+  CHECK(strcmp(job.policy_key, transaction.policy_key) == 0);
+  CHECK(strcmp(job.request_path, "/analysis.html") == 0);
+  CHECK(strcmp(job.content_type, "text/html") == 0);
+  CHECK(job.analysis_timeout_ms == 1750U);
+  CHECK(job.payload.length == finalized.selected.length &&
+        memcmp(payload, finalized.selected.data, job.payload.length) == 0);
+  laghu_http_transaction_result_release(&finalized);
+
+  /* A saturated optional queue cannot change the HTTP response. */
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &prepared));
+  laghu_http_transaction_result_release(&prepared);
+  CHECK(laghu_runtime_queue_try_publish(&queue, &job));
+  CHECK(laghu_http_transaction_finalize(
+      &transaction, (laghu_buffer){html, sizeof(html) - 1U}, &finalized));
+  CHECK(finalized.decision == LAGHU_DECISION_PASS);
+  laghu_http_transaction_result_release(&finalized);
+  laghu_runtime_queue_close(&queue);
+  (void)remove(test_queue_path);
+}
+
 static void test_html_cold_warm_headers(void) {
   const laghu_http_header headers[] = {
       {VIEW("Content-Type"), VIEW("text/html")}};
@@ -974,6 +1029,7 @@ int main(void) {
   test_request_does_not_attach_queue();
   test_css_cold_warm();
   test_javascript_cold_publication();
+  test_html_chrome_analysis_publication();
   test_html_cold_warm_headers();
   test_html_preconnect_headers();
   test_validator_hints_and_worker_liveness();

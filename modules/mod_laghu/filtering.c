@@ -279,6 +279,10 @@ bool laghu_apache_normalize(request_rec *request,
         context->config->service.font_providers;
   context->environment.javascript_queue =
       laghu_apache_javascript_queue(context->config);
+  context->environment.chrome_analysis_queue =
+      laghu_apache_chrome_analysis_queue(context->config);
+  context->environment.chrome_analysis_timeout_ms =
+      context->config->service.chrome_analysis_timeout_ms;
   context->environment.javascript_target =
       context->config->service.javascript_target;
   context->environment.javascript_observations =
