@@ -210,6 +210,8 @@ void proxy_send_json(laghu_socket client, unsigned int status,
                      const char *reason, const char *json, bool head);
 void proxy_send_admin_json(laghu_socket client, unsigned int status,
                            const char *reason, const char *json, bool head);
+void proxy_send_admin_html(laghu_socket client, unsigned int status,
+                           const char *reason, const char *html, bool head);
 void proxy_send_metrics(laghu_socket client, const char *body, size_t length,
                         bool head);
 bool proxy_handle_beacon_routes(const proxy_connection *connection,

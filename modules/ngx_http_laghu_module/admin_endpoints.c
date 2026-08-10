@@ -24,6 +24,8 @@ static ngx_int_t ngx_http_laghu_admin_write(
   if (response->content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS) {
     ngx_str_set(&request->headers_out.content_type,
                 "text/plain; version=0.0.4; charset=utf-8");
+  } else if (response->content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_HTML) {
+    ngx_str_set(&request->headers_out.content_type, "text/html; charset=utf-8");
   } else {
     ngx_str_set(&request->headers_out.content_type, "application/json");
   }
@@ -161,6 +163,63 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
                                                 &response))
       return NGX_HTTP_INTERNAL_SERVER_ERROR;
     return ngx_http_laghu_admin_write(request, &response, json);
+  }
+  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE) {
+    laghu_cache_stats stats = {0};
+    laghu_operational_snapshot snapshot;
+    laghu_operational_readiness readiness;
+    laghu_http_administrative_response response;
+    char *rendered = ngx_pnalloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (rendered == NULL ||
+        !laghu_cache_backend_health_path(conf->service.image_cache, &stats) ||
+        !laghu_operational_registry_snapshot(&ngx_http_laghu_operational,
+                                             &snapshot) ||
+        !laghu_operational_readiness_evaluate(
+            &snapshot, (uint64_t)ngx_time(), true, true,
+            conf->service.readiness_strict, &readiness) ||
+        !laghu_http_administrative_render_console(&stats, &readiness, rendered,
+                                                  LAGHU_OPERATIONAL_RENDER_SIZE,
+                                                  &response))
+      return NGX_HTTP_SERVICE_UNAVAILABLE;
+    return ngx_http_laghu_admin_write(request, &response, rendered);
+  }
+  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY) {
+    laghu_operational_snapshot snapshot;
+    laghu_http_administrative_history_model history;
+    laghu_http_administrative_response response;
+    char *rendered = ngx_pnalloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (rendered == NULL ||
+        !laghu_operational_registry_snapshot(&ngx_http_laghu_operational,
+                                             &snapshot) ||
+        !laghu_http_administrative_build_history_model(
+            &snapshot, &plan.history_query, &history) ||
+        !laghu_http_administrative_render_history(
+            &history, rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response)) {
+      return NGX_HTTP_SERVICE_UNAVAILABLE;
+    }
+    return ngx_http_laghu_admin_write(request, &response, rendered);
+  }
+  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
+    laghu_operational_snapshot snapshot;
+    laghu_operational_readiness readiness;
+    laghu_http_administrative_explain_model explain;
+    laghu_http_administrative_response response;
+    laghu_cache_stats stats = {0};
+    char *rendered = ngx_pnalloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (rendered == NULL ||
+        !laghu_cache_backend_health_path(conf->service.image_cache, &stats) ||
+        !laghu_operational_registry_snapshot(&ngx_http_laghu_operational,
+                                             &snapshot) ||
+        !laghu_operational_readiness_evaluate(
+            &snapshot, (uint64_t)ngx_time(), true, true,
+            conf->service.readiness_strict, &readiness) ||
+        !laghu_http_administrative_build_explain_model(
+            &plan.explain_query, &readiness, &stats, &explain) ||
+        !laghu_http_administrative_render_explain(
+            &explain, rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response)) {
+      return NGX_HTTP_SERVICE_UNAVAILABLE;
+    }
+    return ngx_http_laghu_admin_write(request, &response, rendered);
   }
   if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_METRICS ||
       plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS) {

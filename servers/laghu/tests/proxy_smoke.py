@@ -1214,6 +1214,25 @@ def main():
             )
             assert b" 200 " in stats_head.split(b"\r\n", 1)[0]
             assert b"laghu-cache-stats-v1" in stats_body
+            console_head, console_body = request(
+                proxy_port, "/.laghu/console", headers=admin_headers
+            )
+            assert b" 200 " in console_head.split(b"\r\n", 1)[0]
+            assert b"text/html; charset=utf-8" in console_head
+            assert b"<h1>Laghu console</h1>" in console_body
+            history_head, history_body = request(
+                proxy_port, "/.laghu/history", headers=admin_headers
+            )
+            assert b" 200 " in history_head.split(b"\r\n", 1)[0]
+            assert b"content-type: text/html; charset=utf-8" in history_head
+            assert b"<h1>Laghu history</h1>" in history_body
+            explain_head, explain_body = request(
+                proxy_port, "/.laghu/explain?path=/index.html", headers=admin_headers
+            )
+            assert b" 200 " in explain_head.split(b"\r\n", 1)[0]
+            assert b"content-type: text/html; charset=utf-8" in explain_head
+            assert b"<h1>Laghu explain</h1>" in explain_body
+            assert b"Target: /index.html" in explain_body
             purge_head, purge_body = request(
                 proxy_port, "/site.css", method="PURGE", headers=admin_headers
             )

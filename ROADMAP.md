@@ -133,6 +133,7 @@
 - [x] Configurable `Vary` and forwarded-protocol handling (`RespectVary` and `RespectXForwardedProto` in migration input).
 - [x] Allow/disallow URL wildcard filtering (`AllowResources` and `Disallow` in migration input).
 - [x] Per-location and per-server configuration scope and inheritance.
+- [x] `.laghu/console`, `.laghu/history`, and `.laghu/explain` share core models and rendering in `laghu-http`, then execute standalone, NGINX, and Apache smoke validation on parity.
 - [ ] Statistics, administration, message history, console, and cache-purge UI, including migration from the legacy administration/statistics/console paths.
 - [x] Basic `X-Laghu` pass/bypass decision response header.
 - [x] Cache-state and transform-decision response headers.

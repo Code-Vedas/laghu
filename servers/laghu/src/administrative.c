@@ -61,6 +61,21 @@ void proxy_send_admin_json(laghu_socket client, unsigned int status,
   }
 }
 
+void proxy_send_admin_html(laghu_socket client, unsigned int status,
+                           const char *reason, const char *html, bool head) {
+  char headers[512];
+  size_t length = strlen(html);
+  int count = snprintf(headers, sizeof(headers),
+                       "HTTP/1.1 %u %s\r\nContent-Type: text/html; "
+                       "charset=utf-8\r\nCache-Control: no-store\r\n"
+                       "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+                       status, reason, length);
+  if (count > 0 && (size_t)count < sizeof(headers)) {
+    (void)proxy_send_all(client, headers, (size_t)count);
+    if (!head) (void)proxy_send_all(client, html, length);
+  }
+}
+
 void proxy_send_metrics(laghu_socket client, const char *body, size_t length,
                         bool head) {
   char headers[512];

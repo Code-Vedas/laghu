@@ -44,7 +44,10 @@ typedef enum {
   LAGHU_HTTP_ADMINISTRATIVE_ROUTE_PURGE,
   LAGHU_HTTP_ADMINISTRATIVE_ROUTE_STATS,
   LAGHU_HTTP_ADMINISTRATIVE_ROUTE_METRICS,
-  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_READINESS
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_READINESS,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_HISTORY,
+  LAGHU_HTTP_ADMINISTRATIVE_ROUTE_EXPLAIN
 } laghu_http_administrative_route;
 
 typedef enum {
@@ -52,13 +55,17 @@ typedef enum {
   LAGHU_HTTP_ADMINISTRATIVE_ACTION_PURGE,
   LAGHU_HTTP_ADMINISTRATIVE_ACTION_STATS,
   LAGHU_HTTP_ADMINISTRATIVE_ACTION_METRICS,
-  LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY,
+  LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN
 } laghu_http_administrative_action;
 
 typedef enum {
   LAGHU_HTTP_ADMINISTRATIVE_CONTENT_NONE = 0,
   LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON,
-  LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS
+  LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS,
+  LAGHU_HTTP_ADMINISTRATIVE_CONTENT_HTML
 } laghu_http_administrative_content;
 
 typedef struct {
@@ -72,6 +79,53 @@ typedef struct {
 } laghu_http_administrative_options;
 
 typedef struct {
+  unsigned int limit;
+} laghu_http_administrative_history_query;
+
+typedef struct {
+  char target[LAGHU_RUNTIME_PATH_SIZE];
+} laghu_http_administrative_explain_query;
+
+typedef struct {
+  char runtime[16];
+  char cache[16];
+  char workers[16];
+  uint64_t hits;
+  uint64_t misses;
+  uint64_t bytes;
+} laghu_http_administrative_console_model;
+
+typedef struct {
+  unsigned int index;
+  char surface[24];
+  char process[24];
+  bool active;
+  bool healthy;
+  bool required;
+  uint64_t requests;
+  uint64_t original_bytes;
+  uint64_t selected_bytes;
+} laghu_http_administrative_history_record;
+
+typedef struct {
+  unsigned int count;
+  unsigned int limit;
+  laghu_http_administrative_history_record records[LAGHU_OPERATIONAL_HISTORY_SIZE];
+} laghu_http_administrative_history_model;
+
+typedef struct {
+  bool has_target;
+  char target[LAGHU_RUNTIME_PATH_SIZE];
+  char source_hash[LAGHU_RUNTIME_KEY_SIZE];
+  bool runtime_ready;
+  bool cache_ready;
+  bool workers_ready;
+  char status[24];
+  uint64_t hits_ratio_ppm;
+  char recommendation[256];
+} laghu_http_administrative_explain_model;
+
+typedef struct {
   laghu_http_administrative_route route;
   laghu_http_administrative_action action;
   char normalized_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -80,6 +134,8 @@ typedef struct {
   bool head;
   bool purge_by_method;
   bool purge_by_query;
+  laghu_http_administrative_history_query history_query;
+  laghu_http_administrative_explain_query explain_query;
   /* A non-zero status is returned after native authorization succeeds. */
   unsigned int status;
 } laghu_http_administrative_plan;
@@ -274,6 +330,16 @@ bool laghu_http_administrative_render_operational(
     const laghu_operational_snapshot *snapshot, uint64_t now,
     bool runtime_ready, bool cache_ready, bool strict_workers, char *output,
     size_t capacity, laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_console_model(
+    const laghu_http_administrative_console_model *model, char *output,
+    size_t capacity, laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_console(
+    const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
+    char *output, size_t capacity,
+    laghu_http_administrative_response *response);
+bool laghu_http_administrative_build_console_model(
+    const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
+    laghu_http_administrative_console_model *model);
 bool laghu_http_administrative_render_purge(
     laghu_cache_purge_result purge_result, uint64_t matched_artifacts,
     char *output, size_t capacity,
@@ -282,6 +348,20 @@ bool laghu_http_administrative_render_stats(
     const laghu_cache_limits *limits, const laghu_cache_stats *stats,
     char *output, size_t capacity,
     laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_history(
+    const laghu_http_administrative_history_model *model, char *output,
+    size_t capacity, laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_explain(
+    const laghu_http_administrative_explain_model *model, char *output,
+    size_t capacity, laghu_http_administrative_response *response);
+bool laghu_http_administrative_build_history_model(
+    const laghu_operational_snapshot *snapshot,
+    const laghu_http_administrative_history_query *query,
+    laghu_http_administrative_history_model *model);
+bool laghu_http_administrative_build_explain_model(
+    const laghu_http_administrative_explain_query *query,
+    const laghu_operational_readiness *ready, const laghu_cache_stats *stats,
+    laghu_http_administrative_explain_model *model);
 void laghu_http_beacon_options_init(laghu_http_beacon_options *options);
 bool laghu_http_beacon_plan_build(laghu_http_beacon_plan *plan,
                                   laghu_buffer method, laghu_buffer target,

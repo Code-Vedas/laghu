@@ -136,6 +136,81 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
       access_value->status = response.status;
       access_value->output_bytes = head ? 0U : response.length;
     }
+  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE) {
+    laghu_cache_stats stats = {0};
+    laghu_operational_snapshot snapshot;
+    laghu_operational_readiness readiness;
+    laghu_http_administrative_response response;
+    char *html = calloc(1U, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (!proxy_cache_probe(options->service.image_cache) ||
+        !laghu_cache_backend_health_path(options->service.image_cache, &stats) ||
+        !laghu_operational_registry_snapshot(&worker->queue->operational,
+                                             &snapshot) ||
+        !laghu_operational_readiness_evaluate(
+            &snapshot, (uint64_t)time(NULL),
+            proxy_state(worker->queue) == PROXY_RUNNING, true,
+            options->service.readiness_strict, &readiness) ||
+        html == NULL || !laghu_http_administrative_render_console(
+                              &stats, &readiness, html, LAGHU_OPERATIONAL_RENDER_SIZE,
+                              &response)) {
+      proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
+                       "runtime");
+    } else {
+      proxy_send_admin_html(client, response.status, "OK", html, head);
+      access_value->status = response.status;
+      access_value->output_bytes = head ? 0U : response.length;
+    }
+    free(html);
+  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY) {
+    laghu_operational_snapshot snapshot;
+    laghu_http_administrative_history_model history;
+    laghu_http_administrative_response response;
+    char *html = calloc(1U, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (!laghu_operational_registry_snapshot(&worker->queue->operational,
+                                            &snapshot) ||
+        !laghu_http_administrative_build_history_model(
+            &snapshot, &plan.history_query, &history) ||
+        html == NULL || !laghu_http_administrative_render_history(
+                            &history, html, LAGHU_OPERATIONAL_RENDER_SIZE,
+                            &response)) {
+      proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
+                       "runtime");
+    } else {
+      proxy_send_admin_html(client, response.status, "OK", html, head);
+      access_value->status = response.status;
+      access_value->output_bytes = head ? 0U : response.length;
+    }
+    free(html);
+  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
+    laghu_operational_snapshot snapshot;
+    laghu_operational_readiness readiness;
+    laghu_http_administrative_explain_model explain;
+    laghu_http_administrative_response response;
+    laghu_cache_stats stats = {0};
+    char *html = calloc(1U, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (!proxy_cache_probe(options->service.image_cache) ||
+        !laghu_cache_backend_health_path(options->service.image_cache, &stats) ||
+        !laghu_operational_registry_snapshot(&worker->queue->operational,
+                                            &snapshot) ||
+        !laghu_operational_readiness_evaluate(
+            &snapshot, (uint64_t)time(NULL),
+            proxy_state(worker->queue) == PROXY_RUNNING, true,
+            options->service.readiness_strict, &readiness) ||
+        !laghu_http_administrative_build_explain_model(&plan.explain_query,
+                                                      &readiness, &stats,
+                                                      &explain) ||
+        html == NULL || !laghu_http_administrative_render_explain(
+                             &explain, html, LAGHU_OPERATIONAL_RENDER_SIZE,
+                             &response)) {
+      proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
+                       "runtime");
+    } else {
+      proxy_send_admin_html(client, response.status, "OK", html, head);
+      access_value->status = response.status;
+      access_value->output_bytes = head ? 0U : response.length;
+      access_value->failure = response.status == 200U ? "none" : "readiness";
+    }
+    free(html);
   } else {
     uint64_t matched = 0U;
     laghu_cache_purge_result purged = laghu_cache_backend_purge_url_path(
