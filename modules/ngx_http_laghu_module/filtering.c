@@ -116,9 +116,16 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
   ngx_http_laghu_request_ctx_t *context;
   laghu_http_transaction_result result;
   bool prepared;
+  bool administration_candidate;
+  if (conf == NULL) return ngx_http_laghu_next_header_filter(request);
   if (request->uri.len >= sizeof("/.laghu/") - 1U &&
       ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) ==
           0) {
+    return ngx_http_laghu_next_header_filter(request);
+  }
+  administration_candidate = conf != NULL &&
+                            ngx_http_laghu_administration_candidate(request, conf);
+  if (administration_candidate) {
     return ngx_http_laghu_next_header_filter(request);
   }
   if (conf->core.mode != LAGHU_MODE_ON) {

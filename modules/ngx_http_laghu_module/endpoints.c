@@ -58,6 +58,7 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
   ngx_chain_t output;
   ngx_int_t status;
   size_t content_type_length;
+  bool administration_candidate;
   if (request == NULL || conf == NULL || conf->core.mode != LAGHU_MODE_ON ||
       request->method != NGX_HTTP_GET ||
       conf->core.html_cache_origin[0] == '\0' ||
@@ -73,6 +74,9 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
            0)) {
     return NGX_DECLINED;
   }
+  administration_candidate =
+      ngx_http_laghu_administration_candidate(request, conf);
+  if (administration_candidate) return NGX_DECLINED;
   path.len = request->uri.len +
              (request->args.len == 0U ? 0U : 1U + request->args.len);
   if (path.len == 0U || request->uri.data[0] != '/' ||
@@ -129,13 +133,50 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
 ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   ngx_http_laghu_loc_conf_t *conf =
       ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
-  ngx_int_t status = ngx_http_laghu_html_cache_handler(request, conf);
+  bool administration_candidate;
+  bool laghu_asset = false;
+  bool laghu_beacon = false;
+  bool laghu_admin_prefix = false;
+  ngx_int_t status;
+  if (request == NULL || request->uri.len == 0U || conf == NULL) {
+    return NGX_DECLINED;
+  }
+  administration_candidate = ngx_http_laghu_administration_candidate(request, conf);
+  laghu_admin_prefix =
+      request->uri.len >= sizeof("/.laghu/") - 1U &&
+      ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) == 0;
+  laghu_beacon = request->uri.len >= sizeof("/.laghu/beacon/") - 1U &&
+                 ngx_strncmp(request->uri.data, "/.laghu/beacon/",
+                             sizeof("/.laghu/beacon/") - 1U) == 0;
+  laghu_asset = request->uri.len >= sizeof("/.laghu/image/") - 1U &&
+                ngx_strncmp(request->uri.data, "/.laghu/image/",
+                            sizeof("/.laghu/image/") - 1U) == 0;
+  laghu_asset = laghu_asset ||
+               (request->uri.len >= sizeof("/.laghu/css/") - 1U &&
+                ngx_strncmp(request->uri.data, "/.laghu/css/",
+                            sizeof("/.laghu/css/") - 1U) == 0) ||
+               (request->uri.len >= sizeof("/.laghu/js/") - 1U &&
+                ngx_strncmp(request->uri.data, "/.laghu/js/",
+                            sizeof("/.laghu/js/") - 1U) == 0) ||
+               (request->uri.len >= sizeof("/.laghu/media/") - 1U &&
+                ngx_strncmp(request->uri.data, "/.laghu/media/",
+                            sizeof("/.laghu/media/") - 1U) == 0);
+  if (!administration_candidate && !laghu_admin_prefix) {
+    return NGX_DECLINED;
+  }
+  status = ngx_http_laghu_html_cache_handler(request, conf);
 
   if (status != NGX_DECLINED) return status;
-  status = ngx_http_laghu_admin_endpoint(request, conf);
-
-  if (status != NGX_DECLINED) return status;
-  status = ngx_http_laghu_beacon_endpoint(request, conf);
-  if (status != NGX_DECLINED) return status;
-  return ngx_http_laghu_asset_endpoint(request, conf);
+  if (administration_candidate || laghu_admin_prefix) {
+    status = ngx_http_laghu_admin_endpoint(request, conf);
+    if (status != NGX_DECLINED) return status;
+  }
+  if (laghu_beacon) {
+    status = ngx_http_laghu_beacon_endpoint(request, conf);
+    if (status != NGX_DECLINED) return status;
+  }
+  if (laghu_asset) {
+    return ngx_http_laghu_asset_endpoint(request, conf);
+  }
+  return NGX_HTTP_NOT_FOUND;
 }

@@ -230,10 +230,18 @@ typedef enum {
   LAGHU_DECISION_BYPASS_RESOURCE_POLICY,
   LAGHU_DECISION_BYPASS_VARY,
   LAGHU_DECISION_BYPASS_QUERY_OVERRIDE,
+  LAGHU_DECISION_BYPASS_QUERY_OFF,
+  LAGHU_DECISION_BYPASS_QUERY_EXPLAIN,
   LAGHU_DECISION_BYPASS_FORWARDED_PROTO,
   LAGHU_DECISION_IMAGE_HIT,
   LAGHU_DECISION_BYPASS_ERROR
 } laghu_decision;
+
+typedef enum {
+  LAGHU_QUERY_CONTROL_NONE = 0,
+  LAGHU_QUERY_CONTROL_OFF,
+  LAGHU_QUERY_CONTROL_EXPLAIN
+} laghu_query_control;
 
 typedef enum {
   LAGHU_CANDIDATE_ACCEPTED = 0,
@@ -291,6 +299,7 @@ bool laghu_domain_url_rewrite(const laghu_domain_policy *policy,
                               const char *source_url, char *output,
                               size_t output_size);
 bool laghu_vary_supported(const char *vary);
+bool laghu_apply_query_control(const char *query, laghu_query_control *control);
 bool laghu_apply_query_filter_overrides(const laghu_config *config,
                                         const char *query, laghu_policy *policy,
                                         uint32_t *enabled, uint32_t *disabled);

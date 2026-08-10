@@ -5,6 +5,37 @@
 
 #include "mod_laghu_internal.h"
 
+static bool laghu_apache_administration_candidate(
+    request_rec *request, laghu_apache_config *config) {
+  laghu_http_administrative_options options;
+  laghu_http_administrative_plan plan;
+  laghu_buffer method = {NULL, 0U};
+  laghu_buffer target = {NULL, 0U};
+  if (request == NULL || config == NULL || request->unparsed_uri == NULL ||
+      request->method == NULL) {
+    return false;
+  }
+  if (strcmp(request->method, "PURGE") == 0 ||
+      strstr(request->unparsed_uri, "laghu=purge") != NULL) {
+    return true;
+  }
+  laghu_http_administrative_options_init(&options);
+  options.metrics_enabled = config->service.metrics;
+  options.readiness_enabled = config->service.readiness;
+  options.statistics_enabled = config->service.statistics;
+  options.purge_method_enabled = config->service.purge_method;
+  options.purge_query_enabled = config->service.purge_query;
+  options.purge_query_get_only = false;
+  method = (laghu_buffer){(const unsigned char *)request->method,
+                          strlen(request->method)};
+  target = (laghu_buffer){(const unsigned char *)request->unparsed_uri,
+                          strlen(request->unparsed_uri)};
+  if (!laghu_http_administrative_plan_build(&plan, method, target, &options)) {
+    return false;
+  }
+  return plan.recognized;
+}
+
 static void laghu_apache_enqueue_html_refresh(
     laghu_apache_config *config, const char *request_path,
     const laghu_html_cache_record *record) {
@@ -71,13 +102,7 @@ int laghu_apache_variant_handler(request_rec *request) {
   laghu_apache_config *server_config;
   laghu_apache_config *directory_config;
   laghu_apache_config *config;
-  bool administration_candidate =
-      strcmp(request->method, "PURGE") == 0 ||
-      (request->unparsed_uri != NULL &&
-       strstr(request->unparsed_uri, "laghu=purge") != NULL) ||
-      (request->uri != NULL && (strcmp(request->uri, "/.laghu/stats") == 0 ||
-                                strcmp(request->uri, "/.laghu/metrics") == 0 ||
-                                strcmp(request->uri, "/.laghu/ready") == 0));
+  bool administration_candidate;
   if (request->uri == NULL) return DECLINED;
   server_config =
       ap_get_module_config(request->server->module_config, &laghu_module);
@@ -85,6 +110,7 @@ int laghu_apache_variant_handler(request_rec *request) {
       ap_get_module_config(request->per_dir_config, &laghu_module);
   config =
       laghu_apache_merge_config(request->pool, server_config, directory_config);
+  administration_candidate = laghu_apache_administration_candidate(request, config);
   {
     int cache_status = laghu_apache_html_cache_handler(request, config);
     if (cache_status != DECLINED) return cache_status;

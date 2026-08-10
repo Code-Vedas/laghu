@@ -352,10 +352,19 @@ curl --fail --silent \
   http://127.0.0.1:18081/.laghu/console | grep '<h1>Laghu console</h1>' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/pagespeed_admin | grep '<h1>Laghu console</h1>' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/.laghu/history | grep '<h1>Laghu history</h1>' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/pagespeed_statistics | grep 'laghu-cache-stats-v1' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/.laghu/explain?path=/ | grep '<h1>Laghu explain</h1>' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/pagespeed_console | grep 'laghu_requests_total' >/dev/null
 if [ ! -x "${status_bin}" ]; then
   echo "Laghu status executable not found: ${status_bin}" >&2
   exit 1

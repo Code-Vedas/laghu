@@ -949,6 +949,66 @@ static int laghu_hex_value(char value) {
   return -1;
 }
 
+static bool laghu_decode_query_parameter_value(const char *value,
+                                              size_t value_length,
+                                              char output[LAGHU_QUERY_OVERRIDE_SIZE]) {
+  size_t used = 0U;
+  size_t index;
+  if (value == NULL) {
+    output[0] = '\0';
+    return false;
+  }
+  for (index = 0U; index < value_length; ++index) {
+    unsigned char decoded = (unsigned char)value[index];
+    if (decoded == '%' && index + 2U < value_length) {
+      int high = laghu_hex_value(value[index + 1U]);
+      int low = laghu_hex_value(value[index + 2U]);
+      if (high < 0 || low < 0) return false;
+      decoded = (unsigned char)((high << 4) | low);
+      index += 2U;
+    } else if (decoded == '%' || decoded <= 0x20U || decoded >= 0x7fU) {
+      return false;
+    }
+    if (used + 1U >= LAGHU_QUERY_OVERRIDE_SIZE) return false;
+    output[used++] = (char)decoded;
+  }
+  output[used] = '\0';
+  return true;
+}
+
+bool laghu_apply_query_control(const char *query, laghu_query_control *control) {
+  const char *cursor;
+  bool seen_control = false;
+  if (control == NULL) {
+    return false;
+  }
+  *control = LAGHU_QUERY_CONTROL_NONE;
+  if (query == NULL) {
+    return true;
+  }
+  cursor = query[0] == '?' ? query + 1 : query;
+  while (*cursor != '\0') {
+    const char *end = strchr(cursor, '&');
+    size_t length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
+    char decoded[LAGHU_QUERY_OVERRIDE_SIZE];
+    if (length >= 6U && strncmp(cursor, "laghu=", 6U) == 0) {
+      if (seen_control) return false;
+      if (!laghu_decode_query_parameter_value(cursor + 6U, length - 6U,
+                                             decoded) ||
+          (strcmp(decoded, "off") != 0 &&
+           strcmp(decoded, "explain") != 0))
+        return false;
+      seen_control = true;
+      *control =
+          (strcmp(decoded, "off") == 0 ? LAGHU_QUERY_CONTROL_OFF
+                                       : LAGHU_QUERY_CONTROL_EXPLAIN);
+    }
+    if (end == NULL) break;
+    cursor = end + 1U;
+  }
+  return true;
+}
+
 bool laghu_apply_query_filter_overrides(const laghu_config *config,
                                         const char *query, laghu_policy *policy,
                                         uint32_t *enabled, uint32_t *disabled) {
@@ -968,23 +1028,11 @@ bool laghu_apply_query_filter_overrides(const laghu_config *config,
     const char *end = strchr(cursor, '&');
     size_t length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
     if (length >= 13U && strncmp(cursor, "laghuFilters=", 13U) == 0) {
-      size_t index;
       if (found) return false;
       found = true;
-      for (index = 13U; index < length; ++index) {
-        unsigned char value = (unsigned char)cursor[index];
-        if (value == '%' && index + 2U < length) {
-          int high = laghu_hex_value(cursor[index + 1U]);
-          int low = laghu_hex_value(cursor[index + 2U]);
-          if (high < 0 || low < 0) return false;
-          value = (unsigned char)((high << 4) | low);
-          index += 2U;
-        } else if (value == '%' || value <= 0x20U || value >= 0x7fU) {
-          return false;
-        }
-        if (used + 1U >= sizeof(decoded)) return false;
-        decoded[used++] = (char)value;
-      }
+      if (!laghu_decode_query_parameter_value(cursor + 13U, length - 13U, decoded))
+        return false;
+      used = strlen(decoded);
     }
     if (end == NULL) break;
     cursor = end + 1U;
@@ -1524,6 +1572,10 @@ const char *laghu_decision_name(laghu_decision decision) {
       return "bypass-vary";
     case LAGHU_DECISION_BYPASS_QUERY_OVERRIDE:
       return "bypass-query-override";
+    case LAGHU_DECISION_BYPASS_QUERY_OFF:
+      return "bypass-query-off";
+    case LAGHU_DECISION_BYPASS_QUERY_EXPLAIN:
+      return "bypass-query-explain";
     case LAGHU_DECISION_BYPASS_FORWARDED_PROTO:
       return "bypass-forwarded-proto";
     case LAGHU_DECISION_IMAGE_HIT:

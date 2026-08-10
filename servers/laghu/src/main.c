@@ -58,7 +58,14 @@ static void usage(FILE *stream) {
       "  --trusted-proxy CIDR (repeatable, maximum 64)\n"
       "  --purge-method PURGE --purge-query on|off\n"
       "  --purge-token-file PATH --purge-allow CIDR\n"
-      "  --cache-flush-file PATH --statistics on|off\n",
+      "  --cache-flush-file PATH --statistics on|off\n"
+      "Commands:\n"
+      "  laghu status URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
+      "  laghu doctor URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
+      "  laghu purge URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
+      "  laghu explain URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
+      "  laghu bench URL [--requests N] [--timeout SECONDS] [--ca-file PATH] [--json]\n"
+      "  laghu migrate [FILE]\n",
       stream);
 }
 
@@ -72,6 +79,12 @@ int main(int argc, char **argv) {
     return laghu_doctor_run(argc - 1, argv + 1);
   if (argc > 1 && strcmp(argv[1], "purge") == 0)
     return laghu_purge_run(argc - 1, argv + 1);
+  if (argc > 1 && strcmp(argv[1], "explain") == 0)
+    return laghu_explain_run(argc - 1, argv + 1);
+  if (argc > 1 && strcmp(argv[1], "bench") == 0)
+    return laghu_bench_run(argc - 1, argv + 1);
+  if (argc > 1 && strcmp(argv[1], "migrate") == 0)
+    return laghu_migrate_run(argc - 1, argv + 1);
   laghu_proxy_options_init(&options);
   parsed =
       laghu_proxy_parse_options(argc, argv, &options, error, sizeof(error));

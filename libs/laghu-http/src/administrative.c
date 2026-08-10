@@ -128,6 +128,7 @@ static bool laghu_http_administrative_query_parse_path(
   if (query_out->target[0] != '\0') {
     query_out->target[0] = '\0';
   }
+  query_out->json = false;
   if (!laghu_http_administrative_query_param_value(query, "path", false,
                                                   query_out->target,
                                                   sizeof(query_out->target))) {
@@ -140,7 +141,46 @@ static bool laghu_http_administrative_query_parse_path(
       return false;
     }
   }
+  {
+    char format[16];
+    format[0] = '\0';
+    if (!laghu_http_administrative_query_param_value(query, "format", false,
+                                                    format, sizeof(format))) {
+      return false;
+    }
+    if (format[0] != '\0' && strcmp(format, "json") != 0) return false;
+    query_out->json = format[0] != '\0';
+  }
   return query_out->target[0] != '\0';
+}
+
+static bool laghu_http_administrative_normalize_legacy_path(
+    laghu_buffer path, char *output, size_t capacity) {
+  if (!laghu_http_administrative_view_valid(path) || output == NULL ||
+      capacity < 2U || path.length == 0U || path.length >= capacity) {
+    return false;
+  }
+  if (path.data == NULL) return false;
+  memcpy(output, path.data, path.length);
+  output[path.length] = '\0';
+  if (strcmp(output, "/pagespeed_admin") == 0 ||
+      strcmp(output, "/pagespeed_admin/") == 0) {
+    memcpy(output, "/.laghu/console", sizeof("/.laghu/console"));
+    return true;
+  }
+  if (strcmp(output, "/pagespeed_console") == 0 ||
+      strcmp(output, "/pagespeed_console/") == 0) {
+    memcpy(output, "/.laghu/metrics", sizeof("/.laghu/metrics"));
+    return true;
+  }
+  if (strcmp(output, "/pagespeed_statistics") == 0 ||
+      strcmp(output, "/pagespeed_statistics/") == 0 ||
+      strcmp(output, "/pagespeed_stats") == 0 ||
+      strcmp(output, "/pagespeed_stats/") == 0) {
+    memcpy(output, "/.laghu/stats", sizeof("/.laghu/stats"));
+    return true;
+  }
+  return true;
 }
 
 static bool laghu_http_administrative_method_is(laghu_buffer method,
@@ -206,6 +246,7 @@ bool laghu_http_administrative_plan_build(
     laghu_http_administrative_plan *plan, laghu_buffer method,
     laghu_buffer target, const laghu_http_administrative_options *options) {
   char raw_target[LAGHU_RUNTIME_PATH_SIZE];
+  char mapped_target[LAGHU_RUNTIME_PATH_SIZE];
   bool normalized;
   bool purge_control = false;
   bool method_purge;
@@ -230,6 +271,12 @@ bool laghu_http_administrative_plan_build(
   target_purge_query = laghu_http_administrative_target_mentions_purge(target);
   plan->history_query.limit = LAGHU_OPERATIONAL_HISTORY_SIZE;
   method_purge = laghu_http_administrative_method_is(method, "PURGE");
+  if (!laghu_http_administrative_normalize_legacy_path(path, mapped_target,
+                                                     sizeof(mapped_target))) {
+    return true;
+  }
+  path = (laghu_buffer){(const unsigned char *)mapped_target,
+                        strlen(mapped_target)};
   normalized = laghu_http_administrative_target_copy(path, raw_target,
                                                      sizeof(raw_target));
   if (normalized) {
@@ -681,6 +728,7 @@ bool laghu_http_administrative_build_explain_model(
   memset(model, 0, sizeof(*model));
   (void)snprintf(model->target, sizeof(model->target), "%s", query->target);
   model->has_target = true;
+  model->json = query->json;
   model->runtime_ready = ready->runtime_ready;
   model->cache_ready = ready->cache_ready;
   model->workers_ready = ready->workers_ready;
@@ -705,6 +753,28 @@ bool laghu_http_administrative_render_explain(
   int written;
   if (model == NULL || output == NULL || response == NULL || capacity == 0U) {
     return false;
+  }
+  if (model->json) {
+    written = snprintf(
+        output, capacity,
+        "{\"schema\":\"laghu-explain-v1\","
+        "\"target\":\"%s\","
+        "\"status\":\"%s\","
+        "\"source_hash\":\"%s\","
+        "\"readiness\":{\"runtime\":\"%s\",\"cache\":\"%s\","
+        "\"workers\":\"%s\"},"
+        "\"hit_ratio_ppm\":%llu,"
+        "\"recommendation\":\"%s\"}",
+        model->target, model->status, model->source_hash,
+        model->runtime_ready ? "ready" : "unavailable",
+        model->cache_ready ? "ready" : "unavailable",
+        model->workers_ready ? "ready" : "unavailable",
+        (unsigned long long)model->hits_ratio_ppm, model->recommendation);
+    if (written < 0 || (size_t)written >= capacity) return false;
+    response->status = 200U;
+    response->content = LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON;
+    response->length = (size_t)written;
+    return true;
   }
   written = snprintf(
       output, capacity,

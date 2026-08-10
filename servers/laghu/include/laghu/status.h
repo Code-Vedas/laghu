@@ -9,5 +9,8 @@
 int laghu_status_run(int argc, char **argv);
 int laghu_doctor_run(int argc, char **argv);
 int laghu_purge_run(int argc, char **argv);
+int laghu_explain_run(int argc, char **argv);
+int laghu_bench_run(int argc, char **argv);
+int laghu_migrate_run(int argc, char **argv);
 
 #endif

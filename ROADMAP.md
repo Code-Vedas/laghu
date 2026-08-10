@@ -134,7 +134,7 @@
 - [x] Allow/disallow URL wildcard filtering (`AllowResources` and `Disallow` in migration input).
 - [x] Per-location and per-server configuration scope and inheritance.
 - [x] `.laghu/console`, `.laghu/history`, and `.laghu/explain` share core models and rendering in `laghu-http`, then execute standalone, NGINX, and Apache smoke validation on parity.
-- [ ] Statistics, administration, message history, console, and cache-purge UI, including migration from the legacy administration/statistics/console paths.
+- [x] Statistics, administration, message history, console, and cache-purge UI, including migration from the legacy administration/statistics/console paths.
 - [x] Basic `X-Laghu` pass/bypass decision response header.
 - [x] Cache-state and transform-decision response headers.
 - [x] Per-request query-string filter overrides.
@@ -213,14 +213,14 @@
 - [x] Implement `laghu status` with authenticated ready/stats checks for standalone, NGINX, and Apache endpoints.
 - [x] Implement `laghu purge <url>`.
 - [x] Implement `laghu doctor`.
-- [ ] Implement `laghu bench`.
-- [ ] Implement `laghu explain <url>`.
-- [ ] Implement `laghu migrate` as a one-way legacy configuration converter.
+- [x] Implement `laghu bench`.
+- [x] Implement `laghu explain <url>`.
+- [x] Implement `laghu migrate` as a one-way legacy configuration converter.
 - [ ] Complete the documented `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, and `static` preset behavior.
 - [x] Reject unsupported preset values during NGINX configuration loading.
 - [ ] Validate every directive and invalid cross-directive combination during configuration loading with actionable errors.
 - [ ] Add a web console with statistics, per-URL explanations, purge, before/after comparisons, and filter controls.
-- [ ] Add `?laghu=off`, `?laghu=explain`, and `?laghuFilters=...` request debugging.
+- [x] Add `?laghu=off`, `?laghu=explain`, and `?laghuFilters=...` request debugging.
 - [ ] Add dry-run/preview mode that reports changes without serving them.
 
 ### 4.7 Migration Converter Coverage

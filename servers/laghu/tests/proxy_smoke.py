@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 
 
 BODY = b"<!doctype html>\n<html>  <head><!-- remove --></head>  <body>hello</body></html>"
@@ -280,6 +281,27 @@ class StatusOrigin(http.server.BaseHTTPRequestHandler):
             status, body = self.ready_status, self.ready_body
         elif self.path == "/.laghu/stats":
             status, body = self.stats_status, self.stats_body
+        elif self.path.startswith("/.laghu/explain"):
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            target = query.get("path", ("/",))[0]
+            if target is None:
+                self.send_error(400)
+                return
+            body = json.dumps({
+                "schema": "laghu-explain-v1",
+                "target": target,
+                "status": "ready",
+                "source_hash": "abcd1234",
+                "readiness": {
+                    "runtime": "ready",
+                    "cache": "ready",
+                    "workers": "ready",
+                },
+                "hit_ratio_ppm": 333333,
+                "recommendation": "ready for request",
+            }, separators=(",", ":")).encode()
+            status, body = 200, body
         else:
             self.send_error(404)
             return
@@ -311,6 +333,38 @@ class PurgeOrigin(http.server.BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(self.response_body)
+        self.close_connection = True
+
+    def log_message(self, *_args):
+        pass
+
+
+class BenchOrigin(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    requests = []
+    status_for_path = {
+        "/": (200, b"ok", "text/plain"),
+        "/error": (500, b"error", "text/plain"),
+    }
+    chunked_paths = set()
+
+    def do_GET(self):
+        status, body, content_type = self.__class__.status_for_path.get(
+            self.path, (200, b"ok", "text/plain")
+        )
+        self.__class__.requests.append(self.path)
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        if self.path in self.__class__.chunked_paths:
+            self.send_header("Transfer-Encoding", "chunked")
+        else:
+            self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if self.path in self.__class__.chunked_paths:
+            self.wfile.write(f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+        else:
+            self.wfile.write(body)
         self.close_connection = True
 
     def log_message(self, *_args):
@@ -572,6 +626,232 @@ def purge_smoke(executable, root):
         server.server_close()
 
 
+def migrate_smoke(executable, root):
+    source = root / "legacy.conf"
+    source.write_text(
+        "\n".join(
+            [
+                "# legacy mod_pagespeed sample",
+                "pagespeed on;",
+                "ModPagespeed Off;",
+                "pagespeed RewriteLevel CoreFilters;",
+                "pagespeed EnableFilters rewrite_images,combine_css,Image;",
+                "pagespeed Disallow \"/private/*\";",
+                "pagespeed FileCachePath file:///tmp/legacy-cache;",
+                "pagespeed AllowResources \"/*\";",
+                "Location /pagespeed_admin {",
+                '    ProxyPass "/pagespeed_statistics" "http://127.0.0.1/status"',
+                "}",
+                "PageSpeedFilters=\"RewriteImages,inlinecss\"",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    expected = "\n".join(
+        [
+            "# legacy mod_pagespeed sample",
+            "laghu on;",
+            "laghu off;",
+            "laghu preset balanced;",
+            "laghu enable image_lossless,image_metadata,image_dimensions,image_responsive,image_lazyload,resource_combine,image_modern;",
+            "laghu disallow /private/*;",
+            "laghu file_cache_backend file:///tmp/legacy-cache/laghu;",
+            "laghu allow_resources /*;",
+            "Location /laghu/console {",
+            '    ProxyPass "/laghu/stats" "http://127.0.0.1/status"',
+            "}",
+            'laghuFilters="RewriteImages,inlinecss"',
+        ]
+    )
+    result = subprocess.run(
+        [str(executable), "migrate", str(source)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout == expected
+
+    result = subprocess.run(
+        [str(executable), "migrate", str(root / "missing-legacy.conf")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 4
+
+    result = subprocess.run(
+        [str(executable), "migrate"],
+        input=(
+            "pagespeed on;\n"
+            "location /pagespeed_console { return 200; }\n"
+            "PageSpeedFilters=\"RemoveComments\"\n"
+        ),
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout == (
+        "laghu on;\n"
+        "location /metrics { return 200; }\n"
+        'laghuFilters="RemoveComments"\n'
+    )
+
+
+def explain_smoke(executable, root):
+    token = root / "explain.token"
+    token.write_text("0123456789abcdef\n")
+    token.chmod(0o600)
+
+    def run(port, *options, path="/index.html", scheme="http"):
+        return subprocess.run(
+            [str(executable), "explain", f"{scheme}://127.0.0.1:{port}{path}",
+             "--token-file", str(token), *options],
+            capture_output=True, text=True,
+        )
+
+    def serve(handler):
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server
+
+    server = serve(StatusOrigin)
+    try:
+        result = run(server.server_port, "--json")
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert payload["schema"] == "laghu-explain-v1"
+        assert payload["target"] == "/index.html"
+        assert payload["status"] == "ready"
+        assert payload["source_hash"] == "abcd1234"
+        assert payload["readiness"] == {
+            "runtime": "ready",
+            "cache": "ready",
+            "workers": "ready",
+        }
+        assert payload["hit_ratio_ppm"] == 333333
+        assert payload["recommendation"] == "ready for request"
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+
+        result = run(server.server_port, path="/index.html?tenant=blue")
+        assert result.returncode == 0
+        assert "target: /index.html?tenant=blue" in result.stdout
+        assert "runtime: ready" in result.stdout
+        assert "recommendation: ready for request" in result.stdout
+        assert "0123456789abcdef" not in result.stdout + result.stderr
+
+        result = run(server.server_port, path="/index.html?tenant=blue&tenant=red")
+        assert result.returncode == 0
+        assert "target: /index.html?tenant=blue&tenant=red" in result.stdout
+
+        for url in ("http://127.0.0.1/path#fragment",
+                    "http://token@127.0.0.1/path",
+                    "http://127.0.0.1/" + "x" * 1024,
+                    "http://127.0.0.1//path"):
+            result = subprocess.run(
+                [str(executable), "explain", url, "--token-file", str(token)],
+                capture_output=True, text=True,
+            )
+            assert result.returncode == 2
+            assert "0123456789abcdef" not in result.stdout + result.stderr
+
+        ca_file, server_file, server_key = create_tls_certificate(root)
+        tls_server = QuietThreadingHTTPServer(("127.0.0.1", 0), StatusOrigin)
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.load_cert_chain(server_file, server_key)
+        tls_server.socket = tls_context.wrap_socket(
+            tls_server.socket, server_side=True
+        )
+        thread = threading.Thread(
+            target=tls_server.serve_forever, daemon=True
+        )
+        thread.start()
+        try:
+            result = run(tls_server.server_port, "--json", scheme="https")
+            assert result.returncode == 4
+            result = run(
+                tls_server.server_port, "--ca-file", str(ca_file), "--json",
+                path="/index.html", scheme="https"
+            )
+            assert result.returncode == 0
+            payload = json.loads(result.stdout)
+            assert payload["schema"] == "laghu-explain-v1"
+        finally:
+            tls_server.shutdown()
+            tls_server.server_close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def bench_smoke(executable, root):
+    def run(port, *options, path="/", scheme="http"):
+        return subprocess.run(
+            [str(executable), "bench", f"{scheme}://127.0.0.1:{port}{path}",
+             *options],
+            capture_output=True, text=True,
+        )
+
+    def serve(handler):
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server
+
+    server = serve(BenchOrigin)
+    try:
+        result = run(server.server_port, "--requests", "3")
+        assert result.returncode == 0
+        assert "bench: target=/" in result.stdout
+        assert "success=3" in result.stdout
+        assert "failures=0" in result.stdout
+
+        result = run(
+            server.server_port, "--requests", "2", "--json", path="/error",
+        )
+        assert result.returncode == 7
+        payload = json.loads(result.stdout)
+        assert payload["schema"] == "laghu-bench-v1"
+        assert payload["target"] == "/error"
+        assert payload["requests"] == 2
+        assert payload["success"] == 0
+        assert payload["failures"] == 2
+        assert payload["status_5xx"] == 2
+
+        handler = type("MalformedBench", (BenchOrigin,), {
+            "requests": [],
+            "status_for_path": {
+                "/": (200, b"ok", "text/plain"),
+                "/chunked": (200, b"partial", "text/plain"),
+            },
+            "chunked_paths": {"/chunked"},
+        })
+        server.shutdown()
+        server.server_close()
+        server = serve(handler)
+        result = run(server.server_port, "--requests", "1", path="/chunked")
+        assert result.returncode == 5
+
+        for url in ("http://127.0.0.1/path#fragment",
+                    "http://127.0.0.1//path",
+                    "http://127.0.0.1/" + "x" * 1024):
+            result = subprocess.run(
+                [str(executable), "bench", url, "--requests", "1"],
+                capture_output=True, text=True,
+            )
+            assert result.returncode == 2
+
+        BenchOrigin.status_for_path["/timeout"] = (200, b"ok", "text/plain")
+        result = subprocess.run(
+            [str(executable), "bench", f"http://127.0.0.1:{server.server_port}/timeout",
+             "--requests", "1", "--timeout", "1"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def create_tls_certificate(root):
     ca_key = root / "ca.key"
     ca_file = root / "ca.pem"
@@ -729,6 +1009,9 @@ def main():
         status_smoke(executable, root)
         doctor_smoke(executable, root)
         purge_smoke(executable, root)
+        migrate_smoke(executable, root)
+        explain_smoke(executable, root)
+        bench_smoke(executable, root)
         (root / "cache").mkdir()
         subprocess.run(
             [str(javascript_worker), "--init", str(root / "javascript.queue"),
@@ -1220,12 +1503,23 @@ def main():
             assert b" 200 " in console_head.split(b"\r\n", 1)[0]
             assert b"text/html; charset=utf-8" in console_head
             assert b"<h1>Laghu console</h1>" in console_body
+            admin_head, admin_body = request(
+                proxy_port, "/pagespeed_admin", headers=admin_headers
+            )
+            assert b" 200 " in admin_head.split(b"\r\n", 1)[0]
+            assert b"text/html; charset=utf-8" in admin_head
+            assert b"<h1>Laghu console</h1>" in admin_body
             history_head, history_body = request(
                 proxy_port, "/.laghu/history", headers=admin_headers
             )
             assert b" 200 " in history_head.split(b"\r\n", 1)[0]
             assert b"content-type: text/html; charset=utf-8" in history_head
             assert b"<h1>Laghu history</h1>" in history_body
+            stats_legacy_head, stats_legacy_body = request(
+                proxy_port, "/pagespeed_statistics", headers=admin_headers
+            )
+            assert b" 200 " in stats_legacy_head.split(b"\r\n", 1)[0]
+            assert b"laghu-cache-stats-v1" in stats_legacy_body
             explain_head, explain_body = request(
                 proxy_port, "/.laghu/explain?path=/index.html", headers=admin_headers
             )
@@ -1233,6 +1527,11 @@ def main():
             assert b"content-type: text/html; charset=utf-8" in explain_head
             assert b"<h1>Laghu explain</h1>" in explain_body
             assert b"Target: /index.html" in explain_body
+            metrics_legacy_head, metrics_legacy_body = request(
+                proxy_port, "/pagespeed_console", headers=admin_headers
+            )
+            assert b" 200 " in metrics_legacy_head.split(b"\r\n", 1)[0]
+            assert b"laghu_requests_total" in metrics_legacy_body
             purge_head, purge_body = request(
                 proxy_port, "/site.css", method="PURGE", headers=admin_headers
             )

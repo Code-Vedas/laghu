@@ -170,6 +170,35 @@ The URL may include its cache source path and query; a missing path becomes `/`.
 | 7 | `404`, `405`, or another unexpected HTTP status. |
 | 8 | `429` purge table saturated; retry after maintenance. |
 
+## Bench client
+
+`laghu bench URL [--requests N]` sends repeated GET requests and emits simple latency
+and success metrics. `URL` follows the same origin+path parser as purge and explain:
+root `http://` or `https://` origin, optional root-relative path, and query only.
+
+Optional flags:
+
+- `--requests 1..100000` — number of requests to send (default `100`).
+- `--timeout 1..30` — per-request timeout in seconds (default `5`).
+- `--ca-file PATH` — HTTPS trust anchor; requires HTTPS URL.
+- `--json` — emit `laghu-bench-v1`.
+
+```sh
+laghu bench https://edge.example.com/index.html --requests 200
+```
+
+Plain output prints aggregate counters, throughput, and latency. `--json` prints
+`laghu-bench-v1` with `target`, `requests`, `success`, `failures`, `status_4xx`,
+`status_5xx`, `bytes`, and `min_ms`/`max_ms`/`avg_ms`.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | All requests returned `200`. |
+| 2 | Invalid command, URL, or option. |
+| 4 | I/O/TLS/connect timeout for any request. |
+| 5 | Malformed HTTP framing or body in at least one response. |
+| 7 | One or more requests returned a non-`200` status. |
+
 ## JavaScript deferral, interaction approvals, and task yields
 
 The approval file accepts exact, root-relative, query-free same-origin deferrals and exact HTTPS third-party interaction delays, each optionally scoped to one exact template:

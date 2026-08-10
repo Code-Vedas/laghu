@@ -111,6 +111,41 @@ static bool ngx_http_laghu_admin_authorized(
   return false;
 }
 
+bool ngx_http_laghu_administration_candidate(
+    ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf) {
+  laghu_http_administrative_options options;
+  laghu_http_administrative_plan plan;
+  laghu_buffer method = {NULL, 0U};
+  laghu_buffer target = {NULL, 0U};
+  if (request == NULL || conf == NULL || request->unparsed_uri.len == 0U) {
+    return false;
+  }
+  if ((request->method_name.len == 5U &&
+       ngx_strncasecmp((u_char *)request->method_name.data, (u_char *)"PURGE", 5U) ==
+           0) ||
+      (request->unparsed_uri.len >= 12U &&
+       request->unparsed_uri.len >= strlen("laghu=purge") &&
+       ngx_strnstr(request->unparsed_uri.data, (char *)"laghu=purge",
+                   request->unparsed_uri.len) != NULL)) {
+    return true;
+  }
+  laghu_http_administrative_options_init(&options);
+  options.metrics_enabled = conf->service.metrics;
+  options.readiness_enabled = conf->service.readiness;
+  options.statistics_enabled = conf->service.statistics;
+  options.purge_method_enabled = conf->service.purge_method;
+  options.purge_query_enabled = conf->service.purge_query;
+  options.purge_query_get_only = false;
+  method = (laghu_buffer){(const unsigned char *)request->method_name.data,
+                          request->method_name.len};
+  target = (laghu_buffer){(const unsigned char *)request->unparsed_uri.data,
+                          request->unparsed_uri.len};
+  if (!laghu_http_administrative_plan_build(&plan, method, target, &options)) {
+    return false;
+  }
+  return plan.recognized;
+}
+
 ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
                                         ngx_http_laghu_loc_conf_t *conf) {
   laghu_http_administrative_options options;

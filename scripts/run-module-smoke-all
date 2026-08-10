@@ -685,8 +685,16 @@ curl --fail --silent --show-error \
   grep '<h1>Laghu console</h1>' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/pagespeed_admin" | \
+  grep '<h1>Laghu console</h1>' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/history" | \
   grep '<h1>Laghu history</h1>' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/pagespeed_statistics" | \
+  grep 'laghu-cache-stats-v1' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/explain?path=/" | \
@@ -694,6 +702,10 @@ curl --fail --silent --show-error \
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/metrics" | \
+  grep 'laghu_requests_total' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/pagespeed_console" | \
   grep 'laghu_requests_total' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \

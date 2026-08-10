@@ -155,6 +155,11 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
                               &response)) {
       proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
                        "runtime");
+    } else if (response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON) {
+      const char *reason = response.status == 200U ? "OK" : "Service Unavailable";
+      proxy_send_admin_json(client, response.status, reason, html, head);
+      access_value->status = response.status;
+      access_value->output_bytes = head ? 0U : response.length;
     } else {
       proxy_send_admin_html(client, response.status, "OK", html, head);
       access_value->status = response.status;

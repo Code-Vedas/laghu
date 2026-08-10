@@ -329,6 +329,31 @@ static void test_request_policy_controls(void) {
   assert(enabled == 0U && disabled == 0U);
 }
 
+static void test_query_control_parser(void) {
+  laghu_query_control control = LAGHU_QUERY_CONTROL_NONE;
+  assert(laghu_apply_query_control(NULL, &control));
+  assert(control == LAGHU_QUERY_CONTROL_NONE);
+  assert(laghu_apply_query_control("?laghu=off", &control));
+  assert(control == LAGHU_QUERY_CONTROL_OFF);
+  assert(laghu_apply_query_control("laghu=explain", &control));
+  assert(control == LAGHU_QUERY_CONTROL_EXPLAIN);
+  assert(laghu_apply_query_control("/index.html?laghu=off", &control));
+  assert(control == LAGHU_QUERY_CONTROL_NONE);
+  assert(laghu_apply_query_control("laghu=bad", &control) == false);
+  assert(!laghu_apply_query_control("laghu=off&laghu=explain", &control));
+  assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&laghu=off",
+                                   &control));
+  assert(control == LAGHU_QUERY_CONTROL_OFF);
+  assert(laghu_apply_query_control("x=1&laghuFilters=%2Bhtml_minify",
+                                   &control));
+  assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&", &control));
+  assert(!laghu_apply_query_control("laghu=", &control));
+  assert(laghu_apply_query_control("?", &control));
+  assert(laghu_apply_query_control("", &control));
+  assert(laghu_apply_query_control("/index.html", &control));
+  assert(control == LAGHU_QUERY_CONTROL_NONE);
+}
+
 static void test_preset_parser(void) {
   static const struct {
     const char *name;
@@ -598,6 +623,10 @@ static void test_decision_precedence(void) {
 
   assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_API), "bypass-api") ==
          0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_OFF),
+                "bypass-query-off") == 0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_EXPLAIN),
+                "bypass-query-explain") == 0);
   assert(strcmp(laghu_decision_name((laghu_decision)999), "bypass-error") == 0);
 }
 
@@ -822,6 +851,7 @@ int main(void) {
   test_config_defaults_and_inheritance();
   test_domain_policy();
   test_request_policy_controls();
+  test_query_control_parser();
   test_preset_parser();
   test_preset_policies();
   test_rewrite_level_parser_and_policies();

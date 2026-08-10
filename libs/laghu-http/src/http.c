@@ -876,6 +876,27 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   }
   {
     const char *query = strchr(transaction->path, '?');
+    laghu_query_control control = LAGHU_QUERY_CONTROL_NONE;
+    if (!laghu_apply_query_control(query, &control)) {
+      transaction->decision = LAGHU_DECISION_BYPASS_QUERY_OVERRIDE;
+      transaction->prepared = true;
+      result->action = LAGHU_HTTP_ACTION_BYPASS;
+      return laghu_http_add_status(result,
+                                   LAGHU_DECISION_BYPASS_QUERY_OVERRIDE);
+    }
+    if (control == LAGHU_QUERY_CONTROL_OFF) {
+      transaction->decision = LAGHU_DECISION_BYPASS_QUERY_OFF;
+      transaction->prepared = true;
+      result->action = LAGHU_HTTP_ACTION_BYPASS;
+      return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_QUERY_OFF);
+    }
+    if (control == LAGHU_QUERY_CONTROL_EXPLAIN) {
+      transaction->decision = LAGHU_DECISION_BYPASS_QUERY_EXPLAIN;
+      transaction->prepared = true;
+      result->action = LAGHU_HTTP_ACTION_BYPASS;
+      return laghu_http_add_status(result,
+                                   LAGHU_DECISION_BYPASS_QUERY_EXPLAIN);
+    }
     if (!laghu_apply_query_filter_overrides(&environment->config, query,
                                             &transaction->policy, NULL, NULL)) {
       transaction->decision = LAGHU_DECISION_BYPASS_QUERY_OVERRIDE;

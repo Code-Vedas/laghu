@@ -141,6 +141,11 @@ static void test_decision_table(void) {
        LAGHU_DECISION_BYPASS_DISABLED},
       {"api", VIEW("/api/items"), NULL, 0U, html_headers, 1U, LAGHU_MODE_ON,
        200U, LAGHU_DECISION_BYPASS_API},
+      {"query_off", VIEW("/index.html?laghu=off"), NULL, 0U, html_headers, 1U,
+       LAGHU_MODE_ON, 200U, LAGHU_DECISION_BYPASS_QUERY_OFF},
+      {"query_explain", VIEW("/index.html?laghu=explain"), NULL, 0U,
+       html_headers, 1U, LAGHU_MODE_ON, 200U,
+       LAGHU_DECISION_BYPASS_QUERY_EXPLAIN},
       {"authorized", VIEW("/"), authorized, 1U, html_headers, 1U, LAGHU_MODE_ON,
        200U, LAGHU_DECISION_BYPASS_AUTHORIZED},
       {"private", VIEW("/"), NULL, 0U, private_headers, 2U, LAGHU_MODE_ON, 200U,
@@ -821,6 +826,27 @@ static void test_request_policy_enforcement(void) {
   CHECK(result.decision == LAGHU_DECISION_BYPASS_QUERY_OVERRIDE);
   laghu_http_transaction_result_release(&result);
 
+  request.normalized_path = VIEW("/index.html?laghu=off");
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(result.decision == LAGHU_DECISION_BYPASS_QUERY_OFF);
+  laghu_http_transaction_result_release(&result);
+
+  request.normalized_path = VIEW("/index.html?laghu=explain");
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                       &environment, &result));
+  CHECK(result.decision == LAGHU_DECISION_BYPASS_QUERY_EXPLAIN);
+  laghu_http_transaction_result_release(&result);
+
+  request.normalized_path = VIEW("/index.html?laghu=off&laghuFilters=-html_minify");
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response,
+                                      &environment, &result));
+  CHECK(result.decision == LAGHU_DECISION_BYPASS_QUERY_OFF);
+  laghu_http_transaction_result_release(&result);
+
   request.normalized_path = VIEW("/index.html");
   response = test_response(vary_headers, 2U, 128U);
   laghu_http_transaction_init(&transaction);
@@ -866,6 +892,24 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(plan.requires_authorization);
   CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE);
   CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE);
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/pagespeed_admin"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.requires_authorization);
+  CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE);
+  CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE);
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/pagespeed_console"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.requires_authorization);
+  CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_METRICS);
+  CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_METRICS);
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/pagespeed_statistics"), &options));
+  CHECK(plan.recognized);
+  CHECK(plan.requires_authorization);
+  CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_STATS);
+  CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_STATS);
 
   CHECK(laghu_http_administrative_plan_build(
       &plan, VIEW("GET"), VIEW("/.laghu/history?limit=1"), &options));
@@ -888,6 +932,12 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_EXPLAIN);
   CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN);
   CHECK(strcmp(plan.explain_query.target, "/") == 0);
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/.laghu/explain?path=/&format=json"), &options));
+  CHECK(plan.explain_query.json);
+  CHECK(laghu_http_administrative_plan_build(
+      &plan, VIEW("GET"), VIEW("/.laghu/explain?path=/&format=xml"), &options));
+  CHECK(plan.status == 400U);
   CHECK(laghu_http_administrative_plan_build(
       &plan, VIEW("GET"), VIEW("/.laghu/explain"), &options));
   CHECK(plan.status == 400U);
@@ -987,6 +1037,13 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_HTML);
   CHECK(strstr(output, "Laghu explain") != NULL);
   CHECK(strstr(output, explain_model.target) != NULL);
+  plan.explain_query.json = true;
+  CHECK(laghu_http_administrative_build_explain_model(&plan.explain_query, &readiness,
+                                                     &stats, &explain_model));
+  CHECK(laghu_http_administrative_render_explain(&explain_model, output,
+                                                sizeof(output), &response));
+  CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
+  CHECK(strstr(output, "\"schema\":\"laghu-explain-v1\"") != NULL);
 
   CHECK(laghu_http_administrative_plan_build(
       &plan, VIEW("GET"), VIEW("/.laghu/explain?url=%2Findex.html"), &options));

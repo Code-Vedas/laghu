@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_HTTP_ABI_VERSION 6U
+#define LAGHU_HTTP_ABI_VERSION 7U
 #define LAGHU_HTTP_MAX_REQUEST_HEADERS 64U
 #define LAGHU_HTTP_MAX_RESPONSE_HEADERS 64U
 #define LAGHU_HTTP_MAX_HEADER_OPERATIONS 32U
@@ -84,6 +84,7 @@ typedef struct {
 
 typedef struct {
   char target[LAGHU_RUNTIME_PATH_SIZE];
+  bool json;
 } laghu_http_administrative_explain_query;
 
 typedef struct {
@@ -120,6 +121,7 @@ typedef struct {
   bool runtime_ready;
   bool cache_ready;
   bool workers_ready;
+  bool json;
   char status[24];
   uint64_t hits_ratio_ppm;
   char recommendation[256];

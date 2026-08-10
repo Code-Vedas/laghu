@@ -107,6 +107,8 @@ void ngx_http_laghu_exit_process(ngx_cycle_t *cycle);
 bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
+bool ngx_http_laghu_administration_candidate(
+    ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_image_queue(
     ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf);
