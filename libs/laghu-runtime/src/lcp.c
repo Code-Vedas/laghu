@@ -523,12 +523,12 @@ static bool laghu_lcp_rewrite_tag(laghu_buffer html,
   return true;
 }
 
-bool laghu_runtime_prioritize_lcp(
+static bool laghu_runtime_prioritize_lcp_impl(
     laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html,
     const char *page_path, const char *page_origin, const char *template_key,
     uint64_t now, unsigned int ttl_seconds, unsigned int viewport_width,
     bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
-    laghu_lcp_result *result) {
+    bool learned_only, laghu_lcp_result *result) {
   laghu_lcp_inventory *evidence = NULL, *current = NULL;
   laghu_rum_instrumentation_record *record = NULL;
   laghu_rum_instrumentation_record *evidence_record = NULL;
@@ -580,6 +580,15 @@ bool laghu_runtime_prioritize_lcp(
         &ordinal, &resource, &observations);
   }
 profile_unavailable:
+  if (!learned && learned_only) {
+    result->decision =
+        record_ready ? LAGHU_LCP_DECISION_UNRESOLVED : LAGHU_LCP_DECISION_STALE;
+    free(evidence);
+    free(current);
+    free(record);
+    free(evidence_record);
+    return true;
+  }
   if (!learned) {
     ordinal = laghu_lcp_heuristic(evidence);
     if (ordinal != UINT_MAX && ordinal < current->count &&
@@ -688,6 +697,29 @@ failed:
   free(evidence_record);
   laghu_lcp_result_release(result);
   return false;
+}
+
+bool laghu_runtime_prioritize_lcp(
+    laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *template_key,
+    uint64_t now, unsigned int ttl_seconds, unsigned int viewport_width,
+    bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
+    laghu_lcp_result *result) {
+  return laghu_runtime_prioritize_lcp_impl(
+      rum, evidence_html, html, page_path, page_origin, template_key, now,
+      ttl_seconds, viewport_width, resource_hints, lazyload, csp, false,
+      result);
+}
+
+bool laghu_runtime_prioritize_learned_lcp(
+    laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html,
+    const char *page_path, const char *page_origin, const char *template_key,
+    uint64_t now, unsigned int ttl_seconds, unsigned int viewport_width,
+    bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
+    laghu_lcp_result *result) {
+  return laghu_runtime_prioritize_lcp_impl(
+      rum, evidence_html, html, page_path, page_origin, template_key, now,
+      ttl_seconds, viewport_width, resource_hints, lazyload, csp, true, result);
 }
 
 void laghu_lcp_result_release(laghu_lcp_result *result) {

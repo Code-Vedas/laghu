@@ -98,6 +98,7 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.image_beacon == LAGHU_MODE_OFF);
   assert(result.critical_css_beacon == LAGHU_MODE_OFF);
   assert(result.instrumentation_beacon == LAGHU_MODE_OFF);
+  assert(result.optimization_profiles == LAGHU_MODE_OFF);
   assert(result.javascript_defer_suggestions == LAGHU_MODE_ON);
   assert(result.include_js_source_maps == LAGHU_MODE_OFF);
   assert(result.instrumentation_sample_rate ==
@@ -125,6 +126,7 @@ static void test_config_defaults_and_inheritance(void) {
   parent.image_beacon = LAGHU_MODE_ON;
   parent.critical_css_beacon = LAGHU_MODE_ON;
   parent.instrumentation_beacon = LAGHU_MODE_ON;
+  parent.optimization_profiles = LAGHU_MODE_ON;
   parent.javascript_defer_suggestions = LAGHU_MODE_OFF;
   parent.include_js_source_maps = LAGHU_MODE_ON;
   parent.instrumentation_sample_rate = 25U;
@@ -149,6 +151,7 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.image_beacon == LAGHU_MODE_ON);
   assert(result.critical_css_beacon == LAGHU_MODE_ON);
   assert(result.instrumentation_beacon == LAGHU_MODE_ON);
+  assert(result.optimization_profiles == LAGHU_MODE_ON);
   assert(result.javascript_defer_suggestions == LAGHU_MODE_OFF);
   assert(result.include_js_source_maps == LAGHU_MODE_ON);
   assert(result.instrumentation_sample_rate == 25U);
@@ -159,6 +162,9 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.css_outline_threshold == 16384U);
   assert(result.javascript_inline_limit == 4096U);
   assert(result.javascript_outline_threshold == 32768U);
+  child.optimization_profiles = LAGHU_MODE_OFF;
+  laghu_config_merge(&result, &parent, &child);
+  assert(result.optimization_profiles == LAGHU_MODE_OFF);
   assert(strcmp(result.html_cache_origin, "https://origin.example") == 0);
   assert(result.html_cache_ttl == 30U);
   assert(result.html_cache_stale_ttl == 300U);

@@ -82,6 +82,8 @@ Laghu HtmlRefreshQueue /run/laghu/html-refresh-www.queue
   Laghu CriticalCssBeacon On
   Laghu InstrumentationBeacon On
   Laghu InstrumentationSampleRate 10
+  # Keep this explicit: profile application is independent of collection.
+  Laghu OptimizationProfiles On
 
   ProxyPass / http://application/
   ProxyPassReverse / http://application/

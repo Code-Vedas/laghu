@@ -40,6 +40,7 @@ runtime|laghu_font_provider.c|libs/laghu-runtime/src/font_provider.c
 runtime|laghu_javascript.c|libs/laghu-runtime/src/javascript.c
 runtime|laghu_javascript_defer.c|libs/laghu-runtime/src/javascript_defer.c
 runtime|laghu_instrumentation.c|libs/laghu-runtime/src/instrumentation.c
+runtime|laghu_profile.c|libs/laghu-runtime/src/profile.c
 runtime|laghu_lcp.c|libs/laghu-runtime/src/lcp.c
 runtime|laghu_beacon.c|libs/laghu-runtime/src/beacon.c
 worker|laghu_html_refresh.c|workers/laghu-html-refresh/main.c
@@ -98,6 +99,7 @@ runtime_test|css|libs/laghu-runtime/tests/css_test.c
 runtime_test|domain|libs/laghu-runtime/tests/domain_test.c
 runtime_test|javascript|libs/laghu-runtime/tests/javascript_test.c
 runtime_test|instrumentation|libs/laghu-runtime/tests/instrumentation_test.c
+runtime_test|profile|libs/laghu-runtime/tests/profile_test.c
 runtime_test|lcp|libs/laghu-runtime/tests/lcp_test.c
 runtime_test|worker|libs/laghu-runtime/tests/worker_test.c
 runtime_test|log|libs/laghu-runtime/tests/log_test.c

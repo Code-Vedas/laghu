@@ -175,6 +175,8 @@ typedef struct {
   laghu_mode image_beacon;
   laghu_mode critical_css_beacon;
   laghu_mode instrumentation_beacon;
+  /* Enables RUM-derived, DOM-template-scoped safe variants. */
+  laghu_mode optimization_profiles;
   laghu_mode javascript_defer_suggestions;
   laghu_mode include_js_source_maps;
   unsigned int instrumentation_sample_rate;

@@ -64,6 +64,14 @@ static void test_lcp_prioritization(laghu_rum_engine *rum) {
                 "src=/hero.jpg width=800 height=600 loading=lazy") == NULL);
   assert(strcmp(result.link_header, "</hero.jpg>; rel=preload; as=image") == 0);
   laghu_lcp_result_release(&result);
+  assert(laghu_runtime_prioritize_learned_lcp(
+      rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
+      (laghu_buffer){selected_html, sizeof(selected_html) - 1U}, "/index.html",
+      "https://example.test", template_key, 100U, 60U, 640U, true, true, &csp,
+      &result));
+  assert(result.decision == LAGHU_LCP_DECISION_STALE && !result.applied &&
+         !result.rewritten);
+  laghu_lcp_result_release(&result);
   assert(laghu_runtime_prioritize_lcp(
       rum, (laghu_buffer){evidence_html, sizeof(evidence_html) - 1U},
       (laghu_buffer){responsive_html, sizeof(responsive_html) - 1U},

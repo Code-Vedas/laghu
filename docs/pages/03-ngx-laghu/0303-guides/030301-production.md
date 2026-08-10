@@ -94,6 +94,8 @@ http {
     laghu critical_css_beacon on;
     laghu instrumentation_beacon on;
     laghu instrumentation_sample_rate 10;
+    # Keep this explicit: profile application is independent of collection.
+    laghu optimization_profiles on;
 
     location / {
       proxy_pass http://application;

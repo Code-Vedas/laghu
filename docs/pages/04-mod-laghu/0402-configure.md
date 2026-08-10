@@ -36,6 +36,7 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu CriticalCssBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-CSS learning. |
 | `Laghu InstrumentationBeacon On\|Off` | inherited | boolean | `Off` | Injects bounded RUM instrumentation when CSP permits. |
 | `Laghu InstrumentationSampleRate N` | inherited | `0..100` | `10` | Sets browser-side percentage sampling. |
+| `Laghu OptimizationProfiles On\|Off` | inherited | boolean | `Off` | Allows a ready, template-scoped RUM profile to apply the existing safe LCP prioritization; it never enables a new rewrite. |
 | `Laghu JavaScriptDeferSuggestions On\|Off` | inherited | boolean | `On` | Enables bounded RUM deferral recommendations; it never applies them. |
 | `Laghu IncludeJsSourceMaps On\|Off` | inherited | boolean | `Off` | Emits immutable external SWC source maps without source content. |
 | `Laghu ImageInlineLimit BYTES` | inherited | `0..16384` | `2048` | Caps image inlining. |

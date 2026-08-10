@@ -45,6 +45,7 @@ laghu \
   --critical-css-beacon \
   --instrumentation-beacon \
   --instrumentation-sample-rate 10 \
+  --optimization-profiles on \
   --workers 8 \
   --connection-queue 1024 \
   --connect-timeout 5 \

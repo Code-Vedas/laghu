@@ -36,6 +36,7 @@ Laghu transaction records use the configured NGINX error_log sink. Each native e
 | `laghu critical_css_beacon on\|off;` | inherited | boolean | `off` | Enables critical-CSS learning. |
 | `laghu instrumentation_beacon on\|off;` | inherited | boolean | `off` | Injects bounded RUM instrumentation when CSP permits. |
 | `laghu instrumentation_sample_rate N;` | inherited | `0..100` | `10` | Sets browser-side percentage sampling. |
+| `laghu optimization_profiles on\|off;` | inherited | boolean | `off` | Allows a ready, template-scoped RUM profile to apply the existing safe LCP prioritization; it never enables a new rewrite. |
 | `laghu javascript_defer_suggestions on\|off;` | inherited | boolean | `on` | Enables bounded RUM deferral recommendations; it never applies them. |
 | `laghu include_js_source_maps on\|off;` | inherited | boolean | `off` | Emits immutable external SWC source maps without source content. |
 | `laghu image_inline_limit BYTES;` | inherited | `0..16384` | `2048` | Caps image data-URI inlining; zero disables it. |

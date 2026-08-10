@@ -35,6 +35,8 @@ static const laghu_config_name laghu_config_names[] = {
      "CriticalCssBeacon"},
     {LAGHU_CONFIG_SETTING_INSTRUMENTATION_BEACON, "instrumentation_beacon",
      "InstrumentationBeacon"},
+    {LAGHU_CONFIG_SETTING_OPTIMIZATION_PROFILES, "optimization_profiles",
+     "OptimizationProfiles"},
     {LAGHU_CONFIG_SETTING_INSTRUMENTATION_SAMPLE_RATE,
      "instrumentation_sample_rate", "InstrumentationSampleRate"},
     {LAGHU_CONFIG_SETTING_JAVASCRIPT_DEFER_SUGGESTIONS,
@@ -236,6 +238,9 @@ bool laghu_config_setting_apply(laghu_config *config,
       break;
     case LAGHU_CONFIG_SETTING_INSTRUMENTATION_BEACON:
       mode = &config->instrumentation_beacon;
+      break;
+    case LAGHU_CONFIG_SETTING_OPTIMIZATION_PROFILES:
+      mode = &config->optimization_profiles;
       break;
     case LAGHU_CONFIG_SETTING_JAVASCRIPT_DEFER_SUGGESTIONS:
       mode = &config->javascript_defer_suggestions;

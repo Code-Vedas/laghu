@@ -47,6 +47,7 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--critical-css-beacon` | flag | off | Enables critical-CSS learning. |
 | `--instrumentation-beacon` | flag | off | Enables RUM script injection when CSP permits. |
 | `--instrumentation-sample-rate N` | `0..100` | `10` | Sets browser-side percentage sampling. |
+| `--optimization-profiles on\|off` | boolean | `off` | Allows a ready, template-scoped RUM profile to apply the existing safe LCP prioritization; it never enables a new rewrite. |
 | `--javascript-defer-suggestions on\|off` | boolean | `on` | Enables bounded RUM deferral recommendations; it never applies them. |
 | `--include-js-source-maps` | flag | off | Emits immutable external SWC source maps without source content. |
 | `--font-fetch-queue PATH` | bounded path | unset | Enables the font-fetch queue; requires provider config. |

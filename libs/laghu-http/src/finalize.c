@@ -18,6 +18,7 @@
 #include "laghu/instrumentation.h"
 #include "laghu/javascript.h"
 #include "laghu/lcp.h"
+#include "laghu/profile.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
 #include "laghu/types.h"
@@ -146,6 +147,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   laghu_runtime_html_result instrumentation = {0};
   laghu_domain_rewrite_result domains;
   laghu_lcp_result lcp = {0};
+  laghu_template_profile optimization_profile;
   laghu_runtime_html_result hinted;
   laghu_runtime_html_result finalized;
   char csp_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
@@ -398,17 +400,39 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
         transaction->environment.config.image_metadata_ttl,
         transaction->environment.config.instrumentation_sample_rate,
         lcp_template_key);
-  if (!laghu_runtime_prioritize_lcp(
-          transaction->environment.rum, body,
-          (laghu_buffer){selected, selected_length}, transaction->path,
-          transaction->origin,
-          lcp_template_key[0] == '\0' ? NULL : lcp_template_key,
-          transaction->environment.now,
-          transaction->environment.config.image_metadata_ttl,
-          transaction->viewport_width,
-          (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
-          (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U,
-          &csp_policy, &lcp)) {
+  memset(&optimization_profile, 0, sizeof(optimization_profile));
+  if (transaction->environment.config.optimization_profiles == LAGHU_MODE_ON)
+    (void)laghu_template_profile_decide(
+        transaction->environment.rum, lcp_template_key,
+        transaction->environment.now,
+        transaction->environment.config.image_metadata_ttl,
+        transaction->viewport_width != 0U && transaction->viewport_width < 768U
+            ? 0U
+            : 1U,
+        &optimization_profile);
+  if ((transaction->environment.config.optimization_profiles == LAGHU_MODE_ON &&
+       optimization_profile.apply &&
+       !laghu_runtime_prioritize_learned_lcp(
+           transaction->environment.rum, body,
+           (laghu_buffer){selected, selected_length}, transaction->path,
+           transaction->origin, lcp_template_key, transaction->environment.now,
+           transaction->environment.config.image_metadata_ttl,
+           transaction->viewport_width,
+           (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
+           (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U,
+           &csp_policy, &lcp)) ||
+      (transaction->environment.config.optimization_profiles != LAGHU_MODE_ON &&
+       !laghu_runtime_prioritize_lcp(
+           transaction->environment.rum, body,
+           (laghu_buffer){selected, selected_length}, transaction->path,
+           transaction->origin,
+           lcp_template_key[0] == '\0' ? NULL : lcp_template_key,
+           transaction->environment.now,
+           transaction->environment.config.image_metadata_ttl,
+           transaction->viewport_width,
+           (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
+           (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U,
+           &csp_policy, &lcp))) {
     laghu_runtime_html_result_release(&critical);
     laghu_runtime_html_result_release(&font);
     laghu_runtime_html_result_release(&rewritten);
