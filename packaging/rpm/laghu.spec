@@ -58,6 +58,14 @@ Requires: laghu-libvips%{?_isa} = %{version}-%{release}
 Apache HTTP Server 2.4 output-filter adapter using Laghu's shared policy,
 queue, cache, and fail-open delivery contracts.
 
+%package -n laghu
+Summary: Standalone Laghu reverse proxy
+Requires: laghu-libvips%{?_isa} = %{version}-%{release}
+
+%description -n laghu
+Standalone Laghu HTTP reverse proxy using the same policy and transformation
+contracts as native modules.
+
 %prep
 %setup -q -T -c -n laghu-%{version}
 bsdtar -xf %{SOURCE0} --strip-components 1 -C .
@@ -70,6 +78,8 @@ bsdtar -xf %{SOURCE0} --strip-components 1 -C .
 APACHE_BUILD_DIR=%{_builddir}/laghu-apache-module scripts/build-apache-module
 
 %install
+install -D -m 0755 %{__cmake_builddir}/servers/laghu/laghu \
+  %{buildroot}%{_bindir}/laghu
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-libvips/laghu-libvips \
   %{buildroot}%{_bindir}/laghu-libvips
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-resource-fetch/laghu-resource-fetch \
@@ -185,3 +195,7 @@ httpd -t
 %{_libdir}/httpd/modules/mod_laghu.so
 %config(noreplace) %{_sysconfdir}/httpd/conf.modules.d/10-laghu.conf
 %config(noreplace) %{_sysconfdir}/httpd/conf.d/laghu.conf
+
+%files -n laghu
+%license LICENSE
+%{_bindir}/laghu

@@ -40,7 +40,8 @@ class Origin(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
-        if self.path == "/headers":
+        request_path = urllib.parse.urlsplit(self.path).path
+        if request_path == "/headers":
             body = json.dumps(
                 {
                     name.lower(): self.headers.get_all(name)
@@ -55,17 +56,17 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 sort_keys=True,
             ).encode()
             content_type = "application/json"
-        elif self.path == "/api/data":
+        elif request_path == "/api/data":
             body = b'{"ok":true}'
             content_type = "application/json"
-        elif self.path == "/lcp.html":
+        elif request_path == "/lcp.html":
             body = (
                 b'<html><body><nav><img src="/logo.png" width="40" '
                 b'height="40"></nav><img src="/image.png" width="320" '
                 b'height="240"></body></html>'
             )
             content_type = "text/html"
-        elif self.path == "/hints.html":
+        elif request_path == "/hints.html":
             body = (
                 b'<html><head><link rel="preconnect" '
                 b'href="https://reserved.example.test"></head><body>'
@@ -73,28 +74,28 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 b"</script></body></html>"
             )
             content_type = "text/html"
-        elif self.path == "/site.css":
+        elif request_path == "/site.css":
             body = b"body { color: red; }"
             content_type = "text/css"
-        elif self.path == "/app.js":
+        elif request_path == "/app.js":
             body = b"function publicName(longLocal) { return longLocal + 1; }"
             content_type = "application/javascript"
-        elif self.path == "/combine-one.js":
+        elif request_path == "/combine-one.js":
             body = (
                 b" " * 160
                 + b"console.log('combine one value'); console.log('combine one value again');"
             )
             content_type = "application/javascript"
-        elif self.path == "/combine-two.js":
+        elif request_path == "/combine-two.js":
             body = (
                 b" " * 160
                 + b"console.log('combine two value'); console.log('combine two value again');"
             )
             content_type = "application/javascript"
-        elif self.path == "/javascript-inline.html":
+        elif request_path == "/javascript-inline.html":
             body = b"<html><body><script>function inlinePublic(longLocal) { return longLocal + 1; }</script></body></html>"
             content_type = "text/html"
-        elif self.path == "/javascript-csp-hash.html":
+        elif request_path == "/javascript-csp-hash.html":
             body = (
                 b'<html><head><meta http-equiv="Content-Security-Policy" '
                 b'content="script-src \'sha256-YWJjZA==\'"></head><body>'
@@ -102,7 +103,7 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 b'</body></html>'
             )
             content_type = "text/html"
-        elif self.path == "/javascript-external.html":
+        elif request_path == "/javascript-external.html":
             body = (
                 b'<html><body><script src="/app.js"></script><script>'
                 b"function externalPageHelper(veryLongLocalArgument) { return "
@@ -110,38 +111,38 @@ class Origin(http.server.BaseHTTPRequestHandler):
                 + b"; }</script></body></html>"
             )
             content_type = "text/html"
-        elif self.path == "/javascript-combine.html":
+        elif request_path == "/javascript-combine.html":
             body = (
                 b'<html><body><script src="/combine-one.js" data-laghu-combine="application-main"></script>\n'
                 b'<script src="/combine-two.js" data-laghu-combine="application-main"></script></body></html>'
             )
             content_type = "text/html"
-        elif self.path == "/javascript-outline.html":
+        elif request_path == "/javascript-outline.html":
             body = (
                 b"<html><body><script>function outlinePublic(veryLongLocalArgument) { return "
                 + b" + ".join([b"veryLongLocalArgument"] * 500)
                 + b"; }</script></body></html>"
             )
             content_type = "text/html"
-        elif self.path == "/trim-urls.html":
+        elif request_path == "/trim-urls.html":
             body = (
                 b'<html><body><audio src="http://example.test/asset.mp3?q=1#hero">'
                 b'</audio><a href="/next">next</a></body></html>'
             )
             content_type = "text/html"
-        elif self.path == "/private":
+        elif request_path == "/private":
             body = BODY
             content_type = "text/html"
-        elif self.path == "/encoded":
+        elif request_path == "/encoded":
             body = b"encoded-origin"
             content_type = "text/html"
-        elif self.path == "/image.png":
+        elif request_path == "/image.png":
             body = b"not-decoded-without-worker"
             content_type = "image/png"
-        elif self.path == "/partial":
+        elif request_path == "/partial":
             body = b"partial"
             content_type = "text/html"
-        elif self.path == "/truncated":
+        elif request_path == "/truncated":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", "100")
@@ -149,47 +150,48 @@ class Origin(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"short")
             self.close_connection = True
             return
-        elif self.path in ("/chunked", "/bad-chunk"):
+        elif request_path in ("/chunked", "/bad-chunk"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            if self.path == "/chunked":
+            if request_path == "/chunked":
                 self.wfile.write(f"{len(BODY):x}\r\n".encode() + BODY + b"\r\n0\r\n\r\n")
             else:
                 self.wfile.write(b"4\r\nno")
             self.wfile.flush()
             self.close_connection = True
             return
-        elif self.path == "/slow":
+        elif request_path == "/slow":
             time.sleep(2)
             body = BODY
             content_type = "text/html"
-        elif self.path == "/drain":
+        elif request_path == "/drain":
             time.sleep(0.4)
             body = BODY
             content_type = "text/html"
-        elif self.path == "/hang":
+        elif request_path == "/hang":
             time.sleep(10)
             body = BODY
             content_type = "text/html"
         else:
             body = BODY
             content_type = "text/html"
-        self.send_response(206 if self.path == "/partial" else 200)
+        self.send_response(206 if request_path == "/partial" else 200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header(
-            "ETag", '"trim-v1"' if self.path == "/trim-urls.html" else '"origin-v1"'
+            "ETag",
+            '"trim-v1"' if request_path == "/trim-urls.html" else '"origin-v1"',
         )
         self.send_header("Connection", "close")
-        if self.path == "/hints.html":
+        if request_path == "/hints.html":
             self.send_header("Link", "<https://origin.example.test>; rel=preload")
-        if self.path == "/private":
+        if request_path == "/private":
             self.send_header("Cache-Control", "private")
-        if self.path == "/encoded":
+        if request_path == "/encoded":
             self.send_header("Content-Encoding", "gzip")
-        if self.path == "/partial":
+        if request_path == "/partial":
             self.send_header("Content-Range", "bytes 0-6/20")
         self.end_headers()
         self.wfile.write(body)
@@ -639,10 +641,20 @@ def migrate_smoke(executable, root):
                 "pagespeed Disallow \"/private/*\";",
                 "pagespeed FileCachePath file:///tmp/legacy-cache;",
                 "pagespeed AllowResources \"/*\";",
+                "modpagespeed inplaceresourceoptimization On;",
+                "modpagespeed maprewritedomain https://public.test https://origin.test;",
+                "modpagespeed mapproxyDomain https://cdn.public.test https://cdn.origin.test;",
+                "modpagespeed shardDomain https://shard.test https://shard1.test,https://shard2.test;",
+                "modpagespeed unknownlegacy on;",
+                "mod_pagespeed InPlaceOptimizeForBrowser Off;",
+                "mod_pagespeed imagerecompressquality 81;",
                 "Location /pagespeed_admin {",
                 '    ProxyPass "/pagespeed_statistics" "http://127.0.0.1/status"',
                 "}",
-                "PageSpeedFilters=\"RewriteImages,inlinecss\"",
+                "Location /pagespeed_stats {",
+                '    ProxyPass "/pagespeed_statistics" "http://127.0.0.1/status"',
+                "}",
+                "PageSpeedFilters=\"RewriteImages,inlinecss\";",
             ]
         ),
         encoding="utf-8",
@@ -657,10 +669,21 @@ def migrate_smoke(executable, root):
             "laghu disallow /private/*;",
             "laghu file_cache_backend file:///tmp/legacy-cache/laghu;",
             "laghu allow_resources /*;",
-            "Location /laghu/console {",
-            '    ProxyPass "/laghu/stats" "http://127.0.0.1/status"',
+            "laghu enable image_modern;",
+            "laghu map_rewrite_domain https://public.test https://origin.test;",
+            "laghu map_proxy_domain https://cdn.public.test https://cdn.origin.test;",
+            "laghu shard_domain https://shard.test https://shard1.test,https://shard2.test;",
+            "# unsupported legacy directive omitted by laghu migrate; manual review required",
+            "laghu disable image_modern;",
+            "laghu image_quality 81;",
+            "Location /.laghu/console {",
+            '    ProxyPass "/.laghu/stats" "http://127.0.0.1/status"',
             "}",
-            'laghuFilters="RewriteImages,inlinecss"',
+            "Location /.laghu/stats {",
+            '    ProxyPass "/.laghu/stats" "http://127.0.0.1/status"',
+            "}",
+            "laghu query_filter_overrides on;",
+            "laghuFilters=+image_lossless,+image_metadata,+image_dimensions,+image_responsive,+image_lazyload,+resource_inline;",
         ]
     )
     result = subprocess.run(
@@ -668,8 +691,12 @@ def migrate_smoke(executable, root):
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        print(f"laghu migrate returned {result.returncode}", file=sys.stderr)
+        print(f"stdout: {result.stdout}", file=sys.stderr)
+        print(f"stderr: {result.stderr}", file=sys.stderr)
     assert result.returncode == 0
-    assert result.stdout == expected
+    assert result.stdout.splitlines() == expected.splitlines()
 
     result = subprocess.run(
         [str(executable), "migrate", str(root / "missing-legacy.conf")],
@@ -683,7 +710,8 @@ def migrate_smoke(executable, root):
         input=(
             "pagespeed on;\n"
             "location /pagespeed_console { return 200; }\n"
-            "PageSpeedFilters=\"RemoveComments\"\n"
+            "location /pagespeed_stats { return 200; }\n"
+            "PageSpeedFilters=\"RemoveComments\";\n"
         ),
         text=True,
         capture_output=True,
@@ -691,8 +719,10 @@ def migrate_smoke(executable, root):
     assert result.returncode == 0
     assert result.stdout == (
         "laghu on;\n"
-        "location /metrics { return 200; }\n"
-        'laghuFilters="RemoveComments"\n'
+        "location /.laghu/metrics { return 200; }\n"
+        "location /.laghu/stats { return 200; }\n"
+        "laghu query_filter_overrides on;\n"
+        "laghuFilters=+html_minify;\n"
     )
 
 
@@ -1352,6 +1382,15 @@ def main():
             assert b'token=secret' not in hints_head
             assert b'#part' not in hints_head
             assert b'etag: "laghu-html-' in hints_head
+            preview_head, preview_body = request(
+                proxy_port, "/trim-urls.html?laghu=preview"
+            )
+            assert preview_body == (
+                b'<html><body><audio src="http://example.test/asset.mp3?q=1#hero">'
+                b'</audio><a href="/next">next</a></body></html>'
+            )
+            assert b'x-laghu: bypass-query-preview' in preview_head
+            assert b'x-laghu-preview:' in preview_head
             for _ in range(warm_attempts):
                 trim_head, trim_body = request(proxy_port, "/trim-urls.html")
                 if (
@@ -1509,24 +1548,53 @@ def main():
             assert b" 200 " in admin_head.split(b"\r\n", 1)[0]
             assert b"text/html; charset=utf-8" in admin_head
             assert b"<h1>Laghu console</h1>" in admin_body
+            admin_json_head, admin_json_body = request(
+                proxy_port, "/pagespeed_admin?format=json", headers=admin_headers
+            )
+            assert b" 200 " in admin_json_head.split(b"\r\n", 1)[0]
+            assert b"\"schema\":\"laghu-console-v1\"" in admin_json_body
             history_head, history_body = request(
                 proxy_port, "/.laghu/history", headers=admin_headers
             )
             assert b" 200 " in history_head.split(b"\r\n", 1)[0]
             assert b"content-type: text/html; charset=utf-8" in history_head
-            assert b"<h1>Laghu history</h1>" in history_body
+            assert b"<h1>Laghu console</h1>" in history_body
+            assert b"<h2>Laghu history</h2>" in history_body
+            history_json_head, history_json_body = request(
+                proxy_port, "/.laghu/history?format=json&limit=2", headers=admin_headers
+            )
+            assert b" 200 " in history_json_head.split(b"\r\n", 1)[0]
+            assert b"\"schema\":\"laghu-history-v1\"" in history_json_body
             stats_legacy_head, stats_legacy_body = request(
                 proxy_port, "/pagespeed_statistics", headers=admin_headers
             )
             assert b" 200 " in stats_legacy_head.split(b"\r\n", 1)[0]
             assert b"laghu-cache-stats-v1" in stats_legacy_body
+            stats_legacy_json_head, _ = request(
+                proxy_port, "/pagespeed_statistics?format=json", headers=admin_headers
+            )
+            assert b" 200 " in stats_legacy_json_head.split(b"\r\n", 1)[0]
             explain_head, explain_body = request(
                 proxy_port, "/.laghu/explain?path=/index.html", headers=admin_headers
             )
             assert b" 200 " in explain_head.split(b"\r\n", 1)[0]
             assert b"content-type: text/html; charset=utf-8" in explain_head
-            assert b"<h1>Laghu explain</h1>" in explain_body
+            assert b"<h1>Laghu console</h1>" in explain_body
+            assert b"<h2>Laghu explain</h2>" in explain_body
             assert b"Target: /index.html" in explain_body
+            explain_json_head, explain_json_body = request(
+                proxy_port,
+                "/.laghu/explain?path=/index.html&format=json",
+                headers=admin_headers,
+            )
+            assert b" 200 " in explain_json_head.split(b"\r\n", 1)[0]
+            assert b"\"schema\":\"laghu-explain-v1\"" in explain_json_body
+            purge_form_head, purge_form_body = request(
+                proxy_port, "/.laghu/purge?path=/site.css", headers=admin_headers
+            )
+            assert b" 202 " in purge_form_head.split(b"\r\n", 1)[0]
+            assert b"cache-control: no-store" in purge_form_head
+            assert b'"status":"accepted"' in purge_form_body
             metrics_legacy_head, metrics_legacy_body = request(
                 proxy_port, "/pagespeed_console", headers=admin_headers
             )

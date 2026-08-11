@@ -32,6 +32,11 @@ esac
 scripts/run-build-all
 scripts/run-test-all
 
+if [ "${SERVER}" = standalone ]; then
+  scripts/run-standalone-container-smoke
+  exit 0
+fi
+
 if [ "${SERVER}" = nginx ]; then
   scripts/run-module-build-all
   scripts/run-module-smoke-all

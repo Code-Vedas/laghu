@@ -7,6 +7,31 @@
 
 module AP_MODULE_DECLARE_DATA laghu_module;
 
+static const char *laghu_apache_service_setting_name(
+    laghu_service_setting setting) {
+  const laghu_service_setting_descriptor *descriptor =
+      laghu_service_setting_describe(setting);
+  return descriptor == NULL || descriptor->name == NULL
+             ? "setting"
+             : descriptor->name;
+}
+
+static void laghu_apache_service_error_message(
+    server_rec *server, const char *context,
+    const laghu_service_diagnostic *diagnostic) {
+  if (diagnostic == NULL || context == NULL) return;
+  if (diagnostic->message[0] == '\0')
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, server,
+                 "Laghu %s setting '%s' is invalid", context,
+                 laghu_apache_service_setting_name(diagnostic->setting));
+  else
+    ap_log_error(
+        APLOG_MARK, APLOG_ERR, 0, server,
+        "Laghu %s setting '%s' is invalid: %s", context,
+        laghu_apache_service_setting_name(diagnostic->setting),
+        diagnostic->message);
+}
+
 static bool laghu_apache_validate_directory_config(
     server_rec *server, ap_conf_vector_t *directory) {
   laghu_apache_config *parent =
@@ -25,9 +50,8 @@ static bool laghu_apache_validate_directory_config(
   laghu_config_merge(&core, &parent->core, &child->core);
   if (!laghu_apache_service_resolve(&service, &parent->service, &child->service,
                                     &core, &diagnostic)) {
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, server,
-                 "Laghu directory configuration is invalid: %s",
-                 diagnostic.message);
+    laghu_apache_service_error_message(server, "directory configuration",
+                                       &diagnostic);
     return false;
   }
   return true;
@@ -134,7 +158,7 @@ int laghu_apache_post_config(apr_pool_t *configuration_pool,
         (void)snprintf(config->service.source_policy.native_root,
                        sizeof(config->service.source_policy.native_root), "%s",
                        core_server->ap_document_root);
-      if (config == NULL ||
+  if (config == NULL ||
           !laghu_service_config_finalize(
               &config->service,
               &(laghu_service_finalize_options){
@@ -143,10 +167,12 @@ int laghu_apache_post_config(apr_pool_t *configuration_pool,
                   .respect_x_forwarded_proto =
                       config->core.respect_x_forwarded_proto == LAGHU_MODE_ON},
               &diagnostic)) {
-        ap_log_error(
-            APLOG_MARK, APLOG_ERR, 0, item,
-            "Laghu service configuration is invalid: %s",
-            config == NULL ? "missing configuration" : diagnostic.message);
+        if (config == NULL)
+          ap_log_error(APLOG_MARK, APLOG_ERR, 0, item,
+                       "Laghu service configuration is missing");
+        else
+          laghu_apache_service_error_message(item, "service configuration",
+                                             &diagnostic);
         return HTTP_INTERNAL_SERVER_ERROR;
       }
       if (config->service.source_policy.mode != LAGHU_SOURCE_FILE_OFF) {
@@ -194,9 +220,8 @@ int laghu_apache_post_config(apr_pool_t *configuration_pool,
     if (!laghu_apache_service_resolve(&operational, &server_config->service,
                                       &default_config->service, &core,
                                       &diagnostic)) {
-      ap_log_error(APLOG_MARK, APLOG_ERR, 0, server,
-                   "Laghu operational configuration is invalid: %s",
-                   diagnostic.message);
+      laghu_apache_service_error_message(server, "operational configuration",
+                                         &diagnostic);
       return HTTP_INTERNAL_SERVER_ERROR;
     }
     laghu_apache_operational_enabled =

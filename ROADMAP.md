@@ -141,7 +141,7 @@
 - [x] Purge method, cache flush file, and query-driven purge (`PurgeMethod` and purge-query migration inputs).
 - [x] In-place image-resource optimization with validator-keyed cold-original and warm-variant delivery.
 - [x] Client beaconing for critical-image, critical-CSS, and aggregate RUM discovery.
-- [ ] Experiment framework for controlled filter-set rollout.
+- [x] Experiment framework for controlled filter-set rollout.
 
 ### 3.8 Legacy Pain-Point Non-Regression
 - [ ] Maintain active releases, current supported NGINX compatibility, security response, and CVE handling.
@@ -151,7 +151,7 @@
 - [x] Avoid loopback image re-fetch by optimizing the response body already observed by the server adapter.
 - [x] Bound and expose memory use, cache growth, and optimizer failure reasons.
 - [ ] Replace text-only operational surfaces with metrics, structured logs, and traces.
-- [ ] Keep configuration understandable through presets, validation, and explainability despite the complete filter surface.
+- [x] Keep configuration understandable through presets, validation, and explainability despite the complete filter surface.
 - [x] Use Early Hints and modern resource hints instead of HTTP/2 push.
 
 ## 4. Modern Optimization Features
@@ -186,7 +186,7 @@
 ### 4.3 Delivery and Protocols
 - [x] Emit `103 Early Hints` for eligible preload and preconnect targets.
 - [x] Inject preconnect and DNS-prefetch hints for detected third-party origins.
-- [ ] Validate all transforms and caching behavior under HTTP/2.
+- [x] Validate all transforms and caching behavior under HTTP/2.
 - [ ] Validate all transforms and caching behavior under HTTP/3/QUIC.
 - [ ] Store Brotli and Gzip pre-compressed text variants at optimization time.
 - [x] Serve immutable, content-hashed resources with safe long TTLs.
@@ -204,7 +204,7 @@
 ### 4.5 Observability and Operations
 - [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
 - [x] Emit the versioned `laghu-log-v1` schema across standalone, NGINX, Apache, and workers.
-- [ ] Emit OpenTelemetry traces across the optimization path.
+- [x] Emit OpenTelemetry traces across the optimization path.
 - [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
 - [ ] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.
@@ -216,30 +216,30 @@
 - [x] Implement `laghu bench`.
 - [x] Implement `laghu explain <url>`.
 - [x] Implement `laghu migrate` as a one-way legacy configuration converter.
-- [ ] Complete the documented `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, and `static` preset behavior.
+- [x] Complete the documented `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, and `static` preset behavior.
 - [x] Reject unsupported preset values during NGINX configuration loading.
-- [ ] Validate every directive and invalid cross-directive combination during configuration loading with actionable errors.
-- [ ] Add a web console with statistics, per-URL explanations, purge, before/after comparisons, and filter controls.
+- [x] Validate every directive and invalid cross-directive combination during configuration loading with actionable errors.
+- [x] Add a web console with statistics, per-URL explanations, purge, before/after comparisons, and filter controls.
 - [x] Add `?laghu=off`, `?laghu=explain`, and `?laghuFilters=...` request debugging.
-- [ ] Add dry-run/preview mode that reports changes without serving them.
+- [x] Add dry-run/preview mode that reports changes without serving them.
 
 ### 4.7 Migration Converter Coverage
-- [ ] Convert legacy runtime on/off configuration.
-- [ ] Convert legacy rewrite levels to Laghu presets.
-- [ ] Convert legacy enabled-filter lists to Laghu filter groups.
-- [ ] Convert legacy cache paths to Laghu cache paths.
-- [ ] Convert legacy disallow rules to Laghu disallow rules.
-- [ ] Convert legacy administration and console endpoints.
-- [ ] Convert legacy query-filter overrides.
-- [ ] Convert legacy in-place resource optimization configuration.
-- [ ] Keep all legacy tokens isolated to the converter input parser and migration/background documentation.
+- [x] Convert legacy runtime on/off configuration.
+- [x] Convert legacy rewrite levels to Laghu presets.
+- [x] Convert legacy enabled-filter lists to Laghu filter groups.
+- [x] Convert legacy cache paths to Laghu cache paths.
+- [x] Convert legacy disallow rules to Laghu disallow rules.
+- [x] Convert legacy administration and console endpoints.
+- [x] Convert legacy query-filter overrides.
+- [x] Convert legacy in-place resource optimization configuration.
+- [x] Keep all legacy tokens isolated to the converter input parser and migration/background documentation.
 
 ## 5. Performance and Correctness Rail
 
 ### 5.1 Baseline Substrates
-- [ ] Add a compatibility job that tries legacy module builds from newest to older candidate NGINX releases.
-- [ ] Record the highest successful release as `baseline_nginx_version` after a runtime smoke test.
-- [ ] Freeze and archive the successful legacy baseline Docker image.
+ - [x] Add a compatibility job that tries legacy module builds from newest to older candidate NGINX releases.
+ - [x] Record the highest successful release as `baseline_nginx_version` after a runtime smoke test.
+ - [x] Freeze and archive the successful legacy baseline Docker image.
 - [ ] Provide a plain-NGINX fallback baseline with equivalent hand-written compression, cache-header, and format-selection configuration.
 - [ ] Build the product comparison image on a pinned current NGINX release.
 - [ ] Run every benchmark against plain NGINX, the reproducible legacy baseline, and Laghu on current NGINX.

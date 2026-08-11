@@ -7,6 +7,8 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include <inttypes.h>
+
 #include "laghu/html_cache.h"
 #include "ngx_http_laghu_internal.h"
 
@@ -19,6 +21,26 @@ static bool ngx_http_laghu_html_cache_token_equal(const unsigned char *value,
                                                   const char *expected) {
   return ngx_strlen(expected) == length &&
          ngx_strncasecmp((u_char *)value, (u_char *)expected, length) == 0;
+}
+
+static void laghu_http_laghu_generate_trace_ids(const ngx_http_request_t *request,
+                                               char trace_id[33U],
+                                               char span_id[17U]) {
+  uint64_t trace_high = UINT64_C(1469598103934665603);
+  uint64_t trace_low = UINT64_C(1099511628211);
+  trace_high ^= (uint64_t)ngx_time();
+  trace_high *= UINT64_C(1099511628211);
+  trace_low ^= (uint64_t)(uintptr_t)request;
+  trace_low *= UINT64_C(1099511628211);
+  if (request != NULL && request->connection != NULL) {
+    trace_high ^= (uint64_t)request->connection->number;
+    trace_low ^= (uint64_t)request->method_name.len;
+  }
+  if (trace_high == 0U && trace_low == 0U) trace_high = UINT64_C(1);
+  (void)snprintf(trace_id, 33U, "%016" PRIx64 "%016" PRIx64, trace_high,
+                 trace_low);
+  (void)snprintf(span_id, 17U, "%016" PRIx64,
+                 trace_high ^ trace_low);
 }
 
 static bool ngx_http_laghu_html_cache_control_prohibits(laghu_buffer value) {
@@ -136,6 +158,8 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
     return ngx_http_laghu_next_header_filter(request);
   }
   context->log_started_ms = ngx_current_msec;
+  laghu_http_laghu_generate_trace_ids(request, context->trace_id,
+                                     context->span_id);
   prepared = laghu_http_transaction_prepare(
       &context->transaction, &context->request, &context->response,
       &context->environment, &result);

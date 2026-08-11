@@ -15,6 +15,6 @@ fi
 if getent passwd www-data >/dev/null; then
   adduser www-data laghu
 fi
-systemd-tmpfiles --create laghu.conf >/dev/null 2>&1 || true
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/laghu.conf >/dev/null 2>&1 || true
 
 #DEBHELPER#

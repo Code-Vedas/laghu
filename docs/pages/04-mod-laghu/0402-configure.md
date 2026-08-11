@@ -88,6 +88,23 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu RumStorePendingLimit BYTES` | main server | `16KiB..1GiB`, size suffix accepted | `16MiB` | Bounds unsynchronized deltas. |
 | `Laghu RumStoreRequired On\|Off` | main server | boolean | `Off` | Makes RUM initialization failure fatal. |
 
+## Preset behavior contract
+
+Preset selection resolves to the following tested filter families and safety
+settings in the shared policy engine.
+
+| Preset | Enabled filters | Risk | Lossy | Structural rewrite | Resource inlining | Script reordering | Image quality |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `safe` | `image_lossless`, `image_metadata`, `image_dimensions` | conservative | no | no | no | no | codec default |
+| `balanced` | safe + `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension` | moderate | yes | yes | no | no | `82` |
+| `aggressive` | balanced + `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer` | expansive | yes | yes | yes | yes | `75` |
+| `ecommerce` | safe + `image_modern`, `image_responsive`, `image_lazyload`, `css_minify`, `resource_hints`, `cache_extension` | conservative | yes | yes | no | no | `85` |
+| `blog` | balanced + `resource_inline`, `critical_css`, `javascript_defer` | moderate | yes | yes | yes | yes | `82` |
+| `static` | aggressive + `immutable_cache` | expansive | yes | yes | yes | yes | `75` |
+
+You can always narrow a preset with `disable_filter`/`forbid_filter`, but not
+with unknown tokens; unsupported values are rejected by config loaders.
+
 `Preset` and `RewriteLevel` cannot appear together in the same scope.
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be declared only once per scope; duplicate or conflicting controls fail startup.

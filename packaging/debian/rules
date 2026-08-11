@@ -37,6 +37,8 @@ override_dh_auto_clean:
 	rm -rf debian/apache-module
 
 override_dh_auto_install:
+	install -D -m 0755 debian/build/servers/laghu/laghu \
+		debian/laghu/usr/bin/laghu
 	install -D -m 0644 \
 		debian/nginx-module-build/ngx_http_laghu_module.so \
 		debian/ngx-laghu/usr/lib/nginx/modules/ngx_http_laghu_module.so

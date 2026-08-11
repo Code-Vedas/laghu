@@ -1,0 +1,81 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+
+BASELINE_VERSION="${BASELINE_NGINX_VERSION:-${NGINX_BASELINE_VERSION:-}}"
+if [ -z "${BASELINE_VERSION}" ]; then
+  if [ -f "${NGINX_BASELINE_VERSION_PATH:-${REPO_ROOT}/tmp/baseline_nginx_version}" ]; then
+    BASELINE_VERSION="$(sed -n '1p' "${NGINX_BASELINE_VERSION_PATH:-${REPO_ROOT}/tmp/baseline_nginx_version}")"
+  fi
+fi
+if [ -z "${BASELINE_VERSION}" ]; then
+  echo "Baseline NGINX version not provided." >&2
+  echo "Set BASELINE_NGINX_VERSION or write it to NGINX_BASELINE_VERSION_PATH." >&2
+  exit 1
+fi
+
+architecture="$(uname -m)"
+case "${architecture}" in
+  x86_64) architecture="amd64" ;;
+  aarch64) architecture="arm64" ;;
+esac
+
+image_tag="${BASELINE_IMAGE_TAG:-laghu-baseline-compatibility-nginx-${BASELINE_VERSION}-${architecture}}"
+archive_path="${NGINX_BASELINE_IMAGE_ARCHIVE:-${REPO_ROOT}/tmp/legacy-baseline-nginx-${BASELINE_VERSION}-${architecture}.tar.gz}"
+manifest_path="${NGINX_BASELINE_IMAGE_MANIFEST:-${REPO_ROOT}/tmp/legacy-baseline-nginx-${BASELINE_VERSION}-${architecture}.json}"
+context_dir="${NGINX_BASELINE_IMAGE_CONTEXT:-${REPO_ROOT}}"
+
+if [ ! -f "${context_dir}/packaging/container/Dockerfile" ]; then
+  echo "Expected a container Dockerfile at ${context_dir}/packaging/container/Dockerfile." >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "${archive_path}")" "$(dirname "${manifest_path}")"
+
+echo "Building legacy baseline docker image ${image_tag} from NGINX ${BASELINE_VERSION}" >&2
+if [ -n "${DOCKER_PLATFORM:-}" ]; then
+  docker build \
+    --platform "${DOCKER_PLATFORM}" \
+    --file "${context_dir}/packaging/container/Dockerfile" \
+    --build-arg "NGINX_VERSION=${BASELINE_VERSION}" \
+    --build-arg "LAGHU_VERSION=0.1.0" \
+    --progress plain \
+    --tag "${image_tag}" \
+    "${context_dir}"
+else
+  docker build \
+    --file "${context_dir}/packaging/container/Dockerfile" \
+    --build-arg "NGINX_VERSION=${BASELINE_VERSION}" \
+    --build-arg "LAGHU_VERSION=0.1.0" \
+    --progress plain \
+    --tag "${image_tag}" \
+    "${context_dir}"
+fi
+
+image_id="$(docker image inspect "${image_tag}" --format '{{.Id}}')"
+echo "Built image id ${image_id}" >&2
+echo "Archiving ${image_tag} to ${archive_path}" >&2
+docker save "${image_tag}" | gzip >"${archive_path}"
+
+{
+  printf '{\n'
+  printf '  "baseline_nginx_version": "%s",\n' "${BASELINE_VERSION}"
+  printf '  "architecture": "%s",\n' "${architecture}"
+  printf '  "image_tag": "%s",\n' "${image_tag}"
+  printf '  "image_id": "%s"\n' "${image_id}"
+  printf '}\n'
+} >"${manifest_path}"
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  printf 'baseline_image_tag=%s\n' "${image_tag}" >>"${GITHUB_OUTPUT}"
+  printf 'baseline_image_archive=%s\n' "${archive_path}" >>"${GITHUB_OUTPUT}"
+  printf 'baseline_image_id=%s\n' "${image_id}" >>"${GITHUB_OUTPUT}"
+  printf 'baseline_nginx_version=%s\n' "${BASELINE_VERSION}" >>"${GITHUB_OUTPUT}"
+fi

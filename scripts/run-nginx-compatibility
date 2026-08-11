@@ -1,0 +1,38 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+
+CANDIDATES="${NGINX_COMPATIBILITY_CANDIDATES:-1.31.3 1.30.4}"
+BASELINE_PATH="${NGINX_BASELINE_VERSION_PATH:-${REPO_ROOT}/tmp/baseline_nginx_version}"
+
+mkdir -p "$(dirname "${BASELINE_PATH}")"
+
+attempt() {
+  version="$1"
+  printf '%s\n' "=== probing nginx compatibility candidate=${version} ==="
+  NGINX_VERSION="${version}" "${SCRIPT_DIR}/build-nginx-module"
+  NGINX_VERSION="${version}" "${SCRIPT_DIR}/run-module-smoke-all"
+}
+
+for candidate in ${CANDIDATES}; do
+  if attempt "${candidate}"; then
+    printf '%s\n' "${candidate}" >"${BASELINE_PATH}"
+    printf 'baseline_nginx_version=%s\n' "${candidate}"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+      printf 'baseline_nginx_version=%s\n' "${candidate}" >>"${GITHUB_OUTPUT}"
+    fi
+    exit 0
+  fi
+  printf '%s\n' "candidate ${candidate} failed" >&2
+done
+
+printf '%s\n' "NGINX compatibility probe failed for all candidates" >&2
+printf '%s\n' "Candidates: ${CANDIDATES}" >&2
+exit 1

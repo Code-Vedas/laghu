@@ -124,6 +124,8 @@ typedef struct {
   uint64_t request_id;
   uint64_t started_ms;
   char method[16];
+  char trace_id[33U];
+  char span_id[17U];
   char path[LAGHU_RUNTIME_PATH_SIZE];
   unsigned int status;
   laghu_decision decision;

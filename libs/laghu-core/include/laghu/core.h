@@ -58,6 +58,7 @@ extern "C" {
 #define LAGHU_HTML_CACHE_TTL_MAX 3600U
 #define LAGHU_HTML_CACHE_STALE_TTL_UNSET 0U
 #define LAGHU_HTML_CACHE_STALE_TTL_MAX 86400U
+#define LAGHU_ROLLOUT_PERCENTAGE_UNSET 101U
 
 typedef enum {
   LAGHU_MODE_UNSET = -1,
@@ -168,6 +169,10 @@ typedef struct {
   laghu_mode mode;
   laghu_preset preset;
   laghu_rewrite_level rewrite_level;
+  laghu_mode rollout;
+  unsigned int rollout_percentage;
+  laghu_preset rollout_preset;
+  laghu_rewrite_level rollout_rewrite_level;
   uint32_t enabled_filters;
   uint32_t disabled_filters;
   uint32_t forbidden_filters;
@@ -232,6 +237,7 @@ typedef enum {
   LAGHU_DECISION_BYPASS_QUERY_OVERRIDE,
   LAGHU_DECISION_BYPASS_QUERY_OFF,
   LAGHU_DECISION_BYPASS_QUERY_EXPLAIN,
+  LAGHU_DECISION_BYPASS_QUERY_PREVIEW,
   LAGHU_DECISION_BYPASS_FORWARDED_PROTO,
   LAGHU_DECISION_IMAGE_HIT,
   LAGHU_DECISION_BYPASS_ERROR
@@ -240,7 +246,8 @@ typedef enum {
 typedef enum {
   LAGHU_QUERY_CONTROL_NONE = 0,
   LAGHU_QUERY_CONTROL_OFF,
-  LAGHU_QUERY_CONTROL_EXPLAIN
+  LAGHU_QUERY_CONTROL_EXPLAIN,
+  LAGHU_QUERY_CONTROL_PREVIEW
 } laghu_query_control;
 
 typedef enum {
@@ -272,7 +279,11 @@ const char *laghu_rewrite_level_name(laghu_rewrite_level rewrite_level);
 bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
                                  laghu_policy *policy);
 bool laghu_resolve_config_policy(const laghu_config *config,
-                                 laghu_policy *policy);
+                                laghu_policy *policy);
+bool laghu_resolve_config_policy_with_error(const laghu_config *config,
+                                            laghu_policy *policy,
+                                            char *error,
+                                            size_t error_size);
 bool laghu_parse_filter(const char *value, uint32_t *filter);
 const char *laghu_filter_name(uint32_t filter);
 bool laghu_mime_type_allowed(const char *allowlist, const char *content_type);

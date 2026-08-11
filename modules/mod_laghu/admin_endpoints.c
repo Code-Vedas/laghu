@@ -120,59 +120,37 @@ int laghu_apache_admin_endpoint(request_rec *request,
       return HTTP_INTERNAL_SERVER_ERROR;
     return laghu_apache_admin_write(request, &response, rendered);
   }
-  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE) {
-    laghu_cache_stats stats = {0};
+  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE ||
+      plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY ||
+      plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
     laghu_operational_snapshot snapshot;
     laghu_operational_readiness readiness;
-    laghu_http_administrative_response response;
-    char *rendered = apr_palloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
-    if (rendered == NULL ||
-        !laghu_cache_backend_health_path(config->service.image_cache, &stats) ||
-        !laghu_operational_registry_snapshot(&laghu_apache_operational,
-                                             &snapshot) ||
-        !laghu_operational_readiness_evaluate(
-            &snapshot, (uint64_t)apr_time_sec(apr_time_now()), true, true,
-            config->service.readiness_strict, &readiness) ||
-        !laghu_http_administrative_render_console(&stats, &readiness, rendered,
-                                                  LAGHU_OPERATIONAL_RENDER_SIZE,
-                                                  &response))
-      return HTTP_SERVICE_UNAVAILABLE;
-    return laghu_apache_admin_write(request, &response, rendered);
-  }
-  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY) {
-    laghu_operational_snapshot snapshot;
-    laghu_http_administrative_history_model history;
-    laghu_http_administrative_response response;
-    char *rendered = apr_palloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
-    if (rendered == NULL ||
-        !laghu_operational_registry_snapshot(&laghu_apache_operational,
-                                            &snapshot) ||
-        !laghu_http_administrative_build_history_model(
-            &snapshot, &plan.history_query, &history) ||
-        !laghu_http_administrative_render_history(
-            &history, rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response))
-      return HTTP_SERVICE_UNAVAILABLE;
-    return laghu_apache_admin_write(request, &response, rendered);
-  }
-  if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
-    laghu_operational_snapshot snapshot;
-    laghu_operational_readiness readiness;
-    laghu_http_administrative_explain_model explain;
+    laghu_http_administrative_console_page_model page;
     laghu_http_administrative_response response;
     laghu_cache_stats stats = {0};
+    bool cache_ready = false;
     char *rendered = apr_palloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
-    if (rendered == NULL ||
-        !laghu_cache_backend_health_path(config->service.image_cache, &stats) ||
-        !laghu_operational_registry_snapshot(&laghu_apache_operational,
+    if (rendered == NULL) return HTTP_INTERNAL_SERVER_ERROR;
+    if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE ||
+        plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
+      if (!laghu_cache_backend_health_path(config->service.image_cache, &stats))
+        return HTTP_SERVICE_UNAVAILABLE;
+      cache_ready = true;
+    } else {
+      cache_ready = laghu_cache_backend_health_path(config->service.image_cache,
+                                                   &stats);
+    }
+    if (!laghu_operational_registry_snapshot(&laghu_apache_operational,
                                             &snapshot) ||
         !laghu_operational_readiness_evaluate(
-            &snapshot, (uint64_t)apr_time_sec(apr_time_now()), true, true,
-            config->service.readiness_strict, &readiness) ||
-        !laghu_http_administrative_build_explain_model(
-            &plan.explain_query, &readiness, &stats, &explain) ||
-        !laghu_http_administrative_render_explain(
-            &explain, rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response))
+            &snapshot, (uint64_t)apr_time_sec(apr_time_now()), true,
+            cache_ready, config->service.readiness_strict, &readiness) ||
+        !laghu_http_administrative_build_console_page_model(
+            &plan, &stats, &readiness, &snapshot, &page) ||
+        !laghu_http_administrative_render_console_page(
+            &plan, &page, rendered, LAGHU_OPERATIONAL_RENDER_SIZE, &response)) {
       return HTTP_SERVICE_UNAVAILABLE;
+    }
     return laghu_apache_admin_write(request, &response, rendered);
   }
   if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_METRICS ||
@@ -208,9 +186,11 @@ int laghu_apache_admin_endpoint(request_rec *request,
     laghu_http_administrative_response response;
     char *rendered = apr_palloc(request->pool, LAGHU_OPERATIONAL_RENDER_SIZE);
     uint64_t matched = 0U;
+    const char *purge_target =
+        plan.purge_target[0] != '\0' ? plan.purge_target : plan.normalized_path;
     if (rendered == NULL) return HTTP_INTERNAL_SERVER_ERROR;
     purge_result = laghu_cache_backend_purge_url_path(
-        config->service.image_cache, plan.normalized_path,
+        config->service.image_cache, purge_target,
         (uint64_t)apr_time_sec(apr_time_now()), &matched);
     if (!laghu_http_administrative_render_purge(purge_result, matched, rendered,
                                                 LAGHU_OPERATIONAL_RENDER_SIZE,

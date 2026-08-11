@@ -74,6 +74,14 @@ target "ubuntu-apache-prefork" {
     APACHE_MPM = "prefork"
   }
 }
+target "ubuntu-standalone" {
+  inherits = ["base"]
+  args = {
+    BASE_IMAGE = "ubuntu:24.04"
+    PACKAGE_FAMILY = "apt"
+    SERVER = "standalone"
+  }
+}
 target "fedora-nginx" {
   inherits = ["base"]
   args = { BASE_IMAGE = "fedora:44", PACKAGE_FAMILY = "dnf", SERVER = "nginx" }

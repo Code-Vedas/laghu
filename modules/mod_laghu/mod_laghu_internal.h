@@ -99,6 +99,8 @@ typedef struct {
   bool css_capture;
   bool log_written;
   apr_time_t log_started;
+  char trace_id[33U];
+  char span_id[17U];
 } laghu_apache_context;
 
 extern module AP_MODULE_DECLARE_DATA laghu_module;

@@ -84,6 +84,8 @@ typedef struct {
   bool header_deferred;
   bool log_written;
   uint64_t log_started_ms;
+  char trace_id[33U];
+  char span_id[17U];
 } ngx_http_laghu_request_ctx_t;
 
 extern ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;

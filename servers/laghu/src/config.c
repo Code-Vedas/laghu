@@ -492,8 +492,10 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
                        "--trusted-proxy requires forwarded headers");
   {
     laghu_policy policy;
-    if (!laghu_resolve_config_policy(&options->config, &policy))
-      return proxy_error(error, error_size, "invalid filter policy");
+    char policy_error[160U];
+    if (!laghu_resolve_config_policy_with_error(
+            &options->config, &policy, policy_error, sizeof(policy_error)))
+      return proxy_error(error, error_size, policy_error);
   }
   return LAGHU_PROXY_PARSE_OK;
 }

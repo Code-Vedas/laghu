@@ -193,6 +193,10 @@ void laghu_config_init(laghu_config *config) {
   config->mode = LAGHU_MODE_UNSET;
   config->preset = LAGHU_PRESET_UNSET;
   config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
+  config->rollout = LAGHU_MODE_OFF;
+  config->rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
+  config->rollout_preset = LAGHU_PRESET_UNSET;
+  config->rollout_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   config->enabled_filters = 0U;
   config->disabled_filters = 0U;
   config->forbidden_filters = 0U;
@@ -261,6 +265,10 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
   laghu_mode parent_respect_vary = LAGHU_MODE_ON;
   laghu_mode parent_respect_x_forwarded_proto = LAGHU_MODE_OFF;
   laghu_mode parent_query_filter_overrides = LAGHU_MODE_OFF;
+  laghu_mode parent_rollout = LAGHU_MODE_OFF;
+  unsigned int parent_rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
+  laghu_preset parent_rollout_preset = LAGHU_PRESET_UNSET;
+  laghu_rewrite_level parent_rollout_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
 
   if (result == NULL) {
     return;
@@ -334,6 +342,14 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       parent_respect_x_forwarded_proto = parent->respect_x_forwarded_proto;
     if (parent->query_filter_overrides != LAGHU_MODE_UNSET)
       parent_query_filter_overrides = parent->query_filter_overrides;
+    if (parent->rollout != LAGHU_MODE_UNSET)
+      parent_rollout = parent->rollout;
+    if (parent->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET)
+      parent_rollout_percentage = parent->rollout_percentage;
+    if (parent->rollout_preset != LAGHU_PRESET_UNSET)
+      parent_rollout_preset = parent->rollout_preset;
+    if (parent->rollout_rewrite_level != LAGHU_REWRITE_LEVEL_UNSET)
+      parent_rollout_rewrite_level = parent->rollout_rewrite_level;
   }
 
   result->mode = child != NULL && child->mode != LAGHU_MODE_UNSET ? child->mode
@@ -472,6 +488,22 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       child != NULL && child->query_filter_overrides != LAGHU_MODE_UNSET
           ? child->query_filter_overrides
           : parent_query_filter_overrides;
+  result->rollout =
+      child != NULL && child->rollout != LAGHU_MODE_UNSET ? child->rollout
+                                                         : parent_rollout;
+  result->rollout_percentage =
+      child != NULL &&
+              child->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET
+          ? child->rollout_percentage
+          : parent_rollout_percentage;
+  result->rollout_preset =
+      child != NULL && child->rollout_preset != LAGHU_PRESET_UNSET
+          ? child->rollout_preset
+          : parent_rollout_preset;
+  result->rollout_rewrite_level =
+      child != NULL && child->rollout_rewrite_level != LAGHU_REWRITE_LEVEL_UNSET
+          ? child->rollout_rewrite_level
+          : parent_rollout_rewrite_level;
   if (child != NULL && child->cache_mime_types[0] != '\0') {
     (void)snprintf(result->cache_mime_types, sizeof(result->cache_mime_types),
                    "%s", child->cache_mime_types);
@@ -996,12 +1028,14 @@ bool laghu_apply_query_control(const char *query, laghu_query_control *control) 
       if (!laghu_decode_query_parameter_value(cursor + 6U, length - 6U,
                                              decoded) ||
           (strcmp(decoded, "off") != 0 &&
-           strcmp(decoded, "explain") != 0))
+           strcmp(decoded, "explain") != 0 &&
+           strcmp(decoded, "preview") != 0))
         return false;
       seen_control = true;
       *control =
           (strcmp(decoded, "off") == 0 ? LAGHU_QUERY_CONTROL_OFF
-                                       : LAGHU_QUERY_CONTROL_EXPLAIN);
+           : strcmp(decoded, "explain") == 0 ? LAGHU_QUERY_CONTROL_EXPLAIN
+                                            : LAGHU_QUERY_CONTROL_PREVIEW);
     }
     if (end == NULL) break;
     cursor = end + 1U;
@@ -1329,29 +1363,57 @@ bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
   }
 }
 
-bool laghu_resolve_config_policy(const laghu_config *config,
-                                 laghu_policy *policy) {
+static void laghu_resolve_config_policy_error(char *error, size_t error_size,
+                                             const char *message) {
+  if (error != NULL && error_size != 0U) (void)snprintf(error, error_size, "%s",
+                                                        message);
+}
+
+bool laghu_resolve_config_policy_with_error(const laghu_config *config,
+                                            laghu_policy *policy,
+                                            char *error,
+                                            size_t error_size) {
   bool has_preset;
   bool has_rewrite_level;
+  bool has_rollout_preset;
+  bool has_rollout_rewrite_level;
   bool resolved;
   laghu_sha256_context resource_context;
   unsigned int index;
+  if (error != NULL && error_size != 0U && error[0] != '\0') error[0] = '\0';
 
   if (config == NULL || policy == NULL) {
+    laghu_resolve_config_policy_error(error, error_size,
+                                     "missing configuration");
     return false;
   }
-  if (!laghu_domain_policy_validate(&config->domain_policy)) return false;
+  if (!laghu_domain_policy_validate(&config->domain_policy)) {
+    laghu_resolve_config_policy_error(error, error_size,
+                                     "invalid domain policy");
+    return false;
+  }
   if (((config->enabled_filters | config->disabled_filters |
         config->forbidden_filters) &
        ~LAGHU_FILTER_ALL_MASK) != 0U ||
       (config->enabled_filters & config->disabled_filters) != 0U ||
       (config->enabled_filters & config->forbidden_filters) != 0U) {
+    laghu_resolve_config_policy_error(error, error_size,
+                                      "invalid or conflicting filter family");
     return false;
   }
   if (config->instrumentation_sample_rate !=
           LAGHU_INSTRUMENTATION_SAMPLE_RATE_UNSET &&
-      config->instrumentation_sample_rate > 100U)
+      config->instrumentation_sample_rate > 100U) {
+    laghu_resolve_config_policy_error(
+        error, error_size, "instrumentation sample-rate exceeds 100");
     return false;
+  }
+  if (config->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET &&
+      config->rollout_percentage > 100U) {
+    laghu_resolve_config_policy_error(error, error_size,
+                                      "rollout percentage out of range");
+    return false;
+  }
   if ((config->transform_memory_limit != LAGHU_TRANSFORM_MEMORY_LIMIT_UNSET &&
        (config->transform_memory_limit < LAGHU_TRANSFORM_MEMORY_LIMIT_MIN ||
         config->transform_memory_limit > LAGHU_TRANSFORM_MEMORY_LIMIT_MAX)) ||
@@ -1360,13 +1422,59 @@ bool laghu_resolve_config_policy(const laghu_config *config,
         config->transform_deadline_ms > LAGHU_TRANSFORM_DEADLINE_MS_MAX)) ||
       (config->variants_per_source != LAGHU_VARIANTS_PER_SOURCE_UNSET &&
        (config->variants_per_source < LAGHU_VARIANTS_PER_SOURCE_MIN ||
-        config->variants_per_source > LAGHU_VARIANTS_PER_SOURCE_MAX)))
+        config->variants_per_source > LAGHU_VARIANTS_PER_SOURCE_MAX))) {
+    laghu_resolve_config_policy_error(error, error_size,
+                                      "transform tuning values are out of range");
     return false;
-  if (!laghu_domain_policy_validate(&config->domain_policy)) return false;
+  }
+  if (!laghu_domain_policy_validate(&config->domain_policy)) {
+    laghu_resolve_config_policy_error(error, error_size,
+                                     "invalid domain policy");
+    return false;
+  }
 
   has_preset = config->preset != LAGHU_PRESET_UNSET;
   has_rewrite_level = config->rewrite_level != LAGHU_REWRITE_LEVEL_UNSET;
+  has_rollout_preset = config->rollout_preset != LAGHU_PRESET_UNSET;
+  has_rollout_rewrite_level =
+      config->rollout_rewrite_level != LAGHU_REWRITE_LEVEL_UNSET;
+  if (config->rollout != LAGHU_MODE_ON) {
+    if (config->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET) {
+      laghu_resolve_config_policy_error(
+          error, error_size,
+          "rollout percentage requires rollout to be enabled");
+      return false;
+    }
+    if (has_rollout_preset) {
+      laghu_resolve_config_policy_error(
+          error, error_size,
+          "rollout preset requires rollout to be enabled");
+      return false;
+    }
+    if (has_rollout_rewrite_level) {
+      laghu_resolve_config_policy_error(
+          error, error_size,
+          "rollout rewrite-level requires rollout to be enabled");
+      return false;
+    }
+  }
+  if (config->rollout == LAGHU_MODE_ON &&
+      config->rollout_percentage == LAGHU_ROLLOUT_PERCENTAGE_UNSET) {
+    laghu_resolve_config_policy_error(
+        error, error_size, "rollout percentage required");
+    return false;
+  }
+  if (config->rollout == LAGHU_MODE_ON &&
+      has_rollout_preset == has_rollout_rewrite_level) {
+    laghu_resolve_config_policy_error(
+        error, error_size,
+        "set exactly one of rollout preset or rollout rewrite-level");
+    return false;
+  }
   if (has_preset == has_rewrite_level) {
+    laghu_resolve_config_policy_error(
+        error, error_size,
+        "set exactly one of preset or rewrite-level");
     return false;
   }
 
@@ -1375,6 +1483,9 @@ bool laghu_resolve_config_policy(const laghu_config *config,
                  : laghu_resolve_rewrite_level(config->rewrite_level, policy);
   if (resolved && config->rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
       config->enabled_filters != 0U) {
+    laghu_resolve_config_policy_error(
+        error, error_size,
+        "passthrough policy does not allow enabled filters");
     return false;
   }
   if (resolved) {
@@ -1408,6 +1519,8 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   }
   if (resolved && config->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
     if (config->image_quality > 100U) {
+      laghu_resolve_config_policy_error(error, error_size,
+                                       "image quality exceeds 100");
       return false;
     }
     if (policy->allow_lossy) {
@@ -1499,6 +1612,11 @@ bool laghu_resolve_config_policy(const laghu_config *config,
   return resolved;
 }
 
+bool laghu_resolve_config_policy(const laghu_config *config,
+                                 laghu_policy *policy) {
+  return laghu_resolve_config_policy_with_error(config, policy, NULL, 0U);
+}
+
 laghu_decision laghu_decide(const laghu_config *config,
                             const laghu_response *response) {
   laghu_policy policy;
@@ -1576,6 +1694,8 @@ const char *laghu_decision_name(laghu_decision decision) {
       return "bypass-query-off";
     case LAGHU_DECISION_BYPASS_QUERY_EXPLAIN:
       return "bypass-query-explain";
+    case LAGHU_DECISION_BYPASS_QUERY_PREVIEW:
+      return "bypass-query-preview";
     case LAGHU_DECISION_BYPASS_FORWARDED_PROTO:
       return "bypass-forwarded-proto";
     case LAGHU_DECISION_IMAGE_HIT:

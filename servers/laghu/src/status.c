@@ -37,11 +37,14 @@ static bool status_migrate_filter_in_set(const char *filter, const char *set[32]
 static bool status_migrate_collect_filters(const char *legacy_filter,
                                           const char *(*filters)[32],
                                           size_t *filter_count);
+static bool status_migrate_next_token(const char **cursor, const char *end,
+                                     char *value, size_t value_size);
 static bool status_migrate_prefix_is(const char *value, const char *prefix);
 static bool status_migrate_eq_ci(const char *left, const char *right);
 static const char *status_migrate_command_prefix(const char *value);
 static void status_migrate_replacements(const char *line, FILE *output);
 static bool status_migrate_parse_pagespeed(const char *line, FILE *output);
+static bool status_migrate_parse_pagespeed_filters(const char *line, FILE *output);
 static bool status_migrate_convert_line(const char *line, FILE *output);
 int laghu_migrate_run(int argc, char **argv);
 
@@ -180,22 +183,62 @@ static bool status_migrate_collect_filters(const char *legacy_filter,
   return false;
 }
 
+static bool status_migrate_next_token(const char **cursor, const char *end,
+                                     char *value, size_t value_size) {
+  const char *start;
+  const char *current;
+  size_t length;
+
+  if (cursor == NULL || *cursor == NULL || end == NULL || value == NULL ||
+      value_size < 1U)
+    return false;
+
+  current = *cursor;
+  while (current < end && isspace((unsigned char)*current)) ++current;
+  if (current >= end) return false;
+
+  if (*current == '\'' || *current == '"') {
+    char quote = *current++;
+    start = current;
+    while (current < end && *current != quote) ++current;
+    if (current >= end) return false;
+  } else {
+    start = current;
+    while (current < end && !isspace((unsigned char)*current)) ++current;
+  }
+
+  length = (size_t)(current - start);
+  if (length == 0U || length >= value_size) return false;
+  memcpy(value, start, length);
+  value[length] = '\0';
+
+  if (*current == '\'' || *current == '"') ++current;
+  while (current < end && isspace((unsigned char)*current)) ++current;
+  *cursor = current;
+  return true;
+}
+
 static void status_migrate_replacements(const char *line, FILE *output) {
   size_t index = 0U;
   if (line == NULL || output == NULL) return;
   while (line[index] != '\0') {
     if (status_migrate_prefix_is(line + index, "/pagespeed_admin")) {
-      fputs("/laghu/console", output);
+      fputs("/.laghu/console", output);
+      index += 16U;
+      continue;
+    }
+    if (status_migrate_prefix_is(line + index, "/pagespeed_stats")) {
+      fputs("/.laghu/stats", output);
       index += 16U;
       continue;
     }
     if (status_migrate_prefix_is(line + index, "/pagespeed_console")) {
-      fputs("/metrics", output);
+      fputs("/.laghu/metrics", output);
       index += 18U;
       continue;
     }
     if (status_migrate_prefix_is(line + index, "/pagespeed_statistics")) {
-      fputs("/laghu/stats", output);
+      fputs("/.laghu/stats", output);
       index += 21U;
       continue;
     }
@@ -243,7 +286,7 @@ static const char *status_migrate_command_prefix(const char *line) {
     return *cursor == '\0' || *cursor == '#' ? NULL : cursor;
   }
   if (status_migrate_prefix_is(cursor, "mod_pagespeed")) {
-    cursor += 12U;
+    cursor += 13U;
     if (*cursor == ' ' || *cursor == '\t') {
       while (isspace((unsigned char)*cursor)) ++cursor;
       return *cursor == '\0' || *cursor == '#' ? NULL : cursor;
@@ -259,7 +302,7 @@ static bool status_migrate_copy_segment(const char *start, const char *end,
   if (start == NULL || end == NULL || output == NULL || output_size < 1U ||
       start >= end) return false;
   while (start < end && isspace((unsigned char)*start)) ++start;
-  while (end > start && isspace((unsigned char)end[-1U])) --end;
+  while (end > start && isspace((unsigned char)*(end - 1U))) --end;
   length = (size_t)(end - start);
   if (length == 0U || length >= output_size) return false;
   memcpy(output, start, length);
@@ -304,7 +347,8 @@ static bool status_migrate_parse_pagespeed(const char *line, FILE *output) {
   while (value_start < command_end && isspace((unsigned char)*value_start))
     ++value_start;
   value_end = command_end;
-  while (value_end > value_start && isspace((unsigned char)value_end[-1U]))
+  while (value_end > value_start &&
+         isspace((unsigned char)*(value_end - 1U)))
     --value_end;
 
   if (status_migrate_eq_ci(command, "on") ||
@@ -321,7 +365,13 @@ static bool status_migrate_parse_pagespeed(const char *line, FILE *output) {
       !status_migrate_eq_ci(command, "EnableFilters") &&
       !status_migrate_eq_ci(command, "Disallow") &&
       !status_migrate_eq_ci(command, "FileCachePath") &&
-      !status_migrate_eq_ci(command, "AllowResources")) {
+      !status_migrate_eq_ci(command, "AllowResources") &&
+      !status_migrate_eq_ci(command, "MapRewriteDomain") &&
+      !status_migrate_eq_ci(command, "MapProxyDomain") &&
+      !status_migrate_eq_ci(command, "ShardDomain") &&
+      !status_migrate_eq_ci(command, "InPlaceResourceOptimization") &&
+      !status_migrate_eq_ci(command, "InPlaceOptimizeForBrowser") &&
+      !status_migrate_eq_ci(command, "ImageRecompressQuality")) {
     return false;
   }
 
@@ -359,6 +409,53 @@ static bool status_migrate_parse_pagespeed(const char *line, FILE *output) {
   if (!status_migrate_copy_segment(value_start, value_end, value, sizeof(value)) ||
       value[0U] == '\0')
     return false;
+
+  if (status_migrate_eq_ci(command, "MapRewriteDomain") ||
+      status_migrate_eq_ci(command, "MapProxyDomain") ||
+      status_migrate_eq_ci(command, "ShardDomain")) {
+    char first[1024U];
+    char second[1024U];
+    const char *cursor = value_start;
+    if (!status_migrate_next_token(&cursor, command_end, first, sizeof(first)) ||
+        !status_migrate_next_token(&cursor, command_end, second, sizeof(second)) ||
+        status_migrate_next_token(&cursor, command_end, quote_free,
+                                 sizeof(quote_free)))
+      return false;
+    if (status_migrate_eq_ci(command, "MapRewriteDomain"))
+      fprintf(output, "laghu map_rewrite_domain %s %s;\n", first, second);
+    else if (status_migrate_eq_ci(command, "MapProxyDomain"))
+      fprintf(output, "laghu map_proxy_domain %s %s;\n", first, second);
+    else
+      fprintf(output, "laghu shard_domain %s %s;\n", first, second);
+    return true;
+  }
+
+  if (status_migrate_eq_ci(command, "InPlaceResourceOptimization") ||
+      status_migrate_eq_ci(command, "InPlaceOptimizeForBrowser")) {
+    char state[64U];
+    const char *cursor = value_start;
+    if (!status_migrate_next_token(&cursor, command_end, state, sizeof(state)) ||
+        status_migrate_next_token(&cursor, command_end, quote_free,
+                                 sizeof(quote_free)))
+      return false;
+    if (status_migrate_eq_ci(state, "on"))
+      fputs("laghu enable image_modern;\n", output);
+    else if (status_migrate_eq_ci(state, "off"))
+      fputs("laghu disable image_modern;\n", output);
+    else
+      return false;
+    return true;
+  }
+
+  if (status_migrate_eq_ci(command, "ImageRecompressQuality")) {
+    const char *cursor = value_start;
+    if (!status_migrate_next_token(&cursor, command_end, value, sizeof(value)) ||
+        status_migrate_next_token(&cursor, command_end, quote_free,
+                                 sizeof(quote_free)))
+      return false;
+    fprintf(output, "laghu image_quality %s;\n", value);
+    return true;
+  }
 
   if (status_migrate_eq_ci(command, "EnableFilters")) {
     for (cursor = value;;) {
@@ -413,9 +510,77 @@ static bool status_migrate_parse_pagespeed(const char *line, FILE *output) {
   return false;
 }
 
+static bool status_migrate_parse_pagespeed_filters(const char *line, FILE *output) {
+  static bool emitted_query_toggle;
+  const char *command_start = line;
+  const char *command_end;
+  const char *value_start;
+  const char *cursor;
+  const char *filters[32U];
+  char value[1024U];
+  size_t index;
+  size_t filter_count = 0U;
+
+  if (line == NULL || output == NULL) return false;
+  while (*command_start != '\0' &&
+         ((*command_start == ' ') || (*command_start == '\t'))) {
+    ++command_start;
+  }
+  if (command_start[0U] == '\0' || command_start[0U] == '#') return false;
+  if (!status_migrate_prefix_is(command_start, "PageSpeedFilters")) return false;
+  command_end = strchr(command_start, ';');
+  if (command_end == NULL) return false;
+  value_start = command_start + 16U;
+  while (value_start < command_end && isspace((unsigned char)*value_start))
+    ++value_start;
+  if (*value_start == '=') ++value_start;
+  while (value_start < command_end && isspace((unsigned char)*value_start))
+    ++value_start;
+  if (value_start >= command_end) return false;
+  if (!status_migrate_copy_segment(value_start, command_end, value, sizeof(value)))
+    return false;
+  if (*value == '\0') return false;
+
+  cursor = value;
+  for (;;) {
+    const char *filter_end = strchr(cursor, ',');
+    char legacy_filter[64U];
+    if (filter_end == NULL) filter_end = cursor + strlen(cursor);
+    if (!status_migrate_copy_segment(cursor, filter_end, legacy_filter,
+                                    sizeof(legacy_filter)) ||
+        legacy_filter[0U] == '\0') {
+      return false;
+    }
+    if (!status_migrate_collect_filters(legacy_filter, &filters, &filter_count))
+      return false;
+    cursor = filter_end;
+    if (*cursor != ',') break;
+    ++cursor;
+  }
+
+  if (!emitted_query_toggle) {
+    fputs("laghu query_filter_overrides on;\n", output);
+    emitted_query_toggle = true;
+  }
+  fputs("laghuFilters=", output);
+  for (index = 0U; index < filter_count; ++index) {
+    if (index != 0U) fputc(',', output);
+    fputc('+', output);
+    fputs(filters[index], output);
+  }
+  fputs(";\n", output);
+  return true;
+}
+
 static bool status_migrate_convert_line(const char *line, FILE *output) {
   if (line == NULL || output == NULL) return false;
   if (status_migrate_parse_pagespeed(line, output)) return true;
+  if (status_migrate_parse_pagespeed_filters(line, output)) return true;
+  if (status_migrate_command_prefix(line) != NULL) {
+    fputs("# unsupported legacy directive omitted by laghu migrate; manual review required\n",
+          output);
+    return true;
+  }
   status_migrate_replacements(line, output);
   return false;
 }
@@ -1360,16 +1525,17 @@ int laghu_bench_run(int argc, char **argv) {
           "\"throughput_rps\":%llu}\n",
           request_path, requests, status_200, failures,
           (unsigned long long)status_error_4xx,
-          (unsigned long long)status_error_5xx, malformed,
-          connection_failures, request_bytes, minimum_ms, maximum_ms,
-          average_ms, throughput);
+          (unsigned long long)status_error_5xx, malformed, connection_failures,
+          (unsigned long long)request_bytes,
+          (unsigned long long)minimum_ms, (unsigned long long)maximum_ms,
+          (unsigned long long)average_ms, (unsigned long long)throughput);
     } else {
       char ratio[64U];
-      if (snprintf(ratio, sizeof(ratio), "%llu", requests == 0U
-                                            ? 0ULL
-                                            : ((uint64_t)status_200
-                                               * 1000000ULL) /
-                                                  (uint64_t)requests) < 0) {
+      if (snprintf(ratio, sizeof(ratio), "%llu",
+                   (unsigned long long)(requests == 0U
+                                           ? 0ULL
+                                           : ((uint64_t)status_200 * 1000000ULL) /
+                                                 (uint64_t)requests)) < 0) {
         fputs("laghu bench: malformed response\n", stderr);
         return 5;
       }
@@ -1377,10 +1543,12 @@ int laghu_bench_run(int argc, char **argv) {
           "bench: target=%s requests=%u success=%u failures=%u status_4xx=%llu "
           "status_5xx=%llu malformed=%u connection_failures=%u bytes=%llu "
           "ratio_ppm=%s min_ms=%llu max_ms=%llu avg_ms=%llu throughput_rps=%llu\n",
-          request_path, requests, status_200, failures,
-          (unsigned long long)status_error_4xx,
-          (unsigned long long)status_error_5xx, malformed, connection_failures,
-          request_bytes, ratio, minimum_ms, maximum_ms, average_ms, throughput);
+            request_path, requests, status_200, failures,
+            (unsigned long long)status_error_4xx,
+            (unsigned long long)status_error_5xx, malformed, connection_failures,
+            (unsigned long long)request_bytes,
+            ratio, (unsigned long long)minimum_ms, (unsigned long long)maximum_ms,
+            (unsigned long long)average_ms, (unsigned long long)throughput);
     }
   }
   if (malformed > 0U)

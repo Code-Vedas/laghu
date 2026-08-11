@@ -583,6 +583,69 @@ static unsigned int laghu_http_parse_dpr(const laghu_http_request *request) {
   return whole >= 100U && whole <= 400U ? whole : 100U;
 }
 
+static uint32_t laghu_http_rollout_hash(const unsigned char *data,
+                                        size_t length,
+                                        uint32_t hash) {
+  size_t index;
+  for (index = 0U; index < length; ++index) {
+    hash ^= (uint32_t)data[index];
+    hash *= 16777619U;
+  }
+  return hash;
+}
+
+static unsigned int laghu_http_rollout_bucket(const laghu_http_request *request,
+                                             unsigned int modulo) {
+  const unsigned char *query;
+  size_t index;
+  size_t path_length;
+  uint32_t hash;
+  if (request == NULL || request->normalized_path.data == NULL ||
+      request->normalized_path.length == 0U || modulo == 0U) {
+    return 0U;
+  }
+  hash = 2166136261U;
+  hash = laghu_http_rollout_hash(request->method.data, request->method.length, hash);
+  hash = laghu_http_rollout_hash(request->authority.data, request->authority.length,
+                                 hash);
+  path_length = request->normalized_path.length;
+  query = request->normalized_path.data;
+  for (index = 0U; index < path_length; ++index) {
+    if (query[index] == '?') {
+      break;
+    }
+    hash = laghu_http_rollout_hash(&query[index], 1U, hash);
+  }
+  hash ^= (uint32_t)modulo;
+  hash *= 16777619U;
+  return (unsigned int)(hash % modulo);
+}
+
+static bool laghu_http_apply_rollout(laghu_config *config,
+                                    const laghu_http_request *request) {
+  unsigned int bucket;
+  if (config == NULL || request == NULL ||
+      config->rollout != LAGHU_MODE_ON) {
+    return false;
+  }
+  if (config->rollout_percentage == LAGHU_ROLLOUT_PERCENTAGE_UNSET) {
+    return false;
+  }
+  bucket = laghu_http_rollout_bucket(request, 100U);
+  if (bucket >= config->rollout_percentage) {
+    return false;
+  }
+  if (config->rollout_preset != LAGHU_PRESET_UNSET) {
+    config->preset = config->rollout_preset;
+    config->rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
+  } else if (config->rollout_rewrite_level !=
+             LAGHU_REWRITE_LEVEL_UNSET) {
+    config->rewrite_level = config->rollout_rewrite_level;
+    config->preset = LAGHU_PRESET_UNSET;
+  }
+  return true;
+}
+
 static bool laghu_http_internal_asset_key(const char *path,
                                           char output[LAGHU_RUNTIME_KEY_SIZE]) {
   static const char image_prefix[] = "/.laghu/image/";
@@ -720,10 +783,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   transaction->request = request;
   transaction->response = response;
   transaction->environment = *environment;
+  (void)laghu_http_apply_rollout(&transaction->environment.config, request);
+  const laghu_config *config = &transaction->environment.config;
   laghu_transform_budget_init(&transaction->budget,
-                              environment->config.transform_memory_limit,
-                              environment->config.transform_deadline_ms,
-                              environment->config.variants_per_source);
+                              config->transform_memory_limit,
+                              config->transform_deadline_ms,
+                              config->variants_per_source);
   transaction->capability_mask =
       laghu_http_refresh_backend(&transaction->environment);
   transaction->viewport_width =
@@ -739,7 +804,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   transaction->cache_publishable = true;
   laghu_cache_source_scope(environment->cache_path, transaction->path);
   laghu_cache_variant_limit_scope(environment->cache_path,
-                                  environment->config.variants_per_source);
+                                  config->variants_per_source);
   if (laghu_http_internal_asset_key(transaction->path,
                                     transaction->cache_key) &&
       laghu_runtime_cache_lookup_variant(
@@ -786,7 +851,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
             : snprintf(source, sizeof(source), "%s%s", transaction->origin,
                        transaction->path);
     if (written <= 0 || (size_t)written >= sizeof(source) ||
-        !laghu_resource_allowed(&environment->config, source)) {
+        !laghu_resource_allowed(config, source)) {
       transaction->decision = LAGHU_DECISION_BYPASS_RESOURCE_POLICY;
       transaction->prepared = true;
       result->action = LAGHU_HTTP_ACTION_BYPASS;
@@ -841,7 +906,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   classification.has_authorization =
       laghu_http_find_header(request->headers, request->header_count,
                              "Authorization") != NULL;
-  decision = laghu_decide(&environment->config, &classification);
+  decision = laghu_decide(config, &classification);
   if (decision == LAGHU_DECISION_PASS &&
       (!response->complete || response->partial)) {
     decision = LAGHU_DECISION_BYPASS_STATUS;
@@ -857,7 +922,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       decision = LAGHU_DECISION_BYPASS_ERROR;
     } else if (!laghu_vary_supported(vary_value)) {
       transaction->cache_publishable = false;
-      if (environment->config.respect_vary != LAGHU_MODE_OFF)
+      if (config->respect_vary != LAGHU_MODE_OFF)
         decision = LAGHU_DECISION_BYPASS_VARY;
     }
   }
@@ -890,6 +955,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       result->action = LAGHU_HTTP_ACTION_BYPASS;
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_QUERY_OFF);
     }
+    if (control == LAGHU_QUERY_CONTROL_PREVIEW) {
+      decision = LAGHU_DECISION_BYPASS_QUERY_PREVIEW;
+      transaction->decision = decision;
+      transaction->query_preview = true;
+      result->decision = decision;
+    }
     if (control == LAGHU_QUERY_CONTROL_EXPLAIN) {
       transaction->decision = LAGHU_DECISION_BYPASS_QUERY_EXPLAIN;
       transaction->prepared = true;
@@ -897,7 +968,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       return laghu_http_add_status(result,
                                    LAGHU_DECISION_BYPASS_QUERY_EXPLAIN);
     }
-    if (!laghu_apply_query_filter_overrides(&environment->config, query,
+    if (!laghu_apply_query_filter_overrides(config, query,
                                             &transaction->policy, NULL, NULL)) {
       transaction->decision = LAGHU_DECISION_BYPASS_QUERY_OVERRIDE;
       transaction->prepared = true;
@@ -986,7 +1057,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
       if (laghu_catalog_lookup_url(
               environment->cache_path, transaction->path,
               transaction->policy_key, transaction->capability_mask,
-              environment->now, environment->config.image_metadata_ttl,
+              environment->now, config->image_metadata_ttl,
               &catalog)) {
         unsigned int index;
         for (index = 0U; index < catalog.variant_count &&
@@ -1065,6 +1136,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
         environment->cache_path, transaction->cache_key, transaction->path);
     transaction->action = LAGHU_HTTP_ACTION_CAPTURE_RESOURCE;
     result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
+  }
+  if (transaction->query_preview) {
+    transaction->decision = LAGHU_DECISION_BYPASS_QUERY_PREVIEW;
+    transaction->prepared = true;
+    result->action = transaction->action;
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_QUERY_PREVIEW);
   }
   transaction->decision = LAGHU_DECISION_PASS;
   transaction->prepared = true;

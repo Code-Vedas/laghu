@@ -39,6 +39,224 @@ static bool laghu_http_select_owned(laghu_http_transaction_result *result,
   return true;
 }
 
+static void laghu_http_retain_preview_headers(
+    laghu_http_transaction_result *result) {
+  size_t index;
+  size_t write = 0U;
+  if (result == NULL) return;
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    const laghu_http_header_operation *operation =
+        &result->header_operations[index];
+    if (strncmp(operation->name, "X-Laghu", 7U) == 0) {
+      if (write != index) {
+        result->header_operations[write] = *operation;
+      }
+      ++write;
+      continue;
+    }
+    free(operation->value);
+  }
+  result->header_operation_count = write;
+}
+
+static bool laghu_http_add_query_preview_report(
+    const laghu_http_transaction *transaction,
+    const laghu_http_transaction_result *result,
+    laghu_http_transaction_result *report) {
+  char value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
+  char filters[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
+  char preset[LAGHU_RUNTIME_KEY_SIZE];
+  char rewrite_level[LAGHU_RUNTIME_KEY_SIZE];
+  size_t original_length;
+  size_t selected_length;
+  long long delta_bytes;
+  bool changed;
+  int count;
+  if (transaction == NULL || result == NULL || report == NULL ||
+      transaction->response == NULL) {
+    return false;
+  }
+  original_length = result->original.length;
+  selected_length = result->selected.length;
+  delta_bytes = (long long)selected_length - (long long)original_length;
+  changed = selected_length < original_length;
+  filters[0] = '\0';
+  if ((transaction->policy.filter_families &
+       LAGHU_FILTER_IMAGE_LOSSLESS) != 0U) {
+    (void)snprintf(filters, sizeof(filters), "%s", "image_lossless");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_METADATA) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",image_metadata") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "image_metadata");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_DIMENSIONS) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",image_dimensions") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "image_dimensions");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_MODERN) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",image_modern") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "image_modern");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_RESPONSIVE) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",image_responsive") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "image_responsive");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LAZYLOAD) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",image_lazyload") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "image_lazyload");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",html_minify") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "html_minify");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",css_minify") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "css_minify");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",javascript_minify") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "javascript_minify");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_HINTS) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",resource_hints") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "resource_hints");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CACHE_EXTENSION) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",cache_extension") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "cache_extension");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_COMBINE) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",resource_combine") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "resource_combine");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",resource_inline") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "resource_inline");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",critical_css") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "critical_css");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",javascript_defer") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "javascript_defer");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMMUTABLE_CACHE) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",immutable_cache") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "immutable_cache");
+  }
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CACHE_MEDIA) != 0U) {
+    if (filters[0] != '\0') {
+      if (strlen(filters) + sizeof(",cache_media") >= sizeof(filters)) {
+        return false;
+      }
+      (void)strcat(filters, ",");
+    }
+    (void)strcat(filters, "cache_media");
+  }
+  if ((transaction->policy.preset >= LAGHU_PRESET_SAFE &&
+       transaction->policy.preset <= LAGHU_PRESET_STATIC)) {
+    (void)snprintf(preset, sizeof(preset), "%s", laghu_preset_name(transaction->policy.preset));
+  } else {
+    (void)snprintf(preset, sizeof(preset), "custom");
+  }
+  if (transaction->policy.rewrite_level >= LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
+      transaction->policy.rewrite_level <= LAGHU_REWRITE_LEVEL_EXPERIMENTAL) {
+    (void)snprintf(rewrite_level, sizeof(rewrite_level),
+                   "%s", laghu_rewrite_level_name(transaction->policy.rewrite_level));
+  } else {
+    (void)snprintf(rewrite_level, sizeof(rewrite_level), "unset");
+  }
+  count =
+      snprintf(value, sizeof(value),
+               "changed=%s;original-bytes=%zu;selected-bytes=%zu;"
+               "delta-bytes=%+lld;cache-ready=%s;policy=%s;rewrite=%s;filters=%s",
+               changed ? "true" : "false", original_length, selected_length,
+               delta_bytes, transaction->cache_publishable ? "true" : "false",
+               preset, rewrite_level,
+               filters[0] == '\0' ? "none" : filters);
+  if (count <= 0 || (size_t)count >= sizeof(value)) {
+    return false;
+  }
+  return laghu_http_add_header_operation(report, LAGHU_HTTP_HEADER_SET,
+                                         "X-Laghu-Preview", value);
+}
+
 static bool laghu_http_add_entity_headers(laghu_http_transaction_result *result,
                                           const char *prefix,
                                           const char *dependency_key) {
@@ -989,5 +1207,14 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
   }
   if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML)
     laghu_http_publish_chrome_analysis(transaction, result->selected);
+  if (transaction->query_preview) {
+    (void)laghu_http_add_query_preview_report(transaction, result, result);
+    result->selected = captured_body;
+    if (!laghu_http_add_length(result, captured_body.length)) {
+      return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+    }
+    laghu_http_retain_preview_headers(result);
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_QUERY_PREVIEW);
+  }
   return laghu_http_add_status(result, LAGHU_DECISION_PASS);
 }

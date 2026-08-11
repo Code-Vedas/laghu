@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <httpd.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -53,6 +54,24 @@
 #define LAGHU_ADMIN_SET_READINESS_POLICY (1U << 7U)
 
 #include "mod_laghu_internal.h"
+
+static void laghu_apache_generate_trace_ids(const request_rec *request,
+                                           char trace_id[33U],
+                                           char span_id[17U]) {
+  uint64_t trace_high = UINT64_C(1469598103934665603);
+  uint64_t trace_low = UINT64_C(1099511628211);
+  if (request == NULL || trace_id == NULL || span_id == NULL) return;
+  trace_high ^= (uint64_t)apr_time_now();
+  trace_high *= UINT64_C(1099511628211);
+  trace_low ^= (uint64_t)(uintptr_t)request;
+  trace_low *= UINT64_C(1099511628211);
+  trace_low ^= (uint64_t)apr_time_sec(apr_time_now()) << 32U;
+  if (trace_high == 0U && trace_low == 0U) trace_high = UINT64_C(1);
+  (void)snprintf(trace_id, 33U, "%016" PRIx64 "%016" PRIx64, trace_high,
+                 trace_low);
+  (void)snprintf(span_id, 17U, "%016" PRIx64,
+                 trace_high ^ trace_low);
+}
 
 static bool laghu_apache_html_cache_token_equal(const unsigned char *value,
                                                 size_t length,
@@ -384,6 +403,8 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
       return ap_pass_brigade(filter->next, brigade);
     }
     context->log_started = apr_time_now();
+    laghu_apache_generate_trace_ids(request, context->trace_id,
+                                   context->span_id);
     context->config = laghu_apache_merge_config(request->pool, server_config,
                                                 directory_config);
     if (context->config == NULL || !laghu_apache_normalize(request, context)) {

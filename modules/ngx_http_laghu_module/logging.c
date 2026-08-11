@@ -21,6 +21,8 @@ void ngx_http_laghu_log_transaction(ngx_http_request_t *request,
   const char *decision = "bypass-error";
   uint64_t original = 0U, output = 0U;
   bool job_published = false;
+  const char *trace_id = NULL;
+  const char *span_id = NULL;
   if (request == NULL || context == NULL || context->log_written) return;
   method_length = request->method_name.len < sizeof(method) - 1U
                       ? request->method_name.len
@@ -41,9 +43,12 @@ void ngx_http_laghu_log_transaction(ngx_http_request_t *request,
     else if (result->action != LAGHU_HTTP_ACTION_BYPASS)
       cache = "cold";
   }
+  trace_id = context->trace_id[0] == '\0' ? NULL : context->trace_id;
+  span_id = context->span_id[0] == '\0' ? NULL : context->span_id;
   {
     laghu_log_transaction record = {
-        .common = {(time_t)ngx_time(), "nginx", "nginx"},
+        .common =
+            {(time_t)ngx_time(), "nginx", "nginx", trace_id, span_id},
         .method = method_length == 0U ? "unknown" : method,
         .path = path_length == 0U ? "/" : path,
         .status = request->headers_out.status,

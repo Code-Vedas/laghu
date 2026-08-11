@@ -17,6 +17,8 @@ void laghu_apache_log_transaction(request_rec *request,
   const char *decision = "bypass-error";
   uint64_t original = 0U, output = 0U;
   bool job_published = false;
+  const char *trace_id = NULL;
+  const char *span_id = NULL;
   if (request == NULL || context == NULL || context->log_written) return;
   if (result != NULL) {
     decision = laghu_decision_name(result->decision);
@@ -28,9 +30,13 @@ void laghu_apache_log_transaction(request_rec *request,
     else if (result->action != LAGHU_HTTP_ACTION_BYPASS)
       cache = "cold";
   }
+  trace_id = context->trace_id[0] == '\0' ? NULL : context->trace_id;
+  span_id = context->span_id[0] == '\0' ? NULL : context->span_id;
   {
     laghu_log_transaction record = {
-        .common = {(time_t)apr_time_sec(apr_time_now()), "apache", "apache"},
+        .common =
+            {(time_t)apr_time_sec(apr_time_now()), "apache", "apache", trace_id,
+             span_id},
         .method = request->method == NULL ? "unknown" : request->method,
         .path = request->uri == NULL ? "/" : request->uri,
         .status = (unsigned int)request->status,

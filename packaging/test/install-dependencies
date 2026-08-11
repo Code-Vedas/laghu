@@ -11,8 +11,8 @@ case "${PACKAGE_FAMILY}" in
     apt-get update
     apt-get install --no-install-recommends -y \
       apache2 apache2-dev build-essential bundler clang-format cmake curl \
-      debhelper devscripts dh-apache2 dh-sequence-nginx libpcre2-dev \
-      libssl-dev nginx nginx-dev pkgconf ruby-dev \
+      cargo debhelper devscripts dh-apache2 dh-sequence-nginx libpcre2-dev \
+      libssl-dev nginx nginx-dev pkgconf ruby-dev rustc \
       shellcheck zlib1g-dev
     if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
       apt-get install --no-install-recommends -y libvips-dev libvips-tools

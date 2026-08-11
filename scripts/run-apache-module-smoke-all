@@ -355,13 +355,25 @@ curl --fail --silent \
   http://127.0.0.1:18081/pagespeed_admin | grep '<h1>Laghu console</h1>' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/.laghu/history | grep '<h1>Laghu history</h1>' >/dev/null
+  http://127.0.0.1:18081/.laghu/history | grep '<h2>Laghu history</h2>' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  'http://127.0.0.1:18081/.laghu/history?format=json' | grep '"schema":"laghu-history-v1"' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/pagespeed_statistics | grep 'laghu-cache-stats-v1' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/.laghu/explain?path=/ | grep '<h1>Laghu explain</h1>' >/dev/null
+  'http://127.0.0.1:18081/.laghu/explain?path=/' | grep '<h2>Laghu explain</h2>' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  'http://127.0.0.1:18081/.laghu/explain?path=/&format=json' | grep '"schema":"laghu-explain-v1"' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/.laghu/purge?path=/ | grep '"status":"accepted"' >/dev/null
+curl --fail --silent \
+  -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
+  http://127.0.0.1:18081/pagespeed_stats | grep 'laghu-cache-stats-v1' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/pagespeed_console | grep 'laghu_requests_total' >/dev/null
@@ -619,6 +631,20 @@ if grep '<!-- remove -->' "${work}/minify-page-warm" >/dev/null; then
 fi
 grep -i '^ETag: "laghu-html-' "${work}/minify-page-warm.headers" >/dev/null
 
+curl --fail --silent --dump-header "${work}/minify-page-preview.headers" \
+  http://127.0.0.1:18081/minify-page.html?laghu=preview >"${work}/minify-page-preview"
+cmp "${work}/htdocs/minify-page.html" "${work}/minify-page-preview"
+grep -i '^X-Laghu: bypass-query-preview' \
+  "${work}/minify-page-preview.headers" >/dev/null
+grep -i '^X-Laghu-Preview:' "${work}/minify-page-preview.headers" >/dev/null
+grep -i 'changed=' "${work}/minify-page-preview.headers" | head -n 1 >/dev/null
+grep -i 'policy=' "${work}/minify-page-preview.headers" | head -n 1 >/dev/null
+grep -i 'filters=' "${work}/minify-page-preview.headers" | head -n 1 >/dev/null
+grep -i '^X-Laghu-Cache: bypass' \
+  "${work}/minify-page-preview.headers" >/dev/null
+grep -i '^X-Laghu-Transform: pass' \
+  "${work}/minify-page-preview.headers" >/dev/null
+
 curl --fail --silent --dump-header "${work}/hints-page-cold.headers" \
   http://127.0.0.1:18081/hints-page.html >"${work}/hints-page-cold"
 cmp "${work}/htdocs/hints-page.html" "${work}/hints-page-cold"
@@ -848,14 +874,21 @@ if [ "${readiness_status}" != 200 ] || \
 fi
 
 grep 'laghu_json={"schema":"laghu-log-v1"' "${work}/logs/error.log" >/dev/null
-if grep -E 'smoke-test|apache-purge-token-0123456789|[?]laghu=' "${work}/logs/error.log" >/dev/null; then
-  echo "Apache structured log leaked a secret or query." >&2
+if grep -E 'smoke-test|apache-purge-token-0123456789' "${work}/logs/error.log" >/dev/null; then
+  echo "Apache structured log leaked a secret token." >&2
+  exit 1
+fi
+if grep '[?]laghu=' "${work}/logs/error.log" | grep -v 'laghu=preview' >/dev/null; then
+  echo "Apache structured log leaked a query string." >&2
   exit 1
 fi
 
 trap - EXIT
 kill -WINCH "${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
 kill "${origin_pid}" 2>/dev/null || true
+wait "${pid}" 2>/dev/null || true
+wait "${origin_pid}" 2>/dev/null || true
 if [ "${service_pid}" != "" ]; then
   kill "${service_pid}" 2>/dev/null || true
+  wait "${service_pid}" 2>/dev/null || true
 fi

@@ -19,6 +19,12 @@ ORIGIN_PORT=$((PORT + 1))
 OPTIMIZER_BIN="${LAGHU_OPTIMIZER_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips}"
 JAVASCRIPT_BIN="${LAGHU_JAVASCRIPT_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize}"
 STATUS_BIN="${LAGHU_STATUS_BIN:-${REPO_ROOT}/tmp/build/servers/laghu/laghu}"
+HTTP2_ENABLED=0
+HTTP2_DIRECTIVE=
+if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v2_module'; then
+  HTTP2_ENABLED=1
+  HTTP2_DIRECTIVE='    http2 on;'
+fi
 nginx_user_directive=
 if [ "$(id -u)" -eq 0 ]; then
   nginx_user_directive="user root;"
@@ -53,6 +59,8 @@ printf '%s\n' '<!doctype html><title>Laghu smoke test</title>' \
   >"${SMOKE_DIR}/html/index.html"
 printf '%s\n' '<!doctype html><body><nav><img src="/logo.png" width="40" height="40"></nav><img src="/hero.jpg" width="800" height="600"><img src="/later.jpg" loading="lazy"></body>' \
   >"${SMOKE_DIR}/html/lcp.html"
+printf '%s\n' '<!doctype html><body><!-- @license keep --><!-- remove --> <p class="safe" title="two words">one   two</p><pre> a  b </pre></body></html>' \
+  >"${SMOKE_DIR}/html/http2.html"
 
 image_smoke=0
 optimizer_pid=""
@@ -165,6 +173,7 @@ http {
 
   server {
     listen 127.0.0.1:${PORT};
+${HTTP2_DIRECTIVE}
     root ${SMOKE_DIR}/html;
     early_hints 1;
     laghu on;
@@ -428,6 +437,7 @@ http {
 
   server {
     listen 127.0.0.1:${PORT};
+${HTTP2_DIRECTIVE}
     server_name rewrite-inheritance;
     laghu on;
     laghu rewrite_level passthrough;
@@ -446,6 +456,7 @@ http {
 
   server {
     listen 127.0.0.1:${PORT};
+${HTTP2_DIRECTIVE}
     server_name filter-policy;
     laghu on;
     laghu preset balanced;
@@ -615,6 +626,11 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 0
 fi
 
+CURL_HTTP2_SUPPORT=0
+if curl --help 2>&1 | grep -q -- '--http2-prior-knowledge'; then
+  CURL_HTTP2_SUPPORT=1
+fi
+
 cleanup() {
   if [ "${optimizer_pid}" != "" ]; then
     kill "${optimizer_pid}" 2>/dev/null || true
@@ -675,6 +691,28 @@ if [ "${ready}" -ne 1 ]; then
   fi
   exit 1
 fi
+
+if [ "${HTTP2_ENABLED}" -eq 1 ] && [ "${CURL_HTTP2_SUPPORT}" -eq 1 ]; then
+  curl --fail --silent --show-error \
+    --http2-prior-knowledge \
+    --output "${SMOKE_DIR}/http2-body" \
+    --dump-header "${SMOKE_DIR}/http2-headers" \
+    "http://127.0.0.1:${PORT}/http2.html"
+  if ! tr -d '\r' <"${SMOKE_DIR}/http2-headers" | \
+      awk 'NR == 1 { print; exit }' | grep -q '^HTTP/2 '; then
+    echo "Expected HTTP/2 response for NGINX smoke check." >&2
+    cat "${SMOKE_DIR}/http2-headers" >&2
+    exit 1
+  fi
+  grep -i '^X-Laghu: pass' "${SMOKE_DIR}/http2-headers" >/dev/null
+  grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/http2-headers" >/dev/null
+  grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/http2-headers" >/dev/null
+  grep -F '<!-- @license keep -->' "${SMOKE_DIR}/http2-body" >/dev/null
+  if grep -F '<!-- remove -->' "${SMOKE_DIR}/http2-body" >/dev/null; then
+    echo "HTTP/2 minification path did not apply on smoke output." >&2
+    exit 1
+  fi
+fi
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/stats" | \
@@ -690,15 +728,31 @@ curl --fail --silent --show-error \
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/history" | \
-  grep '<h1>Laghu history</h1>' >/dev/null
+  grep '<h2>Laghu history</h2>' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/.laghu/history?format=json&limit=1" | \
+  grep '"schema":"laghu-history-v1"' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/pagespeed_statistics" | \
   grep 'laghu-cache-stats-v1' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/pagespeed_stats" | \
+  grep 'laghu-cache-stats-v1' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/explain?path=/" | \
-  grep '<h1>Laghu explain</h1>' >/dev/null
+  grep '<h2>Laghu explain</h2>' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/.laghu/explain?path=/&format=json" | \
+  grep '"schema":"laghu-explain-v1"' >/dev/null
+curl --fail --silent --show-error \
+  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+  "http://127.0.0.1:${PORT}/.laghu/purge?path=/" | \
+  grep '"status":"accepted"' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/metrics" | \
@@ -1083,6 +1137,22 @@ while [ "${attempt}" -lt 100 ]; do
   sleep 0.1
 done
 grep -F '/*! keep */' "${SMOKE_DIR}/css-warm" >/dev/null
+if [ "${HTTP2_ENABLED}" -eq 1 ] && [ "${CURL_HTTP2_SUPPORT}" -eq 1 ]; then
+  curl --fail --silent --show-error \
+    --http2-prior-knowledge \
+    --output "${SMOKE_DIR}/http2-css-warm" \
+    --dump-header "${SMOKE_DIR}/http2-css-warm.headers" \
+    "http://127.0.0.1:${PORT}/site.css"
+  if ! tr -d '\r' <"${SMOKE_DIR}/http2-css-warm.headers" | \
+      awk 'NR == 1 { print; exit }' | grep -q '^HTTP/2 '; then
+    echo "Expected HTTP/2 response for transformed CSS warm check." >&2
+    cat "${SMOKE_DIR}/http2-css-warm.headers" >&2
+    exit 1
+  fi
+  grep -F '/*! keep */' "${SMOKE_DIR}/http2-css-warm" >/dev/null
+  tr -d '\r' <"${SMOKE_DIR}/http2-css-warm.headers" | \
+    grep -i -E -x 'ETag: "laghu-css-[0-9a-f]{64}"' >/dev/null
+fi
 if [ "${attempt}" -eq 100 ]; then
   echo "NGINX did not serve the warm minified CSS derivation." >&2
   exit 1
@@ -1218,6 +1288,21 @@ if grep '<!-- remove -->' "${SMOKE_DIR}/minify-page-warm" >/dev/null; then
 fi
 grep -i '^ETag: "laghu-html-' \
   "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
+
+curl --fail --silent --dump-header "${SMOKE_DIR}/minify-page-preview.headers" \
+  --output "${SMOKE_DIR}/minify-page-preview" \
+  "http://127.0.0.1:${PORT}/minify-page.html?laghu=preview"
+cmp "${SMOKE_DIR}/html/minify-page.html" "${SMOKE_DIR}/minify-page-preview"
+grep -i '^X-Laghu: bypass-query-preview' \
+  "${SMOKE_DIR}/minify-page-preview.headers" >/dev/null
+grep -i '^X-Laghu-Preview:' "${SMOKE_DIR}/minify-page-preview.headers" >/dev/null
+grep -i 'changed=' "${SMOKE_DIR}/minify-page-preview.headers" | head -n 1 >/dev/null
+grep -i 'policy=' "${SMOKE_DIR}/minify-page-preview.headers" | head -n 1 >/dev/null
+grep -i 'filters=' "${SMOKE_DIR}/minify-page-preview.headers" | head -n 1 >/dev/null
+grep -i '^X-Laghu-Cache: bypass' \
+  "${SMOKE_DIR}/minify-page-preview.headers" >/dev/null
+grep -i '^X-Laghu-Transform: pass' \
+  "${SMOKE_DIR}/minify-page-preview.headers" >/dev/null
 
 curl --fail --silent --dump-header "${SMOKE_DIR}/hints-page-cold.headers" \
   --output "${SMOKE_DIR}/hints-page-cold" \
@@ -1367,8 +1452,12 @@ test "${attempt}" -lt 50
 curl --fail --silent "http://127.0.0.1:${PORT}${outline_route}" | grep 'outlinePublic' >/dev/null
 
 grep 'laghu_json={"schema":"laghu-log-v1"' "${SMOKE_DIR}/logs/error.log" >/dev/null
-if grep -E 'smoke-test|nginx-purge-token-0123456789|[?]laghu=' "${SMOKE_DIR}/logs/error.log" >/dev/null; then
-  echo "NGINX structured log leaked a secret or query." >&2
+if grep -E 'smoke-test|nginx-purge-token-0123456789' "${SMOKE_DIR}/logs/error.log" >/dev/null; then
+  echo "NGINX structured log leaked a secret token." >&2
+  exit 1
+fi
+if grep '[?]laghu=' "${SMOKE_DIR}/logs/error.log" | grep -v 'laghu=preview' >/dev/null; then
+  echo "NGINX structured log leaked a query string." >&2
   exit 1
 fi
 

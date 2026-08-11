@@ -9,7 +9,7 @@ Priority: optional
 Maintainer: Codevedas Inc. <opensource@codevedas.com>
 Build-Depends: debhelper-compat (= 13), apache2-dev, cmake,
  dh-sequence-apache2, dh-sequence-nginx, pkgconf, libvips-dev (>= 8.15),
- cargo, rustc (>= 1.86)
+ cargo, rustc
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
 Homepage: https://laghu.codevedas.com
@@ -39,6 +39,15 @@ Description: shared asynchronous libvips service for Laghu
  analysis workers; the latter requires a separately installed Chromium binary.
  The official Ubuntu 24.04 build requires the distribution libvips runtime and
  its JPEG, PNG, GIF, and WebP codec dependencies.
+
+Package: laghu
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, laghu-libvips (= ${binary:Version})
+Description: standalone Laghu HTTP optimization reverse proxy
+ Runs the shared Laghu policy and transformation engine as a standalone
+ reverse proxy. The standalone server is useful where native modules are not
+ available or where optimization is isolated into an independent service tier.
+ Run with your own listen and origin arguments.
 
 Package: mod-laghu
 Architecture: any

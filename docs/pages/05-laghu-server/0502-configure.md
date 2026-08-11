@@ -95,6 +95,24 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--version` | flag | n/a | Prints version. |
 
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
+
+## Preset behavior contract
+
+Preset selection resolves to the following tested filter families and safety
+settings in the shared policy engine.
+
+| Preset | Enabled filters | Risk | Lossy | Structural rewrite | Resource inlining | Script reordering | Image quality |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `safe` | `image_lossless`, `image_metadata`, `image_dimensions` | conservative | no | no | no | no | codec default |
+| `balanced` | safe + `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension` | moderate | yes | yes | no | no | `82` |
+| `aggressive` | balanced + `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer` | expansive | yes | yes | yes | yes | `75` |
+| `ecommerce` | safe + `image_modern`, `image_responsive`, `image_lazyload`, `css_minify`, `resource_hints`, `cache_extension` | conservative | yes | yes | no | no | `85` |
+| `blog` | balanced + `resource_inline`, `critical_css`, `javascript_defer` | moderate | yes | yes | yes | yes | `82` |
+| `static` | aggressive + `immutable_cache` | expansive | yes | yes | yes | yes | `75` |
+
+You can always narrow a preset with `disable_filter`/`forbid_filter`, but not
+with unknown tokens; unsupported values are rejected by config loaders.
+
 Filter names are `image_lossless`, `image_metadata`, `image_dimensions`, `image_modern`, `image_responsive`, `image_lazyload`, `html_minify`, `css_minify`, `javascript_minify`, `resource_hints`, `cache_extension`, `resource_combine`, `resource_inline`, `critical_css`, `javascript_defer`, `immutable_cache`, and `cache_media`.
 Each filter may be controlled only once; duplicates and conflicts fail startup, as does enabling a filter with `passthrough`.
 Resource patterns begin with `/`, `http://`, or `https://`; support `*` and `?`; and match normalized URLs without fragments. Query overrides cannot bypass forbidden filters or denied resources, remain origin-visible, and participate in cache identity. Encode `+` as `%2B` for form-style clients.

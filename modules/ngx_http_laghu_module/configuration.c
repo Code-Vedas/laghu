@@ -19,6 +19,32 @@ static void ngx_http_laghu_service_cleanup(void *data) {
   laghu_service_config_dispose(data);
 }
 
+static void ngx_http_laghu_service_error_message(
+    ngx_conf_t *configuration, const laghu_service_diagnostic *error) {
+  const laghu_service_setting_descriptor *descriptor;
+  const char *name;
+  if (configuration == NULL || error == NULL) return;
+  descriptor = laghu_service_setting_describe(error->setting);
+  name = descriptor == NULL || descriptor->name == NULL
+             ? "setting"
+             : descriptor->name;
+  if (error->message[0] == '\0')
+    ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                       "invalid laghu service setting '%s'", name);
+  else
+    ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                       "invalid laghu service setting '%s': %s", name,
+                       error->message);
+}
+
+static void ngx_http_laghu_policy_error_message(ngx_conf_t *configuration,
+                                                const char *message) {
+  if (configuration == NULL) return;
+  ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
+                     "invalid laghu filter policy: %s",
+                     message != NULL ? message : "invalid policy");
+}
+
 static bool ngx_http_laghu_service_cleanup_register(
     ngx_pool_t *pool, laghu_service_config *service) {
   ngx_pool_cleanup_t *cleanup = ngx_pool_cleanup_add(pool, 0);
@@ -91,6 +117,7 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
   ngx_http_laghu_main_conf_t *main_conf;
   laghu_config merged;
   laghu_policy policy;
+  char policy_error[160U];
   laghu_service_diagnostic error = {0};
   laghu_service_finalize_options options = {
       .native_file_loading = true,
@@ -105,14 +132,19 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
     return "invalid, duplicate, conflicting, or excessive inherited domain "
            "policy";
   laghu_config_merge(&merged, &parent_conf->core, &child_conf->core);
-  if (!laghu_resolve_config_policy(&merged, &policy))
-    return "invalid or conflicting inherited laghu filter policy";
+  if (!laghu_resolve_config_policy_with_error(&merged, &policy, policy_error,
+                                            sizeof(policy_error))) {
+    ngx_http_laghu_policy_error_message(configuration, policy_error);
+    return NGX_CONF_ERROR;
+  }
   child_conf->core = merged;
   options.respect_x_forwarded_proto =
       child_conf->core.respect_x_forwarded_proto == LAGHU_MODE_ON;
   if (!laghu_service_config_merge(&child_conf->service, &parent_conf->service,
-                                  &child_conf->service, &error))
-    return "invalid inherited laghu service configuration";
+                                  &child_conf->service, &error)) {
+    ngx_http_laghu_service_error_message(configuration, &error);
+    return NGX_CONF_ERROR;
+  }
   ngx_http_laghu_service_defaults(&child_conf->service);
   if (child_conf->service.source_policy.mode == LAGHU_SOURCE_FILE_NATIVE ||
       child_conf->service.source_policy.mode == LAGHU_SOURCE_FILE_BOTH) {
@@ -129,8 +161,10 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
     child_conf->service.source_policy.native_root[core_location->root.len] =
         '\0';
   }
-  if (!laghu_service_config_finalize(&child_conf->service, &options, &error))
+  if (!laghu_service_config_finalize(&child_conf->service, &options, &error)) {
+    ngx_http_laghu_service_error_message(configuration, &error);
     return "invalid laghu service configuration";
+  }
   if (child_conf->service.source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
       !laghu_source_registry_publish(child_conf->service.asset_upload_queue,
                                      &child_conf->service.source_policy))

@@ -23,6 +23,8 @@ typedef struct {
   time_t timestamp;
   const char *surface;
   const char *component;
+  const char *trace_id;
+  const char *span_id;
 } laghu_log_common;
 
 typedef struct {

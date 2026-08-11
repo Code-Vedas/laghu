@@ -1,0 +1,436 @@
+#!/usr/bin/env python3
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+"""Smoke a standalone laghu container against multiple upstream types."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import urllib.error
+from pathlib import Path
+from typing import Callable, Dict, Tuple
+
+
+def free_port() -> int:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+def wait_http(url: str, timeout: float = 10.0) -> None:
+    deadline = time.time() + timeout
+    last_error: BaseException | None = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if response.status == 200:
+                    return
+        except urllib.error.HTTPError as error:
+            last_error = error
+        except OSError:
+            last_error = None
+            pass
+        time.sleep(0.05)
+    if last_error:
+        raise AssertionError(f"server did not become ready: {url} ({type(last_error).__name__}: {last_error})")
+    raise AssertionError(f"server did not become ready: {url}")
+
+
+def request(
+    url: str, headers: Dict[str, str] | None = None
+) -> Tuple[int, Dict[str, str], bytes]:
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=5) as response:
+        headers = {name.lower(): value for name, value in response.headers.items()}
+        return response.status, headers, response.read()
+
+
+def ensure_path(path: Path) -> None:
+    if not path.exists():
+        raise AssertionError(f"required artifact missing: {path}")
+
+
+def start_app_origin(root: Path) -> Tuple[subprocess.Popen[bytes], int, Callable[[], None]]:
+    port = free_port()
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "http.server",
+            str(port),
+            "--bind",
+            "127.0.0.1",
+            "--directory",
+            str(root),
+        ],
+        cwd=str(root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    def stop() -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    return process, port, stop
+
+
+def start_nginx_origin(
+    root: Path,
+) -> Tuple[subprocess.Popen[bytes], int, Callable[[], None], Path]:
+    if shutil.which("nginx") is None:
+        raise AssertionError("nginx binary is required for nginx origin smoke")
+
+    port = free_port()
+    workdir = Path(tempfile.mkdtemp(prefix="laghu-nginx-origin-"))
+    log_path = Path(tempfile.mkstemp(prefix=f"laghu-nginx-origin-{port}-", suffix=".log")[1])
+    config = workdir / "nginx.conf"
+    error_log_path = log_path.with_suffix(".error")
+    config.write_text(
+        "\n".join(
+            [
+                "worker_processes 1;",
+                f"error_log {error_log_path} notice;",
+                f"pid {workdir / 'nginx.pid'};",
+                "events { worker_connections 128; }",
+                "http {",
+                "  include /etc/nginx/mime.types;",
+                f"  access_log {log_path} combined;",
+                "  server {",
+                f"    listen 127.0.0.1:{port};",
+                f"    root {root};",
+                "    location / { try_files $uri $uri/ =404; }",
+                "  }",
+                "}",
+                "",
+            ]
+        )
+    )
+
+    log_file = log_path.open("ab")
+    process = subprocess.Popen(
+        ["nginx", "-c", str(config), "-g", "daemon off;"],
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+
+    def stop() -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        log_file.close()
+
+    return process, port, stop, log_path
+
+
+def apache_module_path() -> Path:
+    for candidate in (
+        Path("/usr/lib/apache2/modules"),
+        Path("/usr/lib64/httpd/modules"),
+        Path("/usr/lib/httpd/modules"),
+    ):
+        if candidate.is_dir():
+            return candidate
+    return Path("/usr/lib/apache2/modules")
+
+
+def apache_load_first_mpm(module_dir: Path) -> list[str]:
+    loaded = []
+    preferred = os.environ.get("APACHE_MPM")
+    checks = (
+        ("event", ".so", "mpm_event_module"),
+        ("worker", ".so", "mpm_worker_module"),
+        ("prefork", ".so", "mpm_prefork_module"),
+    )
+
+    if preferred:
+        for name, suffix, directive in checks:
+            if preferred != name:
+                continue
+            module = f"mod_mpm_{name}{suffix}"
+            module_file = module_dir / module
+            if module_file.exists():
+                loaded.append(f"LoadModule {directive} {module_file}")
+            return loaded
+
+    for name, suffix, directive in checks:
+        module = f"mod_mpm_{name}{suffix}"
+        module_file = module_dir / module
+        if module_file.exists():
+            loaded.append(f"LoadModule {directive} {module_file}")
+            return loaded
+    return loaded
+
+
+def start_apache_origin(
+    root: Path,
+) -> Tuple[subprocess.Popen[bytes], int, Callable[[], None], Path]:
+    apache = shutil.which("apache2ctl") or shutil.which("apache2") or shutil.which("httpd")
+    if apache is None:
+        raise AssertionError("apache2/httpd binary is required for apache origin smoke")
+
+    port = free_port()
+    module_dir = apache_module_path()
+    module_directives = [
+        ("mod_authz_core.so", "authz_core_module"),
+        ("mod_mime.so", "mime_module"),
+        ("mod_alias.so", "alias_module"),
+        ("mod_dir.so", "dir_module"),
+        ("mod_log_config.so", "log_config_module"),
+        ("mod_negotiation.so", "negotiation_module"),
+        ("mod_unixd.so", "unixd_module"),
+    ]
+    load_modules = [*apache_load_first_mpm(module_dir)]
+    for module, directive in module_directives:
+        module_path = module_dir / module
+        if module_path.exists():
+            load_modules.append(f"LoadModule {directive} {module_path}")
+    has_mime_types = Path("/etc/mime.types").exists()
+    if has_mime_types:
+        load_modules.append('TypesConfig "/etc/mime.types"')
+
+    workdir = Path(tempfile.mkdtemp(prefix="laghu-apache-origin-"))
+    config = workdir / "apache.conf"
+    log_path = Path(tempfile.mkstemp(prefix=f"laghu-apache-origin-{port}-", suffix=".log")[1])
+    config.write_text(
+        "\n".join(
+            [
+                "ServerRoot /etc/apache2",
+                f"PidFile {workdir}/apache.pid",
+                "User www-data",
+                "Group www-data",
+                f"Listen 127.0.0.1:{port}",
+                "ServerName localhost",
+                f"ErrorLog {log_path}",
+                "LogLevel warn",
+                *load_modules,
+                f"DocumentRoot {root}",
+                "<Directory />",
+                "  Require all denied",
+                "</Directory>",
+                f"<Directory {root}>",
+                "  Options -Indexes +FollowSymLinks",
+                "  AllowOverride None",
+                "  Require all granted",
+                "</Directory>",
+                f"<VirtualHost 127.0.0.1:{port}>",
+                "  ServerName localhost",
+                f"  DocumentRoot {root}",
+                "  DirectoryIndex index.html",
+                "</VirtualHost>",
+                "",
+            ]
+        )
+    )
+
+    log_file = log_path.open("ab")
+    process = subprocess.Popen(
+        [apache, "-f", str(config), "-DFOREGROUND"],
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+
+    def stop() -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        log_file.close()
+
+    return process, port, stop, log_path
+
+
+def start_origin(
+    mode: str, root: Path
+) -> Tuple[subprocess.Popen[bytes], int, Callable[[], None], Path | None]:
+    if mode == "app":
+        process, origin_port, stop_origin = start_app_origin(root)
+        return process, origin_port, stop_origin, None
+    if mode == "nginx":
+        return start_nginx_origin(root)
+    if mode == "apache":
+        return start_apache_origin(root)
+    raise AssertionError(f"unsupported origin mode: {mode}")
+
+
+def has_laghu_header(headers: Dict[str, str]) -> bool:
+    return any(key.startswith("x-laghu") for key in headers)
+
+
+def _read_text(path: Path | None, default: str = "") -> str:
+    if path is None or not path.exists():
+        return default
+    return path.read_bytes().decode("utf-8", "replace")
+
+
+def run_origin_mode(mode: str, executable: Path) -> None:
+    root = Path(tempfile.mkdtemp(prefix=f"laghu-origin-{mode}-"))
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "index.html").write_text(
+        "<!doctype html><html><body><!-- remove -->" "hello" 
+        "<script src='/app.js'></script></body></html>",
+        encoding="utf-8",
+    )
+    (root / "app.js").write_text(
+        "function app(value){ return value + 1; }",
+        encoding="utf-8",
+    )
+    root.chmod(0o755)
+    for filename in ("index.html", "app.js"):
+        (root / filename).chmod(0o644)
+
+    origin_process, origin_port, stop_origin, origin_log_path = start_origin(mode, root)
+    try:
+        if origin_process.poll() is not None:
+            if origin_log_path and origin_log_path.exists():
+                origin_logs = _read_text(origin_log_path)
+                error_logs = _read_text(origin_log_path.with_suffix(".error"))
+                details = ""
+                if origin_logs:
+                    details += f"ACCESS:\n{origin_logs}\n"
+                if error_logs:
+                    details += f"ERROR:\n{error_logs}\n"
+                raise AssertionError(
+                    f"origin process exited early for {mode}: code={origin_process.returncode} {details}".strip()
+                )
+            raise AssertionError(
+                f"origin process exited early for {mode}: code={origin_process.returncode}"
+            )
+        try:
+            wait_http(f"http://127.0.0.1:{origin_port}/index.html", timeout=30)
+        except AssertionError:
+            if origin_log_path and origin_log_path.exists():
+                origin_logs = _read_text(origin_log_path)
+                error_logs = _read_text(origin_log_path.with_suffix(".error"))
+                details = ""
+                if origin_logs:
+                    details += f"ACCESS:\n{origin_logs}\n"
+                if error_logs:
+                    details += f"ERROR:\n{error_logs}\n"
+                raise AssertionError(
+                    f"origin server failed to start for {mode}: {details}"
+                )
+            raise AssertionError(
+                f"server did not become ready for origin mode={mode}: "
+                f"http://127.0.0.1:{origin_port}/index.html"
+            )
+
+        cache_root = Path(tempfile.mkdtemp(prefix=f"laghu-cache-{mode}-"))
+        proxy_port = free_port()
+        log_path = Path(tempfile.mkstemp(prefix=f"laghu-standalone-{mode}-", suffix=".log")[1])
+        laghu_cmd = [
+            str(executable),
+            "--listen",
+            f"127.0.0.1:{proxy_port}",
+            "--origin",
+            f"http://127.0.0.1:{origin_port}",
+            "--cache",
+            str(cache_root),
+            "--worker-queue",
+            str(cache_root / "jobs.queue"),
+            "--javascript-queue",
+            str(cache_root / "javascript.queue"),
+            "--allow-resources",
+            "/*",
+            "--disallow",
+            "/never-optimized/*",
+            "--query-filter-overrides",
+            "on",
+            "--rewrite-level",
+            "all",
+            "--workers",
+            "1",
+            "--connection-queue",
+            "1",
+        ]
+
+        with log_path.open("ab") as log_file:
+            proxy = subprocess.Popen(
+                laghu_cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+
+        try:
+            wait_http(f"http://127.0.0.1:{proxy_port}/index.html", timeout=20)
+
+            cold_status, cold_headers, cold_body = request(
+                f"http://127.0.0.1:{proxy_port}/index.html"
+            )
+            if cold_status != 200:
+                raise AssertionError(f"cold request failed for {mode}: status={cold_status}")
+            if not cold_body:
+                raise AssertionError(f"cold body empty for {mode}")
+
+            warm_status, warm_headers, warm_body = request(
+                f"http://127.0.0.1:{proxy_port}/index.html"
+            )
+            if warm_status != 200:
+                raise AssertionError(f"warm request failed for {mode}: status={warm_status}")
+            if not warm_body:
+                raise AssertionError(f"warm body empty for {mode}")
+            if "<!-- remove -->" in warm_body.decode("utf-8", "replace"):
+                raise AssertionError(f"standalone {mode} origin did not warm HTML response")
+
+            if not has_laghu_header(warm_headers):
+                raise AssertionError(f"standalone {mode} origin missing laghu header")
+
+        finally:
+            if proxy.poll() is None:
+                proxy.terminate()
+                proxy.wait(timeout=5)
+
+            logs = log_path.read_bytes().decode("utf-8", "replace")
+            if '"schema":"laghu-log-v1"' not in logs:
+                raise AssertionError(f"laghu logs not emitted for {mode}")
+    finally:
+        stop_origin()
+
+
+def main() -> None:
+    project_root = Path.cwd()
+    build_dir = Path(os.environ.get("BUILD_DIR", project_root / "tmp" / "build"))
+    executable = Path(
+        os.environ.get(
+            "LAGHU_EXE", str(build_dir / "servers" / "laghu" / "laghu")
+        )
+    )
+    runtime_fixture = Path(
+        os.environ.get(
+            "LAGHU_RUNTIME_FIXTURE",
+            str(build_dir / "libs" / "laghu-runtime" / "laghu_runtime_cache_fixture"),
+        )
+    )
+
+    ensure_path(executable)
+    ensure_path(runtime_fixture)
+
+    for mode in ("app", "nginx", "apache"):
+        run_origin_mode(mode, executable)
+
+    print("laghu standalone container origins smoke passed")
+
+
+if __name__ == "__main__":
+    main()

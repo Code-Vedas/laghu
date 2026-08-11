@@ -136,90 +136,73 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection,
       access_value->status = response.status;
       access_value->output_bytes = head ? 0U : response.length;
     }
-  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE) {
-    laghu_cache_stats stats = {0};
+  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE ||
+             plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY ||
+             plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
     laghu_operational_snapshot snapshot;
     laghu_operational_readiness readiness;
+    laghu_http_administrative_console_page_model page;
     laghu_http_administrative_response response;
+    laghu_cache_stats stats = {0};
+    bool cache_ready = false;
     char *html = calloc(1U, LAGHU_OPERATIONAL_RENDER_SIZE);
-    if (!proxy_cache_probe(options->service.image_cache) ||
-        !laghu_cache_backend_health_path(options->service.image_cache, &stats) ||
-        !laghu_operational_registry_snapshot(&worker->queue->operational,
-                                             &snapshot) ||
-        !laghu_operational_readiness_evaluate(
-            &snapshot, (uint64_t)time(NULL),
-            proxy_state(worker->queue) == PROXY_RUNNING, true,
-            options->service.readiness_strict, &readiness) ||
-        html == NULL || !laghu_http_administrative_render_console(
-                              &stats, &readiness, html, LAGHU_OPERATIONAL_RENDER_SIZE,
-                              &response)) {
+    if (html == NULL) {
       proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
                        "runtime");
-    } else if (response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON) {
-      const char *reason = response.status == 200U ? "OK" : "Service Unavailable";
-      proxy_send_admin_json(client, response.status, reason, html, head);
-      access_value->status = response.status;
-      access_value->output_bytes = head ? 0U : response.length;
-    } else {
-      proxy_send_admin_html(client, response.status, "OK", html, head);
-      access_value->status = response.status;
-      access_value->output_bytes = head ? 0U : response.length;
+      return true;
     }
-    free(html);
-  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY) {
-    laghu_operational_snapshot snapshot;
-    laghu_http_administrative_history_model history;
-    laghu_http_administrative_response response;
-    char *html = calloc(1U, LAGHU_OPERATIONAL_RENDER_SIZE);
+    if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE ||
+        plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
+      if (!proxy_cache_probe(options->service.image_cache) ||
+          !laghu_cache_backend_health_path(options->service.image_cache,
+                                           &stats)) {
+        proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
+                         "runtime");
+        free(html);
+        return true;
+      }
+      cache_ready = true;
+    } else {
+      if (proxy_cache_probe(options->service.image_cache) &&
+          laghu_cache_backend_health_path(options->service.image_cache, &stats)) {
+        cache_ready = true;
+      } else {
+        cache_ready = false;
+      }
+    }
     if (!laghu_operational_registry_snapshot(&worker->queue->operational,
                                             &snapshot) ||
-        !laghu_http_administrative_build_history_model(
-            &snapshot, &plan.history_query, &history) ||
-        html == NULL || !laghu_http_administrative_render_history(
-                            &history, html, LAGHU_OPERATIONAL_RENDER_SIZE,
-                            &response)) {
-      proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
-                       "runtime");
-    } else {
-      proxy_send_admin_html(client, response.status, "OK", html, head);
-      access_value->status = response.status;
-      access_value->output_bytes = head ? 0U : response.length;
-    }
-    free(html);
-  } else if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
-    laghu_operational_snapshot snapshot;
-    laghu_operational_readiness readiness;
-    laghu_http_administrative_explain_model explain;
-    laghu_http_administrative_response response;
-    laghu_cache_stats stats = {0};
-    char *html = calloc(1U, LAGHU_OPERATIONAL_RENDER_SIZE);
-    if (!proxy_cache_probe(options->service.image_cache) ||
-        !laghu_cache_backend_health_path(options->service.image_cache, &stats) ||
-        !laghu_operational_registry_snapshot(&worker->queue->operational,
-                                            &snapshot) ||
         !laghu_operational_readiness_evaluate(
             &snapshot, (uint64_t)time(NULL),
-            proxy_state(worker->queue) == PROXY_RUNNING, true,
+            proxy_state(worker->queue) == PROXY_RUNNING, cache_ready,
             options->service.readiness_strict, &readiness) ||
-        !laghu_http_administrative_build_explain_model(&plan.explain_query,
-                                                      &readiness, &stats,
-                                                      &explain) ||
-        html == NULL || !laghu_http_administrative_render_explain(
-                             &explain, html, LAGHU_OPERATIONAL_RENDER_SIZE,
-                             &response)) {
+        !laghu_http_administrative_build_console_page_model(
+            &plan, &stats, &readiness, &snapshot, &page) ||
+        !laghu_http_administrative_render_console_page(
+            &plan, &page, html, LAGHU_OPERATIONAL_RENDER_SIZE, &response)) {
       proxy_admin_fail(client, access_value, 503U, "Service Unavailable",
                        "runtime");
+      free(html);
+      return true;
+    }
+    if (response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON) {
+      const char *reason = response.status == 200U ? "OK" : "Service Unavailable";
+      proxy_send_admin_json(client, response.status, reason, html, head);
     } else {
       proxy_send_admin_html(client, response.status, "OK", html, head);
-      access_value->status = response.status;
-      access_value->output_bytes = head ? 0U : response.length;
-      access_value->failure = response.status == 200U ? "none" : "readiness";
+      if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
+        access_value->failure = response.status == 200U ? "none" : "readiness";
+      }
     }
+    access_value->status = response.status;
+    access_value->output_bytes = head ? 0U : response.length;
     free(html);
   } else {
     uint64_t matched = 0U;
+    const char *purge_target =
+        plan.purge_target[0] != '\0' ? plan.purge_target : plan.normalized_path;
     laghu_cache_purge_result purged = laghu_cache_backend_purge_url_path(
-        options->service.image_cache, plan.normalized_path,
+        options->service.image_cache, purge_target,
         (uint64_t)time(NULL), &matched);
     laghu_http_administrative_response response;
     char json[192];

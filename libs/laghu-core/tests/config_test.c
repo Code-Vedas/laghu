@@ -5,6 +5,9 @@
 
 #include "laghu/config.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <string.h>
 

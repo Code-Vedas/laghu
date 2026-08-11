@@ -74,6 +74,7 @@ mkdir -p "${BUILD_DIR}"
   ./configure \
     --builddir="${BUILD_DIR}" \
     --with-compat \
+    --with-http_v2_module \
     --add-dynamic-module="${MODULE_DIR}"
   make -f "${BUILD_DIR}/Makefile" "${MAKE_JOBS:--j2}"
 )
