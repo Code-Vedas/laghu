@@ -457,6 +457,7 @@ bool laghu_http_administrative_plan_build(
   bool target_purge_query = false;
   bool console_history_alias = false;
   bool console_explain_alias = false;
+  bool canonicalize_alias = false;
   laghu_buffer path;
   laghu_buffer query;
   unsigned int history_limit = 0U;
@@ -512,10 +513,12 @@ bool laghu_http_administrative_plan_build(
   } else if (strcmp(plan->normalized_path, "/.laghu/history") == 0) {
     plan->route = LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE;
     console_history_alias = true;
+    canonicalize_alias = true;
     plan->console_view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_HISTORY;
   } else if (strcmp(plan->normalized_path, "/.laghu/explain") == 0) {
     plan->route = LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE;
     console_explain_alias = true;
+    canonicalize_alias = true;
     plan->console_view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_EXPLAIN;
   } else if (strcmp(plan->normalized_path, "/.laghu/purge") == 0) {
     plan->route = LAGHU_HTTP_ADMINISTRATIVE_ROUTE_PURGE;
@@ -596,6 +599,11 @@ bool laghu_http_administrative_plan_build(
         plan->console_view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_HISTORY;
       } else if (console_explain_alias) {
         plan->console_view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_EXPLAIN;
+      }
+      if (canonicalize_alias) {
+        (void)snprintf(plan->normalized_path,
+                       sizeof(plan->normalized_path), "%s",
+                       "/.laghu/console");
       }
       if (plan->console_view ==
           LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_EXPLAIN) {

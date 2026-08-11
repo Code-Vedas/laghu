@@ -16,6 +16,7 @@ run_cmd license-headers "${SCRIPT_DIR}/run-license-headers-all"
 run_cmd shell-syntax sh -c '
   for script in "${1}"/scripts/*; do
     [ -f "${script}" ] || continue
+    [ "${script}" = "${1}/scripts/run-standalone-container-smoke" ] && continue
     sh -n "${script}"
   done
   sh -n "${1}/packaging/debian/laghu-libvips.postinst"
@@ -25,11 +26,14 @@ run_cmd python-syntax env PYTHONPYCACHEPREFIX="${REPO_ROOT}/tmp/pycache" \
   "${PYTHON:-python3}" -m py_compile \
   "${REPO_ROOT}/workers/laghu-chrome-analyze/tests/analysis_test.py" \
   "${REPO_ROOT}/workers/laghu-libvips/tests/worker_test.py" \
-  "${REPO_ROOT}/workers/laghu-html-refresh/tests/refresh_test.py"
+  "${REPO_ROOT}/workers/laghu-html-refresh/tests/refresh_test.py" \
+  "${REPO_ROOT}/scripts/run-standalone-container-smoke"
 
 if has_command shellcheck; then
   # SC1091 is disabled because the shared helper path is calculated at runtime.
-  run_cmd shellcheck shellcheck -e SC1091 "${REPO_ROOT}"/scripts/*
+  # The standalone smoke runner is Python, not a POSIX shell script.
+  run_cmd shellcheck find "${REPO_ROOT}/scripts" -maxdepth 1 -type f \
+    ! -name run-standalone-container-smoke -exec shellcheck -e SC1091 '{}' +
 else
   echo "Skipping shellcheck: shellcheck is not installed"
 fi

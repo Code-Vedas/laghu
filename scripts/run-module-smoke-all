@@ -16,14 +16,21 @@ NGINX_BIN="${BUILD_DIR}/nginx"
 MODULE="${BUILD_DIR}/ngx_http_laghu_module.so"
 PORT="${LAGHU_SMOKE_PORT:-18080}"
 ORIGIN_PORT=$((PORT + 1))
+H3_PORT=$((PORT + 2))
 OPTIMIZER_BIN="${LAGHU_OPTIMIZER_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips}"
 JAVASCRIPT_BIN="${LAGHU_JAVASCRIPT_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize}"
 STATUS_BIN="${LAGHU_STATUS_BIN:-${REPO_ROOT}/tmp/build/servers/laghu/laghu}"
 HTTP2_ENABLED=0
 HTTP2_DIRECTIVE=
+HTTP3_ENABLED=0
+H3_CERT="${SMOKE_DIR}/h3-cert.pem"
+H3_CERT_KEY="${SMOKE_DIR}/h3-cert-key.pem"
 if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v2_module'; then
   HTTP2_ENABLED=1
   HTTP2_DIRECTIVE='    http2 on;'
+fi
+if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v3_module'; then
+  HTTP3_ENABLED=1
 fi
 nginx_user_directive=
 if [ "$(id -u)" -eq 0 ]; then
@@ -132,6 +139,28 @@ if [ -x "${JAVASCRIPT_BIN}" ]; then
     "${SMOKE_DIR}/cache"
 fi
 
+if [ "${HTTP3_ENABLED}" -eq 1 ] && command -v openssl >/dev/null 2>&1; then
+  if ! openssl req -x509 -nodes -newkey rsa:2048 -keyout "${H3_CERT_KEY}" \
+      -out "${H3_CERT}" -subj "/CN=127.0.0.1" -days 1 >/dev/null 2>&1; then
+    echo "Skipping NGINX HTTP/3 smoke checks: failed to generate self-signed test certificate." >&2
+    HTTP3_ENABLED=0
+  fi
+else
+  HTTP3_ENABLED=0
+fi
+NGINX_H3_BLOCK=
+if [ "${HTTP3_ENABLED}" -eq 1 ]; then
+  NGINX_H3_BLOCK=$(cat <<EOF
+    listen 127.0.0.1:${H3_PORT} quic;
+    listen 127.0.0.1:${H3_PORT} ssl;
+    ssl_certificate ${H3_CERT};
+    ssl_certificate_key ${H3_CERT_KEY};
+    ssl_protocols TLSv1.3;
+    http3 on;
+EOF
+  )
+fi
+
 cat >"${SMOKE_DIR}/nginx.conf" <<EOF
 load_module ${MODULE};
 ${nginx_user_directive}
@@ -173,6 +202,7 @@ http {
 
   server {
     listen 127.0.0.1:${PORT};
+${NGINX_H3_BLOCK}
 ${HTTP2_DIRECTIVE}
     root ${SMOKE_DIR}/html;
     early_hints 1;
@@ -630,6 +660,10 @@ CURL_HTTP2_SUPPORT=0
 if curl --help 2>&1 | grep -q -- '--http2-prior-knowledge'; then
   CURL_HTTP2_SUPPORT=1
 fi
+CURL_HTTP3_SUPPORT=0
+if curl --help 2>&1 | grep -q -- '--http3'; then
+  CURL_HTTP3_SUPPORT=1
+fi
 
 cleanup() {
   if [ "${optimizer_pid}" != "" ]; then
@@ -711,6 +745,73 @@ if [ "${HTTP2_ENABLED}" -eq 1 ] && [ "${CURL_HTTP2_SUPPORT}" -eq 1 ]; then
   if grep -F '<!-- remove -->' "${SMOKE_DIR}/http2-body" >/dev/null; then
     echo "HTTP/2 minification path did not apply on smoke output." >&2
     exit 1
+  fi
+else
+  if [ "${HTTP2_ENABLED}" -eq 0 ] && [ "${CURL_HTTP2_SUPPORT}" -eq 0 ]; then
+    echo "Skipping HTTP/2 smoke check: nginx lacks http_v2 support and curl lacks --http2-prior-knowledge."
+  elif [ "${HTTP2_ENABLED}" -eq 0 ]; then
+    echo "Skipping HTTP/2 smoke check: nginx lacks http_v2_module."
+  elif [ "${CURL_HTTP2_SUPPORT}" -eq 0 ]; then
+    echo "Skipping HTTP/2 smoke check: curl does not advertise --http2-prior-knowledge."
+  fi
+fi
+
+if [ "${HTTP3_ENABLED}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; then
+  h3_version=$(
+    curl --fail --silent --show-error \
+      --http3 \
+      --insecure \
+      --output "${SMOKE_DIR}/http3-body" \
+      --dump-header "${SMOKE_DIR}/http3-headers" \
+      --write-out '%{http_version}' \
+      "https://127.0.0.1:${H3_PORT}/http2.html"
+  )
+  if [ "${h3_version}" != 3 ] && \
+      ! tr -d '\r' <"${SMOKE_DIR}/http3-headers" | \
+        awk 'NR == 1 { print; exit }' | grep -q '^HTTP/3 '; then
+    echo "Expected HTTP/3 response for NGINX smoke check." >&2
+    cat "${SMOKE_DIR}/http3-headers" >&2
+    exit 1
+  fi
+  h3_attempt=0
+  while [ "${h3_attempt}" -lt 50 ]; do
+    curl --fail --silent --show-error \
+      --http3 \
+      --insecure \
+      --output "${SMOKE_DIR}/http3-body-2" \
+      --dump-header "${SMOKE_DIR}/http3-headers-2" \
+      "https://127.0.0.1:${H3_PORT}/http2.html" >/dev/null
+    if grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/http3-headers-2" >/dev/null; then
+      break
+    fi
+    h3_attempt=$((h3_attempt + 1))
+    sleep 0.1
+  done
+  if [ "${h3_attempt}" -eq 50 ]; then
+    echo "NGINX HTTP/3 warm transformation did not become cache hit." >&2
+    exit 1
+  fi
+  grep -i '^X-Laghu: pass' "${SMOKE_DIR}/http3-headers" >/dev/null
+  grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/http3-headers" >/dev/null
+  grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/http3-headers" >/dev/null
+  grep -F '<!-- @license keep -->' "${SMOKE_DIR}/http3-body" >/dev/null
+  if grep -F '<!-- remove -->' "${SMOKE_DIR}/http3-body" >/dev/null; then
+    echo "HTTP/3 minification path did not apply on smoke output." >&2
+    exit 1
+  fi
+  grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/http3-headers-2" >/dev/null
+  grep -F '<!-- @license keep -->' "${SMOKE_DIR}/http3-body-2" >/dev/null
+  if grep -F '<!-- remove -->' "${SMOKE_DIR}/http3-body-2" >/dev/null; then
+    echo "HTTP/3 warm transformation output retained removed content." >&2
+    exit 1
+  fi
+else
+  if [ "${HTTP3_ENABLED}" -eq 0 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 0 ]; then
+    echo "Skipping HTTP/3 smoke check: nginx lacks http_v3_module and curl lacks --http3."
+  elif [ "${HTTP3_ENABLED}" -eq 0 ]; then
+    echo "Skipping HTTP/3 smoke check: nginx lacks http_v3_module."
+  elif [ "${CURL_HTTP3_SUPPORT}" -eq 0 ]; then
+    echo "Skipping HTTP/3 smoke check: curl does not advertise --http3."
   fi
 fi
 curl --fail --silent --show-error \

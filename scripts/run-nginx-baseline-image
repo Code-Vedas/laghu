@@ -74,8 +74,10 @@ docker save "${image_tag}" | gzip >"${archive_path}"
 } >"${manifest_path}"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-  printf 'baseline_image_tag=%s\n' "${image_tag}" >>"${GITHUB_OUTPUT}"
-  printf 'baseline_image_archive=%s\n' "${archive_path}" >>"${GITHUB_OUTPUT}"
-  printf 'baseline_image_id=%s\n' "${image_id}" >>"${GITHUB_OUTPUT}"
-  printf 'baseline_nginx_version=%s\n' "${BASELINE_VERSION}" >>"${GITHUB_OUTPUT}"
+  {
+    printf 'baseline_image_tag=%s\n' "${image_tag}"
+    printf 'baseline_image_archive=%s\n' "${archive_path}"
+    printf 'baseline_image_id=%s\n' "${image_id}"
+    printf 'baseline_nginx_version=%s\n' "${BASELINE_VERSION}"
+  } >>"${GITHUB_OUTPUT}"
 fi

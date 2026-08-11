@@ -33,6 +33,23 @@ status_bin=${LAGHU_STATUS_BIN:-"${REPO_ROOT}/tmp/build/servers/laghu/laghu"}
 service_pid=
 javascript_pid=
 origin_pid=
+H3_PROXY_PID=
+H3_PROXY_PORT=
+APACHE_H3_PROXY_SUPPORT=0
+CURL_HTTP3_SUPPORT=0
+APACHE_H3_PROXY_ENABLED=0
+H3_PORT=18083
+APACHE_H3_CERT="${work}/apache-h3-cert.pem"
+APACHE_H3_CERT_KEY="${work}/apache-h3-cert-key.pem"
+if command -v nginx >/dev/null 2>&1; then
+  NGINX_BIN=$(command -v nginx)
+  if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v3_module'; then
+    APACHE_H3_PROXY_ENABLED=1
+  fi
+fi
+if curl --help 2>&1 | grep -q -- '--http3'; then
+  CURL_HTTP3_SUPPORT=1
+fi
 rm -rf "${work}"
 mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache" \
   "${work}/asset-catalog" "${work}/asset-queue"
@@ -91,6 +108,7 @@ printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="i
   >"${work}/htdocs/missing-head-page.html"
 printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><audio src="/asset.mp3?q=1#hero"></audio><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
   >"${work}/htdocs/minify-page.html"
+cp "${work}/htdocs/minify-page.html" "${work}/htdocs/h3-minify-page.html"
 printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"><link rel="preconnect" href="https://reserved.example.test"></head><body><script src="https://cdn.example.test/app.js?token=secret#part"></script></body></html>' \
   >"${work}/htdocs/hints-page.html"
 printf '%s\n' 'function publicName(longLocal) { return longLocal + 1; }' \
@@ -187,7 +205,7 @@ load_first_mpm() {
   printf '<Location "/import-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
-  printf '<Location "/minify-page.html">\nLaghu RewriteLevel bandwidth\n</Location>\n'
+  printf '<LocationMatch "^/(minify-page|h3-minify-page)\\.html$">\nLaghu RewriteLevel bandwidth\n</LocationMatch>\n'
   printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\nHeader always add Link "<https://origin.example.test>; rel=preload"\n</Location>\n'
   printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
@@ -322,7 +340,7 @@ else
   "${HTTPD}" -f "${work}/httpd.conf" -DFOREGROUND &
 fi
 pid=$!
-trap 'kill "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} 2>/dev/null || true; wait "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} 2>/dev/null || true' EXIT
+trap 'kill "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} ${H3_PROXY_PID:-} 2>/dev/null || true; wait "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} ${H3_PROXY_PID:-} 2>/dev/null || true' EXIT
 
 attempt=0
 while [ "${attempt}" -lt 50 ]; do
@@ -387,6 +405,47 @@ fi
 "${status_bin}" doctor http://127.0.0.1:18081 \
   --token-file "${work}/purge.token" --json | \
   grep '"schema":"laghu-doctor-v1"' >/dev/null
+
+if [ "${CURL_HTTP3_SUPPORT}" -eq 1 ] && [ "${APACHE_H3_PROXY_ENABLED}" -eq 1 ] && \
+  command -v openssl >/dev/null 2>&1; then
+  if openssl req -x509 -nodes -newkey rsa:2048 -keyout "${APACHE_H3_CERT_KEY}" \
+      -out "${APACHE_H3_CERT}" -subj "/CN=127.0.0.1" -days 1 >/dev/null 2>&1; then
+    H3_PROXY_PORT="${H3_PORT}"
+    APACHE_H3_PROXY_SUPPORT=1
+    cat >"${work}/h3-proxy.conf" <<EOF
+worker_processes 1;
+pid ${work}/h3-proxy.pid;
+error_log ${work}/h3-proxy.error.log notice;
+events {}
+http {
+  server {
+    listen 127.0.0.1:${H3_PROXY_PORT} ssl;
+    listen 127.0.0.1:${H3_PROXY_PORT} quic reuseport;
+    http2 on;
+    http3 on;
+    ssl_certificate ${APACHE_H3_CERT};
+    ssl_certificate_key ${APACHE_H3_CERT_KEY};
+    ssl_protocols TLSv1.3;
+    server_name localhost;
+    location / {
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_pass http://127.0.0.1:18081;
+    }
+  }
+}
+EOF
+    "${NGINX_BIN}" -c "${work}/h3-proxy.conf" -g 'daemon on;' >/dev/null 2>&1 || {
+      APACHE_H3_PROXY_SUPPORT=0
+    }
+    if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ -f "${work}/h3-proxy.pid" ]; then
+      H3_PROXY_PID=$(cat "${work}/h3-proxy.pid")
+    else
+      H3_PROXY_PORT=
+    fi
+  fi
+fi
+
 "${status_bin}" purge http://127.0.0.1:18081/site.css \
   --token-file "${work}/purge.token" --json | \
   grep '"schema":"laghu-purge-v1"' >/dev/null
@@ -714,6 +773,78 @@ if [ -f "${modules}/mod_http2.so" ] && curl --version | grep -q 'Features:.*HTTP
     http://127.0.0.1:18081/proxied/stream)
   [ "${http_version}" = 2 ]
   cmp "${work}/expected-stream" "${work}/proxy-http2.body"
+else
+  if [ ! -f "${modules}/mod_http2.so" ]; then
+    echo "Skipping Apache HTTP/2 smoke check: mod_http2 is not available."
+  elif ! curl --version | grep -q 'Features:.*HTTP2'; then
+    echo "Skipping Apache HTTP/2 smoke check: curl does not advertise HTTP2 support."
+  fi
+fi
+
+if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; then
+  h3_attempt=0
+  while [ "${h3_attempt}" -lt 40 ]; do
+    if curl --fail --silent --show-error \
+      --http3 \
+      --insecure \
+      --http3-only \
+      --output "${work}/proxy-http3.body" \
+      --dump-header "${work}/proxy-http3.headers" \
+      https://127.0.0.1:${H3_PROXY_PORT}/h3-minify-page.html >/dev/null; then
+      break
+    fi
+    h3_attempt=$((h3_attempt + 1))
+    sleep 0.1
+  done
+  if [ "${h3_attempt}" -eq 40 ]; then
+    echo "Apache HTTP/3 smoke check: proxy did not become responsive." >&2
+    exit 1
+  fi
+  if ! tr -d '\r' <"${work}/proxy-http3.headers" | \
+      awk 'NR == 1 { print; exit }' | grep -q '^HTTP/3 '; then
+    echo "Expected HTTP/3 response for Apache smoke check." >&2
+    cat "${work}/proxy-http3.headers" >&2
+    exit 1
+  fi
+  grep -i '^X-Laghu: pass' "${work}/proxy-http3.headers" >/dev/null
+  grep -i '^X-Laghu-Cache: miss' "${work}/proxy-http3.headers" >/dev/null
+  grep -i '^X-Laghu-Transform: queued' "${work}/proxy-http3.headers" >/dev/null
+  grep -F '<!-- @license keep -->' "${work}/proxy-http3.body" >/dev/null
+  if grep -F '<!-- remove -->' "${work}/proxy-http3.body" >/dev/null; then
+    echo "Apache HTTP/3 smoke check did not apply minification." >&2
+    exit 1
+  fi
+  h3_attempt=0
+  while [ "${h3_attempt}" -lt 80 ]; do
+    curl --fail --silent --show-error \
+      --http3 \
+      --insecure \
+      --http3-only \
+      --output "${work}/proxy-http3-warm.body" \
+      --dump-header "${work}/proxy-http3-warm.headers" \
+      https://127.0.0.1:${H3_PROXY_PORT}/h3-minify-page.html >/dev/null
+    if grep -i '^X-Laghu-Cache: hit' "${work}/proxy-http3-warm.headers" >/dev/null; then
+      break
+    fi
+    h3_attempt=$((h3_attempt + 1))
+    sleep 0.1
+  done
+  if [ "${h3_attempt}" -eq 80 ]; then
+    echo "Apache HTTP/3 smoke check: cold-to-warm transition did not complete." >&2
+    exit 1
+  fi
+  grep -i '^X-Laghu: pass' "${work}/proxy-http3-warm.headers" >/dev/null
+  grep -F '<!-- @license keep -->' "${work}/proxy-http3-warm.body" >/dev/null
+  if grep -F '<!-- remove -->' "${work}/proxy-http3-warm.body" >/dev/null; then
+    echo "Apache HTTP/3 warm output retained removed content." >&2
+    exit 1
+  fi
+else
+  if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 0 ]; then
+    echo "Skipping Apache HTTP/3 smoke check: nginx HTTP/3 proxy frontend not available."
+  elif [ "${CURL_HTTP3_SUPPORT}" -eq 0 ]; then
+    echo "Skipping Apache HTTP/3 smoke check: curl does not advertise --http3."
+  fi
 fi
 
 if [ "${service_pid}" != "" ]; then
@@ -886,7 +1017,9 @@ fi
 trap - EXIT
 kill -WINCH "${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
 kill "${origin_pid}" 2>/dev/null || true
+kill "${H3_PROXY_PID}" 2>/dev/null || true
 wait "${pid}" 2>/dev/null || true
+wait "${H3_PROXY_PID}" 2>/dev/null || true
 wait "${origin_pid}" 2>/dev/null || true
 if [ "${service_pid}" != "" ]; then
   kill "${service_pid}" 2>/dev/null || true

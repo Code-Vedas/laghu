@@ -57,9 +57,155 @@ def request(
         return response.status, headers, response.read()
 
 
+def run_curl_request(
+    url: str, headers: Dict[str, str] | None = None, args: list[str] | None = None
+) -> Tuple[int, int, Dict[str, str], bytes]:
+    args = args or []
+    header_args = []
+    for key, value in (headers or {}).items():
+        header_args.extend(["-H", f"{key}: {value}"])
+    with tempfile.NamedTemporaryFile(prefix="laghu-standalone-headers-", delete=False) as h:
+        header_path = Path(h.name)
+    with tempfile.NamedTemporaryFile(prefix="laghu-standalone-body-", delete=False) as b:
+        body_path = Path(b.name)
+    command = [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        *args,
+        *header_args,
+        "--dump-header",
+        str(header_path),
+        "--output",
+        str(body_path),
+        url,
+    ]
+    proc = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    status = 0
+    headers = {}
+    if header_path.exists():
+        try:
+            header_lines = header_path.read_text(errors="replace").splitlines()
+            if header_lines and header_lines[0].startswith("HTTP/"):
+                parts = header_lines[0].split(" ", 2)
+                if len(parts) >= 2 and parts[1].isdigit():
+                    status = int(parts[1])
+            for line in header_lines:
+                if not line or ": " not in line or not line[0].isupper():
+                    continue
+                name, value = line.split(": ", 1)
+                headers[name.lower()] = value
+            if header_lines and header_lines[0].startswith("HTTP/"):
+                headers[":protocol"] = header_lines[0].split(" ", 1)[0]
+        except OSError:
+            pass
+    body = b""
+    try:
+        body = body_path.read_bytes()
+    except OSError:
+        body = b""
+    finally:
+        try:
+            os.remove(str(header_path))
+        except OSError:
+            pass
+        try:
+            os.remove(str(body_path))
+        except OSError:
+            pass
+    return proc.returncode, status, headers, body
+
+
 def ensure_path(path: Path) -> None:
     if not path.exists():
         raise AssertionError(f"required artifact missing: {path}")
+
+
+def curl_supports_http3() -> bool:
+    if not shutil.which("curl"):
+        return False
+    return subprocess.run(
+        ["curl", "--help"], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ).stdout.find("--http3") != -1
+
+
+def start_h3_frontend(proxy_port: int, upstream_port: int, cache_root: Path) -> Tuple[subprocess.Popen[bytes], int, Callable[[], None]]:
+    if not (shutil.which("openssl") and shutil.which("nginx")):
+        raise AssertionError("NGINX and OpenSSL are required for HTTP/3 proxy smoke checks.")
+
+    cert_path = cache_root / "h3-cert.pem"
+    key_path = cache_root / "h3-cert-key.pem"
+    if (
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-nodes",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(key_path),
+                "-out",
+                str(cert_path),
+                "-subj",
+                "/CN=127.0.0.1",
+                "-days",
+                "1",
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        != 0
+    ):
+        raise AssertionError("failed to generate standalone HTTP/3 test certificate")
+
+    (cache_root / "logs").mkdir(exist_ok=True)
+    config = cache_root / "h3-fronted.conf"
+    config.write_text(
+        "\n".join(
+            [
+                "pid logs/h3-proxy.pid;",
+                "error_log logs/h3-proxy.log notice;",
+                "events { }",
+                "http {",
+                "  server {",
+                f"    listen 127.0.0.1:{proxy_port} ssl;",
+                f"    listen 127.0.0.1:{proxy_port} quic;",
+                "    http2 on;",
+                "    http3 on;",
+                f"    ssl_certificate {cert_path};",
+                f"    ssl_certificate_key {key_path};",
+                "    ssl_protocols TLSv1.3;",
+                "    server_name localhost;",
+                "    location / {",
+                "      proxy_http_version 1.1;",
+                "      proxy_set_header Host $host;",
+                f"      proxy_pass http://127.0.0.1:{upstream_port};",
+                "    }",
+                "  }",
+                "}",
+            ]
+        )
+    )
+    process = subprocess.Popen(
+        ["nginx", "-c", str(config), "-g", "daemon off;"],
+        cwd=str(cache_root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    def stop() -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    return process, proxy_port, stop
 
 
 def start_app_origin(root: Path) -> Tuple[subprocess.Popen[bytes], int, Callable[[], None]]:
@@ -278,6 +424,22 @@ def has_laghu_header(headers: Dict[str, str]) -> bool:
     return any(key.startswith("x-laghu") for key in headers)
 
 
+def has_origin_binary(mode: str) -> bool:
+    if mode == "nginx":
+        return shutil.which("nginx") is not None
+    if mode == "apache":
+        return (
+            shutil.which("apache2ctl") is not None
+            or shutil.which("apache2") is not None
+            or shutil.which("httpd") is not None
+        ) and (
+            Path("/usr/lib/apache2/modules").is_dir()
+            or Path("/usr/lib64/httpd/modules").is_dir()
+            or Path("/usr/lib/httpd/modules").is_dir()
+        )
+    return True
+
+
 def _read_text(path: Path | None, default: str = "") -> str:
     if path is None or not path.exists():
         return default
@@ -296,8 +458,13 @@ def run_origin_mode(mode: str, executable: Path) -> None:
         "function app(value){ return value + 1; }",
         encoding="utf-8",
     )
+    (root / "h3.html").write_text(
+        "<!doctype html><html><body><!-- remove -->h3"
+        "<script src='/app.js'></script></body></html>",
+        encoding="utf-8",
+    )
     root.chmod(0o755)
-    for filename in ("index.html", "app.js"):
+    for filename in ("index.html", "h3.html", "app.js"):
         (root / filename).chmod(0o644)
 
     origin_process, origin_port, stop_origin, origin_log_path = start_origin(mode, root)
@@ -396,6 +563,99 @@ def run_origin_mode(mode: str, executable: Path) -> None:
             if not has_laghu_header(warm_headers):
                 raise AssertionError(f"standalone {mode} origin missing laghu header")
 
+            curl_has_http3 = curl_supports_http3()
+            if curl_has_http3:
+                try:
+                    _, h3_proxy_port, stop_h3_proxy = start_h3_frontend(
+                        free_port(), proxy_port, cache_root
+                    )
+                except AssertionError:
+                    print(f"Skipping standalone HTTP/3 smoke check for {mode}: missing nginx/openssl for H3 frontend.")
+                else:
+                    try:
+                        try:
+                            ready = False
+                            for _ in range(60):
+                                ret, h3_status, h3_headers, _ = run_curl_request(
+                                    f"https://127.0.0.1:{h3_proxy_port}/h3.html",
+                                    args=["--http3", "--http3-only", "--insecure"],
+                                )
+                                if ret == 0 and h3_status == 200 and has_laghu_header(h3_headers):
+                                    ready = True
+                                    break
+                                time.sleep(0.1)
+                            if not ready:
+                                raise AssertionError(
+                                    "standalone HTTP/3 proxy did not become ready for H3 smoke request."
+                                )
+
+                            cold_ret, cold_h3_status, h3_cold_headers, h3_cold_body = run_curl_request(
+                                f"https://127.0.0.1:{h3_proxy_port}/h3.html",
+                                args=["--http3", "--http3-only", "--insecure"],
+                            )
+                            if cold_ret != 0:
+                                raise AssertionError(
+                                    f"HTTP/3 cold request failed for {mode}: rc={cold_ret}"
+                                )
+                            if cold_h3_status != 200:
+                                raise AssertionError(
+                                    f"HTTP/3 cold request failed for {mode}: status={cold_h3_status}"
+                                )
+                            if h3_cold_headers.get(":protocol") != "HTTP/3":
+                                raise AssertionError(
+                                    f"HTTP/3 cold request did not negotiate HTTP/3 for {mode}"
+                                )
+                            if not h3_cold_body:
+                                raise AssertionError(f"HTTP/3 cold body empty for {mode}")
+                            if "x-laghu" not in h3_cold_headers:
+                                raise AssertionError(
+                                    f"HTTP/3 cold response missing Laghu header for {mode}"
+                                )
+                            cache_state = h3_cold_headers.get("x-laghu-cache", "")
+                            if "miss" not in cache_state:
+                                raise AssertionError(
+                                    f"HTTP/3 cold response missing cache header for {mode}"
+                                )
+                            transform_state = h3_cold_headers.get("x-laghu-transform", "")
+                            if "queued" not in transform_state:
+                                raise AssertionError(
+                                    f"HTTP/3 cold response missing queued transform state for {mode}"
+                                )
+                            if "<!-- remove -->" in h3_cold_body.decode("utf-8", "replace"):
+                                raise AssertionError(
+                                    f"standalone {mode} HTTP/3 cold response retained removed content"
+                                )
+
+                            warm_ready = False
+                            for _ in range(80):
+                                warm_ret, warm_h3_status, h3_warm_headers, h3_warm_body = run_curl_request(
+                                    f"https://127.0.0.1:{h3_proxy_port}/h3.html",
+                                    args=["--http3", "--http3-only", "--insecure"],
+                                )
+                                if warm_ret == 0 and warm_h3_status == 200 and "x-laghu-cache" in h3_warm_headers:
+                                    if "hit" in h3_warm_headers.get("x-laghu-cache", ""):
+                                        warm_ready = True
+                                        break
+                                time.sleep(0.1)
+                            if not warm_ready:
+                                raise AssertionError(
+                                    f"HTTP/3 cold-to-warm cache transition not observed for {mode}"
+                                )
+                            if "x-laghu-transform" not in h3_warm_headers:
+                                raise AssertionError(
+                                    f"HTTP/3 warm response missing transform state for {mode}"
+                                )
+                            if "<!-- remove -->" in h3_warm_body.decode("utf-8", "replace"):
+                                raise AssertionError(
+                                    f"standalone {mode} HTTP/3 warm response retained removed content"
+                                )
+                        finally:
+                            stop_h3_proxy()
+                    except AssertionError:
+                        raise
+            else:
+                print(f"Skipping standalone HTTP/3 smoke check for {mode}: curl --http3 unavailable.")
+
         finally:
             if proxy.poll() is None:
                 proxy.terminate()
@@ -427,6 +687,9 @@ def main() -> None:
     ensure_path(runtime_fixture)
 
     for mode in ("app", "nginx", "apache"):
+        if not has_origin_binary(mode):
+            print(f"Skipping standalone container smoke mode '{mode}': binary not available in environment.")
+            continue
         run_origin_mode(mode, executable)
 
     print("laghu standalone container origins smoke passed")

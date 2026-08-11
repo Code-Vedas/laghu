@@ -1147,6 +1147,7 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE);
   CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY);
   CHECK(plan.console_view == LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_HISTORY);
+  CHECK(strcmp(plan.normalized_path, "/.laghu/console") == 0);
   CHECK(plan.history_query.limit == 1U);
   CHECK(plan.output_json == false);
   CHECK(laghu_http_administrative_plan_build(
@@ -1179,6 +1180,7 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(plan.recognized);
   CHECK(plan.route == LAGHU_HTTP_ADMINISTRATIVE_ROUTE_CONSOLE);
   CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN);
+  CHECK(strcmp(plan.normalized_path, "/.laghu/console") == 0);
   CHECK(plan.console_view == LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_EXPLAIN);
   CHECK(strcmp(plan.explain_query.target, "/") == 0);
   CHECK(plan.explain_query.before[0] == '\0');
