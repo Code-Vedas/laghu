@@ -91,6 +91,7 @@ static int laghu_apache_html_cache_handler(request_rec *request,
   request->status = HTTP_OK;
   ap_set_content_type(request, record.entry.content_type);
   ap_set_content_length(request, (apr_off_t)record.entry.length);
+  apr_table_setn(request->headers_out, "x-laghu-cache", "hit");
   if (request->header_only) return OK;
   return ap_rwrite(body, (int)record.entry.length, request) ==
                  (int)record.entry.length

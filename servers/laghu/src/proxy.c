@@ -40,31 +40,48 @@ bool proxy_is_forcing(proxy_queue *queue) {
   return forcing;
 }
 
-static bool proxy_html_cache_origin_matches(
-    const laghu_proxy_options *options) {
-  char origin[LAGHU_DOMAIN_ORIGIN_SIZE];
-  int written;
-  if (options == NULL || options->config.html_cache_origin[0] == '\0')
-    return false;
-  written = snprintf(origin, sizeof(origin), "%s://%s",
-                     options->origin_tls ? "https" : "http",
-                     options->origin_authority);
-  return written > 0 && (size_t)written < sizeof(origin) &&
-         strcmp(origin, options->config.html_cache_origin) == 0;
-}
-
 static bool proxy_html_cache_request_eligible(
     const laghu_proxy_options *options, const proxy_request *request) {
   return options != NULL && request != NULL &&
          options->config.mode == LAGHU_MODE_ON &&
          options->config.html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET &&
-         proxy_html_cache_origin_matches(options) &&
+         options->config.html_cache_origin[0] != '\0' &&
          strcmp(request->method, "GET") == 0 && request->target[0] == '/' &&
          strncmp(request->target, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
          proxy_find((proxy_header *)request->headers, request->header_count,
                     "Authorization") == NULL &&
          proxy_find((proxy_header *)request->headers, request->header_count,
                     "Cookie") == NULL;
+}
+
+static bool proxy_html_cache_mark_hit(laghu_http_transaction_result *result) {
+  laghu_http_header_operation *operation = NULL;
+  char *value;
+  size_t index;
+  if (result == NULL) return false;
+  for (index = 0U; index < result->header_operation_count; ++index) {
+    if (proxy_name_equal(result->header_operations[index].name,
+                         "X-Laghu-Cache")) {
+      operation = &result->header_operations[index];
+      break;
+    }
+  }
+  if (operation == NULL) {
+    if (result->header_operation_count == LAGHU_HTTP_MAX_HEADER_OPERATIONS)
+      return false;
+    operation = &result->header_operations[result->header_operation_count++];
+    memset(operation, 0, sizeof(*operation));
+    (void)snprintf(operation->name, sizeof(operation->name), "%s",
+                   "X-Laghu-Cache");
+  }
+  value = malloc(sizeof("hit"));
+  if (value == NULL) return false;
+  memcpy(value, "hit", sizeof("hit"));
+  free(operation->value);
+  operation->kind = LAGHU_HTTP_HEADER_SET;
+  operation->value = value;
+  operation->early_hint = false;
+  return true;
 }
 
 static bool proxy_html_cache_token_equal(const char *value, size_t length,
@@ -215,6 +232,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   laghu_http_transaction_result prepared, finalized;
   proxy_access_log access;
   bool prepared_ok = false;
+  bool html_cache_response = false;
   bool tls_timed_out = false;
   proxy_header *request_host = NULL;
   char cached_content_type[LAGHU_RUNTIME_TYPE_SIZE];
@@ -460,6 +478,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       if (prepared_ok && record.state == LAGHU_HTML_CACHE_STALE)
         proxy_html_cache_enqueue_refresh(worker, request.target, &record);
       if (prepared_ok && prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
+        (void)proxy_html_cache_mark_hit(&prepared);
         if (!proxy_send_result(
                 client, &response, &prepared,
                 (laghu_buffer){cached_body, record.entry.length}))
@@ -485,6 +504,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
             finalized.lcp_profile_ready);
         finalized.not_modified = laghu_http_request_matches_result_etag(
             &normalized_request, &finalized);
+        (void)proxy_html_cache_mark_hit(&finalized);
         if ((!finalized.not_modified &&
              !proxy_send_early_hints(client, request.version, &finalized)) ||
             !proxy_send_result(client, &response, &finalized,
@@ -711,17 +731,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     decoded = NULL;
     origin_body_length = decoded_length;
   }
-  if (proxy_html_cache_response_eligible(options, &request, &response,
-                                         origin_body_length)) {
-    proxy_header *validator =
-        proxy_find(response.headers, response.header_count, "ETag");
-    laghu_html_cache_record record;
-    (void)laghu_html_cache_publish(
-        options->service.image_cache, options->config.html_cache_origin,
-        request.target, validator == NULL ? "" : validator->value,
-        (laghu_buffer){origin_body, origin_body_length}, (uint64_t)time(NULL),
-        &record);
-  }
+  html_cache_response = proxy_html_cache_response_eligible(
+      options, &request, &response, origin_body_length);
   if (!prepared_ok) {
     normalized_response.declared_length = origin_body_length;
     normalized_response.has_declared_length = true;
@@ -757,6 +768,15 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         finalized.lcp_profile_ready);
     finalized.not_modified =
         laghu_http_request_matches_result_etag(&normalized_request, &finalized);
+    if (html_cache_response) {
+      proxy_header *validator = proxy_find(response.headers, response.header_count,
+                                           "ETag");
+      laghu_html_cache_record record;
+      (void)laghu_html_cache_publish(
+          options->service.image_cache, options->config.html_cache_origin,
+          request.target, validator == NULL ? "" : validator->value,
+          finalized.selected, (uint64_t)time(NULL), &record);
+    }
     if ((!finalized.not_modified &&
          !proxy_send_early_hints(client, request.version, &finalized)) ||
         !proxy_send_result(client, &response, &finalized, finalized.selected))

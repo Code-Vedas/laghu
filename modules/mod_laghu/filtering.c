@@ -153,7 +153,8 @@ static bool laghu_apache_html_cache_response_safe(
   return html;
 }
 
-static void laghu_apache_publish_html_cache(laghu_apache_context *context) {
+static void laghu_apache_publish_html_cache(laghu_apache_context *context,
+                                            laghu_buffer selected) {
   const laghu_apache_config *config;
   if (context == NULL || (config = context->config) == NULL ||
       config->core.html_cache_origin[0] == '\0' ||
@@ -164,8 +165,7 @@ static void laghu_apache_publish_html_cache(laghu_apache_context *context) {
       config->service.image_cache, config->core.html_cache_origin,
       (const char *)context->request.normalized_path.data,
       (const char *)context->response.source_validator.data,
-      (laghu_buffer){context->capture, context->capture_length},
-      (uint64_t)apr_time_sec(apr_time_now()), NULL);
+      selected, (uint64_t)apr_time_sec(apr_time_now()), NULL);
 }
 
 bool laghu_apache_peer_matches(request_rec *request,
@@ -515,10 +515,10 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
   }
   if (eos && context->capture_enabled) {
     laghu_http_transaction_result result;
-    laghu_apache_publish_html_cache(context);
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
+    laghu_apache_publish_html_cache(context, result.selected);
     laghu_operational_registry_budget(
         &laghu_apache_operational, &context->transaction.budget,
         context->transaction.environment.config.transform_deadline_ms);

@@ -41,8 +41,11 @@ APACHE_H3_PROXY_ENABLED=0
 H3_PORT=18083
 APACHE_H3_CERT="${work}/apache-h3-cert.pem"
 APACHE_H3_CERT_KEY="${work}/apache-h3-cert-key.pem"
-if command -v nginx >/dev/null 2>&1; then
+NGINX_BIN=${LAGHU_H3_NGINX:-}
+if [ -z "${NGINX_BIN}" ] && command -v nginx >/dev/null 2>&1; then
   NGINX_BIN=$(command -v nginx)
+fi
+if [ -n "${NGINX_BIN}" ] && [ -x "${NGINX_BIN}" ]; then
   if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v3_module'; then
     APACHE_H3_PROXY_ENABLED=1
   fi
@@ -52,7 +55,9 @@ if curl --help all 2>&1 | grep -q -- '--http3'; then
 fi
 rm -rf "${work}"
 mkdir -p "${work}/htdocs" "${work}/logs" "${work}/cache" \
-  "${work}/asset-catalog" "${work}/asset-queue"
+  "${work}/asset-catalog" "${work}/asset-queue" "${work}/h3-client-body" \
+  "${work}/h3-proxy-temp" "${work}/h3-fastcgi-temp" "${work}/h3-uwsgi-temp" \
+  "${work}/h3-scgi-temp"
 cat >"${work}/assets.conf" <<EOF
 version=1
 source_domain=https://origin.example.test
@@ -219,6 +224,8 @@ load_first_mpm() {
   printf 'Laghu FileCacheInodeLimit 100000\n'
   printf 'Laghu FileCacheCleanInterval 60s\n'
   printf 'Laghu FileCacheMetadataSize 16m\n'
+  printf 'Laghu HtmlCacheOrigin https://h3-cache.example.test\n'
+  printf 'Laghu HtmlCacheTtl 60\n'
   printf 'Laghu PurgeMethod PURGE\n'
   printf 'Laghu PurgeQuery On\n'
   printf 'Laghu PurgeTokenFile "%s/purge.token"\n' "${work}"
@@ -418,6 +425,12 @@ pid ${work}/h3-proxy.pid;
 error_log ${work}/h3-proxy.error.log notice;
 events {}
 http {
+  access_log ${work}/h3-proxy.access.log;
+  client_body_temp_path ${work}/h3-client-body;
+  proxy_temp_path ${work}/h3-proxy-temp;
+  fastcgi_temp_path ${work}/h3-fastcgi-temp;
+  uwsgi_temp_path ${work}/h3-uwsgi-temp;
+  scgi_temp_path ${work}/h3-scgi-temp;
   server {
     listen 127.0.0.1:${H3_PROXY_PORT} ssl;
     listen 127.0.0.1:${H3_PROXY_PORT} quic reuseport;
@@ -428,6 +441,9 @@ http {
     ssl_protocols TLSv1.3;
     server_name localhost;
     location / {
+      proxy_buffering off;
+      proxy_hide_header Connection;
+      proxy_hide_header Upgrade;
       proxy_http_version 1.1;
       proxy_set_header Host \$host;
       proxy_pass http://127.0.0.1:18081;
@@ -435,7 +451,9 @@ http {
   }
 }
 EOF
-    "${NGINX_BIN}" -c "${work}/h3-proxy.conf" -g 'daemon on;' >/dev/null 2>&1 || {
+    "${NGINX_BIN}" -c "${work}/h3-proxy.conf" -g 'daemon on;' \
+      >"${work}/h3-proxy.start.log" 2>&1 || {
+      cat "${work}/h3-proxy.start.log" >&2
       APACHE_H3_PROXY_SUPPORT=0
     }
     if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ -f "${work}/h3-proxy.pid" ]; then
@@ -790,7 +808,7 @@ if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; 
       --http3-only \
       --output "${work}/proxy-http3.body" \
       --dump-header "${work}/proxy-http3.headers" \
-      https://127.0.0.1:${H3_PROXY_PORT}/h3-minify-page.html >/dev/null; then
+      https://127.0.0.1:${H3_PROXY_PORT}/index.html >/dev/null; then
       break
     fi
     h3_attempt=$((h3_attempt + 1))
@@ -806,6 +824,9 @@ if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; 
     cat "${work}/proxy-http3.headers" >&2
     exit 1
   fi
+  curl --fail --silent --show-error --http3 --insecure --http3-only \
+    --output "${work}/proxy-http3.body" --dump-header "${work}/proxy-http3.headers" \
+    https://127.0.0.1:${H3_PROXY_PORT}/h3-minify-page.html >/dev/null
   grep -i '^X-Laghu: pass' "${work}/proxy-http3.headers" >/dev/null
   grep -i '^X-Laghu-Cache: miss' "${work}/proxy-http3.headers" >/dev/null
   grep -i '^X-Laghu-Transform: queued' "${work}/proxy-http3.headers" >/dev/null
