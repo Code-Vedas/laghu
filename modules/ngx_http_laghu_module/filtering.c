@@ -23,6 +23,32 @@ static bool ngx_http_laghu_html_cache_token_equal(const unsigned char *value,
          ngx_strncasecmp((u_char *)value, (u_char *)expected, length) == 0;
 }
 
+static bool ngx_http_laghu_html_cache_hit(const ngx_http_request_t *request) {
+  ngx_list_part_t *part;
+  ngx_table_elt_t *headers;
+  ngx_uint_t index;
+  if (request == NULL) return false;
+  part = (ngx_list_part_t *)&request->headers_out.headers.part;
+  headers = part->elts;
+  for (index = 0U;; ++index) {
+    if (index >= part->nelts) {
+      if (part->next == NULL) break;
+      part = part->next;
+      headers = part->elts;
+      index = 0U;
+    }
+    if (headers[index].hash != 0U &&
+        headers[index].key.len == sizeof("X-Laghu-Cache") - 1U &&
+        headers[index].value.len == sizeof("hit") - 1U &&
+        ngx_strncasecmp(headers[index].key.data, (u_char *)"X-Laghu-Cache",
+                        sizeof("X-Laghu-Cache") - 1U) == 0 &&
+        ngx_strncasecmp(headers[index].value.data, (u_char *)"hit",
+                        sizeof("hit") - 1U) == 0)
+      return true;
+  }
+  return false;
+}
+
 static void laghu_http_laghu_generate_trace_ids(const ngx_http_request_t *request,
                                                char trace_id[33U],
                                                char span_id[17U]) {
@@ -117,18 +143,20 @@ static bool ngx_http_laghu_html_cache_response_safe(
 }
 
 static void ngx_http_laghu_publish_html_cache(
-    ngx_http_laghu_request_ctx_t *context, ngx_http_laghu_loc_conf_t *conf) {
+    ngx_http_laghu_request_ctx_t *context, ngx_http_laghu_loc_conf_t *conf,
+    laghu_buffer selected) {
   if (context == NULL || conf == NULL ||
       conf->core.html_cache_origin[0] == '\0' ||
       conf->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
+      (selected.data == context->capture &&
+       selected.length == context->capture_length) ||
       !ngx_http_laghu_html_cache_response_safe(context))
     return;
   (void)laghu_html_cache_publish(
       conf->service.image_cache, conf->core.html_cache_origin,
       (const char *)context->request.normalized_path.data,
       (const char *)context->response.source_validator.data,
-      (laghu_buffer){context->capture, context->capture_length},
-      (uint64_t)ngx_time(), NULL);
+      selected, (uint64_t)ngx_time(), NULL);
 }
 
 ngx_int_t ngx_http_laghu_transaction_header_filter(
@@ -140,6 +168,8 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
   bool prepared;
   bool administration_candidate;
   if (conf == NULL) return ngx_http_laghu_next_header_filter(request);
+  if (ngx_http_laghu_html_cache_hit(request))
+    return ngx_http_laghu_next_header_filter(request);
   if (request->uri.len >= sizeof("/.laghu/") - 1U &&
       ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) ==
           0) {
@@ -306,10 +336,10 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
     laghu_http_transaction_result result;
     ngx_http_laghu_loc_conf_t *conf =
         ngx_http_get_module_loc_conf(request, ngx_http_laghu_module);
-    ngx_http_laghu_publish_html_cache(context, conf);
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
+    ngx_http_laghu_publish_html_cache(context, conf, result.selected);
     laghu_operational_registry_budget(
         &ngx_http_laghu_operational, &context->transaction.budget,
         context->transaction.environment.config.transform_deadline_ms);

@@ -58,6 +58,7 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
   ngx_chain_t output;
   ngx_int_t status;
   size_t content_type_length;
+  ngx_table_elt_t *header;
   bool administration_candidate;
   if (request == NULL || conf == NULL || conf->core.mode != LAGHU_MODE_ON ||
       request->method != NGX_HTTP_GET ||
@@ -116,6 +117,11 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
   request->headers_out.content_type =
       (ngx_str_t){content_type_length, content_type};
   request->headers_out.content_length_n = (off_t)record.entry.length;
+  header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) return NGX_DECLINED;
+  header->hash = 1U;
+  ngx_str_set(&header->key, "X-Laghu-Cache");
+  ngx_str_set(&header->value, "hit");
   buffer->pos = body;
   buffer->last = body + record.entry.length;
   buffer->memory = 1U;
@@ -161,12 +167,12 @@ ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
                (request->uri.len >= sizeof("/.laghu/media/") - 1U &&
                 ngx_strncmp(request->uri.data, "/.laghu/media/",
                             sizeof("/.laghu/media/") - 1U) == 0);
-  if (!administration_candidate && !laghu_admin_prefix) {
-    return NGX_DECLINED;
-  }
   status = ngx_http_laghu_html_cache_handler(request, conf);
 
   if (status != NGX_DECLINED) return status;
+  if (!administration_candidate && !laghu_admin_prefix) {
+    return NGX_DECLINED;
+  }
   if (administration_candidate || laghu_admin_prefix) {
     status = ngx_http_laghu_admin_endpoint(request, conf);
     if (status != NGX_DECLINED) return status;

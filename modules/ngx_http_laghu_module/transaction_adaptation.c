@@ -225,7 +225,9 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request,
   context->request.headers = context->request_headers;
   context->response.version = LAGHU_HTTP_ABI_VERSION;
   context->response.struct_size = sizeof(context->response);
-  context->response.status = (unsigned int)request->headers_out.status;
+  context->response.status = request->headers_out.status == 0U
+                                 ? NGX_HTTP_OK
+                                 : (unsigned int)request->headers_out.status;
   context->response.headers = context->response_headers;
   context->response.has_declared_length =
       request->headers_out.content_length_n >= 0;

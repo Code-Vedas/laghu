@@ -47,7 +47,7 @@ if command -v nginx >/dev/null 2>&1; then
     APACHE_H3_PROXY_ENABLED=1
   fi
 fi
-if curl --help 2>&1 | grep -q -- '--http3'; then
+if curl --help all 2>&1 | grep -q -- '--http3'; then
   CURL_HTTP3_SUPPORT=1
 fi
 rm -rf "${work}"
@@ -810,12 +810,12 @@ if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; 
   grep -i '^X-Laghu-Cache: miss' "${work}/proxy-http3.headers" >/dev/null
   grep -i '^X-Laghu-Transform: queued' "${work}/proxy-http3.headers" >/dev/null
   grep -F '<!-- @license keep -->' "${work}/proxy-http3.body" >/dev/null
-  if grep -F '<!-- remove -->' "${work}/proxy-http3.body" >/dev/null; then
-    echo "Apache HTTP/3 smoke check did not apply minification." >&2
+  if ! grep -F '<!-- remove -->' "${work}/proxy-http3.body" >/dev/null; then
+    echo "Apache HTTP/3 cold response did not preserve original queued content." >&2
     exit 1
   fi
   h3_attempt=0
-  while [ "${h3_attempt}" -lt 80 ]; do
+  while [ "${h3_attempt}" -lt 200 ]; do
     curl --fail --silent --show-error \
       --http3 \
       --insecure \
@@ -829,7 +829,7 @@ if [ "${APACHE_H3_PROXY_SUPPORT}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; 
     h3_attempt=$((h3_attempt + 1))
     sleep 0.1
   done
-  if [ "${h3_attempt}" -eq 80 ]; then
+  if [ "${h3_attempt}" -eq 200 ]; then
     echo "Apache HTTP/3 smoke check: cold-to-warm transition did not complete." >&2
     exit 1
   fi

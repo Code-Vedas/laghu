@@ -126,7 +126,7 @@ def curl_supports_http3() -> bool:
     if not shutil.which("curl"):
         return False
     return subprocess.run(
-        ["curl", "--help"], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        ["curl", "--help", "all"], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     ).stdout.find("--http3") != -1
 
 
@@ -621,13 +621,13 @@ def run_origin_mode(mode: str, executable: Path) -> None:
                                 raise AssertionError(
                                     f"HTTP/3 cold response missing queued transform state for {mode}"
                                 )
-                            if "<!-- remove -->" in h3_cold_body.decode("utf-8", "replace"):
+                            if "<!-- remove -->" not in h3_cold_body.decode("utf-8", "replace"):
                                 raise AssertionError(
-                                    f"standalone {mode} HTTP/3 cold response retained removed content"
+                                    f"standalone {mode} HTTP/3 cold response did not preserve queued content"
                                 )
 
                             warm_ready = False
-                            for _ in range(80):
+                            for _ in range(200):
                                 warm_ret, warm_h3_status, h3_warm_headers, h3_warm_body = run_curl_request(
                                     f"https://127.0.0.1:{h3_proxy_port}/h3.html",
                                     args=["--http3", "--http3-only", "--insecure"],

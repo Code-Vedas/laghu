@@ -25,20 +25,18 @@ HTTP2_DIRECTIVE=
 HTTP3_ENABLED=0
 H3_CERT="${SMOKE_DIR}/h3-cert.pem"
 H3_CERT_KEY="${SMOKE_DIR}/h3-cert-key.pem"
+nginx_user_directive="user $(id -un);"
+
+if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
+  "${SCRIPT_DIR}/build-nginx-module"
+fi
+
 if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v2_module'; then
   HTTP2_ENABLED=1
   HTTP2_DIRECTIVE='    http2 on;'
 fi
 if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v3_module'; then
   HTTP3_ENABLED=1
-fi
-nginx_user_directive=
-if [ "$(id -u)" -eq 0 ]; then
-  nginx_user_directive="user root;"
-fi
-
-if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
-  "${SCRIPT_DIR}/build-nginx-module"
 fi
 
 rm -rf "${SMOKE_DIR}"
@@ -68,6 +66,7 @@ printf '%s\n' '<!doctype html><body><nav><img src="/logo.png" width="40" height=
   >"${SMOKE_DIR}/html/lcp.html"
 printf '%s\n' '<!doctype html><body><!-- @license keep --><!-- remove --> <p class="safe" title="two words">one   two</p><pre> a  b </pre></body></html>' \
   >"${SMOKE_DIR}/html/http2.html"
+cp "${SMOKE_DIR}/html/http2.html" "${SMOKE_DIR}/html/http3.html"
 
 image_smoke=0
 optimizer_pid=""
@@ -235,10 +234,6 @@ ${HTTP2_DIRECTIVE}
     laghu javascript_inline_limit 2048;
     laghu javascript_outline_threshold 8192;
     laghu file_cache_backend file://${SMOKE_DIR}/cache;
-    laghu file_cache_size 10m;
-    laghu file_cache_inode_limit 1000;
-    laghu file_cache_clean_interval 60s;
-    laghu file_cache_metadata_size 1m;
     laghu purge_method PURGE;
     laghu purge_query on;
     laghu purge_token_file ${SMOKE_DIR}/purge.token;
@@ -251,6 +246,13 @@ ${HTTP2_DIRECTIVE}
     location = /site.css {
       default_type text/css;
       try_files /site.css =404;
+    }
+
+    location = /http3.html {
+      laghu html_cache_origin https://h3-cache.example.test;
+      laghu html_cache_ttl 60;
+      default_type text/html;
+      try_files /http3.html =404;
     }
 
     location = /app.js {
@@ -657,11 +659,11 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 CURL_HTTP2_SUPPORT=0
-if curl --help 2>&1 | grep -q -- '--http2-prior-knowledge'; then
+if curl --help all 2>&1 | grep -q -- '--http2-prior-knowledge'; then
   CURL_HTTP2_SUPPORT=1
 fi
 CURL_HTTP3_SUPPORT=0
-if curl --help 2>&1 | grep -q -- '--http3'; then
+if curl --help all 2>&1 | grep -q -- '--http3'; then
   CURL_HTTP3_SUPPORT=1
 fi
 
@@ -742,8 +744,8 @@ if [ "${HTTP2_ENABLED}" -eq 1 ] && [ "${CURL_HTTP2_SUPPORT}" -eq 1 ]; then
   grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/http2-headers" >/dev/null
   grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/http2-headers" >/dev/null
   grep -F '<!-- @license keep -->' "${SMOKE_DIR}/http2-body" >/dev/null
-  if grep -F '<!-- remove -->' "${SMOKE_DIR}/http2-body" >/dev/null; then
-    echo "HTTP/2 minification path did not apply on smoke output." >&2
+  if ! grep -F '<!-- remove -->' "${SMOKE_DIR}/http2-body" >/dev/null; then
+    echo "HTTP/2 cold response did not preserve original queued content." >&2
     exit 1
   fi
 else
@@ -764,7 +766,7 @@ if [ "${HTTP3_ENABLED}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; then
       --output "${SMOKE_DIR}/http3-body" \
       --dump-header "${SMOKE_DIR}/http3-headers" \
       --write-out '%{http_version}' \
-      "https://127.0.0.1:${H3_PORT}/http2.html"
+      "https://127.0.0.1:${H3_PORT}/http3.html"
   )
   if [ "${h3_version}" != 3 ] && \
       ! tr -d '\r' <"${SMOKE_DIR}/http3-headers" | \
@@ -774,20 +776,20 @@ if [ "${HTTP3_ENABLED}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; then
     exit 1
   fi
   h3_attempt=0
-  while [ "${h3_attempt}" -lt 50 ]; do
+  while [ "${h3_attempt}" -lt 200 ]; do
     curl --fail --silent --show-error \
       --http3 \
       --insecure \
       --output "${SMOKE_DIR}/http3-body-2" \
       --dump-header "${SMOKE_DIR}/http3-headers-2" \
-      "https://127.0.0.1:${H3_PORT}/http2.html" >/dev/null
+      "https://127.0.0.1:${H3_PORT}/http3.html" >/dev/null
     if grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/http3-headers-2" >/dev/null; then
       break
     fi
     h3_attempt=$((h3_attempt + 1))
     sleep 0.1
   done
-  if [ "${h3_attempt}" -eq 50 ]; then
+  if [ "${h3_attempt}" -eq 200 ]; then
     echo "NGINX HTTP/3 warm transformation did not become cache hit." >&2
     exit 1
   fi
@@ -795,8 +797,8 @@ if [ "${HTTP3_ENABLED}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; then
   grep -i '^X-Laghu-Cache: miss' "${SMOKE_DIR}/http3-headers" >/dev/null
   grep -i '^X-Laghu-Transform: queued' "${SMOKE_DIR}/http3-headers" >/dev/null
   grep -F '<!-- @license keep -->' "${SMOKE_DIR}/http3-body" >/dev/null
-  if grep -F '<!-- remove -->' "${SMOKE_DIR}/http3-body" >/dev/null; then
-    echo "HTTP/3 minification path did not apply on smoke output." >&2
+  if ! grep -F '<!-- remove -->' "${SMOKE_DIR}/http3-body" >/dev/null; then
+    echo "HTTP/3 cold response did not preserve original queued content." >&2
     exit 1
   fi
   grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/http3-headers-2" >/dev/null

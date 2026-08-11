@@ -10,6 +10,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 
 NGINX_VERSION="${NGINX_VERSION:-1.30.4}"
+NGINX_HTTP3="${NGINX_HTTP3:-0}"
 WORK_DIR="${NGINX_WORK_DIR:-${REPO_ROOT}/tmp/nginx/${NGINX_VERSION}}"
 SOURCE_DIR="${NGINX_SOURCE_DIR:-${WORK_DIR}/source}"
 BUILD_DIR="${NGINX_BUILD_DIR:-${WORK_DIR}/build}"
@@ -71,11 +72,15 @@ mkdir -p "${BUILD_DIR}"
 
 (
   cd "${SOURCE_DIR}"
-  ./configure \
+  set -- ./configure \
     --builddir="${BUILD_DIR}" \
     --with-compat \
     --with-http_v2_module \
     --add-dynamic-module="${MODULE_DIR}"
+  if [ "${NGINX_HTTP3}" = 1 ]; then
+    set -- "$@" --with-http_v3_module
+  fi
+  "$@"
   make -f "${BUILD_DIR}/Makefile" "${MAKE_JOBS:--j2}"
 )
 

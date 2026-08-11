@@ -21,6 +21,9 @@ int main(void) {
   assert(laghu_html_cache_publish(
       root, "https://origin.example", "/index.html", "\"v1\"",
       (laghu_buffer){body, sizeof(body) - 1U}, 100U, &record));
+  assert(laghu_html_cache_publish(
+      root, "https://origin.example", "/without-record.html", "\"v1\"",
+      (laghu_buffer){body, sizeof(body) - 1U}, 100U, NULL));
   assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html",
                                  record.stored_at, 30U, 30U, &record));
   assert(record.state == LAGHU_HTML_CACHE_FRESH);

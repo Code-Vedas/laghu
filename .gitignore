@@ -19,3 +19,5 @@ docs/vendor/
 .vscode/
 .ruby-lsp/
 .agents/
+__pycache__/
+*.py[cod]
