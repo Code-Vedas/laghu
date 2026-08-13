@@ -18,25 +18,18 @@ int main(void) {
   uint64_t now = (uint64_t)time(NULL);
   unsigned int slot;
   bool found = false;
-  assert(snprintf(directory, sizeof(directory), "/tmp/laghu-worker-%ld-%llu",
-                  (long)getpid(), (unsigned long long)now) > 0);
+  assert(snprintf(directory, sizeof(directory), "/tmp/laghu-worker-%ld-%llu", (long)getpid(), (unsigned long long)now) > 0);
   assert(mkdir(directory, 0700) == 0);
   laghu_worker_lifecycle_init(&lifecycle);
-  assert(laghu_worker_lifecycle_start(&lifecycle, directory,
-                                      LAGHU_OPERATIONAL_PROCESS_LIBVIPS, NULL,
-                                      true, now));
+  assert(laghu_worker_lifecycle_start(&lifecycle, directory, LAGHU_OPERATIONAL_PROCESS_LIBVIPS, NULL, true, now));
   laghu_worker_lifecycle_heartbeat(&lifecycle, now, true);
-  laghu_worker_lifecycle_job(&lifecycle, false, 2500U,
-                             LAGHU_OPERATIONAL_FAILURE_WORKER);
+  laghu_worker_lifecycle_job(&lifecycle, false, 2500U, LAGHU_OPERATIONAL_FAILURE_WORKER);
   assert(laghu_operational_registry_snapshot(&lifecycle.registry, &snapshot));
   for (slot = 0U; slot < snapshot.slot_count; ++slot) {
-    if (snapshot.slots[slot].active != 0U &&
-        snapshot.slots[slot].process_kind ==
-            LAGHU_OPERATIONAL_PROCESS_LIBVIPS) {
+    if (snapshot.slots[slot].active != 0U && snapshot.slots[slot].process_kind == LAGHU_OPERATIONAL_PROCESS_LIBVIPS) {
       assert(snapshot.slots[slot].healthy == 1U);
       assert(snapshot.slots[slot].latency_count == 1U);
-      assert(snapshot.slots[slot].failures[LAGHU_OPERATIONAL_FAILURE_WORKER] ==
-             1U);
+      assert(snapshot.slots[slot].failures[LAGHU_OPERATIONAL_FAILURE_WORKER] == 1U);
       found = true;
     }
   }

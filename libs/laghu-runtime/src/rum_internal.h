@@ -11,14 +11,9 @@
 
 #include "laghu/rum.h"
 
-bool laghu_rum_encode(laghu_rum_record_type type, const void *record,
-                      size_t length, unsigned char *data, size_t capacity,
-                      size_t *encoded_length);
-bool laghu_rum_decode(laghu_rum_record_type type, const unsigned char *data,
-                      size_t length, void *record, size_t record_size);
-bool laghu_rum_same_identity(laghu_rum_record_type type, const void *left,
-                             const void *right, size_t length);
-void laghu_rum_zero_observations(laghu_rum_record_type type, void *data,
-                                 size_t length);
+bool laghu_rum_encode(laghu_rum_record_type type, const void *record, size_t length, unsigned char *data, size_t capacity, size_t *encoded_length);
+bool laghu_rum_decode(laghu_rum_record_type type, const unsigned char *data, size_t length, void *record, size_t record_size);
+bool laghu_rum_same_identity(laghu_rum_record_type type, const void *left, const void *right, size_t length);
+void laghu_rum_zero_observations(laghu_rum_record_type type, void *data, size_t length);
 
 #endif

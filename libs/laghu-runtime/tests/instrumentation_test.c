@@ -12,7 +12,6 @@ int main(void) {
   laghu_instrumentation_beacon beacon;
   const char *script = laghu_runtime_instrumentation_script();
   assert(script != NULL && script[0] != '\0');
-  assert(!laghu_runtime_parse_instrumentation_beacon(
-      (laghu_buffer){(const unsigned char *)"{}", 2U}, &beacon));
+  assert(!laghu_runtime_parse_instrumentation_beacon((laghu_buffer){(const unsigned char *)"{}", 2U}, &beacon));
   return 0;
 }

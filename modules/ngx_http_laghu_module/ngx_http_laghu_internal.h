@@ -45,8 +45,7 @@ typedef struct {
   bool queue_registered;
   ngx_atomic_t html_refresh_dedup_lock;
   ngx_atomic_t html_refresh_until[LAGHU_NGINX_HTML_REFRESH_DEDUP];
-  char html_refresh_keys[LAGHU_NGINX_HTML_REFRESH_DEDUP]
-                        [LAGHU_RUNTIME_KEY_SIZE];
+  char html_refresh_keys[LAGHU_NGINX_HTML_REFRESH_DEDUP][LAGHU_RUNTIME_KEY_SIZE];
 } ngx_http_laghu_loc_conf_t;
 
 typedef struct {
@@ -93,14 +92,10 @@ extern ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;
 extern ngx_http_output_body_filter_pt ngx_http_laghu_next_body_filter;
 extern time_t ngx_http_laghu_last_queue_warning;
 ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request);
-ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
-                                                 ngx_chain_t *chain);
+ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request, ngx_chain_t *chain);
 
-void ngx_http_laghu_log_defer_recommendation(
-    ngx_http_request_t *request, const laghu_http_transaction_result *result);
-void ngx_http_laghu_log_transaction(ngx_http_request_t *request,
-                                    ngx_http_laghu_request_ctx_t *context,
-                                    const laghu_http_transaction_result *result,
+void ngx_http_laghu_log_defer_recommendation(ngx_http_request_t *request, const laghu_http_transaction_result *result);
+void ngx_http_laghu_log_transaction(ngx_http_request_t *request, ngx_http_laghu_request_ctx_t *context, const laghu_http_transaction_result *result,
                                     const char *failure);
 extern ngx_module_t ngx_http_laghu_module;
 extern laghu_rum_engine *ngx_http_laghu_rum;
@@ -110,41 +105,25 @@ void ngx_http_laghu_exit_process(ngx_cycle_t *cycle);
 bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
-bool ngx_http_laghu_administration_candidate(ngx_http_request_t *request,
-                                             ngx_http_laghu_loc_conf_t *conf);
-laghu_runtime_queue *ngx_http_laghu_image_queue(
-    ngx_http_laghu_loc_conf_t *conf);
+bool ngx_http_laghu_administration_candidate(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_image_queue(ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf);
-laghu_runtime_queue *ngx_http_laghu_javascript_queue(
-    ngx_http_laghu_loc_conf_t *conf);
-laghu_runtime_queue *ngx_http_laghu_html_refresh_queue(
-    ngx_http_laghu_loc_conf_t *conf);
-laghu_runtime_queue *ngx_http_laghu_chrome_analysis_queue(
-    ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_javascript_queue(ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_html_refresh_queue(ngx_http_laghu_loc_conf_t *conf);
+laghu_runtime_queue *ngx_http_laghu_chrome_analysis_queue(ngx_http_laghu_loc_conf_t *conf);
 void ngx_http_laghu_beacon_body(ngx_http_request_t *request);
 void *ngx_http_laghu_create_loc_conf(ngx_conf_t *configuration);
 void *ngx_http_laghu_create_main_conf(ngx_conf_t *configuration);
-char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
-                                    void *child);
-char *ngx_http_laghu_command(ngx_conf_t *configuration, ngx_command_t *command,
-                             void *conf);
+char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent, void *child);
+char *ngx_http_laghu_command(ngx_conf_t *configuration, ngx_command_t *command, void *conf);
 ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request);
-ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
-                                        ngx_http_laghu_loc_conf_t *conf);
-ngx_int_t ngx_http_laghu_beacon_endpoint(ngx_http_request_t *request,
-                                         ngx_http_laghu_loc_conf_t *conf);
-ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request,
-                                        ngx_http_laghu_loc_conf_t *conf);
-ngx_int_t ngx_http_laghu_apply_result(
-    ngx_http_request_t *request, const laghu_http_transaction_result *result);
-ngx_int_t ngx_http_laghu_send_early_hints(
-    ngx_http_request_t *request, const laghu_http_transaction_result *result);
-void ngx_http_laghu_remove_header(ngx_http_request_t *request,
-                                  const char *name);
-bool ngx_http_laghu_normalize(ngx_http_request_t *request,
-                              ngx_http_laghu_loc_conf_t *conf,
-                              ngx_http_laghu_request_ctx_t *context);
-bool ngx_http_laghu_peer_matches(ngx_http_request_t *request,
-                                 const laghu_service_cidr *cidrs, size_t count);
+ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
+ngx_int_t ngx_http_laghu_beacon_endpoint(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
+ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
+ngx_int_t ngx_http_laghu_apply_result(ngx_http_request_t *request, const laghu_http_transaction_result *result);
+ngx_int_t ngx_http_laghu_send_early_hints(ngx_http_request_t *request, const laghu_http_transaction_result *result);
+void ngx_http_laghu_remove_header(ngx_http_request_t *request, const char *name);
+bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf, ngx_http_laghu_request_ctx_t *context);
+bool ngx_http_laghu_peer_matches(ngx_http_request_t *request, const laghu_service_cidr *cidrs, size_t count);
 
 #endif

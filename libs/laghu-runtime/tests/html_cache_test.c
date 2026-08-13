@@ -18,30 +18,20 @@ int main(void) {
   assert(laghu_test_directory(root, sizeof(root)));
   laghu_cache_limits_init(&limits);
   assert(laghu_cache_backend_register_path(root, &limits));
-  assert(laghu_html_cache_publish(
-      root, "https://origin.example", "/index.html", "\"v1\"",
-      (laghu_buffer){body, sizeof(body) - 1U}, 100U, &record));
-  assert(laghu_html_cache_publish(
-      root, "https://origin.example", "/without-record.html", "\"v1\"",
-      (laghu_buffer){body, sizeof(body) - 1U}, 100U, NULL));
-  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html",
-                                 record.stored_at, 30U, 30U, &record));
+  assert(laghu_html_cache_publish(root, "https://origin.example", "/index.html", "\"v1\"", (laghu_buffer){body, sizeof(body) - 1U}, 100U, &record));
+  assert(laghu_html_cache_publish(root, "https://origin.example", "/without-record.html", "\"v1\"", (laghu_buffer){body, sizeof(body) - 1U}, 100U,
+                                  NULL));
+  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html", record.stored_at, 30U, 30U, &record));
   assert(record.state == LAGHU_HTML_CACHE_FRESH);
-  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html",
-                                 record.stored_at + 30U, 30U, 30U, &record));
+  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html", record.stored_at + 30U, 30U, 30U, &record));
   assert(record.state == LAGHU_HTML_CACHE_STALE);
-  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html",
-                                 record.stored_at + 60U, 30U, 30U, &record));
+  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html", record.stored_at + 60U, 30U, 30U, &record));
   assert(record.state == LAGHU_HTML_CACHE_MISS);
-  assert(laghu_html_cache_renew(root, "https://origin.example", "/index.html",
-                                "\"v1\"", 400U, &record));
+  assert(laghu_html_cache_renew(root, "https://origin.example", "/index.html", "\"v1\"", 400U, &record));
   assert(record.stored_at == 400U);
-  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html",
-                                 429U, 30U, 30U, &record));
+  assert(laghu_html_cache_lookup(root, "https://origin.example", "/index.html", 429U, 30U, 30U, &record));
   assert(record.state == LAGHU_HTML_CACHE_FRESH);
-  assert(!laghu_html_cache_renew(root, "https://origin.example", "/index.html",
-                                 "\"other\"", 500U, &record));
-  assert(!laghu_html_cache_key("https://origin.example", "relative",
-                               (char[LAGHU_RUNTIME_KEY_SIZE]){0}));
+  assert(!laghu_html_cache_renew(root, "https://origin.example", "/index.html", "\"other\"", 500U, &record));
+  assert(!laghu_html_cache_key("https://origin.example", "relative", (char[LAGHU_RUNTIME_KEY_SIZE]){0}));
   return 0;
 }

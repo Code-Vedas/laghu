@@ -41,9 +41,8 @@ typedef uint32_t laghu_html_planner_mask;
 #define LAGHU_HTML_PLAN_CONVERT_META_TAGS (UINT32_C(1) << 7)
 #define LAGHU_HTML_PLAN_RESOURCE_HINTS (UINT32_C(1) << 8)
 #define LAGHU_HTML_PLAN_TRIM_URLS (UINT32_C(1) << 9)
-#define LAGHU_HTML_PLAN_LEXICAL                                            \
-  (LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE | LAGHU_HTML_PLAN_REMOVE_COMMENTS | \
-   LAGHU_HTML_PLAN_REMOVE_QUOTES | LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES |      \
+#define LAGHU_HTML_PLAN_LEXICAL                                                                                                               \
+  (LAGHU_HTML_PLAN_COLLAPSE_WHITESPACE | LAGHU_HTML_PLAN_REMOVE_COMMENTS | LAGHU_HTML_PLAN_REMOVE_QUOTES | LAGHU_HTML_PLAN_ELIDE_ATTRIBUTES | \
    LAGHU_HTML_PLAN_TRIM_URLS)
 
 typedef struct {
@@ -93,46 +92,29 @@ typedef struct {
   unsigned int rule_count;
   uint16_t rules[LAGHU_CRITICAL_CSS_MAX_RULES];
 } laghu_critical_css_beacon;
-bool laghu_runtime_rewrite_html(
-    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *policy_key,
-    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
-    laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline,
-    bool allow_css_outline, bool allow_css_combine,
-    laghu_html_planner_mask html_plan, const laghu_csp_policy *csp,
-    bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
-    unsigned int css_outline_threshold, unsigned int viewport_width,
-    unsigned int dpr_hundredths, laghu_runtime_html_result *result);
+bool laghu_runtime_rewrite_html(laghu_rum_engine *rum, const char *cache_path, laghu_buffer html, const char *page_path, const char *page_origin,
+                                const char *policy_key, uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+                                laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline, bool allow_css_outline,
+                                bool allow_css_combine, laghu_html_planner_mask html_plan, const laghu_csp_policy *csp, bool beacon_enabled,
+                                size_t inline_limit, unsigned int css_inline_limit, unsigned int css_outline_threshold, unsigned int viewport_width,
+                                unsigned int dpr_hundredths, laghu_runtime_html_result *result);
 void laghu_runtime_html_result_release(laghu_runtime_html_result *result);
-bool laghu_runtime_finalize_html_headers(
-    const char *cache_path, laghu_buffer html, const char *page_path,
-    const char *page_origin, const char *policy_key, uint32_t capability_mask,
-    uint64_t now, unsigned int ttl_seconds, laghu_html_planner_mask plan,
-    const char *existing_content_language, const char *existing_link_headers,
-    unsigned int css_inline_limit, unsigned int css_outline_threshold,
-    bool already_warm, laghu_runtime_html_result *result);
-bool laghu_runtime_plan_html_document(laghu_buffer html,
-                                      laghu_html_planner_mask plan,
-                                      laghu_runtime_head_result *result);
-bool laghu_runtime_plan_html_document_at(laghu_buffer html,
-                                         const char *page_path,
-                                         const char *page_origin,
-                                         laghu_html_planner_mask plan,
+bool laghu_runtime_finalize_html_headers(const char *cache_path, laghu_buffer html, const char *page_path, const char *page_origin,
+                                         const char *policy_key, uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+                                         laghu_html_planner_mask plan, const char *existing_content_language, const char *existing_link_headers,
+                                         unsigned int css_inline_limit, unsigned int css_outline_threshold, bool already_warm,
+                                         laghu_runtime_html_result *result);
+bool laghu_runtime_plan_html_document(laghu_buffer html, laghu_html_planner_mask plan, laghu_runtime_head_result *result);
+bool laghu_runtime_plan_html_document_at(laghu_buffer html, const char *page_path, const char *page_origin, laghu_html_planner_mask plan,
                                          laghu_runtime_head_result *result);
 void laghu_runtime_head_result_release(laghu_runtime_head_result *result);
-bool laghu_runtime_prioritize_critical_css(
-    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *policy_key,
-    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
-    unsigned int inline_limit, unsigned int outline_threshold,
-    unsigned int viewport_width, bool beacon_enabled,
-    const laghu_csp_policy *csp, laghu_runtime_html_result *result);
-bool laghu_runtime_parse_critical_css_beacon(laghu_buffer json,
-                                             laghu_critical_css_beacon *record);
-bool laghu_critical_css_apply_beacon(laghu_rum_engine *rum,
-                                     const char *cache_path,
-                                     const char *policy_key, uint64_t now,
-                                     unsigned int ttl_seconds,
+bool laghu_runtime_prioritize_critical_css(laghu_rum_engine *rum, const char *cache_path, laghu_buffer html, const char *page_path,
+                                           const char *page_origin, const char *policy_key, uint32_t capability_mask, uint64_t now,
+                                           unsigned int ttl_seconds, unsigned int inline_limit, unsigned int outline_threshold,
+                                           unsigned int viewport_width, bool beacon_enabled, const laghu_csp_policy *csp,
+                                           laghu_runtime_html_result *result);
+bool laghu_runtime_parse_critical_css_beacon(laghu_buffer json, laghu_critical_css_beacon *record);
+bool laghu_critical_css_apply_beacon(laghu_rum_engine *rum, const char *cache_path, const char *policy_key, uint64_t now, unsigned int ttl_seconds,
                                      const laghu_critical_css_beacon *beacon);
 const char *laghu_runtime_critical_css_beacon_script(void);
 

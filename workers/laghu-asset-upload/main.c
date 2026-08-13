@@ -35,26 +35,20 @@ static volatile sig_atomic_t laghu_asset_stop;
 
 static void laghu_asset_log_lifecycle(const char *state, const char *failure) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_lifecycle record = {
-      .common = {(time_t)time(NULL), "worker", "asset-upload", NULL, NULL},
-      .state = state,
-      .failure = failure};
-  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
-    fprintf(stderr, "%s\n", line);
+  laghu_log_lifecycle record = {.common = {(time_t)time(NULL), "worker", "asset-upload", NULL, NULL}, .state = state, .failure = failure};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line))) fprintf(stderr, "%s\n", line);
 }
 
 static void laghu_asset_log_job(int status, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_job record = {
-      .common = {(time_t)time(NULL), "worker", "asset-upload", NULL, NULL},
-      .job_kind = "asset_upload",
-      .outcome = status == 0 ? "success" : "failed",
-      .input_bytes = 0U,
-      .output_bytes = 0U,
-      .duration_ms = elapsed / 1000U,
-      .failure = status == 0 ? "none" : "worker"};
-  if (laghu_log_render_job(&record, line, sizeof(line)))
-    fprintf(stderr, "%s\n", line);
+  laghu_log_job record = {.common = {(time_t)time(NULL), "worker", "asset-upload", NULL, NULL},
+                          .job_kind = "asset_upload",
+                          .outcome = status == 0 ? "success" : "failed",
+                          .input_bytes = 0U,
+                          .output_bytes = 0U,
+                          .duration_ms = elapsed / 1000U,
+                          .failure = status == 0 ? "none" : "worker"};
+  if (laghu_log_render_job(&record, line, sizeof(line))) fprintf(stderr, "%s\n", line);
 }
 
 typedef struct {
@@ -66,8 +60,7 @@ typedef struct {
   SSL_CTX *tls;
 } laghu_s3;
 
-static bool laghu_ssl_write_all(SSL *tls, const unsigned char *data,
-                                size_t length);
+static bool laghu_ssl_write_all(SSL *tls, const unsigned char *data, size_t length);
 
 static void laghu_asset_signal(int signal_number) {
   (void)signal_number;
@@ -77,17 +70,13 @@ static void laghu_asset_signal(int signal_number) {
 static bool laghu_s3_endpoint(laghu_s3 *s3) {
   const char *authority = s3->config.endpoint + 8U;
   const char *slash = strchr(authority, '/');
-  size_t host_length =
-      slash == NULL ? strlen(authority) : (size_t)(slash - authority);
-  if (strncmp(s3->config.endpoint, "https://", 8U) != 0 || host_length == 0U ||
-      host_length >= sizeof(s3->host) ||
-      memchr(authority, ':', host_length) != NULL ||
-      memchr(authority, '@', host_length) != NULL)
+  size_t host_length = slash == NULL ? strlen(authority) : (size_t)(slash - authority);
+  if (strncmp(s3->config.endpoint, "https://", 8U) != 0 || host_length == 0U || host_length >= sizeof(s3->host) ||
+      memchr(authority, ':', host_length) != NULL || memchr(authority, '@', host_length) != NULL)
     return false;
   memcpy(s3->host, authority, host_length);
   s3->host[host_length] = '\0';
-  return snprintf(s3->base_path, sizeof(s3->base_path), "%s/%s",
-                  slash == NULL ? "" : slash, s3->config.bucket) > 0;
+  return snprintf(s3->base_path, sizeof(s3->base_path), "%s/%s", slash == NULL ? "" : slash, s3->config.bucket) > 0;
 }
 
 static void laghu_hex(const unsigned char *input, size_t length, char *output) {
@@ -100,90 +89,60 @@ static void laghu_hex(const unsigned char *input, size_t length, char *output) {
   output[length * 2U] = '\0';
 }
 
-static bool laghu_hmac(const void *key, size_t key_length, const char *value,
-                       unsigned char output[32]) {
+static bool laghu_hmac(const void *key, size_t key_length, const char *value, unsigned char output[32]) {
   unsigned int length = 0U;
-  return HMAC(EVP_sha256(), key, (int)key_length, (const unsigned char *)value,
-              strlen(value), output, &length) != NULL &&
-         length == 32U;
+  return HMAC(EVP_sha256(), key, (int)key_length, (const unsigned char *)value, strlen(value), output, &length) != NULL && length == 32U;
 }
 
-static bool laghu_s3_authorization_at(laghu_s3 *s3, const char *method,
-                                      const char *path,
-                                      const char *payload_hash,
-                                      const char *content_type,
-                                      const char *metadata_hash, time_t now,
-                                      char date[17], char authorization[1024]) {
+static bool laghu_s3_authorization_at(laghu_s3 *s3, const char *method, const char *path, const char *payload_hash, const char *content_type,
+                                      const char *metadata_hash, time_t now, char date[17], char authorization[1024]) {
   char day[9], canonical[4096], canonical_hash[LAGHU_RUNTIME_KEY_SIZE];
   char scope[256], string_to_sign[1024], ksecret[512], signature[65];
-  unsigned char kdate[32], kregion[32], kservice[32], ksigning[32],
-      signed_hash[32];
+  unsigned char kdate[32], kregion[32], kservice[32], ksigning[32], signed_hash[32];
   struct tm utc;
   if (gmtime_r(&now, &utc) == NULL) return false;
-  if (strftime(date, 17U, "%Y%m%dT%H%M%SZ", &utc) != 16U ||
-      strftime(day, 9U, "%Y%m%d", &utc) != 8U)
-    return false;
+  if (strftime(date, 17U, "%Y%m%dT%H%M%SZ", &utc) != 16U || strftime(day, 9U, "%Y%m%d", &utc) != 8U) return false;
   if (snprintf(canonical, sizeof(canonical),
-               metadata_hash == NULL
-                   ? "%s\n%s\n\ncontent-type:%s\nhost:%s\nx-amz-content-sha256:"
-                     "%s\nx-amz-date:%s\n\n"
-                     "content-type;host;x-amz-content-sha256;x-amz-date\n%s"
-                   : "%s\n%s\n\ncontent-type:%s\nhost:%s\nx-amz-content-sha256:"
-                     "%s\nx-amz-date:%s\n"
-                     "x-amz-meta-laghu-sha256:%s\n\ncontent-type;host;x-amz-"
-                     "content-sha256;"
-                     "x-amz-date;x-amz-meta-laghu-sha256\n%s",
-               method, path, content_type, s3->host, payload_hash, date,
-               metadata_hash == NULL ? payload_hash : metadata_hash,
+               metadata_hash == NULL ? "%s\n%s\n\ncontent-type:%s\nhost:%s\nx-amz-content-sha256:"
+                                       "%s\nx-amz-date:%s\n\n"
+                                       "content-type;host;x-amz-content-sha256;x-amz-date\n%s"
+                                     : "%s\n%s\n\ncontent-type:%s\nhost:%s\nx-amz-content-sha256:"
+                                       "%s\nx-amz-date:%s\n"
+                                       "x-amz-meta-laghu-sha256:%s\n\ncontent-type;host;x-amz-"
+                                       "content-sha256;"
+                                       "x-amz-date;x-amz-meta-laghu-sha256\n%s",
+               method, path, content_type, s3->host, payload_hash, date, metadata_hash == NULL ? payload_hash : metadata_hash,
                metadata_hash == NULL ? "" : payload_hash) <= 0 ||
-      !laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)canonical, strlen(canonical)},
-          canonical_hash) ||
-      snprintf(scope, sizeof(scope), "%s/%s/s3/aws4_request", day,
-               s3->config.region) <= 0 ||
-      snprintf(string_to_sign, sizeof(string_to_sign),
-               "AWS4-HMAC-SHA256\n%s\n%s\n%s", date, scope,
-               canonical_hash) <= 0 ||
-      snprintf(ksecret, sizeof(ksecret), "AWS4%s", s3->secret_key) <= 0 ||
-      !laghu_hmac(ksecret, strlen(ksecret), day, kdate) ||
-      !laghu_hmac(kdate, sizeof(kdate), s3->config.region, kregion) ||
-      !laghu_hmac(kregion, sizeof(kregion), "s3", kservice) ||
-      !laghu_hmac(kservice, sizeof(kservice), "aws4_request", ksigning) ||
-      !laghu_hmac(ksigning, sizeof(ksigning), string_to_sign, signed_hash))
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)canonical, strlen(canonical)}, canonical_hash) ||
+      snprintf(scope, sizeof(scope), "%s/%s/s3/aws4_request", day, s3->config.region) <= 0 ||
+      snprintf(string_to_sign, sizeof(string_to_sign), "AWS4-HMAC-SHA256\n%s\n%s\n%s", date, scope, canonical_hash) <= 0 ||
+      snprintf(ksecret, sizeof(ksecret), "AWS4%s", s3->secret_key) <= 0 || !laghu_hmac(ksecret, strlen(ksecret), day, kdate) ||
+      !laghu_hmac(kdate, sizeof(kdate), s3->config.region, kregion) || !laghu_hmac(kregion, sizeof(kregion), "s3", kservice) ||
+      !laghu_hmac(kservice, sizeof(kservice), "aws4_request", ksigning) || !laghu_hmac(ksigning, sizeof(ksigning), string_to_sign, signed_hash))
     return false;
   laghu_hex(signed_hash, sizeof(signed_hash), signature);
   return snprintf(authorization, 1024U,
-                  metadata_hash == NULL
-                      ? "AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders="
-                        "content-type;host;x-amz-content-sha256;x-amz-date, "
-                        "Signature=%s"
-                      : "AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders="
-                        "content-type;host;x-amz-content-sha256;x-amz-date;"
-                        "x-amz-meta-laghu-sha256, Signature=%s",
+                  metadata_hash == NULL ? "AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders="
+                                          "content-type;host;x-amz-content-sha256;x-amz-date, "
+                                          "Signature=%s"
+                                        : "AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders="
+                                          "content-type;host;x-amz-content-sha256;x-amz-date;"
+                                          "x-amz-meta-laghu-sha256, Signature=%s",
                   s3->access_key, scope, signature) > 0;
 }
 
-static bool laghu_s3_authorization(laghu_s3 *s3, const char *method,
-                                   const char *path, const char *payload_hash,
-                                   const char *content_type,
-                                   const char *metadata_hash, char date[17],
-                                   char authorization[1024]) {
-  return laghu_s3_authorization_at(s3, method, path, payload_hash, content_type,
-                                   metadata_hash, time(NULL), date,
-                                   authorization);
+static bool laghu_s3_authorization(laghu_s3 *s3, const char *method, const char *path, const char *payload_hash, const char *content_type,
+                                   const char *metadata_hash, char date[17], char authorization[1024]) {
+  return laghu_s3_authorization_at(s3, method, path, payload_hash, content_type, metadata_hash, time(NULL), date, authorization);
 }
 
-static void laghu_socket_timeout(laghu_socket socket_value,
-                                 unsigned int seconds) {
+static void laghu_socket_timeout(laghu_socket socket_value, unsigned int seconds) {
   struct timeval timeout = {(time_t)seconds, 0};
-  (void)setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                   sizeof(timeout));
-  (void)setsockopt(socket_value, SOL_SOCKET, SO_SNDTIMEO, &timeout,
-                   sizeof(timeout));
+  (void)setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  (void)setsockopt(socket_value, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
-static laghu_socket laghu_s3_connect(const char *host, unsigned int timeout,
-                                     bool public_only) {
+static laghu_socket laghu_s3_connect(const char *host, unsigned int timeout, bool public_only) {
   struct addrinfo hints, *addresses = NULL, *item;
   laghu_socket socket_value = LAGHU_INVALID_SOCKET;
   memset(&hints, 0, sizeof(hints));
@@ -197,13 +156,10 @@ static laghu_socket laghu_s3_connect(const char *host, unsigned int timeout,
         return socket_value;
       }
   for (item = addresses; item != NULL; item = item->ai_next) {
-    socket_value = (laghu_socket)socket(item->ai_family, item->ai_socktype,
-                                        item->ai_protocol);
+    socket_value = (laghu_socket)socket(item->ai_family, item->ai_socktype, item->ai_protocol);
     if (socket_value == LAGHU_INVALID_SOCKET) continue;
     laghu_socket_timeout(socket_value, timeout);
-    if (connect(socket_value, item->ai_addr, (laghu_socklen)item->ai_addrlen) ==
-        0)
-      break;
+    if (connect(socket_value, item->ai_addr, (laghu_socklen)item->ai_addrlen) == 0) break;
     laghu_close(socket_value);
     socket_value = LAGHU_INVALID_SOCKET;
   }
@@ -211,8 +167,7 @@ static laghu_socket laghu_s3_connect(const char *host, unsigned int timeout,
   return socket_value;
 }
 
-static bool laghu_origin_url(const char *url, char host[256],
-                             char target[LAGHU_RUNTIME_PATH_SIZE]) {
+static bool laghu_origin_url(const char *url, char host[256], char target[LAGHU_RUNTIME_PATH_SIZE]) {
   const char *authority, *slash;
   size_t host_length;
   if (url == NULL || strncmp(url, "https://", 8U) != 0) return false;
@@ -220,9 +175,7 @@ static bool laghu_origin_url(const char *url, char host[256],
   slash = strchr(authority, '/');
   if (slash == NULL) return false;
   host_length = (size_t)(slash - authority);
-  if (host_length == 0U || host_length >= 256U ||
-      memchr(authority, ':', host_length) != NULL ||
-      memchr(authority, '@', host_length) != NULL ||
+  if (host_length == 0U || host_length >= 256U || memchr(authority, ':', host_length) != NULL || memchr(authority, '@', host_length) != NULL ||
       strlen(slash) >= LAGHU_RUNTIME_PATH_SIZE)
     return false;
   memcpy(host, authority, host_length);
@@ -231,10 +184,8 @@ static bool laghu_origin_url(const char *url, char host[256],
   return true;
 }
 
-static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
-                                    const char *url, unsigned char **body,
-                                    size_t *body_length, char *redirect,
-                                    size_t redirect_size) {
+static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record, const char *url, unsigned char **body, size_t *body_length,
+                                    char *redirect, size_t redirect_size) {
   char host[256], target[LAGHU_RUNTIME_PATH_SIZE], request[2048];
   unsigned char *response;
   size_t capacity = 65536U + s3->config.policy.max_body_bytes + 1U;
@@ -245,12 +196,9 @@ static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
   int request_length, status = 0;
   bool has_length = false;
   redirect[0] = '\0';
-  if (!laghu_origin_url(url, host, target) ||
-      strncmp(url, s3->config.policy.source_domain,
-              strlen(s3->config.policy.source_domain)) != 0 ||
+  if (!laghu_origin_url(url, host, target) || strncmp(url, s3->config.policy.source_domain, strlen(s3->config.policy.source_domain)) != 0 ||
       url[strlen(s3->config.policy.source_domain)] != '/' ||
-      (socket_value = laghu_s3_connect(host, s3->config.policy.timeout_seconds,
-                                       true)) == LAGHU_INVALID_SOCKET)
+      (socket_value = laghu_s3_connect(host, s3->config.policy.timeout_seconds, true)) == LAGHU_INVALID_SOCKET)
     return false;
   tls = SSL_new(s3->tls);
   if (tls == NULL) {
@@ -260,24 +208,17 @@ static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
   SSL_set_tlsext_host_name(tls, host);
   SSL_set1_host(tls, host);
   SSL_set_fd(tls, (int)socket_value);
-  request_length = snprintf(
-      request, sizeof(request),
-      "GET %s HTTP/1.1\r\nHost: %s\r\nAccept: */*\r\nConnection: close\r\n\r\n",
-      target, host);
+  request_length = snprintf(request, sizeof(request), "GET %s HTTP/1.1\r\nHost: %s\r\nAccept: */*\r\nConnection: close\r\n\r\n", target, host);
   response = malloc(capacity);
-  if (response == NULL || request_length <= 0 ||
-      (size_t)request_length >= sizeof(request) || SSL_connect(tls) != 1 ||
-      !laghu_ssl_write_all(tls, (const unsigned char *)request,
-                           (size_t)request_length)) {
+  if (response == NULL || request_length <= 0 || (size_t)request_length >= sizeof(request) || SSL_connect(tls) != 1 ||
+      !laghu_ssl_write_all(tls, (const unsigned char *)request, (size_t)request_length)) {
     free(response);
     SSL_free(tls);
     laghu_close(socket_value);
     return false;
   }
   while (used + 1U < capacity) {
-    int got = SSL_read(
-        tls, response + used,
-        (int)((capacity - used - 1U) > 65536U ? 65536U : capacity - used - 1U));
+    int got = SSL_read(tls, response + used, (int)((capacity - used - 1U) > 65536U ? 65536U : capacity - used - 1U));
     if (got <= 0) break;
     used += (size_t)got;
   }
@@ -285,8 +226,7 @@ static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
   laghu_close(socket_value);
   response[used] = '\0';
   header_end = strstr((char *)response, "\r\n\r\n");
-  if (header_end == NULL || (size_t)(header_end - (char *)response) > 65536U ||
-      sscanf((char *)response, "HTTP/%*u.%*u %d", &status) != 1) {
+  if (header_end == NULL || (size_t)(header_end - (char *)response) > 65536U || sscanf((char *)response, "HTTP/%*u.%*u %d", &status) != 1) {
     free(response);
     return false;
   }
@@ -309,11 +249,9 @@ static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
       } else if (strcasecmp(line, "Content-Type") == 0) {
         char *semicolon = strchr(value, ';');
         if (semicolon != NULL) *semicolon = '\0';
-        (void)snprintf(record->content_type, sizeof(record->content_type), "%s",
-                       value);
+        (void)snprintf(record->content_type, sizeof(record->content_type), "%s", value);
       } else if (strcasecmp(line, "Location") == 0) {
-        if (snprintf(redirect, redirect_size, "%s", value) <= 0 ||
-            strlen(value) >= redirect_size) {
+        if (snprintf(redirect, redirect_size, "%s", value) <= 0 || strlen(value) >= redirect_size) {
           free(response);
           return false;
         }
@@ -328,11 +266,8 @@ static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
     free(response);
     return true;
   }
-  if (status != 200 || !has_length || content_length == 0U ||
-      content_length > s3->config.policy.max_body_bytes ||
-      used - header_length != content_length ||
-      !laghu_mime_type_allowed(s3->config.policy.mime_types,
-                               record->content_type)) {
+  if (status != 200 || !has_length || content_length == 0U || content_length > s3->config.policy.max_body_bytes ||
+      used - header_length != content_length || !laghu_mime_type_allowed(s3->config.policy.mime_types, record->content_type)) {
     free(response);
     return false;
   }
@@ -342,46 +277,34 @@ static bool laghu_origin_fetch_once(laghu_s3 *s3, laghu_asset_record *record,
   return true;
 }
 
-static bool laghu_origin_redirect(const laghu_asset_policy *policy,
-                                  const char *current, const char *redirect,
-                                  char next[LAGHU_RUNTIME_PATH_SIZE]) {
+static bool laghu_origin_redirect(const laghu_asset_policy *policy, const char *current, const char *redirect, char next[LAGHU_RUNTIME_PATH_SIZE]) {
   size_t domain_length = strlen(policy->source_domain);
   int written;
   if (redirect[0] == '/' && redirect[1] != '/')
-    written = snprintf(next, LAGHU_RUNTIME_PATH_SIZE, "%s%s",
-                       policy->source_domain, redirect);
-  else if (strncmp(redirect, policy->source_domain, domain_length) == 0 &&
-           redirect[domain_length] == '/')
+    written = snprintf(next, LAGHU_RUNTIME_PATH_SIZE, "%s%s", policy->source_domain, redirect);
+  else if (strncmp(redirect, policy->source_domain, domain_length) == 0 && redirect[domain_length] == '/')
     written = snprintf(next, LAGHU_RUNTIME_PATH_SIZE, "%s", redirect);
   else
     return false;
-  return written > 0 && (size_t)written < LAGHU_RUNTIME_PATH_SIZE &&
-         strcmp(next, current) != 0;
+  return written > 0 && (size_t)written < LAGHU_RUNTIME_PATH_SIZE && strcmp(next, current) != 0;
 }
 
-static bool laghu_origin_fetch(laghu_s3 *s3, laghu_asset_record *record,
-                               unsigned char **body, size_t *body_length) {
+static bool laghu_origin_fetch(laghu_s3 *s3, laghu_asset_record *record, unsigned char **body, size_t *body_length) {
   char current[LAGHU_RUNTIME_PATH_SIZE], redirect[LAGHU_RUNTIME_PATH_SIZE];
   unsigned int redirects;
-  if (snprintf(current, sizeof(current), "%s", record->source_url) <= 0 ||
-      strlen(record->source_url) >= sizeof(current))
-    return false;
+  if (snprintf(current, sizeof(current), "%s", record->source_url) <= 0 || strlen(record->source_url) >= sizeof(current)) return false;
   for (redirects = 0U; redirects <= 3U; ++redirects) {
     char next[LAGHU_RUNTIME_PATH_SIZE];
-    if (!laghu_origin_fetch_once(s3, record, current, body, body_length,
-                                 redirect, sizeof(redirect)))
-      return false;
+    if (!laghu_origin_fetch_once(s3, record, current, body, body_length, redirect, sizeof(redirect))) return false;
     if (*body != NULL) return true;
     if (redirects == 3U || redirect[0] == '\0') return false;
-    if (!laghu_origin_redirect(&s3->config.policy, current, redirect, next))
-      return false;
+    if (!laghu_origin_redirect(&s3->config.policy, current, redirect, next)) return false;
     (void)snprintf(current, sizeof(current), "%s", next);
   }
   return false;
 }
 
-static bool laghu_ssl_write_all(SSL *tls, const unsigned char *data,
-                                size_t length) {
+static bool laghu_ssl_write_all(SSL *tls, const unsigned char *data, size_t length) {
   while (length != 0U) {
     int sent = SSL_write(tls, data, (int)(length > 65536U ? 65536U : length));
     if (sent <= 0) return false;
@@ -391,84 +314,60 @@ static bool laghu_ssl_write_all(SSL *tls, const unsigned char *data,
   return true;
 }
 
-static laghu_asset_provider_result laghu_s3_response_result(
-    const char *response, size_t response_length, const char *method,
-    size_t expected_size, const char *content_type, const char *checksum) {
+static laghu_asset_provider_result laghu_s3_response_result(const char *response, size_t response_length, const char *method, size_t expected_size,
+                                                            const char *content_type, const char *checksum) {
   int status = 0;
-  if (response == NULL || sscanf(response, "HTTP/%*u.%*u %d", &status) != 1)
-    return LAGHU_ASSET_PROVIDER_RETRYABLE;
+  if (response == NULL || sscanf(response, "HTTP/%*u.%*u %d", &status) != 1) return LAGHU_ASSET_PROVIDER_RETRYABLE;
   if (status >= 200 && status < 300) {
     if (strcmp(method, "HEAD") == 0) {
       char lower[4096], expected[256], lowered_type[LAGHU_RUNTIME_TYPE_SIZE];
       size_t index;
-      if (response_length >= sizeof(lower))
-        return LAGHU_ASSET_PROVIDER_PERMANENT;
-      for (index = 0U; index < response_length; ++index)
-        lower[index] = (char)tolower((unsigned char)response[index]);
+      if (response_length >= sizeof(lower)) return LAGHU_ASSET_PROVIDER_PERMANENT;
+      for (index = 0U; index < response_length; ++index) lower[index] = (char)tolower((unsigned char)response[index]);
       lower[response_length] = '\0';
-      for (index = 0U;
-           index < sizeof(lowered_type) - 1U && content_type[index] != '\0';
-           ++index)
+      for (index = 0U; index < sizeof(lowered_type) - 1U && content_type[index] != '\0'; ++index)
         lowered_type[index] = (char)tolower((unsigned char)content_type[index]);
       lowered_type[index] = '\0';
-      (void)snprintf(expected, sizeof(expected), "x-amz-meta-laghu-sha256: %s",
-                     checksum);
-      if (strstr(lower, expected) == NULL)
-        return LAGHU_ASSET_PROVIDER_PERMANENT;
-      (void)snprintf(expected, sizeof(expected), "content-length: %zu\r\n",
-                     expected_size);
-      if (strstr(lower, expected) == NULL)
-        return LAGHU_ASSET_PROVIDER_PERMANENT;
-      (void)snprintf(expected, sizeof(expected), "content-type: %s\r\n",
-                     lowered_type);
-      if (strstr(lower, expected) == NULL)
-        return LAGHU_ASSET_PROVIDER_PERMANENT;
+      (void)snprintf(expected, sizeof(expected), "x-amz-meta-laghu-sha256: %s", checksum);
+      if (strstr(lower, expected) == NULL) return LAGHU_ASSET_PROVIDER_PERMANENT;
+      (void)snprintf(expected, sizeof(expected), "content-length: %zu\r\n", expected_size);
+      if (strstr(lower, expected) == NULL) return LAGHU_ASSET_PROVIDER_PERMANENT;
+      (void)snprintf(expected, sizeof(expected), "content-type: %s\r\n", lowered_type);
+      if (strstr(lower, expected) == NULL) return LAGHU_ASSET_PROVIDER_PERMANENT;
     }
     return LAGHU_ASSET_PROVIDER_OK;
   }
-  if (status == 408 || status == 429 || status >= 500)
-    return LAGHU_ASSET_PROVIDER_RETRYABLE;
+  if (status == 408 || status == 429 || status >= 500) return LAGHU_ASSET_PROVIDER_RETRYABLE;
   return LAGHU_ASSET_PROVIDER_PERMANENT;
 }
 
-static laghu_asset_provider_result laghu_s3_request(
-    laghu_s3 *s3, const char *method, const char *object_key, laghu_buffer body,
-    size_t expected_size, const char *content_type, const char *checksum) {
-  static const char empty_hash[] =
-      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+static laghu_asset_provider_result laghu_s3_request(laghu_s3 *s3, const char *method, const char *object_key, laghu_buffer body, size_t expected_size,
+                                                    const char *content_type, const char *checksum) {
+  static const char empty_hash[] = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   char path[2048], date[17], authorization[1024], header[8192], response[4096];
   laghu_socket socket_value;
   SSL *tls;
   int length, got;
   if (strpbrk(object_key, " \r\n?#") != NULL ||
-      (s3->config.object_prefix[0] == '\0'
-           ? snprintf(path, sizeof(path), "%s%s", s3->base_path, object_key)
-           : snprintf(path, sizeof(path), "%s/%s%s", s3->base_path,
-                      s3->config.object_prefix, object_key)) <= 0 ||
-      !laghu_s3_authorization(s3, method, path,
-                              body.length == 0U ? empty_hash : checksum,
-                              content_type, body.length == 0U ? NULL : checksum,
-                              date, authorization))
+      (s3->config.object_prefix[0] == '\0' ? snprintf(path, sizeof(path), "%s%s", s3->base_path, object_key)
+                                           : snprintf(path, sizeof(path), "%s/%s%s", s3->base_path, s3->config.object_prefix, object_key)) <= 0 ||
+      !laghu_s3_authorization(s3, method, path, body.length == 0U ? empty_hash : checksum, content_type, body.length == 0U ? NULL : checksum, date,
+                              authorization))
     return LAGHU_ASSET_PROVIDER_PERMANENT;
-  length = body.length == 0U
-               ? snprintf(header, sizeof(header),
-                          "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\n"
-                          "Content-Length: 0\r\nX-Amz-Content-Sha256: %s\r\n"
-                          "X-Amz-Date: %s\r\nAuthorization: %s\r\nConnection: "
-                          "close\r\n\r\n",
-                          method, path, s3->host, content_type, empty_hash,
-                          date, authorization)
-               : snprintf(header, sizeof(header),
-                          "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\n"
-                          "Content-Length: %zu\r\nX-Amz-Content-Sha256: %s\r\n"
-                          "X-Amz-Date: %s\r\nX-Amz-Meta-Laghu-Sha256: %s\r\n"
-                          "Authorization: %s\r\nConnection: close\r\n\r\n",
-                          method, path, s3->host, content_type, body.length,
-                          checksum, date, checksum, authorization);
+  length = body.length == 0U ? snprintf(header, sizeof(header),
+                                        "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\n"
+                                        "Content-Length: 0\r\nX-Amz-Content-Sha256: %s\r\n"
+                                        "X-Amz-Date: %s\r\nAuthorization: %s\r\nConnection: "
+                                        "close\r\n\r\n",
+                                        method, path, s3->host, content_type, empty_hash, date, authorization)
+                             : snprintf(header, sizeof(header),
+                                        "%s %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\n"
+                                        "Content-Length: %zu\r\nX-Amz-Content-Sha256: %s\r\n"
+                                        "X-Amz-Date: %s\r\nX-Amz-Meta-Laghu-Sha256: %s\r\n"
+                                        "Authorization: %s\r\nConnection: close\r\n\r\n",
+                                        method, path, s3->host, content_type, body.length, checksum, date, checksum, authorization);
   if (length <= 0 || (size_t)length >= sizeof(header) ||
-      (socket_value = laghu_s3_connect(
-           s3->host, s3->config.policy.timeout_seconds, false)) ==
-          LAGHU_INVALID_SOCKET)
+      (socket_value = laghu_s3_connect(s3->host, s3->config.policy.timeout_seconds, false)) == LAGHU_INVALID_SOCKET)
     return LAGHU_ASSET_PROVIDER_RETRYABLE;
   tls = SSL_new(s3->tls);
   if (tls == NULL) {
@@ -478,12 +377,8 @@ static laghu_asset_provider_result laghu_s3_request(
   SSL_set_tlsext_host_name(tls, s3->host);
   SSL_set1_host(tls, s3->host);
   SSL_set_fd(tls, (int)socket_value);
-  if (SSL_connect(tls) != 1 ||
-      !laghu_ssl_write_all(tls, (const unsigned char *)header,
-                           (size_t)length) ||
-      (body.length != 0U &&
-       !laghu_ssl_write_all(tls, body.data, body.length)) ||
-      (got = SSL_read(tls, response, sizeof(response) - 1)) <= 0) {
+  if (SSL_connect(tls) != 1 || !laghu_ssl_write_all(tls, (const unsigned char *)header, (size_t)length) ||
+      (body.length != 0U && !laghu_ssl_write_all(tls, body.data, body.length)) || (got = SSL_read(tls, response, sizeof(response) - 1)) <= 0) {
     SSL_free(tls);
     laghu_close(socket_value);
     return LAGHU_ASSET_PROVIDER_RETRYABLE;
@@ -491,25 +386,15 @@ static laghu_asset_provider_result laghu_s3_request(
   response[got] = '\0';
   SSL_free(tls);
   laghu_close(socket_value);
-  return laghu_s3_response_result(response, (size_t)got, method, expected_size,
-                                  content_type, checksum);
+  return laghu_s3_response_result(response, (size_t)got, method, expected_size, content_type, checksum);
 }
 
-static laghu_asset_provider_result laghu_s3_upload(void *context,
-                                                   const char *key,
-                                                   laghu_buffer body,
-                                                   const char *type,
-                                                   const char *checksum) {
-  return laghu_s3_request(context, "PUT", key, body, body.length, type,
-                          checksum);
+static laghu_asset_provider_result laghu_s3_upload(void *context, const char *key, laghu_buffer body, const char *type, const char *checksum) {
+  return laghu_s3_request(context, "PUT", key, body, body.length, type, checksum);
 }
 
-static laghu_asset_provider_result laghu_s3_verify(void *context,
-                                                   const char *key, size_t size,
-                                                   const char *type,
-                                                   const char *checksum) {
-  return laghu_s3_request(context, "HEAD", key, (laghu_buffer){NULL, 0U}, size,
-                          type, checksum);
+static laghu_asset_provider_result laghu_s3_verify(void *context, const char *key, size_t size, const char *type, const char *checksum) {
+  return laghu_s3_request(context, "HEAD", key, (laghu_buffer){NULL, 0U}, size, type, checksum);
 }
 
 static bool laghu_s3_healthy(void *context) { return context != NULL; }
@@ -521,27 +406,19 @@ static int laghu_asset_process(laghu_s3 *s3, laghu_asset_provider *provider) {
   char job_path[LAGHU_RUNTIME_PATH_SIZE], checksum[LAGHU_RUNTIME_KEY_SIZE];
   laghu_asset_provider_result result;
   uint64_t now = (uint64_t)time(NULL);
-  if (!laghu_asset_job_take(&s3->config, &record, &body, &length, job_path))
-    return 0;
+  if (!laghu_asset_job_take(&s3->config, &record, &body, &length, job_path)) return 0;
   if (length == 0U) {
     laghu_source_policy source_policy;
     char validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
     char mapping[LAGHU_RUNTIME_KEY_SIZE];
     laghu_source_load_result loaded = LAGHU_SOURCE_LOAD_MISS;
     if (laghu_source_registry_load(s3->config.queue_path, &source_policy))
-      loaded = laghu_source_file_load(&source_policy, record.source_url, &body,
-                                      &length, record.content_type, validator,
-                                      mapping);
-    if (loaded == LAGHU_SOURCE_LOAD_READY)
-      (void)snprintf(record.source_validator, sizeof(record.source_validator),
-                     "%s", validator);
+      loaded = laghu_source_file_load(&source_policy, record.source_url, &body, &length, record.content_type, validator, mapping);
+    if (loaded == LAGHU_SOURCE_LOAD_READY) (void)snprintf(record.source_validator, sizeof(record.source_validator), "%s", validator);
     (void)mapping;
-    if ((loaded != LAGHU_SOURCE_LOAD_READY &&
-         (!s3->config.policy.trusted_origin_fallback ||
-          !laghu_origin_fetch(s3, &record, &body, &length))) ||
+    if ((loaded != LAGHU_SOURCE_LOAD_READY && (!s3->config.policy.trusted_origin_fallback || !laghu_origin_fetch(s3, &record, &body, &length))) ||
         !laghu_sha256_hex((laghu_buffer){body, length}, record.content_hash) ||
-        !laghu_asset_object_key(&s3->config.policy, record.source_url,
-                                record.content_hash, record.object_key)) {
+        !laghu_asset_object_key(&s3->config.policy, record.source_url, record.content_hash, record.object_key)) {
       result = LAGHU_ASSET_PROVIDER_RETRYABLE;
       goto publish_failure;
     }
@@ -553,38 +430,28 @@ static int laghu_asset_process(laghu_s3 *s3, laghu_asset_provider *provider) {
   if (!laghu_sha256_hex((laghu_buffer){body, length}, checksum))
     result = LAGHU_ASSET_PROVIDER_PERMANENT;
   else if (s3->config.policy.upload)
-    result = provider->upload(provider->context, record.object_key,
-                              (laghu_buffer){body, length}, record.content_type,
-                              checksum);
+    result = provider->upload(provider->context, record.object_key, (laghu_buffer){body, length}, record.content_type, checksum);
   else
     result = LAGHU_ASSET_PROVIDER_OK;
-  if (result == LAGHU_ASSET_PROVIDER_OK)
-    result = provider->verify(provider->context, record.object_key, length,
-                              record.content_type, checksum);
+  if (result == LAGHU_ASSET_PROVIDER_OK) result = provider->verify(provider->context, record.object_key, length, record.content_type, checksum);
 publish_failure:
   ++record.attempts;
   record.updated_at = (uint64_t)time(NULL);
   if (result == LAGHU_ASSET_PROVIDER_OK)
     record.state = LAGHU_ASSET_READY;
-  else if (result == LAGHU_ASSET_PROVIDER_RETRYABLE &&
-           record.attempts <= s3->config.policy.retry_limit) {
+  else if (result == LAGHU_ASSET_PROVIDER_RETRYABLE && record.attempts <= s3->config.policy.retry_limit) {
     record.state = LAGHU_ASSET_RETRYABLE_FAILURE;
-    record.retry_after = laghu_asset_retry_after(
-        &s3->config.policy, record.attempts, record.updated_at);
+    record.retry_after = laghu_asset_retry_after(&s3->config.policy, record.attempts, record.updated_at);
   } else
     record.state = LAGHU_ASSET_PERMANENT_FAILURE;
   (void)laghu_asset_catalog_publish(s3->config.catalog_path, &record);
-  if (record.state == LAGHU_ASSET_RETRYABLE_FAILURE)
-    (void)laghu_asset_job_publish(&s3->config, &record,
-                                  (laghu_buffer){body, length});
+  if (record.state == LAGHU_ASSET_RETRYABLE_FAILURE) (void)laghu_asset_job_publish(&s3->config, &record, (laghu_buffer){body, length});
   free(body);
   (void)laghu_asset_job_complete(job_path);
   return result == LAGHU_ASSET_PROVIDER_OK ? 0 : 1;
 }
 
-static void laghu_usage(FILE *stream) {
-  fputs("Usage: laghu-asset-upload --once|--serve CONFIG\n", stream);
-}
+static void laghu_usage(FILE *stream) { fputs("Usage: laghu-asset-upload --once|--serve CONFIG\n", stream); }
 
 static int laghu_asset_run(const char *mode, const char *config_path) {
   laghu_s3 s3;
@@ -596,24 +463,18 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
   error[0] = '\0';
   serve = strcmp(mode, "--once") != 0;
   memset(&s3, 0, sizeof(s3));
-  if (!laghu_asset_config_load(config_path, &s3.config, error, sizeof(error)) ||
-      !laghu_s3_endpoint(&s3) ||
-      (s3.access_key = getenv(s3.config.access_key_env)) == NULL ||
-      (s3.secret_key = getenv(s3.config.secret_key_env)) == NULL) {
-    fprintf(stderr, "laghu-asset-upload: %s\n",
-            error[0] == '\0' ? "invalid configuration or credentials" : error);
+  if (!laghu_asset_config_load(config_path, &s3.config, error, sizeof(error)) || !laghu_s3_endpoint(&s3) ||
+      (s3.access_key = getenv(s3.config.access_key_env)) == NULL || (s3.secret_key = getenv(s3.config.secret_key_env)) == NULL) {
+    fprintf(stderr, "laghu-asset-upload: %s\n", error[0] == '\0' ? "invalid configuration or credentials" : error);
     return 2;
   }
   s3.tls = SSL_CTX_new(TLS_client_method());
   if (s3.tls == NULL || SSL_CTX_set_default_verify_paths(s3.tls) != 1) return 1;
   SSL_CTX_set_verify(s3.tls, SSL_VERIFY_PEER, NULL);
-  provider = (laghu_asset_provider){laghu_s3_upload, laghu_s3_verify, NULL,
-                                    laghu_s3_healthy, &s3};
+  provider = (laghu_asset_provider){laghu_s3_upload, laghu_s3_verify, NULL, laghu_s3_healthy, &s3};
   if (s3.config.operational_cache_path[0] != '\0')
-    (void)laghu_worker_lifecycle_start(&lifecycle,
-                                       s3.config.operational_cache_path,
-                                       LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD,
-                                       NULL, true, (uint64_t)time(NULL));
+    (void)laghu_worker_lifecycle_start(&lifecycle, s3.config.operational_cache_path, LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD, NULL, true,
+                                       (uint64_t)time(NULL));
   laghu_asset_log_lifecycle("running", "none");
   (void)signal(SIGINT, laghu_asset_signal);
   (void)signal(SIGTERM, laghu_asset_signal);
@@ -621,10 +482,8 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
     uint64_t started = laghu_worker_lifecycle_clock();
     int status = laghu_asset_process(&s3, &provider);
     uint64_t elapsed = laghu_worker_lifecycle_clock() - started;
-    laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL),
-                                     status == 0);
-    laghu_worker_lifecycle_job(&lifecycle, status == 0, elapsed,
-                               LAGHU_OPERATIONAL_FAILURE_WORKER);
+    laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), status == 0);
+    laghu_worker_lifecycle_job(&lifecycle, status == 0, elapsed, LAGHU_OPERATIONAL_FAILURE_WORKER);
     laghu_asset_log_job(status, elapsed);
     if (!serve) {
       laghu_worker_lifecycle_stop(&lifecycle, (uint64_t)time(NULL));
@@ -641,8 +500,7 @@ static int laghu_asset_run(const char *mode, const char *config_path) {
 }
 
 int main(int argc, char **argv) {
-  if (argc != 3 ||
-      (strcmp(argv[1], "--once") != 0 && strcmp(argv[1], "--serve") != 0)) {
+  if (argc != 3 || (strcmp(argv[1], "--once") != 0 && strcmp(argv[1], "--serve") != 0)) {
     laghu_usage(stderr);
     return 2;
   }

@@ -21,8 +21,7 @@
 #define LAGHU_INVALID_SOCKET (-1)
 #define laghu_close close
 static void laghu_sleep_ms(unsigned int value) {
-  struct timespec pause = {.tv_sec = (time_t)(value / 1000U),
-                           .tv_nsec = (long)(value % 1000U) * 1000000L};
+  struct timespec pause = {.tv_sec = (time_t)(value / 1000U), .tv_nsec = (long)(value % 1000U) * 1000000L};
   (void)nanosleep(&pause, NULL);
 }
 
@@ -57,27 +56,20 @@ static volatile sig_atomic_t laghu_fetch_stop;
 
 static void laghu_fetch_log_lifecycle(const char *state, const char *failure) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_lifecycle record = {
-      .common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL},
-      .state = state,
-      .failure = failure};
-  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
-    fprintf(stderr, "%s\n", line);
+  laghu_log_lifecycle record = {.common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL}, .state = state, .failure = failure};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line))) fprintf(stderr, "%s\n", line);
 }
 
-static void laghu_fetch_log_job(const laghu_runtime_job *job, bool success,
-                                uint64_t elapsed) {
+static void laghu_fetch_log_job(const laghu_runtime_job *job, bool success, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_job record = {
-      .common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL},
-      .job_kind = "font_css",
-      .outcome = success ? "success" : "failed",
-      .input_bytes = job->payload.length,
-      .output_bytes = 0U,
-      .duration_ms = elapsed / 1000U,
-      .failure = success ? "none" : "network"};
-  if (laghu_log_render_job(&record, line, sizeof(line)))
-    fprintf(stderr, "%s\n", line);
+  laghu_log_job record = {.common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL},
+                          .job_kind = "font_css",
+                          .outcome = success ? "success" : "failed",
+                          .input_bytes = job->payload.length,
+                          .output_bytes = 0U,
+                          .duration_ms = elapsed / 1000U,
+                          .failure = success ? "none" : "network"};
+  if (laghu_log_render_job(&record, line, sizeof(line))) fprintf(stderr, "%s\n", line);
 }
 
 static void laghu_fetch_signal(int signal_number) {
@@ -85,8 +77,7 @@ static void laghu_fetch_signal(int signal_number) {
   laghu_fetch_stop = 1;
 }
 
-static bool laghu_fetch_url(const char *url, char host[256],
-                            char target[LAGHU_RUNTIME_PATH_SIZE]) {
+static bool laghu_fetch_url(const char *url, char host[256], char target[LAGHU_RUNTIME_PATH_SIZE]) {
   const char *authority;
   const char *slash;
   size_t host_length;
@@ -95,10 +86,8 @@ static bool laghu_fetch_url(const char *url, char host[256],
   slash = strchr(authority, '/');
   if (slash == NULL) return false;
   host_length = (size_t)(slash - authority);
-  if (host_length == 0U || host_length >= 256U ||
-      host_length + strlen(slash) + 1U >= LAGHU_RUNTIME_PATH_SIZE ||
-      memchr(authority, ':', host_length) != NULL ||
-      memchr(authority, '@', host_length) != NULL || strchr(slash, '#') != NULL)
+  if (host_length == 0U || host_length >= 256U || host_length + strlen(slash) + 1U >= LAGHU_RUNTIME_PATH_SIZE ||
+      memchr(authority, ':', host_length) != NULL || memchr(authority, '@', host_length) != NULL || strchr(slash, '#') != NULL)
     return false;
   memcpy(host, authority, host_length);
   host[host_length] = '\0';
@@ -122,8 +111,7 @@ static laghu_socket laghu_fetch_connect(const char *host) {
   if (endpoint != NULL) {
     const char *colon = strrchr(endpoint, ':');
     size_t length = colon == NULL ? 0U : (size_t)(colon - endpoint);
-    if (length == 0U || length >= sizeof(test_host) || strlen(colon + 1U) >= 6U)
-      return result;
+    if (length == 0U || length >= sizeof(test_host) || strlen(colon + 1U) >= 6U) return result;
     memcpy(test_host, endpoint, length);
     test_host[length] = '\0';
     (void)snprintf(test_port, sizeof(test_port), "%s", colon + 1U);
@@ -151,12 +139,10 @@ static laghu_socket laghu_fetch_connect(const char *host) {
       return result;
     }
   for (item = addresses; item != NULL; item = item->ai_next) {
-    result = (laghu_socket)socket(item->ai_family, item->ai_socktype,
-                                  item->ai_protocol);
+    result = (laghu_socket)socket(item->ai_family, item->ai_socktype, item->ai_protocol);
     if (result == LAGHU_INVALID_SOCKET) continue;
     laghu_fetch_timeout(result);
-    if (connect(result, item->ai_addr, (laghu_socklen)item->ai_addrlen) == 0)
-      break;
+    if (connect(result, item->ai_addr, (laghu_socklen)item->ai_addrlen) == 0) break;
     laghu_close(result);
     result = LAGHU_INVALID_SOCKET;
   }
@@ -164,8 +150,7 @@ static laghu_socket laghu_fetch_connect(const char *host) {
   return result;
 }
 
-static bool laghu_fetch_send(SSL *tls, const unsigned char *data,
-                             size_t length) {
+static bool laghu_fetch_send(SSL *tls, const unsigned char *data, size_t length) {
   while (length != 0U) {
     int sent = SSL_write(tls, data, (int)(length > 65536U ? 65536U : length));
     if (sent <= 0) return false;
@@ -175,12 +160,10 @@ static bool laghu_fetch_send(SSL *tls, const unsigned char *data,
   return true;
 }
 
-static int laghu_fetch_casecmp(const char *left, const char *right,
-                               size_t length) {
+static int laghu_fetch_casecmp(const char *left, const char *right, size_t length) {
   size_t index;
   for (index = 0U; index < length; ++index) {
-    int difference = tolower((unsigned char)left[index]) -
-                     tolower((unsigned char)right[index]);
+    int difference = tolower((unsigned char)left[index]) - tolower((unsigned char)right[index]);
     if (difference != 0) return difference;
   }
   return 0;
@@ -195,8 +178,7 @@ static char *laghu_fetch_trim(char *value) {
   return value;
 }
 
-static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
-                             laghu_fetch_response *response) {
+static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider, laghu_fetch_response *response) {
   unsigned char *data;
   size_t capacity = LAGHU_FETCH_HEADER_MAX + provider->max_css_bytes + 1U;
   size_t used = 0U;
@@ -215,8 +197,7 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
     data[used] = '\0';
   }
   header_end = strstr((char *)data, "\r\n\r\n");
-  if (header_end == NULL ||
-      (size_t)(header_end - (char *)data) > LAGHU_FETCH_HEADER_MAX) {
+  if (header_end == NULL || (size_t)(header_end - (char *)data) > LAGHU_FETCH_HEADER_MAX) {
     free(data);
     return false;
   }
@@ -239,16 +220,11 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
     }
     *colon = '\0';
     value = laghu_fetch_trim(colon + 1U);
-    if (strlen(line) == 12U &&
-        laghu_fetch_casecmp(line, "Content-Type", 12U) == 0)
-      (void)snprintf(response->content_type, sizeof(response->content_type),
-                     "%s", value);
-    else if (strlen(line) == 8U &&
-             laghu_fetch_casecmp(line, "Location", 8U) == 0)
-      (void)snprintf(response->location, sizeof(response->location), "%s",
-                     value);
-    else if (strlen(line) == 14U &&
-             laghu_fetch_casecmp(line, "Content-Length", 14U) == 0) {
+    if (strlen(line) == 12U && laghu_fetch_casecmp(line, "Content-Type", 12U) == 0)
+      (void)snprintf(response->content_type, sizeof(response->content_type), "%s", value);
+    else if (strlen(line) == 8U && laghu_fetch_casecmp(line, "Location", 8U) == 0)
+      (void)snprintf(response->location, sizeof(response->location), "%s", value);
+    else if (strlen(line) == 14U && laghu_fetch_casecmp(line, "Content-Length", 14U) == 0) {
       char *end = NULL;
       unsigned long parsed = strtoul(value, &end, 10);
       if (end == value || *end != '\0' || parsed > provider->max_css_bytes) {
@@ -257,23 +233,16 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
       }
       content_length = (size_t)parsed;
       has_content_length = true;
-    } else if (strlen(line) == 17U &&
-               laghu_fetch_casecmp(line, "Transfer-Encoding", 17U) == 0 &&
-               strstr(value, "chunked") != NULL) {
+    } else if (strlen(line) == 17U && laghu_fetch_casecmp(line, "Transfer-Encoding", 17U) == 0 && strstr(value, "chunked") != NULL) {
       chunked = true;
-    } else if (strlen(line) == 16U &&
-               laghu_fetch_casecmp(line, "Content-Encoding", 16U) == 0 &&
-               strcmp(value, "identity") != 0) {
+    } else if (strlen(line) == 16U && laghu_fetch_casecmp(line, "Content-Encoding", 16U) == 0 && strcmp(value, "identity") != 0) {
       free(data);
       return false;
-    } else if (strlen(line) == 13U &&
-               laghu_fetch_casecmp(line, "Cache-Control", 13U) == 0) {
+    } else if (strlen(line) == 13U && laghu_fetch_casecmp(line, "Cache-Control", 13U) == 0) {
       char *maximum = strstr(value, "max-age=");
       if (maximum != NULL) {
         unsigned long parsed = strtoul(maximum + 8U, NULL, 10);
-        response->max_age = parsed > provider->ttl_seconds
-                                ? provider->ttl_seconds
-                                : (unsigned int)parsed;
+        response->max_age = parsed > provider->ttl_seconds ? provider->ttl_seconds : (unsigned int)parsed;
       }
     }
     line = next + 2U;
@@ -288,8 +257,7 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
     while (input < used) {
       char *end = NULL;
       unsigned long size = strtoul((char *)data + input, &end, 16);
-      if (end == (char *)data + input || end + 2U > (char *)data + used ||
-          end[0] != '\r' || end[1] != '\n' ||
+      if (end == (char *)data + input || end + 2U > (char *)data + used || end[0] != '\r' || end[1] != '\n' ||
           size > provider->max_css_bytes - output) {
         free(decoded);
         free(data);
@@ -297,8 +265,7 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
       }
       input = (size_t)(end - (char *)data) + 2U;
       if (size == 0U) break;
-      if (size > used - input || input + size + 2U > used ||
-          data[input + size] != '\r' || data[input + size + 1U] != '\n') {
+      if (size > used - input || input + size + 2U > used || data[input + size] != '\r' || data[input + size + 1U] != '\n') {
         free(decoded);
         free(data);
         return false;
@@ -312,8 +279,7 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
     response->length = output;
   } else {
     size_t body_length = used - header_length;
-    if ((has_content_length && body_length != content_length) ||
-        body_length > provider->max_css_bytes) {
+    if ((has_content_length && body_length != content_length) || body_length > provider->max_css_bytes) {
       free(data);
       return false;
     }
@@ -330,9 +296,7 @@ static bool laghu_fetch_read(SSL *tls, const laghu_font_provider *provider,
   return true;
 }
 
-static bool laghu_fetch_once(SSL_CTX *context,
-                             const laghu_font_provider *provider,
-                             const char *url, laghu_fetch_response *response) {
+static bool laghu_fetch_once(SSL_CTX *context, const laghu_font_provider *provider, const char *url, laghu_fetch_response *response) {
   char host[256], target[LAGHU_RUNTIME_PATH_SIZE];
   char request[LAGHU_RUNTIME_PATH_SIZE + 512U];
   laghu_socket socket = LAGHU_INVALID_SOCKET;
@@ -341,16 +305,12 @@ static bool laghu_fetch_once(SSL_CTX *context,
   int length;
   bool success = false;
   memset(response, 0, sizeof(*response));
-  if (!laghu_fetch_url(url, host, target) ||
-      !laghu_font_provider_url_allowed(provider, url, false, false))
-    goto done;
+  if (!laghu_fetch_url(url, host, target) || !laghu_font_provider_url_allowed(provider, url, false, false)) goto done;
   if ((socket = laghu_fetch_connect(host)) == LAGHU_INVALID_SOCKET) goto done;
   if ((tls = SSL_new(context)) == NULL) goto done;
   parameters = SSL_get0_param(tls);
-  X509_VERIFY_PARAM_set_hostflags(parameters,
-                                  X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-  if (!SSL_set_tlsext_host_name(tls, host) || !SSL_set1_host(tls, host) ||
-      !SSL_set_fd(tls, (int)socket) || SSL_connect(tls) != 1 ||
+  X509_VERIFY_PARAM_set_hostflags(parameters, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+  if (!SSL_set_tlsext_host_name(tls, host) || !SSL_set1_host(tls, host) || !SSL_set_fd(tls, (int)socket) || SSL_connect(tls) != 1 ||
       SSL_get_verify_result(tls) != X509_V_OK)
     goto done;
   length = snprintf(request, sizeof(request),
@@ -358,8 +318,7 @@ static bool laghu_fetch_once(SSL_CTX *context,
                     "LaghuFontFetch/1\r\nAccept: text/css,*/*;q=0.1\r\n"
                     "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
                     target, host);
-  if (length <= 0 || (size_t)length >= sizeof(request) ||
-      !laghu_fetch_send(tls, (const unsigned char *)request, (size_t)length) ||
+  if (length <= 0 || (size_t)length >= sizeof(request) || !laghu_fetch_send(tls, (const unsigned char *)request, (size_t)length) ||
       !laghu_fetch_read(tls, provider, response))
     goto done;
   success = true;
@@ -372,19 +331,14 @@ done:
   return success;
 }
 
-static bool laghu_fetch_stylesheet(SSL_CTX *context,
-                                   const laghu_font_provider *provider,
-                                   const char *initial,
-                                   laghu_fetch_response *response) {
+static bool laghu_fetch_stylesheet(SSL_CTX *context, const laghu_font_provider *provider, const char *initial, laghu_fetch_response *response) {
   char url[LAGHU_RUNTIME_PATH_SIZE];
   unsigned int redirects;
   (void)snprintf(url, sizeof(url), "%s", initial);
   for (redirects = 0U; redirects <= LAGHU_FETCH_REDIRECT_MAX; ++redirects) {
     if (!laghu_fetch_once(context, provider, url, response)) return false;
     if (response->status < 300U || response->status >= 400U) break;
-    if (response->location[0] == '\0' ||
-        !laghu_font_provider_url_allowed(provider, response->location, true,
-                                         false) ||
+    if (response->location[0] == '\0' || !laghu_font_provider_url_allowed(provider, response->location, true, false) ||
         redirects == LAGHU_FETCH_REDIRECT_MAX) {
       free(response->body);
       return false;
@@ -393,74 +347,52 @@ static bool laghu_fetch_stylesheet(SSL_CTX *context,
     free(response->body);
     memset(response, 0, sizeof(*response));
   }
-  return response->status == 200U &&
-         laghu_fetch_casecmp(response->content_type, "text/css", 8U) == 0 &&
-         (response->content_type[8] == '\0' ||
-          response->content_type[8] == ';' ||
-          response->content_type[8] == ' ' ||
+  return response->status == 200U && laghu_fetch_casecmp(response->content_type, "text/css", 8U) == 0 &&
+         (response->content_type[8] == '\0' || response->content_type[8] == ';' || response->content_type[8] == ' ' ||
           response->content_type[8] == '\t') &&
-         laghu_font_css_validate(
-             provider, (laghu_buffer){response->body, response->length});
+         laghu_font_css_validate(provider, (laghu_buffer){response->body, response->length});
 }
 
-static bool laghu_fetch_publish_failure(const char *cache_path,
-                                        const laghu_runtime_job *job,
-                                        uint64_t now) {
+static bool laghu_fetch_publish_failure(const char *cache_path, const laghu_runtime_job *job, uint64_t now) {
   laghu_font_stylesheet_record record = {0};
-  (void)snprintf(record.provider_id, sizeof(record.provider_id), "%s",
-                 job->provider_id);
-  memcpy(record.provider_digest, job->provider_digest,
-         sizeof(record.provider_digest));
-  (void)snprintf(record.normalized_url, sizeof(record.normalized_url), "%s",
-                 job->request_path);
+  (void)snprintf(record.provider_id, sizeof(record.provider_id), "%s", job->provider_id);
+  memcpy(record.provider_digest, job->provider_digest, sizeof(record.provider_digest));
+  (void)snprintf(record.normalized_url, sizeof(record.normalized_url), "%s", job->request_path);
   record.retry_after = now + LAGHU_FETCH_RETRY_SECONDS;
   record.terminally_excluded = true;
   return laghu_font_stylesheet_publish(cache_path, &record);
 }
 
-static bool laghu_fetch_process(SSL_CTX *context,
-                                const laghu_font_provider_set *providers,
-                                const char *cache_path,
-                                const laghu_runtime_job *job) {
-  const laghu_font_provider *provider =
-      laghu_font_provider_by_id(providers, job->provider_id);
+static bool laghu_fetch_process(SSL_CTX *context, const laghu_font_provider_set *providers, const char *cache_path, const laghu_runtime_job *job) {
+  const laghu_font_provider *provider = laghu_font_provider_by_id(providers, job->provider_id);
   laghu_fetch_response response;
   laghu_runtime_cache_entry entry;
   laghu_font_stylesheet_record record = {0};
   char variant_key[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t now = (uint64_t)time(NULL);
   if (provider == NULL || strcmp(provider->digest, job->provider_digest) != 0 ||
-      !laghu_font_provider_url_allowed(provider, job->request_path, false,
-                                       false) ||
+      !laghu_font_provider_url_allowed(provider, job->request_path, false, false) ||
       !laghu_fetch_stylesheet(context, provider, job->request_path, &response))
     return laghu_fetch_publish_failure(cache_path, job, now);
-  if (!laghu_sha256_hex((laghu_buffer){response.body, response.length},
-                        variant_key) ||
-      !laghu_runtime_cache_publish(
-          cache_path, variant_key, variant_key, variant_key, "text/css",
-          LAGHU_FETCH_BACKEND, (laghu_buffer){response.body, response.length},
-          &entry)) {
+  if (!laghu_sha256_hex((laghu_buffer){response.body, response.length}, variant_key) ||
+      !laghu_runtime_cache_publish(cache_path, variant_key, variant_key, variant_key, "text/css", LAGHU_FETCH_BACKEND,
+                                   (laghu_buffer){response.body, response.length}, &entry)) {
     free(response.body);
     return laghu_fetch_publish_failure(cache_path, job, now);
   }
-  (void)snprintf(record.provider_id, sizeof(record.provider_id), "%s",
-                 provider->id);
-  memcpy(record.provider_digest, provider->digest,
-         sizeof(record.provider_digest));
-  (void)snprintf(record.normalized_url, sizeof(record.normalized_url), "%s",
-                 job->request_path);
+  (void)snprintf(record.provider_id, sizeof(record.provider_id), "%s", provider->id);
+  memcpy(record.provider_digest, provider->digest, sizeof(record.provider_digest));
+  (void)snprintf(record.normalized_url, sizeof(record.normalized_url), "%s", job->request_path);
   memcpy(record.variant_key, variant_key, sizeof(record.variant_key));
   record.css_length = response.length;
   record.fetched_at = now;
-  record.ttl_seconds =
-      response.max_age == 0U ? provider->ttl_seconds : response.max_age;
+  record.ttl_seconds = response.max_age == 0U ? provider->ttl_seconds : response.max_age;
   record.ready = true;
   free(response.body);
   return laghu_font_stylesheet_publish(cache_path, &record);
 }
 
-static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
-                             const char *provider_path) {
+static int laghu_fetch_serve(const char *queue_path, const char *cache_path, const char *provider_path) {
   laghu_runtime_queue queue;
   laghu_worker_lifecycle lifecycle;
   laghu_font_provider_set providers;
@@ -469,18 +401,15 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   unsigned char payload[1];
   bool queue_configured = false;
   bool queue_unavailable_reported = false;
-  if (!laghu_font_providers_load(provider_path, &providers, error,
-                                 sizeof(error))) {
+  if (!laghu_font_providers_load(provider_path, &providers, error, sizeof(error))) {
     fprintf(stderr, "laghu-resource-fetch: %s\n", error);
     return 1;
   }
   context = SSL_CTX_new(TLS_client_method());
   if (context == NULL || !SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION)
 #if LAGHU_TEST_HOOKS
-      || (getenv("LAGHU_TEST_FETCH_CA") != NULL
-              ? !SSL_CTX_load_verify_locations(
-                    context, getenv("LAGHU_TEST_FETCH_CA"), NULL)
-              : !SSL_CTX_set_default_verify_paths(context))
+      || (getenv("LAGHU_TEST_FETCH_CA") != NULL ? !SSL_CTX_load_verify_locations(context, getenv("LAGHU_TEST_FETCH_CA"), NULL)
+                                                : !SSL_CTX_set_default_verify_paths(context))
 #else
       || !SSL_CTX_set_default_verify_paths(context)
 #endif
@@ -492,9 +421,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   laghu_runtime_queue_init(&queue);
   laghu_worker_lifecycle_init(&lifecycle);
-  (void)laghu_worker_lifecycle_start(&lifecycle, cache_path,
-                                     LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH,
-                                     NULL, true, (uint64_t)time(NULL));
+  (void)laghu_worker_lifecycle_start(&lifecycle, cache_path, LAGHU_OPERATIONAL_PROCESS_RESOURCE_FETCH, NULL, true, (uint64_t)time(NULL));
   laghu_fetch_log_lifecycle("starting", "none");
   laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), false);
   (void)signal(SIGINT, laghu_fetch_signal);
@@ -511,8 +438,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
       laghu_sleep_ms(100U);
       continue;
     }
-    if (!queue_configured &&
-        !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND)) {
+    if (!queue_configured && !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_FETCH_BACKEND)) {
       if (!queue_unavailable_reported) {
         laghu_fetch_log_lifecycle("degraded", "queue");
         queue_unavailable_reported = true;
@@ -529,11 +455,9 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
     if (laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload))) {
       if (job.kind == LAGHU_RUNTIME_JOB_FONT_CSS) {
         uint64_t started = laghu_worker_lifecycle_clock();
-        bool success =
-            laghu_fetch_process(context, &providers, cache_path, &job);
+        bool success = laghu_fetch_process(context, &providers, cache_path, &job);
         uint64_t elapsed = laghu_worker_lifecycle_clock() - started;
-        laghu_worker_lifecycle_job(&lifecycle, success, elapsed,
-                                   LAGHU_OPERATIONAL_FAILURE_WORKER);
+        laghu_worker_lifecycle_job(&lifecycle, success, elapsed, LAGHU_OPERATIONAL_FAILURE_WORKER);
         laghu_fetch_log_job(&job, success, elapsed);
       }
     } else {
@@ -550,9 +474,7 @@ static int laghu_fetch_serve(const char *queue_path, const char *cache_path,
 int main(int argc, char **argv) {
   laghu_runtime_queue queue;
   bool initialize;
-  if (argc != 5 ||
-      (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 &&
-       strcmp(argv[1], "--init-and-serve") != 0)) {
+  if (argc != 5 || (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--init-and-serve") != 0)) {
     fputs(
         "Usage: laghu-resource-fetch --init|--serve|--init-and-serve "
         "QUEUE CACHE PROVIDERS\n",

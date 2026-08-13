@@ -9,11 +9,9 @@
 #include <string.h>
 
 int main(void) {
-  static const char hash[] =
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  static const char hash[] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   char first[LAGHU_RUNTIME_KEY_SIZE], second[LAGHU_RUNTIME_KEY_SIZE];
-  assert(strstr(laghu_runtime_image_beacon_script(), "/.laghu/beacon/images") !=
-         NULL);
+  assert(strstr(laghu_runtime_image_beacon_script(), "/.laghu/beacon/images") != NULL);
   assert(laghu_catalog_key("/hero.png", hash, hash, 1U, first));
   assert(laghu_catalog_key("/hero.png", hash, hash, 1U, second));
   assert(strcmp(first, second) == 0);

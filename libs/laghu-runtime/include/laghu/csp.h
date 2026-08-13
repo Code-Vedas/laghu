@@ -56,24 +56,15 @@ typedef struct {
   char origin[LAGHU_CSP_ORIGIN_SIZE];
 } laghu_csp_policy;
 void laghu_csp_policy_init(laghu_csp_policy *policy, const char *page_origin);
-bool laghu_csp_policy_add(laghu_csp_policy *policy, const char *value,
-                          size_t length);
+bool laghu_csp_policy_add(laghu_csp_policy *policy, const char *value, size_t length);
 bool laghu_csp_policy_add_meta(laghu_csp_policy *policy, laghu_buffer html);
 bool laghu_csp_allows_data_image(const laghu_csp_policy *policy);
 bool laghu_csp_allows_external_image(const laghu_csp_policy *policy);
-bool laghu_csp_allows_inline_style(const laghu_csp_policy *policy,
-                                   const unsigned char *nonce,
-                                   size_t nonce_length);
-bool laghu_csp_allows_external_style(const laghu_csp_policy *policy,
-                                     const unsigned char *nonce,
-                                     size_t nonce_length);
+bool laghu_csp_allows_inline_style(const laghu_csp_policy *policy, const unsigned char *nonce, size_t nonce_length);
+bool laghu_csp_allows_external_style(const laghu_csp_policy *policy, const unsigned char *nonce, size_t nonce_length);
 bool laghu_csp_allows_style_attribute(const laghu_csp_policy *policy);
-bool laghu_csp_allows_inline_script(const laghu_csp_policy *policy,
-                                    const unsigned char *nonce,
-                                    size_t nonce_length);
-bool laghu_csp_allows_external_script(const laghu_csp_policy *policy,
-                                      const unsigned char *nonce,
-                                      size_t nonce_length);
+bool laghu_csp_allows_inline_script(const laghu_csp_policy *policy, const unsigned char *nonce, size_t nonce_length);
+bool laghu_csp_allows_external_script(const laghu_csp_policy *policy, const unsigned char *nonce, size_t nonce_length);
 
 #ifdef __cplusplus
 }

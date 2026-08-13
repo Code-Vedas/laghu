@@ -61,24 +61,14 @@ typedef struct {
   bool ready;
   bool terminally_excluded;
 } laghu_font_stylesheet_record;
-bool laghu_font_providers_load(const char *path, laghu_font_provider_set *set,
-                               char *error, size_t error_size);
-const laghu_font_provider *laghu_font_provider_match(
-    const laghu_font_provider_set *set, const char *url);
-const laghu_font_provider *laghu_font_provider_by_id(
-    const laghu_font_provider_set *set, const char *id);
-bool laghu_font_provider_url_allowed(const laghu_font_provider *provider,
-                                     const char *url, bool redirect,
-                                     bool asset);
-bool laghu_font_css_validate(const laghu_font_provider *provider,
-                             laghu_buffer css);
-bool laghu_font_stylesheet_key(const char *url, const char *provider_digest,
-                               char output[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_font_stylesheet_publish(const char *cache_path,
-                                   const laghu_font_stylesheet_record *record);
-bool laghu_font_stylesheet_lookup(const char *cache_path, const char *url,
-                                  const laghu_font_provider *provider,
-                                  uint64_t now,
+bool laghu_font_providers_load(const char *path, laghu_font_provider_set *set, char *error, size_t error_size);
+const laghu_font_provider *laghu_font_provider_match(const laghu_font_provider_set *set, const char *url);
+const laghu_font_provider *laghu_font_provider_by_id(const laghu_font_provider_set *set, const char *id);
+bool laghu_font_provider_url_allowed(const laghu_font_provider *provider, const char *url, bool redirect, bool asset);
+bool laghu_font_css_validate(const laghu_font_provider *provider, laghu_buffer css);
+bool laghu_font_stylesheet_key(const char *url, const char *provider_digest, char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_font_stylesheet_publish(const char *cache_path, const laghu_font_stylesheet_record *record);
+bool laghu_font_stylesheet_lookup(const char *cache_path, const char *url, const laghu_font_provider *provider, uint64_t now,
                                   laghu_font_stylesheet_record *record);
 
 #ifdef __cplusplus

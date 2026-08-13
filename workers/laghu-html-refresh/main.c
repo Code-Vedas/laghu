@@ -47,8 +47,7 @@ static void laghu_html_refresh_signal(int signal_number) {
 }
 
 static void laghu_html_refresh_sleep_ms(unsigned int value) {
-  struct timespec pause = {.tv_sec = (time_t)(value / 1000U),
-                           .tv_nsec = (long)(value % 1000U) * 1000000L};
+  struct timespec pause = {.tv_sec = (time_t)(value / 1000U), .tv_nsec = (long)(value % 1000U) * 1000000L};
   (void)nanosleep(&pause, NULL);
 }
 
@@ -66,10 +65,8 @@ static bool laghu_html_refresh_origin(const char *origin, char host[256]) {
   if (origin == NULL || strncmp(origin, "https://", 8U) != 0) return false;
   authority = origin + 8U;
   length = strlen(authority);
-  if (length == 0U || length >= 256U || strchr(authority, '/') != NULL ||
-      strchr(authority, ':') != NULL || strchr(authority, '@') != NULL ||
-      strchr(authority, '?') != NULL || strchr(authority, '#') != NULL ||
-      laghu_html_refresh_has_control(authority))
+  if (length == 0U || length >= 256U || strchr(authority, '/') != NULL || strchr(authority, ':') != NULL || strchr(authority, '@') != NULL ||
+      strchr(authority, '?') != NULL || strchr(authority, '#') != NULL || laghu_html_refresh_has_control(authority))
     return false;
   memcpy(host, authority, length + 1U);
   return true;
@@ -96,9 +93,7 @@ static int laghu_html_refresh_connect(const char *host) {
   if (endpoint != NULL) {
     const char *colon = strrchr(endpoint, ':');
     size_t length = colon == NULL ? 0U : (size_t)(colon - endpoint);
-    if (length == 0U || length >= sizeof(test_host) ||
-        strlen(colon + 1U) >= sizeof(test_port))
-      return -1;
+    if (length == 0U || length >= sizeof(test_host) || strlen(colon + 1U) >= sizeof(test_port)) return -1;
     memcpy(test_host, endpoint, length);
     test_host[length] = '\0';
     memcpy(test_port, colon + 1U, strlen(colon + 1U) + 1U);
@@ -137,11 +132,9 @@ static int laghu_html_refresh_connect(const char *host) {
   return result;
 }
 
-static bool laghu_html_refresh_write_all(SSL *tls, const unsigned char *data,
-                                         size_t length) {
+static bool laghu_html_refresh_write_all(SSL *tls, const unsigned char *data, size_t length) {
   while (length != 0U) {
-    int written =
-        SSL_write(tls, data, (int)(length > 65536U ? 65536U : length));
+    int written = SSL_write(tls, data, (int)(length > 65536U ? 65536U : length));
     if (written <= 0) return false;
     data += written;
     length -= (size_t)written;
@@ -149,12 +142,10 @@ static bool laghu_html_refresh_write_all(SSL *tls, const unsigned char *data,
   return true;
 }
 
-static int laghu_html_refresh_casecmp(const char *left, const char *right,
-                                      size_t length) {
+static int laghu_html_refresh_casecmp(const char *left, const char *right, size_t length) {
   size_t index;
   for (index = 0U; index < length; ++index) {
-    int difference = tolower((unsigned char)left[index]) -
-                     tolower((unsigned char)right[index]);
+    int difference = tolower((unsigned char)left[index]) - tolower((unsigned char)right[index]);
     if (difference != 0) return difference;
   }
   return 0;
@@ -170,9 +161,7 @@ static char *laghu_html_refresh_trim(char *value) {
 }
 
 static bool laghu_html_refresh_html_type(const char *value) {
-  return laghu_html_refresh_casecmp(value, "text/html", 9U) == 0 &&
-         (value[9] == '\0' || value[9] == ';' || value[9] == ' ' ||
-          value[9] == '\t');
+  return laghu_html_refresh_casecmp(value, "text/html", 9U) == 0 && (value[9] == '\0' || value[9] == ';' || value[9] == ' ' || value[9] == '\t');
 }
 
 static bool laghu_html_refresh_cache_control(const char *value) {
@@ -185,22 +174,15 @@ static bool laghu_html_refresh_cache_control(const char *value) {
       ++cursor;
       --length;
     }
-    while (length != 0U &&
-           (cursor[length - 1U] == ' ' || cursor[length - 1U] == '\t'))
-      --length;
+    while (length != 0U && (cursor[length - 1U] == ' ' || cursor[length - 1U] == '\t')) --length;
     equals = memchr(cursor, '=', length);
     if (equals != NULL) {
       length = (size_t)(equals - cursor);
-      while (length != 0U &&
-             (cursor[length - 1U] == ' ' || cursor[length - 1U] == '\t'))
-        --length;
+      while (length != 0U && (cursor[length - 1U] == ' ' || cursor[length - 1U] == '\t')) --length;
     }
-    if ((length == 8U &&
-         laghu_html_refresh_casecmp(cursor, "no-store", 8U) == 0) ||
-        (length == 8U &&
-         laghu_html_refresh_casecmp(cursor, "no-cache", 8U) == 0) ||
-        (length == 7U &&
-         laghu_html_refresh_casecmp(cursor, "private", 7U) == 0))
+    if ((length == 8U && laghu_html_refresh_casecmp(cursor, "no-store", 8U) == 0) ||
+        (length == 8U && laghu_html_refresh_casecmp(cursor, "no-cache", 8U) == 0) ||
+        (length == 7U && laghu_html_refresh_casecmp(cursor, "private", 7U) == 0))
       return false;
     if (end == NULL) break;
     cursor = end + 1U;
@@ -208,25 +190,21 @@ static bool laghu_html_refresh_cache_control(const char *value) {
   return true;
 }
 
-static bool laghu_html_refresh_chunked(const unsigned char *data, size_t length,
-                                       unsigned char **body,
-                                       size_t *body_length) {
+static bool laghu_html_refresh_chunked(const unsigned char *data, size_t length, unsigned char **body, size_t *body_length) {
   unsigned char *decoded = malloc(LAGHU_HTML_REFRESH_BODY_MAX + 1U);
   size_t input = 0U, output = 0U;
   if (decoded == NULL) return false;
   while (input < length) {
     char *end = NULL;
     unsigned long chunk = strtoul((const char *)data + input, &end, 16);
-    if (end == (char *)data + input || end + 2U > (char *)data + length ||
-        end[0] != '\r' || end[1] != '\n' ||
+    if (end == (char *)data + input || end + 2U > (char *)data + length || end[0] != '\r' || end[1] != '\n' ||
         chunk > LAGHU_HTML_REFRESH_BODY_MAX - output) {
       free(decoded);
       return false;
     }
     input = (size_t)(end - (char *)data) + 2U;
     if (chunk == 0U) {
-      if (input + 2U > length || data[input] != '\r' ||
-          data[input + 1U] != '\n') {
+      if (input + 2U > length || data[input] != '\r' || data[input + 1U] != '\n') {
         free(decoded);
         return false;
       }
@@ -240,8 +218,7 @@ static bool laghu_html_refresh_chunked(const unsigned char *data, size_t length,
       *body_length = output;
       return true;
     }
-    if (chunk > length - input || input + chunk + 2U > length ||
-        data[input + chunk] != '\r' || data[input + chunk + 1U] != '\n') {
+    if (chunk > length - input || input + chunk + 2U > length || data[input + chunk] != '\r' || data[input + chunk + 1U] != '\n') {
       free(decoded);
       return false;
     }
@@ -253,11 +230,9 @@ static bool laghu_html_refresh_chunked(const unsigned char *data, size_t length,
   return false;
 }
 
-static bool laghu_html_refresh_read(SSL *tls,
-                                    laghu_html_refresh_response *response) {
+static bool laghu_html_refresh_read(SSL *tls, laghu_html_refresh_response *response) {
   unsigned char *data;
-  size_t capacity =
-      LAGHU_HTML_REFRESH_HEADER_MAX + LAGHU_HTML_REFRESH_BODY_MAX + 1U;
+  size_t capacity = LAGHU_HTML_REFRESH_HEADER_MAX + LAGHU_HTML_REFRESH_BODY_MAX + 1U;
   size_t used = 0U, header_length, content_length = 0U;
   bool has_content_length = false, chunked = false;
   char *header_end, *line;
@@ -274,8 +249,7 @@ static bool laghu_html_refresh_read(SSL *tls,
     return false;
   }
   header_end = strstr((char *)data, "\r\n\r\n");
-  if (header_end == NULL ||
-      (size_t)(header_end - (char *)data) > LAGHU_HTML_REFRESH_HEADER_MAX ||
+  if (header_end == NULL || (size_t)(header_end - (char *)data) > LAGHU_HTML_REFRESH_HEADER_MAX ||
       sscanf((char *)data, "HTTP/1.%*u %u", &response->status) != 1) {
     free(data);
     return false;
@@ -295,51 +269,37 @@ static bool laghu_html_refresh_read(SSL *tls,
     }
     *colon = '\0';
     value = laghu_html_refresh_trim(colon + 1U);
-    if (strlen(line) == 12U &&
-        laghu_html_refresh_casecmp(line, "Content-Type", 12U) == 0) {
+    if (strlen(line) == 12U && laghu_html_refresh_casecmp(line, "Content-Type", 12U) == 0) {
       if (strlen(value) >= sizeof(response->content_type)) {
         free(data);
         return false;
       }
       memcpy(response->content_type, value, strlen(value) + 1U);
-    } else if (strlen(line) == 4U &&
-               laghu_html_refresh_casecmp(line, "ETag", 4U) == 0) {
-      if (!laghu_html_refresh_has_control(value) &&
-          strlen(value) < sizeof(response->validator))
+    } else if (strlen(line) == 4U && laghu_html_refresh_casecmp(line, "ETag", 4U) == 0) {
+      if (!laghu_html_refresh_has_control(value) && strlen(value) < sizeof(response->validator))
         memcpy(response->validator, value, strlen(value) + 1U);
-    } else if (strlen(line) == 14U &&
-               laghu_html_refresh_casecmp(line, "Content-Length", 14U) == 0) {
+    } else if (strlen(line) == 14U && laghu_html_refresh_casecmp(line, "Content-Length", 14U) == 0) {
       char *end = NULL;
       unsigned long parsed = strtoul(value, &end, 10);
-      if (end == value || *end != '\0' ||
-          parsed > LAGHU_HTML_REFRESH_BODY_MAX) {
+      if (end == value || *end != '\0' || parsed > LAGHU_HTML_REFRESH_BODY_MAX) {
         free(data);
         return false;
       }
       content_length = (size_t)parsed;
       has_content_length = true;
-    } else if (strlen(line) == 17U &&
-               laghu_html_refresh_casecmp(line, "Transfer-Encoding", 17U) ==
-                   0) {
-      if (laghu_html_refresh_casecmp(value, "chunked", 7U) != 0 ||
-          value[7] != '\0') {
+    } else if (strlen(line) == 17U && laghu_html_refresh_casecmp(line, "Transfer-Encoding", 17U) == 0) {
+      if (laghu_html_refresh_casecmp(value, "chunked", 7U) != 0 || value[7] != '\0') {
         free(data);
         return false;
       }
       chunked = true;
-    } else if (strlen(line) == 16U &&
-               laghu_html_refresh_casecmp(line, "Content-Encoding", 16U) == 0 &&
-               strcmp(value, "identity") != 0) {
+    } else if (strlen(line) == 16U && laghu_html_refresh_casecmp(line, "Content-Encoding", 16U) == 0 && strcmp(value, "identity") != 0) {
       free(data);
       return false;
-    } else if (strlen(line) == 13U &&
-               laghu_html_refresh_casecmp(line, "Cache-Control", 13U) == 0 &&
-               !laghu_html_refresh_cache_control(value)) {
+    } else if (strlen(line) == 13U && laghu_html_refresh_casecmp(line, "Cache-Control", 13U) == 0 && !laghu_html_refresh_cache_control(value)) {
       response->cacheable = false;
-    } else if ((strlen(line) == 10U &&
-                laghu_html_refresh_casecmp(line, "Set-Cookie", 10U) == 0) ||
-               (strlen(line) == 4U &&
-                laghu_html_refresh_casecmp(line, "Vary", 4U) == 0)) {
+    } else if ((strlen(line) == 10U && laghu_html_refresh_casecmp(line, "Set-Cookie", 10U) == 0) ||
+               (strlen(line) == 4U && laghu_html_refresh_casecmp(line, "Vary", 4U) == 0)) {
       response->cacheable = false;
     }
     line = next + 2U;
@@ -352,15 +312,12 @@ static bool laghu_html_refresh_read(SSL *tls,
     free(data);
     return true;
   }
-  if (response->status != 200U || !response->cacheable ||
-      !laghu_html_refresh_html_type(response->content_type)) {
+  if (response->status != 200U || !response->cacheable || !laghu_html_refresh_html_type(response->content_type)) {
     free(data);
     return false;
   }
   if (chunked) {
-    bool success =
-        laghu_html_refresh_chunked(data + header_length, used - header_length,
-                                   &response->body, &response->length);
+    bool success = laghu_html_refresh_chunked(data + header_length, used - header_length, &response->body, &response->length);
     free(data);
     return success && response->length != 0U;
   }
@@ -369,52 +326,40 @@ static bool laghu_html_refresh_read(SSL *tls,
     return false;
   }
   response->length = used - header_length;
-  if (response->length == 0U ||
-      response->length > LAGHU_HTML_REFRESH_BODY_MAX) {
+  if (response->length == 0U || response->length > LAGHU_HTML_REFRESH_BODY_MAX) {
     free(data);
     return false;
   }
   response->body = malloc(response->length);
-  if (response->body != NULL)
-    memcpy(response->body, data + header_length, response->length);
+  if (response->body != NULL) memcpy(response->body, data + header_length, response->length);
   free(data);
   return response->body != NULL;
 }
 
-static bool laghu_html_refresh_fetch(SSL_CTX *context, const char *origin,
-                                     const laghu_runtime_job *job,
-                                     laghu_html_refresh_response *response) {
+static bool laghu_html_refresh_fetch(SSL_CTX *context, const char *origin, const laghu_runtime_job *job, laghu_html_refresh_response *response) {
   char host[256];
   char request[LAGHU_RUNTIME_PATH_SIZE + LAGHU_RUNTIME_VALIDATOR_SIZE + 256U];
   X509_VERIFY_PARAM *parameters;
   SSL *tls = NULL;
   int socket = -1, length;
   bool success = false;
-  bool use_validator = job->validator[0] != '\0' &&
-                       !laghu_html_refresh_has_control(job->validator);
+  bool use_validator = job->validator[0] != '\0' && !laghu_html_refresh_has_control(job->validator);
   memset(response, 0, sizeof(*response));
-  if (!laghu_html_refresh_origin(origin, host) ||
-      !laghu_html_refresh_path(job->request_path))
-    return false;
+  if (!laghu_html_refresh_origin(origin, host) || !laghu_html_refresh_path(job->request_path)) return false;
   socket = laghu_html_refresh_connect(host);
   if (socket < 0 || (tls = SSL_new(context)) == NULL) goto done;
   parameters = SSL_get0_param(tls);
-  X509_VERIFY_PARAM_set_hostflags(parameters,
-                                  X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-  if (!SSL_set_tlsext_host_name(tls, host) || !SSL_set1_host(tls, host) ||
-      !SSL_set_fd(tls, socket) || SSL_connect(tls) != 1 ||
+  X509_VERIFY_PARAM_set_hostflags(parameters, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+  if (!SSL_set_tlsext_host_name(tls, host) || !SSL_set1_host(tls, host) || !SSL_set_fd(tls, socket) || SSL_connect(tls) != 1 ||
       SSL_get_verify_result(tls) != X509_V_OK)
     goto done;
-  length = snprintf(
-      request, sizeof(request),
-      "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: "
-      "LaghuHtmlRefresh/1\r\nAccept: text/html,*/*;q=0.1\r\n"
-      "Accept-Encoding: identity\r\n%s%s%sConnection: close\r\n\r\n",
-      job->request_path, host, use_validator ? "If-None-Match: " : "",
-      use_validator ? job->validator : "", use_validator ? "\r\n" : "");
-  if (length <= 0 || (size_t)length >= sizeof(request) ||
-      !laghu_html_refresh_write_all(tls, (const unsigned char *)request,
-                                    (size_t)length) ||
+  length =
+      snprintf(request, sizeof(request),
+               "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: "
+               "LaghuHtmlRefresh/1\r\nAccept: text/html,*/*;q=0.1\r\n"
+               "Accept-Encoding: identity\r\n%s%s%sConnection: close\r\n\r\n",
+               job->request_path, host, use_validator ? "If-None-Match: " : "", use_validator ? job->validator : "", use_validator ? "\r\n" : "");
+  if (length <= 0 || (size_t)length >= sizeof(request) || !laghu_html_refresh_write_all(tls, (const unsigned char *)request, (size_t)length) ||
       !laghu_html_refresh_read(tls, response))
     goto done;
   success = true;
@@ -427,35 +372,24 @@ done:
   return success;
 }
 
-static bool laghu_html_refresh_process(SSL_CTX *context, const char *cache_path,
-                                       const char *origin,
-                                       const laghu_runtime_job *job) {
+static bool laghu_html_refresh_process(SSL_CTX *context, const char *cache_path, const char *origin, const laghu_runtime_job *job) {
   char key[LAGHU_RUNTIME_KEY_SIZE];
   laghu_html_refresh_response response;
   laghu_html_cache_record record;
   bool success;
-  if (job->kind != LAGHU_RUNTIME_JOB_HTML_REFRESH ||
-      job->payload.length != 0U ||
-      !laghu_html_cache_key(origin, job->request_path, key) ||
+  if (job->kind != LAGHU_RUNTIME_JOB_HTML_REFRESH || job->payload.length != 0U || !laghu_html_cache_key(origin, job->request_path, key) ||
       strcmp(key, job->index_key) != 0)
     return false;
   if (!laghu_html_refresh_fetch(context, origin, job, &response)) return false;
   if (response.status == 304U)
-    return response.cacheable &&
-           laghu_html_cache_renew(cache_path, origin, job->request_path,
-                                  job->validator, (uint64_t)time(NULL),
-                                  &record);
-  success = laghu_html_cache_publish(
-      cache_path, origin, job->request_path, response.validator,
-      (laghu_buffer){response.body, response.length}, (uint64_t)time(NULL),
-      &record);
+    return response.cacheable && laghu_html_cache_renew(cache_path, origin, job->request_path, job->validator, (uint64_t)time(NULL), &record);
+  success = laghu_html_cache_publish(cache_path, origin, job->request_path, response.validator, (laghu_buffer){response.body, response.length},
+                                     (uint64_t)time(NULL), &record);
   free(response.body);
   return success;
 }
 
-static int laghu_html_refresh_serve(const char *queue_path,
-                                    const char *cache_path, const char *origin,
-                                    bool once) {
+static int laghu_html_refresh_serve(const char *queue_path, const char *cache_path, const char *origin, bool once) {
   laghu_runtime_queue queue;
   SSL_CTX *context;
   bool configured = false;
@@ -465,10 +399,8 @@ static int laghu_html_refresh_serve(const char *queue_path,
   context = SSL_CTX_new(TLS_client_method());
   if (context == NULL || !SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION)
 #if LAGHU_TEST_HOOKS
-      || (getenv("LAGHU_TEST_HTML_REFRESH_CA") != NULL
-              ? !SSL_CTX_load_verify_locations(
-                    context, getenv("LAGHU_TEST_HTML_REFRESH_CA"), NULL)
-              : !SSL_CTX_set_default_verify_paths(context))
+      || (getenv("LAGHU_TEST_HTML_REFRESH_CA") != NULL ? !SSL_CTX_load_verify_locations(context, getenv("LAGHU_TEST_HTML_REFRESH_CA"), NULL)
+                                                       : !SSL_CTX_set_default_verify_paths(context))
 #else
       || !SSL_CTX_set_default_verify_paths(context)
 #endif
@@ -492,16 +424,14 @@ static int laghu_html_refresh_serve(const char *queue_path,
       laghu_html_refresh_sleep_ms(100U);
       continue;
     }
-    if (!configured && !laghu_runtime_queue_set_backend(
-                           &queue, 1U, LAGHU_HTML_REFRESH_BACKEND)) {
+    if (!configured && !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_HTML_REFRESH_BACKEND)) {
       result = 1;
       break;
     }
     configured = true;
     (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
     if (laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload))) {
-      if (!laghu_html_refresh_process(context, cache_path, origin, &job))
-        result = once ? 1 : result;
+      if (!laghu_html_refresh_process(context, cache_path, origin, &job)) result = once ? 1 : result;
       if (once) break;
     } else if (once) {
       break;
@@ -517,26 +447,21 @@ static int laghu_html_refresh_serve(const char *queue_path,
 int main(int argc, char **argv) {
   laghu_runtime_queue queue;
   bool initialize, once;
-  if (argc != 5 ||
-      (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 &&
-       strcmp(argv[1], "--init-and-serve") != 0 &&
-       strcmp(argv[1], "--once") != 0)) {
+  if (argc != 5 || (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--init-and-serve") != 0 &&
+                    strcmp(argv[1], "--once") != 0)) {
     fputs(
         "Usage: laghu-html-refresh --init|--serve|--init-and-serve|--once "
         "QUEUE CACHE HTTPS_ORIGIN\n",
         stderr);
     return 2;
   }
-  initialize =
-      strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--once") != 0;
+  initialize = strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--once") != 0;
   once = strcmp(argv[1], "--once") == 0;
   if (initialize) {
     char host[256];
     if (!laghu_html_refresh_origin(argv[4], host)) return 2;
     laghu_runtime_queue_init(&queue);
-    if (!laghu_runtime_queue_create(&queue, argv[2],
-                                    LAGHU_HTML_REFRESH_QUEUE_SLOTS, 1U))
-      return 1;
+    if (!laghu_runtime_queue_create(&queue, argv[2], LAGHU_HTML_REFRESH_QUEUE_SLOTS, 1U)) return 1;
     laghu_runtime_queue_close(&queue);
     if (strcmp(argv[1], "--init") == 0) return 0;
   }

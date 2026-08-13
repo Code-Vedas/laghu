@@ -18,8 +18,7 @@ static void laghu_test_hash(char output[LAGHU_RUNTIME_KEY_SIZE], char value) {
   output[LAGHU_RUNTIME_KEY_SIZE - 1U] = '\0';
 }
 
-static laghu_runtime_job laghu_test_job(unsigned char *payload,
-                                        size_t payload_length) {
+static laghu_runtime_job laghu_test_job(unsigned char *payload, size_t payload_length) {
   laghu_runtime_job job;
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_JAVASCRIPT;
@@ -34,15 +33,13 @@ static laghu_runtime_job laghu_test_job(unsigned char *payload,
 
 int main(void) {
   char root[LAGHU_RUNTIME_PATH_SIZE], path[LAGHU_RUNTIME_PATH_SIZE];
-  laghu_runtime_queue queue, reader, contended, move_source, move_destination,
-      move_second_source;
+  laghu_runtime_queue queue, reader, contended, move_source, move_destination, move_second_source;
   laghu_runtime_queue_snapshot snapshot;
   laghu_runtime_shared_mapping lock;
   laghu_runtime_job job, taken;
   unsigned char payload[] = "console.log(1)";
   unsigned char output[64U];
-  size_t mapping_size = LAGHU_WIRE_QUEUE_HEADER_SIZE +
-                        2U * (LAGHU_WIRE_QUEUE_SLOT_HEADER_SIZE + 64U);
+  size_t mapping_size = LAGHU_WIRE_QUEUE_HEADER_SIZE + 2U * (LAGHU_WIRE_QUEUE_SLOT_HEADER_SIZE + 64U);
   FILE *file;
 
   assert(laghu_test_directory(root, sizeof(root)));
@@ -55,13 +52,11 @@ int main(void) {
   laghu_runtime_queue_init(&move_second_source);
   assert(laghu_runtime_queue_create(&queue, path, 2U, 64U));
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
-  assert(snapshot.capacity == 2U && snapshot.occupied == 0U &&
-         snapshot.payload_capacity == 64U);
+  assert(snapshot.capacity == 2U && snapshot.occupied == 0U && snapshot.payload_capacity == 64U);
   assert(laghu_runtime_queue_set_backend(&queue, 7U, "test-worker"));
   assert(laghu_runtime_queue_heartbeat(&queue, 123456U));
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
-  assert(snapshot.capabilities == 7U && snapshot.worker_heartbeat == 123456U &&
-         strcmp(snapshot.backend_id, "test-worker") == 0);
+  assert(snapshot.capabilities == 7U && snapshot.worker_heartbeat == 123456U && strcmp(snapshot.backend_id, "test-worker") == 0);
   assert(laghu_runtime_queue_open(&reader, path));
   assert(laghu_runtime_queue_snapshot_get(&reader, &snapshot));
   assert(snapshot.worker_heartbeat == 123456U);
@@ -78,8 +73,7 @@ int main(void) {
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
   assert(snapshot.occupied == 2U);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
-  assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT &&
-         taken.payload.length == sizeof(payload) - 1U && taken.accept_avif &&
+  assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT && taken.payload.length == sizeof(payload) - 1U && taken.accept_avif &&
          memcmp(output, payload, taken.payload.length) == 0);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   memset(&job, 0, sizeof(job));
@@ -93,8 +87,7 @@ int main(void) {
   job.sprite_width[1] = 30U;
   assert(laghu_runtime_queue_try_publish(&queue, &job));
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
-  assert(taken.kind == LAGHU_RUNTIME_JOB_SPRITE && taken.sprite_count == 2U &&
-         taken.payload.length == 0U && taken.sprite_width[1] == 30U &&
+  assert(taken.kind == LAGHU_RUNTIME_JOB_SPRITE && taken.sprite_count == 2U && taken.payload.length == 0U && taken.sprite_width[1] == 30U &&
          strcmp(taken.sprite_variant_keys[1], job.sprite_variant_keys[1]) == 0);
   job.sprite_count = 1U;
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
@@ -112,8 +105,7 @@ int main(void) {
   job.payload = (laghu_buffer){payload, sizeof(payload) - 1U};
   assert(laghu_runtime_queue_try_publish(&queue, &job));
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
-  assert(taken.kind == LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS &&
-         taken.analysis_timeout_ms == 1500U);
+  assert(taken.kind == LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS && taken.analysis_timeout_ms == 1500U);
   job.analysis_timeout_ms = 99U;
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
 
@@ -145,9 +137,7 @@ int main(void) {
   laghu_runtime_queue_close(&move_second_source);
 
   file = fopen(path, "r+b");
-  assert(file != NULL &&
-         fseek(file, LAGHU_WIRE_QUEUE_HEADER_VERSION_OFFSET, SEEK_SET) == 0 &&
-         fputc(0xff, file) != EOF && fclose(file) == 0);
+  assert(file != NULL && fseek(file, LAGHU_WIRE_QUEUE_HEADER_VERSION_OFFSET, SEEK_SET) == 0 && fputc(0xff, file) != EOF && fclose(file) == 0);
   assert(!laghu_runtime_queue_open(&reader, path));
   assert(reader.implementation == NULL);
   file = fopen(path, "wb");

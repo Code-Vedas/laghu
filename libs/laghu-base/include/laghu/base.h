@@ -48,23 +48,16 @@ typedef enum {
 unsigned char laghu_base_ascii_lower(unsigned char value);
 bool laghu_base_ascii_equal(laghu_buffer value, const char *expected);
 bool laghu_base_string_copy(char *output, size_t capacity, const char *value);
-bool laghu_base_builder_append(laghu_builder *builder, const void *data,
-                               size_t length);
-bool laghu_base_parse_u64(const char *value, uint64_t minimum, uint64_t maximum,
-                          uint64_t *output);
-bool laghu_base_url_resolve_same_origin(const char *page_path,
-                                        const char *page_origin,
-                                        laghu_buffer value, uint32_t flags,
-                                        char *output, size_t capacity);
+bool laghu_base_builder_append(laghu_builder *builder, const void *data, size_t length);
+bool laghu_base_parse_u64(const char *value, uint64_t minimum, uint64_t maximum, uint64_t *output);
+bool laghu_base_url_resolve_same_origin(const char *page_path, const char *page_origin, laghu_buffer value, uint32_t flags, char *output,
+                                        size_t capacity);
 int laghu_base_hex_value(unsigned char value);
 bool laghu_sha256_hex(laghu_buffer input, char output[LAGHU_SHA256_HEX_SIZE]);
 void laghu_sha256_init(laghu_sha256_context *context);
-void laghu_sha256_update(laghu_sha256_context *context,
-                         const unsigned char *data, size_t length);
-void laghu_sha256_final(laghu_sha256_context *context,
-                        unsigned char digest[LAGHU_SHA256_DIGEST_SIZE]);
-void laghu_sha256_final_hex(laghu_sha256_context *context,
-                            char output[LAGHU_SHA256_HEX_SIZE]);
+void laghu_sha256_update(laghu_sha256_context *context, const unsigned char *data, size_t length);
+void laghu_sha256_final(laghu_sha256_context *context, unsigned char digest[LAGHU_SHA256_DIGEST_SIZE]);
+void laghu_sha256_final_hex(laghu_sha256_context *context, char output[LAGHU_SHA256_HEX_SIZE]);
 
 #ifdef __cplusplus
 }

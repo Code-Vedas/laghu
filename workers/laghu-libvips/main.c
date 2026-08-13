@@ -31,8 +31,7 @@
 static bool laghu_libvips_stop_requested(void) { return false; }
 
 static void laghu_libvips_pause(unsigned int milliseconds) {
-  struct timespec pause = {.tv_sec = (time_t)(milliseconds / 1000U),
-                           .tv_nsec = (long)(milliseconds % 1000U) * 1000000L};
+  struct timespec pause = {.tv_sec = (time_t)(milliseconds / 1000U), .tv_nsec = (long)(milliseconds % 1000U) * 1000000L};
   (void)nanosleep(&pause, NULL);
 }
 
@@ -46,9 +45,7 @@ static unsigned int laghu_libvips_timeout(void) {
     return LAGHU_SERVICE_TIMEOUT_SECONDS;
   }
   parsed = strtoul(value, &end, 10);
-  return end != value && *end == '\0' && parsed > 0U && parsed <= 30U
-             ? (unsigned int)parsed
-             : LAGHU_SERVICE_TIMEOUT_SECONDS;
+  return end != value && *end == '\0' && parsed > 0U && parsed <= 30U ? (unsigned int)parsed : LAGHU_SERVICE_TIMEOUT_SECONDS;
 #else
   return LAGHU_SERVICE_TIMEOUT_SECONDS;
 #endif
@@ -64,23 +61,17 @@ static bool laghu_libvips_register_cache(const char *cache_path) {
     elapsed += delay;
     if (delay < LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS) {
       delay <<= 1U;
-      if (delay > LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS)
-        delay = LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS;
+      if (delay > LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS) delay = LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS;
     }
   }
   return false;
 }
 
-static bool laghu_libvips_cache_publish(
-    const char *cache_path, const char *index_key, const char *variant_key,
-    const char *validator, const char *content_type, const char *backend_id,
-    laghu_buffer payload, laghu_runtime_cache_entry *entry) {
+static bool laghu_libvips_cache_publish(const char *cache_path, const char *index_key, const char *variant_key, const char *validator,
+                                        const char *content_type, const char *backend_id, laghu_buffer payload, laghu_runtime_cache_entry *entry) {
   unsigned int attempt;
   for (attempt = 0U; attempt < 4U; ++attempt) {
-    if (laghu_runtime_cache_publish(cache_path, index_key, variant_key,
-                                    validator, content_type, backend_id,
-                                    payload, entry))
-      return true;
+    if (laghu_runtime_cache_publish(cache_path, index_key, variant_key, validator, content_type, backend_id, payload, entry)) return true;
     if (attempt + 1U < 4U) laghu_libvips_pause(5U << attempt);
   }
   return false;
@@ -93,63 +84,47 @@ static int laghu_libvips_probe(void) {
     fputs("laghu-libvips: capability probe failed\n", stderr);
     return 1;
   }
-  printf("backend=%s available=%s capabilities=%08x\n", backend.backend_id,
-         backend.available ? "yes" : "no", backend.capabilities);
+  printf("backend=%s available=%s capabilities=%08x\n", backend.backend_id, backend.available ? "yes" : "no", backend.capabilities);
   fflush(stdout);
   return backend.available ? 0 : 3;
 }
 
-static void laghu_libvips_warn_missing_capabilities(
-    laghu_image_capability_mask capabilities) {
+static void laghu_libvips_warn_missing_capabilities(laghu_image_capability_mask capabilities) {
   if ((capabilities & LAGHU_IMAGE_CAP_ALL) == LAGHU_IMAGE_CAP_ALL) {
     return;
   }
   fprintf(stderr,
           "laghu-libvips: warning: partial image backend; missing:%s%s%s%s%s"
           "%s%s%s%s; dependent filters are disabled\n",
-          (capabilities & LAGHU_IMAGE_CAP_JPEG_LOAD) != 0U ? "" : " jpeg-load",
-          (capabilities & LAGHU_IMAGE_CAP_JPEG_SAVE) != 0U ? "" : " jpeg-save",
-          (capabilities & LAGHU_IMAGE_CAP_PNG_LOAD) != 0U ? "" : " png-load",
-          (capabilities & LAGHU_IMAGE_CAP_PNG_SAVE) != 0U ? "" : " png-save",
-          (capabilities & LAGHU_IMAGE_CAP_GIF_LOAD) != 0U ? "" : " gif-load",
-          (capabilities & LAGHU_IMAGE_CAP_GIF_SAVE) != 0U ? "" : " gif-save",
-          (capabilities & LAGHU_IMAGE_CAP_WEBP_LOAD) != 0U ? "" : " webp-load",
-          (capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U ? "" : " webp-save",
+          (capabilities & LAGHU_IMAGE_CAP_JPEG_LOAD) != 0U ? "" : " jpeg-load", (capabilities & LAGHU_IMAGE_CAP_JPEG_SAVE) != 0U ? "" : " jpeg-save",
+          (capabilities & LAGHU_IMAGE_CAP_PNG_LOAD) != 0U ? "" : " png-load", (capabilities & LAGHU_IMAGE_CAP_PNG_SAVE) != 0U ? "" : " png-save",
+          (capabilities & LAGHU_IMAGE_CAP_GIF_LOAD) != 0U ? "" : " gif-load", (capabilities & LAGHU_IMAGE_CAP_GIF_SAVE) != 0U ? "" : " gif-save",
+          (capabilities & LAGHU_IMAGE_CAP_WEBP_LOAD) != 0U ? "" : " webp-load", (capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U ? "" : " webp-save",
           (capabilities & LAGHU_IMAGE_CAP_ANIMATION) != 0U ? "" : " animation");
 }
 
-static void laghu_libvips_log_lifecycle(const char *state,
-                                        const char *failure) {
+static void laghu_libvips_log_lifecycle(const char *state, const char *failure) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_lifecycle record = {.common = {.timestamp = (time_t)time(NULL),
-                                           .surface = "worker",
-                                           .component = "libvips"},
-                                .state = state,
-                                .failure = failure};
-  if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
-    fprintf(stderr, "%s\n", line);
+  laghu_log_lifecycle record = {
+      .common = {.timestamp = (time_t)time(NULL), .surface = "worker", .component = "libvips"}, .state = state, .failure = failure};
+  if (laghu_log_render_lifecycle(&record, line, sizeof(line))) fprintf(stderr, "%s\n", line);
 }
 
-static void laghu_libvips_log_job(const laghu_runtime_job *job, int status,
-                                  uint64_t elapsed) {
+static void laghu_libvips_log_job(const laghu_runtime_job *job, int status, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_job record = {
-      .common = {.timestamp = (time_t)time(NULL),
-                 .surface = "worker",
-                 .component = "libvips"},
-      .job_kind = job->kind == LAGHU_RUNTIME_JOB_SPRITE ? "sprite" : "image",
-      .outcome = status == 0   ? "success"
-                 : status == 4 ? "preserved"
-                               : "failed",
-      .input_bytes = job->payload.length,
-      .output_bytes = 0U,
-      .duration_ms = elapsed / 1000U,
-      .failure = status == 0   ? "none"
-                 : status == 4 ? "transform"
-                 : status == 2 ? "timeout"
-                               : "worker"};
-  if (laghu_log_render_job(&record, line, sizeof(line)))
-    fprintf(stderr, "%s\n", line);
+  laghu_log_job record = {.common = {.timestamp = (time_t)time(NULL), .surface = "worker", .component = "libvips"},
+                          .job_kind = job->kind == LAGHU_RUNTIME_JOB_SPRITE ? "sprite" : "image",
+                          .outcome = status == 0   ? "success"
+                                     : status == 4 ? "preserved"
+                                                   : "failed",
+                          .input_bytes = job->payload.length,
+                          .output_bytes = 0U,
+                          .duration_ms = elapsed / 1000U,
+                          .failure = status == 0   ? "none"
+                                     : status == 4 ? "transform"
+                                     : status == 2 ? "timeout"
+                                                   : "worker"};
+  if (laghu_log_render_job(&record, line, sizeof(line))) fprintf(stderr, "%s\n", line);
 }
 
 static unsigned char *laghu_read_file(const char *path, size_t *length) {
@@ -158,8 +133,7 @@ static unsigned char *laghu_read_file(const char *path, size_t *length) {
   unsigned char *data;
 
   file = fopen(path, "rb");
-  if (file == NULL || fseek(file, 0, SEEK_END) != 0 ||
-      (size = ftell(file)) < 0 || fseek(file, 0, SEEK_SET) != 0) {
+  if (file == NULL || fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) < 0 || fseek(file, 0, SEEK_SET) != 0) {
     if (file != NULL) {
       fclose(file);
     }
@@ -187,13 +161,11 @@ static int laghu_write_file(const char *path, laghu_buffer buffer) {
   if (file == NULL) {
     return 1;
   }
-  success = fwrite(buffer.data, 1U, buffer.length, file) == buffer.length &&
-            fclose(file) == 0;
+  success = fwrite(buffer.data, 1U, buffer.length, file) == buffer.length && fclose(file) == 0;
   return success ? 0 : 1;
 }
 
-static laghu_catalog_variant *laghu_libvips_catalog_variant(
-    laghu_catalog_record *catalog, unsigned int width) {
+static laghu_catalog_variant *laghu_libvips_catalog_variant(laghu_catalog_record *catalog, unsigned int width) {
   unsigned int index;
   for (index = 0U; index < catalog->variant_count; ++index) {
     if (catalog->variants[index].width == width) {
@@ -206,8 +178,7 @@ static laghu_catalog_variant *laghu_libvips_catalog_variant(
   return &catalog->variants[catalog->variant_count++];
 }
 
-static int laghu_libvips_transform(const char *input_path,
-                                   const char *output_path) {
+static int laghu_libvips_transform(const char *input_path, const char *output_path) {
   laghu_image_backend backend;
   laghu_image_request request;
   laghu_image_result result;
@@ -229,17 +200,14 @@ static int laghu_libvips_transform(const char *input_path,
     return 1;
   }
   status = laghu_write_file(output_path, result.selected);
-  fprintf(stderr, "laghu-libvips: %s -> %s (%zu -> %zu bytes)\n",
-          laghu_image_format_name(result.input_format),
-          laghu_image_format_name(result.output_format), input_length,
-          result.selected.length);
+  fprintf(stderr, "laghu-libvips: %s -> %s (%zu -> %zu bytes)\n", laghu_image_format_name(result.input_format),
+          laghu_image_format_name(result.output_format), input_length, result.selected.length);
   laghu_image_result_release(&result);
   free(input);
   return status;
 }
 
-static int laghu_libvips_process_job(const laghu_runtime_job *job,
-                                     const char *cache_path) {
+static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *cache_path) {
   laghu_image_backend backend;
   laghu_image_request request;
   laghu_image_result result;
@@ -260,36 +228,27 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     laghu_runtime_cache_entry published;
     unsigned int index;
     int sprite_status = 5;
-    if (job->sprite_count < 2U ||
-        job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS ||
-        !laghu_image_backend_probe(&backend) || !backend.available) {
+    if (job->sprite_count < 2U || job->sprite_count > LAGHU_RUNTIME_MAX_SPRITE_INPUTS || !laghu_image_backend_probe(&backend) || !backend.available) {
       return 1;
     }
     for (index = 0U; index < job->sprite_count; ++index) {
       sprite_status = 5;
-      if (!laghu_runtime_cache_lookup_variant(
-              cache_path, job->sprite_variant_keys[index], &inputs[index])) {
+      if (!laghu_runtime_cache_lookup_variant(cache_path, job->sprite_variant_keys[index], &inputs[index])) {
         goto sprite_finished;
       }
       buffers[index] = malloc(inputs[index].length);
       sprite_status = 6;
-      if (buffers[index] == NULL ||
-          !laghu_runtime_cache_read(&inputs[index], buffers[index],
-                                    inputs[index].length)) {
+      if (buffers[index] == NULL || !laghu_runtime_cache_read(&inputs[index], buffers[index], inputs[index].length)) {
         goto sprite_finished;
       }
-      items[index].original =
-          (laghu_buffer){buffers[index], inputs[index].length};
+      items[index].original = (laghu_buffer){buffers[index], inputs[index].length};
     }
-    if (!laghu_image_build_sprite(&backend, items, job->sprite_count,
-                                  LAGHU_IMAGE_FORMAT_PNG, &sprite)) {
+    if (!laghu_image_build_sprite(&backend, items, job->sprite_count, LAGHU_IMAGE_FORMAT_PNG, &sprite)) {
       sprite_status = 7;
       goto sprite_finished;
     }
-    if (laghu_libvips_cache_publish(
-            cache_path, job->index_key, job->index_key, job->validator,
-            "image/png", backend.backend_id,
-            (laghu_buffer){sprite.data, sprite.length}, &published)) {
+    if (laghu_libvips_cache_publish(cache_path, job->index_key, job->index_key, job->validator, "image/png", backend.backend_id,
+                                    (laghu_buffer){sprite.data, sprite.length}, &published)) {
       sprite_status = 0;
       laghu_image_sprite_result_release(&sprite);
     } else {
@@ -318,23 +277,19 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     return 1;
   }
   if (!laghu_sha256_hex(job->payload, source_hash) ||
-      !laghu_catalog_key(job->request_path, source_hash, job->policy_key,
-                         backend.capabilities, catalog_key)) {
+      !laghu_catalog_key(job->request_path, source_hash, job->policy_key, backend.capabilities, catalog_key)) {
     return 1;
   }
   {
     laghu_catalog_record existing;
     uint64_t now = (uint64_t)time(NULL);
-    if (laghu_catalog_lookup_url(cache_path, job->request_path, job->policy_key,
-                                 backend.capabilities, now, 2592000U,
-                                 &existing) &&
+    if (laghu_catalog_lookup_url(cache_path, job->request_path, job->policy_key, backend.capabilities, now, 2592000U, &existing) &&
         strcmp(existing.source_hash, source_hash) == 0) {
       catalog = existing;
     }
   }
   catalog.version = LAGHU_CATALOG_VERSION;
-  (void)snprintf(catalog.normalized_url, sizeof(catalog.normalized_url), "%s",
-                 job->request_path);
+  (void)snprintf(catalog.normalized_url, sizeof(catalog.normalized_url), "%s", job->request_path);
   memcpy(catalog.source_hash, source_hash, sizeof(catalog.source_hash));
   memcpy(catalog.policy_key, job->policy_key, sizeof(catalog.policy_key));
   catalog.capability_mask = backend.capabilities;
@@ -362,38 +317,27 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     if (target == 0U) {
       catalog.natural_width = result.natural_width;
       catalog.natural_height = result.natural_height;
-      (void)snprintf(catalog.original_content_type,
-                     sizeof(catalog.original_content_type), "%s",
-                     laghu_image_content_type(result.input_format));
+      (void)snprintf(catalog.original_content_type, sizeof(catalog.original_content_type), "%s", laghu_image_content_type(result.input_format));
     }
     if (target == 0U) {
       memcpy(index_key, job->index_key, sizeof(index_key));
     } else {
       char material[LAGHU_RUNTIME_KEY_SIZE + 32U];
-      int length =
-          snprintf(material, sizeof(material), "%s:%u:%u", job->index_key,
-                   request.target_width, request.target_height);
+      int length = snprintf(material, sizeof(material), "%s:%u:%u", job->index_key, request.target_width, request.target_height);
       if (length < 0 || (size_t)length >= sizeof(material) ||
-          !laghu_sha256_hex(
-              (laghu_buffer){(const unsigned char *)material, (size_t)length},
-              index_key)) {
+          !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, index_key)) {
         laghu_image_result_release(&result);
         return 1;
       }
     }
-    if (result.used_candidate &&
-        laghu_image_variant_key(&backend, &request, job->policy_key,
-                                variant_key)) {
-      status = laghu_libvips_cache_publish(
-                   cache_path, index_key, variant_key, job->validator,
-                   laghu_image_content_type(result.output_format),
-                   backend.backend_id, result.selected, &entry)
+    if (result.used_candidate && laghu_image_variant_key(&backend, &request, job->policy_key, variant_key)) {
+      status = laghu_libvips_cache_publish(cache_path, index_key, variant_key, job->validator, laghu_image_content_type(result.output_format),
+                                           backend.backend_id, result.selected, &entry)
                    ? 0
                    : 1;
     }
     {
-      laghu_catalog_variant *variant =
-          laghu_libvips_catalog_variant(&catalog, result.width);
+      laghu_catalog_variant *variant = laghu_libvips_catalog_variant(&catalog, result.width);
       if (variant != NULL) {
         memset(variant, 0, sizeof(*variant));
         variant->width = result.width;
@@ -403,10 +347,8 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
         variant->ready = result.used_candidate && status == 0;
         variant->terminally_excluded = !result.used_candidate;
         if (result.used_candidate) {
-          memcpy(variant->variant_key, variant_key,
-                 sizeof(variant->variant_key));
-          (void)snprintf(variant->content_type, sizeof(variant->content_type),
-                         "%s", laghu_image_content_type(result.output_format));
+          memcpy(variant->variant_key, variant_key, sizeof(variant->variant_key));
+          (void)snprintf(variant->content_type, sizeof(variant->content_type), "%s", laghu_image_content_type(result.output_format));
         }
       }
     }
@@ -424,8 +366,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     request.accept_webp = job->accept_webp;
     request.accept_avif = job->accept_avif;
     request.quality = job->quality;
-    if (laghu_image_preview_data_uri(&backend, &request,
-                                     LAGHU_IMAGE_PREVIEW_DIMENSION, &preview)) {
+    if (laghu_image_preview_data_uri(&backend, &request, LAGHU_IMAGE_PREVIEW_DIMENSION, &preview)) {
       if (preview.length < sizeof(catalog.preview_data_uri)) {
         memcpy(catalog.preview_data_uri, preview.data, preview.length);
         catalog.preview_data_uri[preview.length] = '\0';
@@ -436,16 +377,12 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
   if (!laghu_catalog_publish(cache_path, catalog_key, &catalog)) {
     return 1;
   }
-  (void)laghu_catalog_prune(
-      cache_path, catalog.updated_at,
-      job->metadata_limit != 0U ? job->metadata_limit
-                                : LAGHU_CATALOG_DEFAULT_LIMIT,
-      job->metadata_ttl != 0U ? job->metadata_ttl : LAGHU_CATALOG_DEFAULT_TTL);
+  (void)laghu_catalog_prune(cache_path, catalog.updated_at, job->metadata_limit != 0U ? job->metadata_limit : LAGHU_CATALOG_DEFAULT_LIMIT,
+                            job->metadata_ttl != 0U ? job->metadata_ttl : LAGHU_CATALOG_DEFAULT_TTL);
   return status;
 }
 
-static int laghu_libvips_run_isolated(const laghu_runtime_job *job,
-                                      const char *cache_path) {
+static int laghu_libvips_run_isolated(const laghu_runtime_job *job, const char *cache_path) {
   struct timespec pause = {.tv_sec = 0, .tv_nsec = 100000000L};
   unsigned int attempts = laghu_libvips_timeout() * 10U;
   pid_t child = fork();
@@ -472,9 +409,7 @@ static int laghu_libvips_run_isolated(const laghu_runtime_job *job,
   return 1;
 }
 
-static int laghu_libvips_submit(const char *queue_path, const char *input_path,
-                                const char *request_path,
-                                const char *validator) {
+static int laghu_libvips_submit(const char *queue_path, const char *input_path, const char *request_path, const char *validator) {
   laghu_runtime_queue queue = {0};
   laghu_runtime_job job;
   laghu_image_format format;
@@ -490,14 +425,9 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path,
   }
   memset(&job, 0, sizeof(job));
   format = laghu_image_detect_format((laghu_buffer){input, input_length});
-  if (format == LAGHU_IMAGE_FORMAT_UNKNOWN ||
-      strlen(request_path) >= sizeof(job.request_path) ||
-      strlen(validator) >= sizeof(job.validator) ||
-      !laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)"standalone-policy", 17U},
-          job.policy_key) ||
-      !laghu_runtime_index_key(request_path, validator, job.policy_key, true,
-                               true, job.index_key)) {
+  if (format == LAGHU_IMAGE_FORMAT_UNKNOWN || strlen(request_path) >= sizeof(job.request_path) || strlen(validator) >= sizeof(job.validator) ||
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)"standalone-policy", 17U}, job.policy_key) ||
+      !laghu_runtime_index_key(request_path, validator, job.policy_key, true, true, job.index_key)) {
     laghu_runtime_queue_close(&queue);
     free(input);
     return 1;
@@ -517,17 +447,12 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path,
   return submitted ? 0 : 1;
 }
 
-static int laghu_libvips_submit_sprite(const char *queue_path,
-                                       const char *first_key,
-                                       const char *second_key,
-                                       const char *output_key) {
+static int laghu_libvips_submit_sprite(const char *queue_path, const char *first_key, const char *second_key, const char *output_key) {
   laghu_runtime_queue queue = {0};
   laghu_runtime_job job = {0};
   bool submitted;
-  if (strlen(first_key) != LAGHU_SHA256_HEX_LENGTH ||
-      strlen(second_key) != LAGHU_SHA256_HEX_LENGTH ||
-      strlen(output_key) != LAGHU_SHA256_HEX_LENGTH ||
-      !laghu_runtime_queue_open(&queue, queue_path)) {
+  if (strlen(first_key) != LAGHU_SHA256_HEX_LENGTH || strlen(second_key) != LAGHU_SHA256_HEX_LENGTH ||
+      strlen(output_key) != LAGHU_SHA256_HEX_LENGTH || !laghu_runtime_queue_open(&queue, queue_path)) {
     return 1;
   }
   job.kind = LAGHU_RUNTIME_JOB_SPRITE;
@@ -542,8 +467,7 @@ static int laghu_libvips_submit_sprite(const char *queue_path,
   return submitted ? 0 : 1;
 }
 
-static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
-                               bool once) {
+static int laghu_libvips_serve(const char *queue_path, const char *cache_path, bool once) {
   laghu_runtime_queue queue = {0};
   laghu_worker_lifecycle lifecycle;
   laghu_runtime_job job;
@@ -571,9 +495,7 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     laghu_runtime_queue_close(&queue);
     return 1;
   }
-  (void)laghu_worker_lifecycle_start(&lifecycle, cache_path,
-                                     LAGHU_OPERATIONAL_PROCESS_LIBVIPS, &queue,
-                                     true, (uint64_t)time(NULL));
+  (void)laghu_worker_lifecycle_start(&lifecycle, cache_path, LAGHU_OPERATIONAL_PROCESS_LIBVIPS, &queue, true, (uint64_t)time(NULL));
   laghu_libvips_log_lifecycle("running", "none");
   for (;;) {
     if (laghu_libvips_stop_requested()) {
@@ -581,17 +503,14 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     }
     laghu_worker_lifecycle_heartbeat(&lifecycle, (uint64_t)time(NULL), true);
     (void)laghu_cache_backend_maintain_path(cache_path, (uint64_t)time(NULL));
-    if (laghu_runtime_queue_try_take(&queue, &job, payload,
-                                     queue_snapshot.payload_capacity)) {
+    if (laghu_runtime_queue_try_take(&queue, &job, payload, queue_snapshot.payload_capacity)) {
       uint64_t started = laghu_worker_lifecycle_clock();
       int job_status = laghu_libvips_run_isolated(&job, cache_path);
       uint64_t elapsed = laghu_worker_lifecycle_clock() - started;
       if (job_status != 0) {
-        laghu_worker_lifecycle_job(&lifecycle, false, elapsed,
-                                   LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
+        laghu_worker_lifecycle_job(&lifecycle, false, elapsed, LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
       } else {
-        laghu_worker_lifecycle_job(&lifecycle, true, elapsed,
-                                   LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
+        laghu_worker_lifecycle_job(&lifecycle, true, elapsed, LAGHU_OPERATIONAL_FAILURE_TRANSFORM);
       }
       laghu_libvips_log_job(&job, job_status, elapsed);
       status = job_status == 4 ? 0 : job_status;
@@ -614,26 +533,22 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
   return status;
 }
 
-static int laghu_libvips_init_runtime(const char *queue_path,
-                                      const char *cache_path) {
+static int laghu_libvips_init_runtime(const char *queue_path, const char *cache_path) {
   laghu_image_backend backend;
   laghu_runtime_queue queue = {0};
 
   laghu_runtime_queue_init(&queue);
   if (!laghu_image_backend_probe(&backend) || !backend.available) {
     (void)laghu_unlink(queue_path);
-    fputs("laghu-libvips: no usable image backend; image filters disabled\n",
-          stderr);
+    fputs("laghu-libvips: no usable image backend; image filters disabled\n", stderr);
     return 3;
   }
   laghu_libvips_warn_missing_capabilities(backend.capabilities);
   if (laghu_mkdir(cache_path, 0750) != 0 && errno != EEXIST) {
     return 1;
   }
-  if (!laghu_runtime_queue_create(&queue, queue_path, LAGHU_QUEUE_DEFAULT_SLOTS,
-                                  LAGHU_IMAGE_MAX_INPUT_BYTES) ||
-      !laghu_runtime_queue_set_backend(&queue, backend.capabilities,
-                                       backend.backend_id) ||
+  if (!laghu_runtime_queue_create(&queue, queue_path, LAGHU_QUEUE_DEFAULT_SLOTS, LAGHU_IMAGE_MAX_INPUT_BYTES) ||
+      !laghu_runtime_queue_set_backend(&queue, backend.capabilities, backend.backend_id) ||
       !laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL))) {
     laghu_runtime_queue_close(&queue);
     return 1;

@@ -26,8 +26,7 @@
 
 #define LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML (1024U * 1024U)
 
-static bool laghu_http_select_owned(laghu_http_transaction_result *result,
-                                    const unsigned char *data, size_t length) {
+static bool laghu_http_select_owned(laghu_http_transaction_result *result, const unsigned char *data, size_t length) {
   if (length == 0U) {
     return false;
   }
@@ -40,57 +39,37 @@ static bool laghu_http_select_owned(laghu_http_transaction_result *result,
   return true;
 }
 
-static bool laghu_http_apply_precompressed(
-    laghu_http_transaction *transaction,
-    laghu_http_transaction_result *result) {
+static bool laghu_http_apply_precompressed(laghu_http_transaction *transaction, laghu_http_transaction_result *result) {
   const laghu_http_header *accept_encoding;
   laghu_runtime_cache_entry entry;
   laghu_precompressed_coding coding;
   unsigned char *body;
   char accept_encoding_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char etag[LAGHU_RUNTIME_KEY_SIZE + 24U];
-  if (transaction == NULL || result == NULL || result->selected.data == NULL ||
-      result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
+  if (transaction == NULL || result == NULL || result->selected.data == NULL || result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
       !laghu_precompressed_text_type(transaction->content_type))
     return true;
-  (void)laghu_precompressed_publish(transaction->environment.cache_path,
-                                    result->selected, transaction->content_type,
-                                    transaction->validator);
-  accept_encoding = laghu_http_find_header(transaction->request->headers,
-                                           transaction->request->header_count,
-                                           "Accept-Encoding");
+  (void)laghu_precompressed_publish(transaction->environment.cache_path, result->selected, transaction->content_type, transaction->validator);
+  accept_encoding = laghu_http_find_header(transaction->request->headers, transaction->request->header_count, "Accept-Encoding");
   if (accept_encoding != NULL) {
-    if (accept_encoding->value.length > LAGHU_HTTP_MAX_HEADER_VALUE)
-      return false;
-    memcpy(accept_encoding_value, accept_encoding->value.data,
-           accept_encoding->value.length);
+    if (accept_encoding->value.length > LAGHU_HTTP_MAX_HEADER_VALUE) return false;
+    memcpy(accept_encoding_value, accept_encoding->value.data, accept_encoding->value.length);
     accept_encoding_value[accept_encoding->value.length] = '\0';
   }
-  if (!laghu_precompressed_select(
-          transaction->environment.cache_path, result->selected,
-          accept_encoding == NULL ? NULL : accept_encoding_value, &entry,
-          &coding))
-    return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET,
-                                           "Vary", "Accept-Encoding");
+  if (!laghu_precompressed_select(transaction->environment.cache_path, result->selected, accept_encoding == NULL ? NULL : accept_encoding_value,
+                                  &entry, &coding))
+    return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", "Accept-Encoding");
   body = malloc(entry.length);
   if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
     free(body);
     return false;
   }
-  (void)snprintf(etag, sizeof(etag), "\"laghu-%s-%s\"",
-                 laghu_precompressed_coding_name(coding), entry.payload_hash);
-  if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary",
-                                       "Accept-Encoding") ||
-      !laghu_http_add_header_operation(
-          result, LAGHU_HTTP_HEADER_SET, "Content-Encoding",
-          laghu_precompressed_coding_name(coding)) ||
-      !laghu_http_add_length(result, entry.length) ||
-      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag",
-                                       etag) ||
-      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE,
-                                       "Content-MD5", NULL) ||
-      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE,
-                                       "Digest", NULL)) {
+  (void)snprintf(etag, sizeof(etag), "\"laghu-%s-%s\"", laghu_precompressed_coding_name(coding), entry.payload_hash);
+  if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", "Accept-Encoding") ||
+      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Content-Encoding", laghu_precompressed_coding_name(coding)) ||
+      !laghu_http_add_length(result, entry.length) || !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag", etag) ||
+      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Content-MD5", NULL) ||
+      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Digest", NULL)) {
     free(body);
     return false;
   }
@@ -100,14 +79,12 @@ static bool laghu_http_apply_precompressed(
   return true;
 }
 
-static void laghu_http_retain_preview_headers(
-    laghu_http_transaction_result *result) {
+static void laghu_http_retain_preview_headers(laghu_http_transaction_result *result) {
   size_t index;
   size_t write = 0U;
   if (result == NULL) return;
   for (index = 0U; index < result->header_operation_count; ++index) {
-    const laghu_http_header_operation *operation =
-        &result->header_operations[index];
+    const laghu_http_header_operation *operation = &result->header_operations[index];
     if (strncmp(operation->name, "X-Laghu", 7U) == 0) {
       if (write != index) {
         result->header_operations[write] = *operation;
@@ -120,10 +97,8 @@ static void laghu_http_retain_preview_headers(
   result->header_operation_count = write;
 }
 
-static bool laghu_http_add_query_preview_report(
-    const laghu_http_transaction *transaction,
-    const laghu_http_transaction_result *result,
-    laghu_http_transaction_result *report) {
+static bool laghu_http_add_query_preview_report(const laghu_http_transaction *transaction, const laghu_http_transaction_result *result,
+                                                laghu_http_transaction_result *report) {
   char value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char filters[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char preset[LAGHU_RUNTIME_KEY_SIZE];
@@ -133,8 +108,7 @@ static bool laghu_http_add_query_preview_report(
   long long delta_bytes;
   bool changed;
   int count;
-  if (transaction == NULL || result == NULL || report == NULL ||
-      transaction->response == NULL) {
+  if (transaction == NULL || result == NULL || report == NULL || transaction->response == NULL) {
     return false;
   }
   original_length = result->original.length;
@@ -142,12 +116,10 @@ static bool laghu_http_add_query_preview_report(
   delta_bytes = (long long)selected_length - (long long)original_length;
   changed = selected_length < original_length;
   filters[0] = '\0';
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LOSSLESS) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LOSSLESS) != 0U) {
     (void)snprintf(filters, sizeof(filters), "%s", "image_lossless");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_METADATA) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_METADATA) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_metadata") >= sizeof(filters)) {
         return false;
@@ -156,8 +128,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "image_metadata");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_DIMENSIONS) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_DIMENSIONS) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_dimensions") >= sizeof(filters)) {
         return false;
@@ -175,8 +146,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "image_modern");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_RESPONSIVE) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_RESPONSIVE) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_responsive") >= sizeof(filters)) {
         return false;
@@ -185,8 +155,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "image_responsive");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LAZYLOAD) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LAZYLOAD) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_lazyload") >= sizeof(filters)) {
         return false;
@@ -213,8 +182,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "css_minify");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",javascript_minify") >= sizeof(filters)) {
         return false;
@@ -223,8 +191,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "javascript_minify");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_HINTS) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_HINTS) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",resource_hints") >= sizeof(filters)) {
         return false;
@@ -233,8 +200,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "resource_hints");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_CACHE_EXTENSION) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CACHE_EXTENSION) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",cache_extension") >= sizeof(filters)) {
         return false;
@@ -243,8 +209,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "cache_extension");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_COMBINE) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_COMBINE) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",resource_combine") >= sizeof(filters)) {
         return false;
@@ -253,8 +218,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "resource_combine");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",resource_inline") >= sizeof(filters)) {
         return false;
@@ -272,8 +236,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "critical_css");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",javascript_defer") >= sizeof(filters)) {
         return false;
@@ -282,8 +245,7 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "javascript_defer");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMMUTABLE_CACHE) !=
-      0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMMUTABLE_CACHE) != 0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",immutable_cache") >= sizeof(filters)) {
         return false;
@@ -301,76 +263,56 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "cache_media");
   }
-  if ((transaction->policy.preset >= LAGHU_PRESET_SAFE &&
-       transaction->policy.preset <= LAGHU_PRESET_STATIC)) {
-    (void)snprintf(preset, sizeof(preset), "%s",
-                   laghu_preset_name(transaction->policy.preset));
+  if ((transaction->policy.preset >= LAGHU_PRESET_SAFE && transaction->policy.preset <= LAGHU_PRESET_STATIC)) {
+    (void)snprintf(preset, sizeof(preset), "%s", laghu_preset_name(transaction->policy.preset));
   } else {
     (void)snprintf(preset, sizeof(preset), "custom");
   }
-  if (transaction->policy.rewrite_level >= LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
-      transaction->policy.rewrite_level <= LAGHU_REWRITE_LEVEL_EXPERIMENTAL) {
-    (void)snprintf(rewrite_level, sizeof(rewrite_level), "%s",
-                   laghu_rewrite_level_name(transaction->policy.rewrite_level));
+  if (transaction->policy.rewrite_level >= LAGHU_REWRITE_LEVEL_PASSTHROUGH && transaction->policy.rewrite_level <= LAGHU_REWRITE_LEVEL_EXPERIMENTAL) {
+    (void)snprintf(rewrite_level, sizeof(rewrite_level), "%s", laghu_rewrite_level_name(transaction->policy.rewrite_level));
   } else {
     (void)snprintf(rewrite_level, sizeof(rewrite_level), "unset");
   }
-  count = snprintf(
-      value, sizeof(value),
-      "changed=%s;original-bytes=%zu;selected-bytes=%zu;"
-      "delta-bytes=%+lld;cache-ready=%s;policy=%s;rewrite=%s;filters=%s",
-      changed ? "true" : "false", original_length, selected_length, delta_bytes,
-      transaction->cache_publishable ? "true" : "false", preset, rewrite_level,
-      filters[0] == '\0' ? "none" : filters);
+  count = snprintf(value, sizeof(value),
+                   "changed=%s;original-bytes=%zu;selected-bytes=%zu;"
+                   "delta-bytes=%+lld;cache-ready=%s;policy=%s;rewrite=%s;filters=%s",
+                   changed ? "true" : "false", original_length, selected_length, delta_bytes, transaction->cache_publishable ? "true" : "false",
+                   preset, rewrite_level, filters[0] == '\0' ? "none" : filters);
   if (count <= 0 || (size_t)count >= sizeof(value)) {
     return false;
   }
-  return laghu_http_add_header_operation(report, LAGHU_HTTP_HEADER_SET,
-                                         "X-Laghu-Preview", value);
+  return laghu_http_add_header_operation(report, LAGHU_HTTP_HEADER_SET, "X-Laghu-Preview", value);
 }
 
-static bool laghu_http_add_entity_headers(laghu_http_transaction_result *result,
-                                          const char *prefix,
-                                          const char *dependency_key) {
+static bool laghu_http_add_entity_headers(laghu_http_transaction_result *result, const char *prefix, const char *dependency_key) {
   char etag[LAGHU_RUNTIME_KEY_SIZE + 32U];
   if (dependency_key == NULL || dependency_key[0] == '\0') {
     return true;
   }
   (void)snprintf(etag, sizeof(etag), "\"%s%s\"", prefix, dependency_key);
-  return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag",
-                                         etag) &&
-         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE,
-                                         "Content-MD5", NULL) &&
-         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE,
-                                         "Digest", NULL);
+  return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag", etag) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Content-MD5", NULL) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Digest", NULL);
 }
 
-static bool laghu_http_finalize_css(laghu_http_transaction *transaction,
-                                    laghu_buffer body,
-                                    laghu_http_transaction_result *result) {
+static bool laghu_http_finalize_css(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_css_result rewritten;
   laghu_domain_rewrite_result domains;
   const unsigned char *selected;
   size_t selected_length;
   bool changed;
   bool ok = laghu_runtime_rewrite_css(
-      transaction->environment.queue, transaction->environment.cache_path, body,
-      transaction->path, transaction->origin, transaction->policy_key,
-      transaction->capability_mask, transaction->environment.now,
-      transaction->environment.config.image_metadata_ttl,
-      (transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U,
-      transaction->policy.allow_structural_rewrite,
-      transaction->environment.config.css_inline_limit,
-      transaction->environment.config.css_outline_threshold, &rewritten);
+      transaction->environment.queue, transaction->environment.cache_path, body, transaction->path, transaction->origin, transaction->policy_key,
+      transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+      (transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U, transaction->policy.allow_structural_rewrite,
+      transaction->environment.config.css_inline_limit, transaction->environment.config.css_outline_threshold, &rewritten);
   if (!ok) {
     return false;
   }
   changed = rewritten.rewritten;
   selected = changed ? rewritten.data : body.data;
   selected_length = changed ? rewritten.length : body.length;
-  if (!laghu_domain_rewrite_css((laghu_buffer){selected, selected_length},
-                                &transaction->environment.config.domain_policy,
-                                &domains)) {
+  if (!laghu_domain_rewrite_css((laghu_buffer){selected, selected_length}, &transaction->environment.config.domain_policy, &domains)) {
     laghu_runtime_css_result_release(&rewritten);
     return false;
   }
@@ -378,15 +320,13 @@ static bool laghu_http_finalize_css(laghu_http_transaction *transaction,
     selected = domains.data;
     selected_length = domains.length;
     changed = true;
-    if (!laghu_sha256_hex((laghu_buffer){selected, selected_length},
-                          result->dependency_key)) {
+    if (!laghu_sha256_hex((laghu_buffer){selected, selected_length}, result->dependency_key)) {
       laghu_domain_rewrite_result_release(&domains);
       laghu_runtime_css_result_release(&rewritten);
       return false;
     }
   } else if (changed) {
-    memcpy(result->dependency_key, rewritten.dependency_key,
-           sizeof(result->dependency_key));
+    memcpy(result->dependency_key, rewritten.dependency_key, sizeof(result->dependency_key));
   }
   if (changed && !laghu_http_select_owned(result, selected, selected_length)) {
     laghu_domain_rewrite_result_release(&domains);
@@ -395,14 +335,11 @@ static bool laghu_http_finalize_css(laghu_http_transaction *transaction,
   }
   laghu_domain_rewrite_result_release(&domains);
   laghu_runtime_css_result_release(&rewritten);
-  return !changed || (laghu_http_add_length(result, result->selected.length) &&
-                      laghu_http_add_entity_headers(result, "laghu-css-",
-                                                    result->dependency_key));
+  return !changed ||
+         (laghu_http_add_length(result, result->selected.length) && laghu_http_add_entity_headers(result, "laghu-css-", result->dependency_key));
 }
 
-bool laghu_http_join_response_headers(const laghu_http_response *response,
-                                      const char *name, char *output,
-                                      size_t capacity) {
+bool laghu_http_join_response_headers(const laghu_http_response *response, const char *name, char *output, size_t capacity) {
   size_t index;
   size_t length = 0U;
   output[0] = '\0';
@@ -428,9 +365,7 @@ bool laghu_http_join_response_headers(const laghu_http_response *response,
   return true;
 }
 
-static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
-                                     laghu_buffer body,
-                                     laghu_http_transaction_result *result) {
+static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_html_result rewritten;
   laghu_runtime_html_result font = {0};
   laghu_runtime_html_result critical = {0};
@@ -455,74 +390,45 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   char javascript_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
   char lcp_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
   laghu_javascript_observation_set decision_observations;
-  const laghu_javascript_observation_set *instrumentation_observations =
-      transaction->environment.javascript_observations;
+  const laghu_javascript_observation_set *instrumentation_observations = transaction->environment.javascript_observations;
   laghu_csp_policy csp_policy;
   unsigned int index;
-  if (!laghu_http_join_response_headers(transaction->response,
-                                        "Content-Security-Policy", csp_value,
-                                        sizeof(csp_value)) ||
-      !laghu_http_join_response_headers(transaction->response,
-                                        "Content-Language", language,
-                                        sizeof(language)) ||
-      !laghu_http_join_response_headers(transaction->response, "Link", links,
-                                        sizeof(links))) {
+  if (!laghu_http_join_response_headers(transaction->response, "Content-Security-Policy", csp_value, sizeof(csp_value)) ||
+      !laghu_http_join_response_headers(transaction->response, "Content-Language", language, sizeof(language)) ||
+      !laghu_http_join_response_headers(transaction->response, "Link", links, sizeof(links))) {
     return false;
   }
   laghu_csp_policy_init(&csp_policy, transaction->origin);
-  if ((csp_value[0] != '\0' &&
-       !laghu_csp_policy_add(&csp_policy, csp_value, strlen(csp_value))) ||
-      !laghu_csp_policy_add_meta(&csp_policy, body))
+  if ((csp_value[0] != '\0' && !laghu_csp_policy_add(&csp_policy, csp_value, strlen(csp_value))) || !laghu_csp_policy_add_meta(&csp_policy, body))
     csp_policy.invalid = true;
   if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
     (void)laghu_runtime_instrumentation_template_key(
-        transaction->environment.rum, transaction->environment.cache_path,
-        transaction->environment.javascript_observations, body,
-        transaction->path, transaction->origin, transaction->policy_key,
-        transaction->environment.now,
-        transaction->environment.config.image_metadata_ttl,
-        transaction->environment.config.instrumentation_sample_rate,
-        javascript_template_key);
-  if (transaction->environment.javascript_defer != NULL &&
-      transaction->environment.javascript_defer->count != 0U) {
+        transaction->environment.rum, transaction->environment.cache_path, transaction->environment.javascript_observations, body, transaction->path,
+        transaction->origin, transaction->policy_key, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+        transaction->environment.config.instrumentation_sample_rate, javascript_template_key);
+  if (transaction->environment.javascript_defer != NULL && transaction->environment.javascript_defer->count != 0U) {
     char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 8U];
     int material_length;
     memset(&decision_observations, 0, sizeof(decision_observations));
-    if (transaction->environment.javascript_observations != NULL)
-      decision_observations = *transaction->environment.javascript_observations;
+    if (transaction->environment.javascript_observations != NULL) decision_observations = *transaction->environment.javascript_observations;
     material_length =
         snprintf(material, sizeof(material), "rum-js-v1\n%s\n%s",
-                 transaction->environment.javascript_observations == NULL
-                     ? "none"
-                     : transaction->environment.javascript_observations->digest,
+                 transaction->environment.javascript_observations == NULL ? "none" : transaction->environment.javascript_observations->digest,
                  transaction->environment.javascript_defer->digest);
     if (material_length > 0 && (size_t)material_length < sizeof(material) &&
-        laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
-                                        (size_t)material_length},
-                         decision_observations.digest))
+        laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, decision_observations.digest))
       instrumentation_observations = &decision_observations;
   }
   if (!laghu_runtime_rewrite_html(
-          transaction->environment.rum, transaction->environment.cache_path,
-          body, transaction->path, transaction->origin, transaction->policy_key,
-          transaction->capability_mask, transaction->environment.now,
-          transaction->environment.config.image_metadata_ttl,
-          transaction->image_filters,
+          transaction->environment.rum, transaction->environment.cache_path, body, transaction->path, transaction->origin, transaction->policy_key,
+          transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl, transaction->image_filters,
           transaction->policy.allow_resource_inlining,
-          (transaction->policy.filter_families &
-           LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
-              transaction->policy.allow_resource_inlining,
+          (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U && transaction->policy.allow_resource_inlining,
           transaction->policy.allow_structural_rewrite,
-          (transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) !=
-                  0U &&
-              transaction->policy.allow_structural_rewrite,
-          transaction->html_plan, &csp_policy,
-          transaction->environment.config.image_beacon == LAGHU_MODE_ON,
-          transaction->environment.config.image_inline_limit,
-          transaction->environment.config.css_inline_limit,
-          transaction->environment.config.css_outline_threshold,
-          transaction->viewport_width, transaction->dpr_hundredths,
-          &rewritten)) {
+          (transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U && transaction->policy.allow_structural_rewrite,
+          transaction->html_plan, &csp_policy, transaction->environment.config.image_beacon == LAGHU_MODE_ON,
+          transaction->environment.config.image_inline_limit, transaction->environment.config.css_inline_limit,
+          transaction->environment.config.css_outline_threshold, transaction->viewport_width, transaction->dpr_hundredths, &rewritten)) {
     return false;
   }
   base_rewritten = rewritten.rewritten;
@@ -535,16 +441,10 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   }
   if (transaction->environment.font_providers != NULL) {
     if (!laghu_runtime_rewrite_font_css(
-            transaction->environment.font_fetch_queue,
-            transaction->environment.cache_path,
-            transaction->environment.font_providers,
-            (laghu_buffer){selected, selected_length},
-            transaction->environment.now,
-            (transaction->policy.filter_families &
-             LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
-                transaction->policy.allow_resource_inlining,
-            &csp_policy, transaction->environment.config.css_inline_limit,
-            &font)) {
+            transaction->environment.font_fetch_queue, transaction->environment.cache_path, transaction->environment.font_providers,
+            (laghu_buffer){selected, selected_length}, transaction->environment.now,
+            (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U && transaction->policy.allow_resource_inlining, &csp_policy,
+            transaction->environment.config.css_inline_limit, &font)) {
       laghu_runtime_html_result_release(&rewritten);
       return false;
     }
@@ -560,77 +460,45 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       selected = font.data;
       selected_length = font.length;
       base_rewritten = true;
-      length = snprintf(material, sizeof(material), "%s\n%s", base_dependency,
-                        font.dependency_key);
+      length = snprintf(material, sizeof(material), "%s\n%s", base_dependency, font.dependency_key);
       if (length > 0 && (size_t)length < sizeof(material))
-        (void)laghu_sha256_hex(
-            (laghu_buffer){(const unsigned char *)material, (size_t)length},
-            base_dependency);
+        (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, base_dependency);
       memcpy(dependency, base_dependency, sizeof(dependency));
     }
   }
   if ((transaction->policy.filter_families & LAGHU_FILTER_CRITICAL_CSS) != 0U) {
-    if (!laghu_runtime_prioritize_critical_css(
-            transaction->environment.rum, transaction->environment.cache_path,
-            (laghu_buffer){selected, selected_length}, transaction->path,
-            transaction->origin, transaction->policy_key,
-            transaction->capability_mask, transaction->environment.now,
-            transaction->environment.config.image_metadata_ttl,
-            transaction->environment.config.css_inline_limit,
-            transaction->environment.config.css_outline_threshold,
-            transaction->viewport_width,
-            transaction->environment.config.critical_css_beacon ==
-                LAGHU_MODE_ON,
-            &csp_policy, &critical)) {
+    if (!laghu_runtime_prioritize_critical_css(transaction->environment.rum, transaction->environment.cache_path,
+                                               (laghu_buffer){selected, selected_length}, transaction->path, transaction->origin,
+                                               transaction->policy_key, transaction->capability_mask, transaction->environment.now,
+                                               transaction->environment.config.image_metadata_ttl, transaction->environment.config.css_inline_limit,
+                                               transaction->environment.config.css_outline_threshold, transaction->viewport_width,
+                                               transaction->environment.config.critical_css_beacon == LAGHU_MODE_ON, &csp_policy, &critical)) {
       laghu_runtime_html_result_release(&font);
       laghu_runtime_html_result_release(&rewritten);
       return false;
     }
     if (critical.rewritten) {
       char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
-      int length = snprintf(material, sizeof(material), "%s\n%s", dependency,
-                            critical.dependency_key);
+      int length = snprintf(material, sizeof(material), "%s\n%s", dependency, critical.dependency_key);
       selected = critical.data;
       selected_length = critical.length;
       base_rewritten = true;
       if (length > 0 && (size_t)length < sizeof(material))
-        (void)laghu_sha256_hex(
-            (laghu_buffer){(const unsigned char *)material, (size_t)length},
-            dependency);
+        (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, dependency);
     }
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) !=
-          0U &&
-      transaction->environment.javascript_queue != NULL) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) != 0U && transaction->environment.javascript_queue != NULL) {
     if (!laghu_runtime_rewrite_javascript_html(
-            transaction->environment.javascript_queue,
-            transaction->environment.cache_path,
-            (laghu_buffer){selected, selected_length}, transaction->path,
-            transaction->policy_key, transaction->environment.javascript_target,
-            &csp_policy, transaction->environment.now,
-            transaction->environment.config.image_metadata_ttl,
-            transaction->environment.rum,
-            javascript_template_key[0] == '\0' ? NULL : javascript_template_key,
-            transaction->origin,
-            transaction->viewport_width != 0U &&
-                    transaction->viewport_width < 768U
-                ? 0U
-                : 1U,
-            transaction->environment.javascript_defer,
-            (transaction->policy.filter_families &
-             LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U &&
-                transaction->policy.allow_script_reordering,
-            transaction->environment.config.javascript_defer_suggestions ==
-                LAGHU_MODE_ON,
-            (transaction->policy.filter_families &
-             LAGHU_FILTER_RESOURCE_COMBINE) != 0U &&
-                transaction->policy.allow_structural_rewrite,
-            (transaction->policy.filter_families &
-             LAGHU_FILTER_RESOURCE_INLINE) != 0U &&
-                transaction->policy.allow_resource_inlining,
-            transaction->policy.allow_structural_rewrite,
-            transaction->policy.include_js_source_maps,
-            transaction->policy.javascript_inline_limit,
+            transaction->environment.javascript_queue, transaction->environment.cache_path, (laghu_buffer){selected, selected_length},
+            transaction->path, transaction->policy_key, transaction->environment.javascript_target, &csp_policy, transaction->environment.now,
+            transaction->environment.config.image_metadata_ttl, transaction->environment.rum,
+            javascript_template_key[0] == '\0' ? NULL : javascript_template_key, transaction->origin,
+            transaction->viewport_width != 0U && transaction->viewport_width < 768U ? 0U : 1U, transaction->environment.javascript_defer,
+            (transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U && transaction->policy.allow_script_reordering,
+            transaction->environment.config.javascript_defer_suggestions == LAGHU_MODE_ON,
+            (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_COMBINE) != 0U && transaction->policy.allow_structural_rewrite,
+            (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U && transaction->policy.allow_resource_inlining,
+            transaction->policy.allow_structural_rewrite, transaction->policy.include_js_source_maps, transaction->policy.javascript_inline_limit,
             transaction->policy.javascript_outline_threshold, &javascript)) {
       laghu_runtime_html_result_release(&critical);
       laghu_runtime_html_result_release(&font);
@@ -639,33 +507,23 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     }
     if (javascript.rewritten) {
       char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
-      int length = snprintf(material, sizeof(material), "%s\n%s", dependency,
-                            javascript.dependency_key);
+      int length = snprintf(material, sizeof(material), "%s\n%s", dependency, javascript.dependency_key);
       selected = javascript.data;
       selected_length = javascript.length;
       base_rewritten = true;
       if (length > 0 && (size_t)length < sizeof(material))
-        (void)laghu_sha256_hex(
-            (laghu_buffer){(const unsigned char *)material, (size_t)length},
-            dependency);
+        (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, dependency);
     }
     if (javascript.javascript_defer_recommended) {
       result->javascript_defer_recommended = true;
-      memcpy(result->javascript_defer_path, javascript.javascript_defer_path,
-             sizeof(result->javascript_defer_path));
-      memcpy(result->javascript_defer_template,
-             javascript.javascript_defer_template,
-             sizeof(result->javascript_defer_template));
+      memcpy(result->javascript_defer_path, javascript.javascript_defer_path, sizeof(result->javascript_defer_path));
+      memcpy(result->javascript_defer_template, javascript.javascript_defer_template, sizeof(result->javascript_defer_template));
       result->javascript_defer_bucket = javascript.javascript_defer_bucket;
-      result->javascript_defer_observations =
-          javascript.javascript_defer_observations;
+      result->javascript_defer_observations = javascript.javascript_defer_observations;
     }
   }
-  if (!laghu_runtime_add_javascript_yield(
-          (laghu_buffer){selected, selected_length}, &csp_policy,
-          (transaction->policy.filter_families &
-           LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U,
-          &javascript_yield)) {
+  if (!laghu_runtime_add_javascript_yield((laghu_buffer){selected, selected_length}, &csp_policy,
+                                          (transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U, &javascript_yield)) {
     laghu_runtime_html_result_release(&critical);
     laghu_runtime_html_result_release(&font);
     laghu_runtime_html_result_release(&rewritten);
@@ -675,58 +533,35 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   }
   if (javascript_yield.rewritten) {
     char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
-    int length = snprintf(material, sizeof(material), "%s\n%s", dependency,
-                          javascript_yield.dependency_key);
+    int length = snprintf(material, sizeof(material), "%s\n%s", dependency, javascript_yield.dependency_key);
     selected = javascript_yield.data;
     selected_length = javascript_yield.length;
     base_rewritten = true;
     if (length > 0 && (size_t)length < sizeof(material))
-      (void)laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)material, (size_t)length},
-          dependency);
+      (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, dependency);
   }
   if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
     (void)laghu_runtime_instrumentation_template_key(
-        transaction->environment.rum, transaction->environment.cache_path,
-        instrumentation_observations, (laghu_buffer){selected, selected_length},
-        transaction->path, transaction->origin, transaction->policy_key,
-        transaction->environment.now,
-        transaction->environment.config.image_metadata_ttl,
-        transaction->environment.config.instrumentation_sample_rate,
-        lcp_template_key);
+        transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations, (laghu_buffer){selected, selected_length},
+        transaction->path, transaction->origin, transaction->policy_key, transaction->environment.now,
+        transaction->environment.config.image_metadata_ttl, transaction->environment.config.instrumentation_sample_rate, lcp_template_key);
   memset(&optimization_profile, 0, sizeof(optimization_profile));
   if (transaction->environment.config.optimization_profiles == LAGHU_MODE_ON)
-    (void)laghu_template_profile_decide(
-        transaction->environment.rum, lcp_template_key,
-        transaction->environment.now,
-        transaction->environment.config.image_metadata_ttl,
-        transaction->viewport_width != 0U && transaction->viewport_width < 768U
-            ? 0U
-            : 1U,
-        &optimization_profile);
-  if ((transaction->environment.config.optimization_profiles == LAGHU_MODE_ON &&
-       optimization_profile.apply &&
-       !laghu_runtime_prioritize_learned_lcp(
-           transaction->environment.rum, body,
-           (laghu_buffer){selected, selected_length}, transaction->path,
-           transaction->origin, lcp_template_key, transaction->environment.now,
-           transaction->environment.config.image_metadata_ttl,
-           transaction->viewport_width,
-           (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
-           (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U,
-           &csp_policy, &lcp)) ||
+    (void)laghu_template_profile_decide(transaction->environment.rum, lcp_template_key, transaction->environment.now,
+                                        transaction->environment.config.image_metadata_ttl,
+                                        transaction->viewport_width != 0U && transaction->viewport_width < 768U ? 0U : 1U, &optimization_profile);
+  if ((transaction->environment.config.optimization_profiles == LAGHU_MODE_ON && optimization_profile.apply &&
+       !laghu_runtime_prioritize_learned_lcp(transaction->environment.rum, body, (laghu_buffer){selected, selected_length}, transaction->path,
+                                             transaction->origin, lcp_template_key, transaction->environment.now,
+                                             transaction->environment.config.image_metadata_ttl, transaction->viewport_width,
+                                             (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
+                                             (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U, &csp_policy, &lcp)) ||
       (transaction->environment.config.optimization_profiles != LAGHU_MODE_ON &&
-       !laghu_runtime_prioritize_lcp(
-           transaction->environment.rum, body,
-           (laghu_buffer){selected, selected_length}, transaction->path,
-           transaction->origin,
-           lcp_template_key[0] == '\0' ? NULL : lcp_template_key,
-           transaction->environment.now,
-           transaction->environment.config.image_metadata_ttl,
-           transaction->viewport_width,
-           (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
-           (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U,
-           &csp_policy, &lcp))) {
+       !laghu_runtime_prioritize_lcp(transaction->environment.rum, body, (laghu_buffer){selected, selected_length}, transaction->path,
+                                     transaction->origin, lcp_template_key[0] == '\0' ? NULL : lcp_template_key, transaction->environment.now,
+                                     transaction->environment.config.image_metadata_ttl, transaction->viewport_width,
+                                     (transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS) != 0U,
+                                     (transaction->image_filters & LAGHU_IMAGE_LAZYLOAD) != 0U, &csp_policy, &lcp))) {
     laghu_runtime_html_result_release(&critical);
     laghu_runtime_html_result_release(&font);
     laghu_runtime_html_result_release(&rewritten);
@@ -736,25 +571,19 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   }
   result->lcp_decision = lcp.decision;
   result->lcp_applied = lcp.applied;
-  memcpy(result->lcp_profile_observations, lcp.profile_observations,
-         sizeof(result->lcp_profile_observations));
-  memcpy(result->lcp_profile_ready, lcp.profile_ready,
-         sizeof(result->lcp_profile_ready));
+  memcpy(result->lcp_profile_observations, lcp.profile_observations, sizeof(result->lcp_profile_observations));
+  memcpy(result->lcp_profile_ready, lcp.profile_ready, sizeof(result->lcp_profile_ready));
   if (lcp.rewritten) {
     char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 2U];
-    int length = snprintf(material, sizeof(material), "%s\n%s", dependency,
-                          lcp.dependency_key);
+    int length = snprintf(material, sizeof(material), "%s\n%s", dependency, lcp.dependency_key);
     selected = lcp.data;
     selected_length = lcp.length;
     base_rewritten = true;
     if (length > 0 && (size_t)length < sizeof(material))
-      (void)laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)material, (size_t)length},
-          dependency);
+      (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, dependency);
   }
   if (lcp.link_header != NULL && lcp.link_header[0] != '\0') {
-    int combined = snprintf(effective_links, sizeof(effective_links), "%s\n%s",
-                            links, lcp.link_header);
+    int combined = snprintf(effective_links, sizeof(effective_links), "%s\n%s", links, lcp.link_header);
     if (combined < 0 || (size_t)combined >= sizeof(effective_links)) {
       laghu_lcp_result_release(&lcp);
       laghu_runtime_html_result_release(&critical);
@@ -768,24 +597,15 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     memcpy(effective_links, links, sizeof(effective_links));
   }
   if (!laghu_runtime_finalize_html_headers(
-          transaction->environment.cache_path, body, transaction->path,
-          transaction->origin, transaction->policy_key,
-          transaction->capability_mask, transaction->environment.now,
-          transaction->environment.config.image_metadata_ttl,
-          transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS, language,
-          effective_links, transaction->environment.config.css_inline_limit,
-          transaction->environment.config.css_outline_threshold, base_rewritten,
-          &hinted) ||
+          transaction->environment.cache_path, body, transaction->path, transaction->origin, transaction->policy_key, transaction->capability_mask,
+          transaction->environment.now, transaction->environment.config.image_metadata_ttl, transaction->html_plan & LAGHU_HTML_PLAN_RESOURCE_HINTS,
+          language, effective_links, transaction->environment.config.css_inline_limit, transaction->environment.config.css_outline_threshold,
+          base_rewritten, &hinted) ||
       !laghu_runtime_finalize_html_headers(
-          transaction->environment.cache_path,
-          (laghu_buffer){selected, selected_length}, transaction->path,
-          transaction->origin, transaction->policy_key,
-          transaction->capability_mask, transaction->environment.now,
-          transaction->environment.config.image_metadata_ttl,
-          transaction->html_plan & ~LAGHU_HTML_PLAN_RESOURCE_HINTS, language,
-          effective_links, transaction->environment.config.css_inline_limit,
-          transaction->environment.config.css_outline_threshold, base_rewritten,
-          &finalized)) {
+          transaction->environment.cache_path, (laghu_buffer){selected, selected_length}, transaction->path, transaction->origin,
+          transaction->policy_key, transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+          transaction->html_plan & ~LAGHU_HTML_PLAN_RESOURCE_HINTS, language, effective_links, transaction->environment.config.css_inline_limit,
+          transaction->environment.config.css_outline_threshold, base_rewritten, &finalized)) {
     laghu_runtime_html_result_release(&critical);
     laghu_runtime_html_result_release(&rewritten);
     laghu_runtime_html_result_release(&font);
@@ -793,10 +613,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     laghu_runtime_html_result_release(&javascript_yield);
     return false;
   }
-  if (hinted.invalid || hinted.dependencies_pending || finalized.invalid ||
-      finalized.dependencies_pending) {
-    result->dependencies_pending =
-        hinted.dependencies_pending || finalized.dependencies_pending;
+  if (hinted.invalid || hinted.dependencies_pending || finalized.invalid || finalized.dependencies_pending) {
+    result->dependencies_pending = hinted.dependencies_pending || finalized.dependencies_pending;
     base_rewritten = false;
   } else {
     char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 4U];
@@ -806,18 +624,12 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       selected_length = finalized.length;
       base_rewritten = true;
     }
-    material_length =
-        snprintf(material, sizeof(material), "%s\n%s\n%s", base_dependency,
-                 hinted.dependency_key, finalized.dependency_key);
+    material_length = snprintf(material, sizeof(material), "%s\n%s\n%s", base_dependency, hinted.dependency_key, finalized.dependency_key);
     if (material_length > 0 && (size_t)material_length < sizeof(material)) {
-      (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
-                                            (size_t)material_length},
-                             dependency);
+      (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, dependency);
     }
     if (finalized.set_content_language) {
-      if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET,
-                                           "Content-Language",
-                                           finalized.content_language)) {
+      if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Content-Language", finalized.content_language)) {
         laghu_runtime_html_result_release(&hinted);
         laghu_runtime_html_result_release(&finalized);
         laghu_runtime_html_result_release(&rewritten);
@@ -870,53 +682,31 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     char decision_template_key[LAGHU_RUNTIME_KEY_SIZE];
     int material_length;
     decision_template_key[0] = '\0';
-    if (javascript_template_key[0] != '\0' &&
-        instrumentation_observations == &decision_observations &&
+    if (javascript_template_key[0] != '\0' && instrumentation_observations == &decision_observations &&
         laghu_runtime_instrumentation_template_key(
-            transaction->environment.rum, transaction->environment.cache_path,
-            instrumentation_observations,
-            (laghu_buffer){selected, selected_length}, transaction->path,
-            transaction->origin, transaction->policy_key,
-            transaction->environment.now,
-            transaction->environment.config.image_metadata_ttl,
-            transaction->environment.config.instrumentation_sample_rate,
-            decision_template_key)) {
-      laghu_rum_instrumentation_record *baseline =
-          calloc(1U, sizeof(*baseline));
+            transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations,
+            (laghu_buffer){selected, selected_length}, transaction->path, transaction->origin, transaction->policy_key, transaction->environment.now,
+            transaction->environment.config.image_metadata_ttl, transaction->environment.config.instrumentation_sample_rate, decision_template_key)) {
+      laghu_rum_instrumentation_record *baseline = calloc(1U, sizeof(*baseline));
       laghu_rum_instrumentation_record *current = calloc(1U, sizeof(*current));
       laghu_rum_value baseline_value, current_value;
-      unsigned int bucket = transaction->viewport_width != 0U &&
-                                    transaction->viewport_width < 768U
-                                ? 0U
-                                : 1U;
+      unsigned int bucket = transaction->viewport_width != 0U && transaction->viewport_width < 768U ? 0U : 1U;
       if (baseline != NULL && current != NULL &&
-          laghu_rum_engine_read(
-              transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
-              javascript_template_key, transaction->environment.now, baseline,
-              sizeof(*baseline), &baseline_value) &&
-          laghu_rum_engine_read(
-              transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION,
-              decision_template_key, transaction->environment.now, current,
-              sizeof(*current), &current_value) &&
-          laghu_javascript_defer_rollback_recommended(baseline, current,
-                                                      bucket)) {
+          laghu_rum_engine_read(transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION, javascript_template_key, transaction->environment.now,
+                                baseline, sizeof(*baseline), &baseline_value) &&
+          laghu_rum_engine_read(transaction->environment.rum, LAGHU_RUM_RECORD_INSTRUMENTATION, decision_template_key, transaction->environment.now,
+                                current, sizeof(*current), &current_value) &&
+          laghu_javascript_defer_rollback_recommended(baseline, current, bucket)) {
         unsigned int rule;
         result->javascript_defer_rollback_recommended = true;
         result->javascript_defer_bucket = bucket;
         result->javascript_defer_observations = current->observations[bucket];
-        (void)snprintf(result->javascript_defer_template,
-                       sizeof(result->javascript_defer_template), "%s",
-                       decision_template_key);
-        for (rule = 0U; rule < transaction->environment.javascript_defer->count;
-             ++rule) {
-          const laghu_javascript_defer_rule *approved =
-              &transaction->environment.javascript_defer->rules[rule];
+        (void)snprintf(result->javascript_defer_template, sizeof(result->javascript_defer_template), "%s", decision_template_key);
+        for (rule = 0U; rule < transaction->environment.javascript_defer->count; ++rule) {
+          const laghu_javascript_defer_rule *approved = &transaction->environment.javascript_defer->rules[rule];
           if (approved->mode == LAGHU_JAVASCRIPT_DELAY_DEFER &&
-              (approved->template_path[0] == '\0' ||
-               strcmp(approved->template_path, transaction->path) == 0)) {
-            (void)snprintf(result->javascript_defer_path,
-                           sizeof(result->javascript_defer_path), "%s",
-                           approved->script_path);
+              (approved->template_path[0] == '\0' || strcmp(approved->template_path, transaction->path) == 0)) {
+            (void)snprintf(result->javascript_defer_path, sizeof(result->javascript_defer_path), "%s", approved->script_path);
             break;
           }
         }
@@ -924,15 +714,10 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       free(baseline);
       free(current);
     }
-    if (!laghu_runtime_add_instrumentation(
-            transaction->environment.rum, transaction->environment.cache_path,
-            instrumentation_observations,
-            (laghu_buffer){selected, selected_length}, transaction->path,
-            transaction->origin, transaction->policy_key,
-            transaction->environment.now,
-            transaction->environment.config.image_metadata_ttl,
-            transaction->environment.config.instrumentation_sample_rate,
-            &csp_policy, &instrumentation)) {
+    if (!laghu_runtime_add_instrumentation(transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations,
+                                           (laghu_buffer){selected, selected_length}, transaction->path, transaction->origin, transaction->policy_key,
+                                           transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+                                           transaction->environment.config.instrumentation_sample_rate, &csp_policy, &instrumentation)) {
       laghu_runtime_html_result_release(&hinted);
       laghu_runtime_html_result_release(&finalized);
       laghu_runtime_html_result_release(&rewritten);
@@ -947,17 +732,12 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       selected = instrumentation.data;
       selected_length = instrumentation.length;
       base_rewritten = true;
-      material_length = snprintf(material, sizeof(material), "%s\n%s",
-                                 dependency, instrumentation.dependency_key);
+      material_length = snprintf(material, sizeof(material), "%s\n%s", dependency, instrumentation.dependency_key);
       if (material_length > 0 && (size_t)material_length < sizeof(material))
-        (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
-                                              (size_t)material_length},
-                               dependency);
+        (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, dependency);
     }
   }
-  if (!laghu_domain_rewrite_html((laghu_buffer){selected, selected_length},
-                                 &transaction->environment.config.domain_policy,
-                                 &domains)) {
+  if (!laghu_domain_rewrite_html((laghu_buffer){selected, selected_length}, &transaction->environment.config.domain_policy, &domains)) {
     laghu_runtime_html_result_release(&hinted);
     laghu_runtime_html_result_release(&finalized);
     laghu_runtime_html_result_release(&rewritten);
@@ -976,8 +756,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     selected = domains.data;
     selected_length = domains.length;
     base_rewritten = true;
-    if (!laghu_sha256_hex((laghu_buffer){selected, selected_length},
-                          domain_hash)) {
+    if (!laghu_sha256_hex((laghu_buffer){selected, selected_length}, domain_hash)) {
       laghu_domain_rewrite_result_release(&domains);
       laghu_runtime_html_result_release(&hinted);
       laghu_runtime_html_result_release(&finalized);
@@ -990,15 +769,11 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       laghu_lcp_result_release(&lcp);
       return false;
     }
-    material_length =
-        snprintf(material, sizeof(material), "%s\n%s", dependency, domain_hash);
+    material_length = snprintf(material, sizeof(material), "%s\n%s", dependency, domain_hash);
     if (material_length > 0 && (size_t)material_length < sizeof(material))
-      (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material,
-                                            (size_t)material_length},
-                             dependency);
+      (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, dependency);
   }
-  if (base_rewritten &&
-      !laghu_http_select_owned(result, selected, selected_length)) {
+  if (base_rewritten && !laghu_http_select_owned(result, selected, selected_length)) {
     laghu_domain_rewrite_result_release(&domains);
     laghu_runtime_html_result_release(&hinted);
     laghu_runtime_html_result_release(&finalized);
@@ -1022,20 +797,16 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     return true;
   }
   memcpy(result->dependency_key, dependency, sizeof(result->dependency_key));
-  return (!base_rewritten ||
-          laghu_http_add_length(result, result->selected.length)) &&
+  return (!base_rewritten || laghu_http_add_length(result, result->selected.length)) &&
          laghu_http_add_entity_headers(result, "laghu-html-", dependency);
 }
 
 /* This is deliberately post-finalization: Chrome receives precisely the body
  * that will leave the HTTP layer. Queue contention, saturation, and malformed
  * optional configuration all leave the response untouched. */
-static void laghu_http_publish_chrome_analysis(
-    const laghu_http_transaction *transaction, laghu_buffer snapshot) {
+static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *transaction, laghu_buffer snapshot) {
   laghu_runtime_job job;
-  if (transaction->environment.chrome_analysis_queue == NULL ||
-      snapshot.length == 0U ||
-      snapshot.length > LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML)
+  if (transaction->environment.chrome_analysis_queue == NULL || snapshot.length == 0U || snapshot.length > LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML)
     return;
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS;
@@ -1046,61 +817,46 @@ static void laghu_http_publish_chrome_analysis(
   memcpy(job.content_type, "text/html", sizeof("text/html"));
   job.analysis_timeout_ms = transaction->environment.chrome_analysis_timeout_ms;
   job.payload = snapshot;
-  (void)laghu_runtime_queue_try_publish(
-      transaction->environment.chrome_analysis_queue, &job);
+  (void)laghu_runtime_queue_try_publish(transaction->environment.chrome_analysis_queue, &job);
 }
 
-static bool laghu_http_finalize_image(laghu_http_transaction *transaction,
-                                      laghu_buffer body,
-                                      laghu_http_transaction_result *result) {
+static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_job job;
   memset(&job, 0, sizeof(job));
   memcpy(job.request_path, transaction->path, strlen(transaction->path) + 1U);
-  memcpy(job.content_type, transaction->content_type,
-         strlen(transaction->content_type) + 1U);
+  memcpy(job.content_type, transaction->content_type, strlen(transaction->content_type) + 1U);
   memcpy(job.index_key, transaction->cache_key, sizeof(job.index_key));
   memcpy(job.validator, transaction->validator, sizeof(job.validator));
   memcpy(job.policy_key, transaction->policy_key, sizeof(job.policy_key));
   job.filters = transaction->image_filters;
-  job.quality = transaction->policy.image_quality != 0U
-                    ? transaction->policy.image_quality
-                    : 100U;
+  job.quality = transaction->policy.image_quality != 0U ? transaction->policy.image_quality : 100U;
   job.metadata_limit = transaction->environment.config.image_metadata_limit;
   job.metadata_ttl = transaction->environment.config.image_metadata_ttl;
   job.target_count = transaction->target_count;
   memcpy(job.target_width, transaction->target_width, sizeof(job.target_width));
-  memcpy(job.target_height, transaction->target_height,
-         sizeof(job.target_height));
-  memcpy(job.resize_filter, transaction->resize_filter,
-         sizeof(job.resize_filter));
+  memcpy(job.target_height, transaction->target_height, sizeof(job.target_height));
+  memcpy(job.resize_filter, transaction->resize_filter, sizeof(job.resize_filter));
   job.allow_lossy = transaction->policy.allow_lossy;
   job.accept_webp = transaction->accept_webp;
   job.accept_avif = transaction->accept_avif;
   job.payload = body;
-  result->job_published =
-      laghu_runtime_queue_try_publish(transaction->environment.queue, &job);
+  result->job_published = laghu_runtime_queue_try_publish(transaction->environment.queue, &job);
   memcpy(result->cache_key, transaction->cache_key, sizeof(result->cache_key));
   return true;
 }
 
-static bool laghu_http_finalize_javascript(
-    laghu_http_transaction *transaction, laghu_buffer body,
-    laghu_http_transaction_result *result) {
+static bool laghu_http_finalize_javascript(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_javascript_result javascript;
   laghu_runtime_javascript_result module;
-  if (!laghu_runtime_rewrite_javascript(
-          transaction->environment.javascript_queue,
-          transaction->environment.cache_path, body, transaction->path,
-          transaction->policy_key, transaction->environment.javascript_target,
-          false, transaction->policy.include_js_source_maps, &javascript))
+  if (!laghu_runtime_rewrite_javascript(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
+                                        transaction->policy_key, transaction->environment.javascript_target, false,
+                                        transaction->policy.include_js_source_maps, &javascript))
     return true;
   result->job_published = javascript.published;
   memset(&module, 0, sizeof(module));
-  if (laghu_runtime_rewrite_javascript(
-          transaction->environment.javascript_queue,
-          transaction->environment.cache_path, body, transaction->path,
-          transaction->policy_key, transaction->environment.javascript_target,
-          true, transaction->policy.include_js_source_maps, &module))
+  if (laghu_runtime_rewrite_javascript(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
+                                       transaction->policy_key, transaction->environment.javascript_target, true,
+                                       transaction->policy.include_js_source_maps, &module))
     result->job_published |= module.published;
   laghu_runtime_javascript_result_release(&module);
   if (!javascript.rewritten) {
@@ -1111,49 +867,33 @@ static bool laghu_http_finalize_javascript(
     laghu_runtime_javascript_result_release(&javascript);
     return false;
   }
-  memcpy(result->dependency_key, javascript.dependency_key,
-         sizeof(result->dependency_key));
+  memcpy(result->dependency_key, javascript.dependency_key, sizeof(result->dependency_key));
   laghu_runtime_javascript_result_release(&javascript);
-  return laghu_http_add_length(result, result->selected.length) &&
-         laghu_http_add_entity_headers(result, "laghu-js-",
-                                       result->dependency_key);
+  return laghu_http_add_length(result, result->selected.length) && laghu_http_add_entity_headers(result, "laghu-js-", result->dependency_key);
 }
 
-static bool laghu_http_finalize_resource(
-    laghu_http_transaction *transaction, laghu_buffer body,
-    laghu_http_transaction_result *result) {
+static bool laghu_http_finalize_resource(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   char payload_hash[LAGHU_RUNTIME_KEY_SIZE];
   laghu_runtime_cache_entry entry;
   char resource_index[LAGHU_RUNTIME_KEY_SIZE];
   if (!laghu_sha256_hex(body, payload_hash) ||
-      !laghu_runtime_index_key(transaction->path, "", transaction->policy_key,
-                               false, false, resource_index) ||
-      !laghu_runtime_cache_publish(
-          transaction->environment.cache_path, transaction->cache_key,
-          payload_hash, transaction->validator, transaction->content_type,
-          "opaque", body, &entry) ||
-      !laghu_runtime_cache_publish(
-          transaction->environment.cache_path, resource_index, payload_hash, "",
-          transaction->content_type, "opaque", body, &entry))
+      !laghu_runtime_index_key(transaction->path, "", transaction->policy_key, false, false, resource_index) ||
+      !laghu_runtime_cache_publish(transaction->environment.cache_path, transaction->cache_key, payload_hash, transaction->validator,
+                                   transaction->content_type, "opaque", body, &entry) ||
+      !laghu_runtime_cache_publish(transaction->environment.cache_path, resource_index, payload_hash, "", transaction->content_type, "opaque", body,
+                                   &entry))
     return true;
   if (transaction->environment.asset_offload != NULL) {
     const laghu_asset_config *config = transaction->environment.asset_offload;
     laghu_asset_record asset = {0};
-    if (snprintf(asset.source_url, sizeof(asset.source_url), "%s%s",
-                 config->policy.source_domain, transaction->path) > 0 &&
+    if (snprintf(asset.source_url, sizeof(asset.source_url), "%s%s", config->policy.source_domain, transaction->path) > 0 &&
         strlen(asset.source_url) < sizeof(asset.source_url) &&
-        snprintf(asset.source_validator, sizeof(asset.source_validator), "%s",
-                 transaction->validator) >= 0 &&
-        snprintf(asset.content_hash, sizeof(asset.content_hash), "%s",
-                 payload_hash) > 0 &&
-        snprintf(asset.content_type, sizeof(asset.content_type), "%s",
-                 transaction->content_type) > 0 &&
-        snprintf(asset.policy_digest, sizeof(asset.policy_digest), "%s",
-                 config->digest) > 0 &&
-        snprintf(asset.provider_digest, sizeof(asset.provider_digest), "%s",
-                 config->digest) > 0 &&
-        laghu_asset_object_key(&config->policy, asset.source_url,
-                               asset.content_hash, asset.object_key)) {
+        snprintf(asset.source_validator, sizeof(asset.source_validator), "%s", transaction->validator) >= 0 &&
+        snprintf(asset.content_hash, sizeof(asset.content_hash), "%s", payload_hash) > 0 &&
+        snprintf(asset.content_type, sizeof(asset.content_type), "%s", transaction->content_type) > 0 &&
+        snprintf(asset.policy_digest, sizeof(asset.policy_digest), "%s", config->digest) > 0 &&
+        snprintf(asset.provider_digest, sizeof(asset.provider_digest), "%s", config->digest) > 0 &&
+        laghu_asset_object_key(&config->policy, asset.source_url, asset.content_hash, asset.object_key)) {
       asset.state = LAGHU_ASSET_PENDING;
       asset.body_length = body.length;
       asset.updated_at = transaction->environment.now;
@@ -1166,64 +906,43 @@ static bool laghu_http_finalize_resource(
   return true;
 }
 
-bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
-                                     laghu_buffer captured_body,
-                                     laghu_http_transaction_result *result) {
+bool laghu_http_transaction_finalize(laghu_http_transaction *transaction, laghu_buffer captured_body, laghu_http_transaction_result *result) {
   bool ok = true;
   laghu_http_result_init(result);
-  if (transaction == NULL || result == NULL || !transaction->prepared ||
-      transaction->version != LAGHU_HTTP_ABI_VERSION ||
-      transaction->struct_size != sizeof(*transaction) ||
-      !laghu_http_view_valid(captured_body)) {
-    return result != NULL &&
-           laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
+  if (transaction == NULL || result == NULL || !transaction->prepared || transaction->version != LAGHU_HTTP_ABI_VERSION ||
+      transaction->struct_size != sizeof(*transaction) || !laghu_http_view_valid(captured_body)) {
+    return result != NULL && laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
   }
   result->action = transaction->action;
   result->original = captured_body;
   result->selected = captured_body;
   memcpy(result->cache_key, transaction->cache_key, sizeof(result->cache_key));
-  if (transaction->action == LAGHU_HTTP_ACTION_BYPASS ||
-      transaction->action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
+  if (transaction->action == LAGHU_HTTP_ACTION_BYPASS || transaction->action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
     return laghu_http_add_status(result, transaction->decision);
   }
-  if (captured_body.length == 0U ||
-      (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS &&
-       captured_body.length > LAGHU_CSS_MAX_INPUT_BYTES) ||
-      (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT &&
-       captured_body.length > LAGHU_JAVASCRIPT_MAX_BYTES) ||
-      (transaction->action != LAGHU_HTTP_ACTION_CAPTURE_CSS &&
-       transaction->action != LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT &&
+  if (captured_body.length == 0U || (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS && captured_body.length > LAGHU_CSS_MAX_INPUT_BYTES) ||
+      (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT && captured_body.length > LAGHU_JAVASCRIPT_MAX_BYTES) ||
+      (transaction->action != LAGHU_HTTP_ACTION_CAPTURE_CSS && transaction->action != LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT &&
        captured_body.length > LAGHU_IMAGE_MAX_INPUT_BYTES) ||
-      (transaction->response->has_declared_length &&
-       captured_body.length != transaction->response->declared_length)) {
+      (transaction->response->has_declared_length && captured_body.length != transaction->response->declared_length)) {
     transaction->budget.rejection = LAGHU_BUDGET_REJECTION_CONTENT;
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
-  if (!laghu_transform_budget_reserve(&transaction->budget,
-                                      captured_body.length))
-    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
-  if (!laghu_transform_budget_checkpoint(&transaction->budget,
-                                         captured_body.length)) {
+  if (!laghu_transform_budget_reserve(&transaction->budget, captured_body.length)) return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  if (!laghu_transform_budget_checkpoint(&transaction->budget, captured_body.length)) {
     laghu_transform_budget_release(&transaction->budget, captured_body.length);
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
-  if (transaction->asset_allowed &&
-      transaction->action != LAGHU_HTTP_ACTION_CAPTURE_RESOURCE) {
+  if (transaction->asset_allowed && transaction->action != LAGHU_HTTP_ACTION_CAPTURE_RESOURCE) {
     const laghu_asset_config *config = transaction->environment.asset_offload;
     laghu_asset_record asset = {0};
     if (laghu_sha256_hex(captured_body, asset.content_hash) &&
-        snprintf(asset.source_url, sizeof(asset.source_url), "%s%s",
-                 config->policy.source_domain, transaction->path) > 0 &&
-        snprintf(asset.source_validator, sizeof(asset.source_validator), "%s",
-                 transaction->validator) >= 0 &&
-        snprintf(asset.content_type, sizeof(asset.content_type), "%s",
-                 transaction->content_type) > 0 &&
-        snprintf(asset.policy_digest, sizeof(asset.policy_digest), "%s",
-                 config->digest) > 0 &&
-        snprintf(asset.provider_digest, sizeof(asset.provider_digest), "%s",
-                 config->digest) > 0 &&
-        laghu_asset_object_key(&config->policy, asset.source_url,
-                               asset.content_hash, asset.object_key)) {
+        snprintf(asset.source_url, sizeof(asset.source_url), "%s%s", config->policy.source_domain, transaction->path) > 0 &&
+        snprintf(asset.source_validator, sizeof(asset.source_validator), "%s", transaction->validator) >= 0 &&
+        snprintf(asset.content_type, sizeof(asset.content_type), "%s", transaction->content_type) > 0 &&
+        snprintf(asset.policy_digest, sizeof(asset.policy_digest), "%s", config->digest) > 0 &&
+        snprintf(asset.provider_digest, sizeof(asset.provider_digest), "%s", config->digest) > 0 &&
+        laghu_asset_object_key(&config->policy, asset.source_url, asset.content_hash, asset.object_key)) {
       asset.state = LAGHU_ASSET_PENDING;
       asset.body_length = captured_body.length;
       asset.updated_at = transaction->environment.now;
@@ -1246,8 +965,7 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
   } else if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE) {
     ok = laghu_http_finalize_image(transaction, captured_body, result);
   }
-  if (ok && !laghu_transform_budget_checkpoint(&transaction->budget, 1U))
-    ok = false;
+  if (ok && !laghu_transform_budget_checkpoint(&transaction->budget, 1U)) ok = false;
   if (!ok) {
     laghu_transform_budget_release(&transaction->budget, captured_body.length);
     laghu_http_transaction_result_release(result);
@@ -1256,8 +974,7 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
     result->action = transaction->action;
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
-  if (!laghu_transform_budget_generate(&transaction->budget,
-                                       result->selected.length)) {
+  if (!laghu_transform_budget_generate(&transaction->budget, result->selected.length)) {
     laghu_transform_budget_release(&transaction->budget, captured_body.length);
     laghu_http_transaction_result_release(result);
     result->original = captured_body;
@@ -1267,14 +984,11 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
   }
   laghu_transform_budget_release(&transaction->budget, captured_body.length);
   if (transaction->environment.asset_offload != NULL &&
-      (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML ||
-       transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
+      (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML || transaction->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
        transaction->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT)) {
     unsigned char *rewritten = NULL;
     size_t rewritten_length = 0U;
-    if (laghu_asset_rewrite_document_at(transaction->environment.asset_offload,
-                                        result->selected, transaction->path,
-                                        &rewritten, &rewritten_length) &&
+    if (laghu_asset_rewrite_document_at(transaction->environment.asset_offload, result->selected, transaction->path, &rewritten, &rewritten_length) &&
         rewritten != NULL) {
       free(result->owned_body);
       result->owned_body = rewritten;
@@ -1282,8 +996,7 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
       (void)laghu_http_add_length(result, rewritten_length);
     }
   }
-  if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML)
-    laghu_http_publish_chrome_analysis(transaction, result->selected);
+  if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML) laghu_http_publish_chrome_analysis(transaction, result->selected);
   if (transaction->query_preview) {
     (void)laghu_http_add_query_preview_report(transaction, result, result);
     result->selected = captured_body;

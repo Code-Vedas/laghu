@@ -49,8 +49,7 @@ typedef struct {
   unsigned int target_height[LAGHU_RUNTIME_MAX_TARGETS];
   uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
   unsigned int sprite_count;
-  char sprite_variant_keys[LAGHU_RUNTIME_MAX_SPRITE_INPUTS]
-                          [LAGHU_RUNTIME_KEY_SIZE];
+  char sprite_variant_keys[LAGHU_RUNTIME_MAX_SPRITE_INPUTS][LAGHU_RUNTIME_KEY_SIZE];
   unsigned int sprite_width[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
   unsigned int sprite_height[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
   bool allow_lossy;
@@ -73,29 +72,17 @@ typedef struct {
   void *implementation;
 } laghu_runtime_queue;
 void laghu_runtime_queue_init(laghu_runtime_queue *queue);
-bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path,
-                                unsigned int slot_count,
-                                size_t slot_payload_size);
+bool laghu_runtime_queue_create(laghu_runtime_queue *queue, const char *path, unsigned int slot_count, size_t slot_payload_size);
 bool laghu_runtime_queue_open(laghu_runtime_queue *queue, const char *path);
-bool laghu_runtime_queue_move(laghu_runtime_queue *destination,
-                              laghu_runtime_queue *source);
+bool laghu_runtime_queue_move(laghu_runtime_queue *destination, laghu_runtime_queue *source);
 bool laghu_runtime_queue_refresh(laghu_runtime_queue *queue);
-bool laghu_runtime_queue_set_backend(laghu_runtime_queue *queue,
-                                     uint32_t capabilities,
-                                     const char *backend_id);
-bool laghu_runtime_queue_heartbeat(laghu_runtime_queue *queue,
-                                   uint64_t epoch_seconds);
-bool laghu_runtime_queue_snapshot_get(const laghu_runtime_queue *queue,
-                                      laghu_runtime_queue_snapshot *snapshot);
-bool laghu_runtime_queue_status(laghu_runtime_queue *queue, uint64_t *capacity,
-                                uint64_t *occupied);
+bool laghu_runtime_queue_set_backend(laghu_runtime_queue *queue, uint32_t capabilities, const char *backend_id);
+bool laghu_runtime_queue_heartbeat(laghu_runtime_queue *queue, uint64_t epoch_seconds);
+bool laghu_runtime_queue_snapshot_get(const laghu_runtime_queue *queue, laghu_runtime_queue_snapshot *snapshot);
+bool laghu_runtime_queue_status(laghu_runtime_queue *queue, uint64_t *capacity, uint64_t *occupied);
 void laghu_runtime_queue_close(laghu_runtime_queue *queue);
-bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue,
-                                     const laghu_runtime_job *job);
-bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
-                                  laghu_runtime_job *job,
-                                  unsigned char *payload,
-                                  size_t payload_capacity);
+bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue, const laghu_runtime_job *job);
+bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue, laghu_runtime_job *job, unsigned char *payload, size_t payload_capacity);
 
 #ifdef __cplusplus
 }

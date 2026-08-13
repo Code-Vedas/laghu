@@ -23,15 +23,10 @@ static laghu_socket proxy_listen(const char *host, const char *port) {
   hints.ai_flags = AI_PASSIVE;
   if (getaddrinfo(host, port, &hints, &addresses) != 0) return listener;
   for (address = addresses; address != NULL; address = address->ai_next) {
-    listener = (laghu_socket)socket(address->ai_family, address->ai_socktype,
-                                    address->ai_protocol);
+    listener = (laghu_socket)socket(address->ai_family, address->ai_socktype, address->ai_protocol);
     if (listener == LAGHU_INVALID_SOCKET) continue;
-    (void)setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (const char *)&enabled,
-                     sizeof(enabled));
-    if (bind(listener, address->ai_addr, (laghu_socklen)address->ai_addrlen) ==
-            0 &&
-        listen(listener, SOMAXCONN) == 0)
-      break;
+    (void)setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (const char *)&enabled, sizeof(enabled));
+    if (bind(listener, address->ai_addr, (laghu_socklen)address->ai_addrlen) == 0 && listen(listener, SOMAXCONN) == 0) break;
     laghu_close(listener);
     listener = LAGHU_INVALID_SOCKET;
   }
@@ -46,8 +41,7 @@ uint64_t proxy_monotonic_ms(void) {
 }
 
 static void proxy_pause_ms(unsigned int milliseconds) {
-  struct timespec value = {(time_t)(milliseconds / 1000U),
-                           (long)(milliseconds % 1000U) * 1000000L};
+  struct timespec value = {(time_t)(milliseconds / 1000U), (long)(milliseconds % 1000U) * 1000000L};
   (void)nanosleep(&value, NULL);
 }
 
@@ -56,10 +50,8 @@ bool proxy_cache_probe(const char *cache_path) {
   int count;
   int file;
   unsigned char marker = 0x4cU;
-  count =
-      snprintf(path, sizeof(path), "%s/.laghu-ready-%ld-%llu-%llu", cache_path,
-               (long)getpid(), (unsigned long long)(uintptr_t)pthread_self(),
-               (unsigned long long)proxy_monotonic_ms());
+  count = snprintf(path, sizeof(path), "%s/.laghu-ready-%ld-%llu-%llu", cache_path, (long)getpid(), (unsigned long long)(uintptr_t)pthread_self(),
+                   (unsigned long long)proxy_monotonic_ms());
   if (count <= 0 || (size_t)count >= sizeof(path)) return false;
   file = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
   if (file < 0) return false;
@@ -107,8 +99,7 @@ static bool proxy_queue_path_valid(const char *path) {
   return valid;
 }
 
-static bool proxy_attach_queue(proxy_queue *queue, laghu_runtime_queue *runtime,
-                               bool *ready, const char *path) {
+static bool proxy_attach_queue(proxy_queue *queue, laghu_runtime_queue *runtime, bool *ready, const char *path) {
   laghu_runtime_queue candidate;
   bool attached;
   if (path == NULL || path[0] == '\0') return true;
@@ -133,24 +124,15 @@ void proxy_maintain_queue_attachments(proxy_queue *queue) {
   const laghu_service_config *service;
   if (queue == NULL || queue->options == NULL) return;
   service = &queue->options->service;
-  (void)proxy_attach_queue(queue, &queue->runtime_queue,
-                           &queue->runtime_queue_ready, service->worker_queue);
+  (void)proxy_attach_queue(queue, &queue->runtime_queue, &queue->runtime_queue_ready, service->worker_queue);
   if (service->html_refresh_queue[0] != '\0')
-    (void)proxy_attach_queue(queue, &queue->html_refresh_queue,
-                             &queue->html_refresh_queue_ready,
-                             service->html_refresh_queue);
+    (void)proxy_attach_queue(queue, &queue->html_refresh_queue, &queue->html_refresh_queue_ready, service->html_refresh_queue);
   if (service->font_providers != NULL)
-    (void)proxy_attach_queue(queue, &queue->font_fetch_queue,
-                             &queue->font_fetch_queue_ready,
-                             service->font_fetch_queue);
+    (void)proxy_attach_queue(queue, &queue->font_fetch_queue, &queue->font_fetch_queue_ready, service->font_fetch_queue);
   if (service->javascript_queue[0] != '\0')
-    (void)proxy_attach_queue(queue, &queue->javascript_queue,
-                             &queue->javascript_queue_ready,
-                             service->javascript_queue);
+    (void)proxy_attach_queue(queue, &queue->javascript_queue, &queue->javascript_queue_ready, service->javascript_queue);
   if (service->chrome_analysis_queue[0] != '\0')
-    (void)proxy_attach_queue(queue, &queue->chrome_analysis_queue,
-                             &queue->chrome_analysis_queue_ready,
-                             service->chrome_analysis_queue);
+    (void)proxy_attach_queue(queue, &queue->chrome_analysis_queue, &queue->chrome_analysis_queue_ready, service->chrome_analysis_queue);
 }
 
 static void proxy_signal_handler(int signal_number) {
@@ -195,16 +177,13 @@ static unsigned int proxy_active_count(proxy_queue *queue) {
   return count;
 }
 
-static void proxy_force_workers(proxy_queue *queue, proxy_worker *workers,
-                                unsigned int worker_count) {
+static void proxy_force_workers(proxy_queue *queue, proxy_worker *workers, unsigned int worker_count) {
   unsigned int index;
   proxy_queue_lock(queue);
   queue->state = PROXY_FORCING;
   for (index = 0U; index < worker_count; ++index) {
-    if (workers[index].active_client != LAGHU_INVALID_SOCKET)
-      (void)shutdown(workers[index].active_client, LAGHU_SHUT_BOTH);
-    if (workers[index].active_origin != LAGHU_INVALID_SOCKET)
-      (void)shutdown(workers[index].active_origin, LAGHU_SHUT_BOTH);
+    if (workers[index].active_client != LAGHU_INVALID_SOCKET) (void)shutdown(workers[index].active_client, LAGHU_SHUT_BOTH);
+    if (workers[index].active_origin != LAGHU_INVALID_SOCKET) (void)shutdown(workers[index].active_origin, LAGHU_SHUT_BOTH);
   }
   proxy_queue_unlock(queue);
 }
@@ -248,16 +227,12 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     char rum_error[160U];
     laghu_rum_options_init(&rum_options);
     if (options->service.rum_snapshot_path[0] != '\0')
-      (void)snprintf(snapshot, sizeof(snapshot), "%s",
-                     options->service.rum_snapshot_path);
-    else if (snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot",
-                      options->service.image_cache) <= 0)
+      (void)snprintf(snapshot, sizeof(snapshot), "%s", options->service.rum_snapshot_path);
+    else if (snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot", options->service.image_cache) <= 0)
       goto cleanup;
     rum_options.store_uri = options->service.rum_store;
     rum_options.snapshot_path = snapshot;
-    rum_options.client_library = options->service.rum_client_library[0] == '\0'
-                                     ? NULL
-                                     : options->service.rum_client_library;
+    rum_options.client_library = options->service.rum_client_library[0] == '\0' ? NULL : options->service.rum_client_library;
     rum_options.memory_limit = options->service.rum_memory_limit;
     rum_options.pending_limit = options->service.rum_pending_limit;
     rum_options.ttl_seconds = options->service.rum_ttl;
@@ -265,16 +240,14 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     rum_options.timeout_ms = options->service.rum_timeout_ms;
     rum_options.retry_limit = options->service.rum_retry_limit;
     rum_options.required = options->service.rum_store_required;
-    queue.rum =
-        laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
+    queue.rum = laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
     if (queue.rum == NULL && options->service.rum_store_required) goto cleanup;
     if (queue.rum == NULL) {
       proxy_log_event(&queue, "rum_store_fallback", "degraded");
       rum_options.store_uri = "local:";
       rum_options.client_library = NULL;
       rum_options.required = false;
-      queue.rum =
-          laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
+      queue.rum = laghu_rum_engine_create(&rum_options, rum_error, sizeof(rum_error));
     }
     if (queue.rum == NULL) goto cleanup;
   }
@@ -283,14 +256,10 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     goto cleanup;
   }
   if (!proxy_queue_path_valid(options->service.worker_queue) ||
-      (options->service.html_refresh_queue[0] != '\0' &&
-       !proxy_queue_path_valid(options->service.html_refresh_queue)) ||
-      (options->service.font_providers != NULL &&
-       !proxy_queue_path_valid(options->service.font_fetch_queue)) ||
-      (options->service.javascript_queue[0] != '\0' &&
-       !proxy_queue_path_valid(options->service.javascript_queue)) ||
-      (options->service.chrome_analysis_queue[0] != '\0' &&
-       !proxy_queue_path_valid(options->service.chrome_analysis_queue))) {
+      (options->service.html_refresh_queue[0] != '\0' && !proxy_queue_path_valid(options->service.html_refresh_queue)) ||
+      (options->service.font_providers != NULL && !proxy_queue_path_valid(options->service.font_fetch_queue)) ||
+      (options->service.javascript_queue[0] != '\0' && !proxy_queue_path_valid(options->service.javascript_queue)) ||
+      (options->service.chrome_analysis_queue[0] != '\0' && !proxy_queue_path_valid(options->service.chrome_analysis_queue))) {
     proxy_log_startup_failure(&queue, "queue_unavailable");
     goto cleanup;
   }
@@ -298,25 +267,20 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
    * already-mapped queue and therefore never open persisted state. */
   proxy_maintain_queue_attachments(&queue);
   if (options->service.source_policy.mode != LAGHU_SOURCE_FILE_OFF &&
-      !laghu_source_registry_publish(options->service.asset_upload_queue,
-                                     &options->service.source_policy)) {
+      !laghu_source_registry_publish(options->service.asset_upload_queue, &options->service.source_policy)) {
     proxy_log_startup_failure(&queue, "source_registry");
     goto cleanup;
   }
-  if (!laghu_cache_backend_register_path(options->service.image_cache,
-                                         &options->service.cache_limits)) {
+  if (!laghu_cache_backend_register_path(options->service.image_cache, &options->service.cache_limits)) {
     proxy_log_startup_failure(&queue, "cache_backend");
     goto cleanup;
   }
   if ((options->service.metrics || options->service.readiness) &&
-      !laghu_operational_registry_open(
-          &queue.operational, options->service.image_cache,
-          LAGHU_OPERATIONAL_SURFACE_STANDALONE,
-          LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)time(NULL))) {
+      !laghu_operational_registry_open(&queue.operational, options->service.image_cache, LAGHU_OPERATIONAL_SURFACE_STANDALONE,
+                                       LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)time(NULL))) {
     proxy_log_event(&queue, "observability", "unavailable");
   }
-  if (options->origin_tls &&
-      (queue.tls_context = proxy_tls_context(options)) == NULL) {
+  if (options->origin_tls && (queue.tls_context = proxy_tls_context(options)) == NULL) {
     proxy_log_startup_failure(&queue, "origin_tls");
     goto cleanup;
   }
@@ -340,9 +304,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     workers[index].queue = &queue;
     workers[index].active_client = LAGHU_INVALID_SOCKET;
     workers[index].active_origin = LAGHU_INVALID_SOCKET;
-    if (pthread_create(&threads[index], NULL, proxy_worker_main,
-                       &workers[index]) != 0)
-      break;
+    if (pthread_create(&threads[index], NULL, proxy_worker_main, &workers[index]) != 0) break;
     ++started;
   }
   if (started != options->workers) {
@@ -357,11 +319,8 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
         proxy_connection connection;
         memset(&connection, 0, sizeof(connection));
         connection.peer_length = (laghu_socklen)sizeof(connection.peer);
-        connection.socket =
-            accept(listener, (struct sockaddr *)&connection.peer,
-                   &connection.peer_length);
-        if (connection.socket != LAGHU_INVALID_SOCKET &&
-            !queue_push(&queue, &connection))
+        connection.socket = accept(listener, (struct sockaddr *)&connection.peer, &connection.peer_length);
+        if (connection.socket != LAGHU_INVALID_SOCKET && !queue_push(&queue, &connection))
           proxy_reject_connection(&queue, connection.socket, "queue_saturated");
       }
     }
@@ -371,11 +330,8 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   proxy_begin_drain(&queue);
   proxy_log_event(&queue, "shutdown", "draining");
   {
-    uint64_t deadline =
-        proxy_monotonic_ms() + (uint64_t)options->drain_timeout * 1000U;
-    while (proxy_active_count(&queue) != 0U && proxy_stop_requests < 2 &&
-           proxy_monotonic_ms() < deadline)
-      proxy_pause_ms(20U);
+    uint64_t deadline = proxy_monotonic_ms() + (uint64_t)options->drain_timeout * 1000U;
+    while (proxy_active_count(&queue) != 0U && proxy_stop_requests < 2 && proxy_monotonic_ms() < deadline) proxy_pause_ms(20U);
   }
   if (proxy_active_count(&queue) != 0U) {
     proxy_force_workers(&queue, workers, started);

@@ -86,71 +86,38 @@ typedef struct {
   char digest[LAGHU_RUNTIME_KEY_SIZE];
 } laghu_asset_config;
 
-typedef enum {
-  LAGHU_ASSET_PROVIDER_OK = 0,
-  LAGHU_ASSET_PROVIDER_RETRYABLE,
-  LAGHU_ASSET_PROVIDER_PERMANENT
-} laghu_asset_provider_result;
+typedef enum { LAGHU_ASSET_PROVIDER_OK = 0, LAGHU_ASSET_PROVIDER_RETRYABLE, LAGHU_ASSET_PROVIDER_PERMANENT } laghu_asset_provider_result;
 
 typedef struct {
-  laghu_asset_provider_result (*upload)(void *context, const char *object_key,
-                                        laghu_buffer body,
-                                        const char *content_type,
-                                        const char *checksum);
-  laghu_asset_provider_result (*verify)(void *context, const char *object_key,
-                                        size_t size, const char *content_type,
-                                        const char *checksum);
+  laghu_asset_provider_result (*upload)(void *context, const char *object_key, laghu_buffer body, const char *content_type, const char *checksum);
+  laghu_asset_provider_result (*verify)(void *context, const char *object_key, size_t size, const char *content_type, const char *checksum);
   laghu_asset_provider_result (*purge)(void *context, const char *object_key);
   bool (*healthy)(void *context);
   void *context;
 } laghu_asset_provider;
 void laghu_asset_policy_init(laghu_asset_policy *policy);
-bool laghu_asset_policy_validate(const laghu_asset_policy *policy, char *error,
-                                 size_t error_size);
-bool laghu_asset_url_rewrite(const laghu_asset_policy *policy,
-                             const char *source_url, const char *content_type,
-                             const char *content_hash, char *output,
-                             size_t output_size);
-bool laghu_asset_source_allowed(const laghu_asset_policy *policy,
-                                const char *source_url,
-                                const char *content_type, size_t body_length);
+bool laghu_asset_policy_validate(const laghu_asset_policy *policy, char *error, size_t error_size);
+bool laghu_asset_url_rewrite(const laghu_asset_policy *policy, const char *source_url, const char *content_type, const char *content_hash,
+                             char *output, size_t output_size);
+bool laghu_asset_source_allowed(const laghu_asset_policy *policy, const char *source_url, const char *content_type, size_t body_length);
 /* The response path may call this helper; it performs no I/O and publishes no
  * work.  Only a verified, atomically published READY record is rewriteable. */
-bool laghu_asset_record_rewrite(const laghu_asset_policy *policy,
-                                const laghu_asset_record *record, char *output,
-                                size_t output_size);
-bool laghu_asset_object_key(const laghu_asset_policy *policy,
-                            const char *source_url, const char *content_hash,
-                            char output[LAGHU_RUNTIME_PATH_SIZE]);
+bool laghu_asset_record_rewrite(const laghu_asset_policy *policy, const laghu_asset_record *record, char *output, size_t output_size);
+bool laghu_asset_object_key(const laghu_asset_policy *policy, const char *source_url, const char *content_hash, char output[LAGHU_RUNTIME_PATH_SIZE]);
 void laghu_asset_config_init(laghu_asset_config *config);
-bool laghu_asset_config_load(const char *path, laghu_asset_config *config,
-                             char *error, size_t error_size);
-bool laghu_asset_catalog_key(const laghu_asset_record *record,
-                             char output[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_asset_catalog_publish(const char *catalog_path,
-                                 const laghu_asset_record *record);
-bool laghu_asset_catalog_lookup(const char *catalog_path, const char *key,
-                                laghu_asset_record *record);
-bool laghu_asset_catalog_lookup_url(const laghu_asset_config *config,
-                                    const char *source_url,
-                                    laghu_asset_record *record);
-bool laghu_asset_rewrite_document(const laghu_asset_config *config,
-                                  laghu_buffer input, unsigned char **output,
-                                  size_t *output_length);
-bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
-                                     laghu_buffer input, const char *page_path,
-                                     unsigned char **output,
+bool laghu_asset_config_load(const char *path, laghu_asset_config *config, char *error, size_t error_size);
+bool laghu_asset_catalog_key(const laghu_asset_record *record, char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_asset_catalog_publish(const char *catalog_path, const laghu_asset_record *record);
+bool laghu_asset_catalog_lookup(const char *catalog_path, const char *key, laghu_asset_record *record);
+bool laghu_asset_catalog_lookup_url(const laghu_asset_config *config, const char *source_url, laghu_asset_record *record);
+bool laghu_asset_rewrite_document(const laghu_asset_config *config, laghu_buffer input, unsigned char **output, size_t *output_length);
+bool laghu_asset_rewrite_document_at(const laghu_asset_config *config, laghu_buffer input, const char *page_path, unsigned char **output,
                                      size_t *output_length);
-bool laghu_asset_job_publish(const laghu_asset_config *config,
-                             const laghu_asset_record *record,
-                             laghu_buffer body);
-bool laghu_asset_job_take(const laghu_asset_config *config,
-                          laghu_asset_record *record, unsigned char **body,
-                          size_t *body_length,
+bool laghu_asset_job_publish(const laghu_asset_config *config, const laghu_asset_record *record, laghu_buffer body);
+bool laghu_asset_job_take(const laghu_asset_config *config, laghu_asset_record *record, unsigned char **body, size_t *body_length,
                           char job_path[LAGHU_RUNTIME_PATH_SIZE]);
 bool laghu_asset_job_complete(const char *job_path);
-uint64_t laghu_asset_retry_after(const laghu_asset_policy *policy,
-                                 unsigned int attempts, uint64_t now);
+uint64_t laghu_asset_retry_after(const laghu_asset_policy *policy, unsigned int attempts, uint64_t now);
 
 #ifdef __cplusplus
 }

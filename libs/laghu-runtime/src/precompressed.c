@@ -15,19 +15,13 @@
 
 #include "laghu/types.h"
 
-static bool laghu_precompressed_key(const char *payload_hash,
-                                    laghu_precompressed_coding coding,
-                                    char output[LAGHU_RUNTIME_KEY_SIZE]) {
+static bool laghu_precompressed_key(const char *payload_hash, laghu_precompressed_coding coding, char output[LAGHU_RUNTIME_KEY_SIZE]) {
   const char *name = laghu_precompressed_coding_name(coding);
   char material[LAGHU_RUNTIME_KEY_SIZE + 32U];
   int length;
   if (payload_hash == NULL || name == NULL) return false;
-  length = snprintf(material, sizeof(material),
-                    "laghu-precompressed-v1\n%s\n%s", payload_hash, name);
-  return length > 0 && (size_t)length < sizeof(material) &&
-         laghu_sha256_hex(
-             (laghu_buffer){(const unsigned char *)material, (size_t)length},
-             output);
+  length = snprintf(material, sizeof(material), "laghu-precompressed-v1\n%s\n%s", payload_hash, name);
+  return length > 0 && (size_t)length < sizeof(material) && laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, output);
 }
 
 const char *laghu_precompressed_coding_name(laghu_precompressed_coding coding) {
@@ -48,29 +42,22 @@ bool laghu_precompressed_text_type(const char *content_type) {
   suffix = strchr(content_type, ';');
   if (suffix == NULL) suffix = content_type + strlen(content_type);
   return (size_t)(suffix - content_type) >= 5U &&
-         (strncmp(content_type, "text/", 5U) == 0 ||
-          strncmp(content_type, "application/javascript", 22U) == 0 ||
-          strncmp(content_type, "application/json", 16U) == 0 ||
-          strncmp(content_type, "application/xml", 15U) == 0 ||
-          strncmp(content_type, "application/wasm", 16U) == 0 ||
-          strncmp(content_type, "image/svg+xml", 13U) == 0);
+         (strncmp(content_type, "text/", 5U) == 0 || strncmp(content_type, "application/javascript", 22U) == 0 ||
+          strncmp(content_type, "application/json", 16U) == 0 || strncmp(content_type, "application/xml", 15U) == 0 ||
+          strncmp(content_type, "application/wasm", 16U) == 0 || strncmp(content_type, "image/svg+xml", 13U) == 0);
 }
 
-static bool laghu_precompressed_encode_gzip(laghu_buffer input,
-                                            unsigned char **output,
-                                            size_t *output_length) {
+static bool laghu_precompressed_encode_gzip(laghu_buffer input, unsigned char **output, size_t *output_length) {
   z_stream stream = {0};
   unsigned char *buffer;
   uLong bound;
   int status;
-  if (input.length > UINT_MAX || output == NULL || output_length == NULL)
-    return false;
+  if (input.length > UINT_MAX || output == NULL || output_length == NULL) return false;
   bound = deflateBound(&stream, (uLong)input.length);
   if (bound > SIZE_MAX) return false;
   buffer = malloc((size_t)bound);
   if (buffer == NULL) return false;
-  status = deflateInit2(&stream, Z_BEST_COMPRESSION, Z_DEFLATED, 15 + 16, 8,
-                        Z_DEFAULT_STRATEGY);
+  status = deflateInit2(&stream, Z_BEST_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);
   if (status != Z_OK) {
     free(buffer);
     return false;
@@ -89,9 +76,7 @@ static bool laghu_precompressed_encode_gzip(laghu_buffer input,
   return true;
 }
 
-static bool laghu_precompressed_encode_brotli(laghu_buffer input,
-                                              unsigned char **output,
-                                              size_t *output_length) {
+static bool laghu_precompressed_encode_brotli(laghu_buffer input, unsigned char **output, size_t *output_length) {
   size_t bound;
   unsigned char *buffer;
   if (output == NULL || output_length == NULL) return false;
@@ -99,8 +84,7 @@ static bool laghu_precompressed_encode_brotli(laghu_buffer input,
   if (bound == 0U) return false;
   buffer = malloc(bound);
   if (buffer == NULL) return false;
-  if (!BrotliEncoderCompress(8, BROTLI_DEFAULT_WINDOW, BROTLI_MODE_TEXT,
-                             input.length, input.data, &bound, buffer)) {
+  if (!BrotliEncoderCompress(8, BROTLI_DEFAULT_WINDOW, BROTLI_MODE_TEXT, input.length, input.data, &bound, buffer)) {
     free(buffer);
     return false;
   }
@@ -109,48 +93,32 @@ static bool laghu_precompressed_encode_brotli(laghu_buffer input,
   return true;
 }
 
-static bool laghu_precompressed_publish_one(const char *cache_path,
-                                            const char *payload_hash,
-                                            const char *content_type,
-                                            const char *validator,
-                                            laghu_precompressed_coding coding,
-                                            laghu_buffer source) {
+static bool laghu_precompressed_publish_one(const char *cache_path, const char *payload_hash, const char *content_type, const char *validator,
+                                            laghu_precompressed_coding coding, laghu_buffer source) {
   unsigned char *encoded = NULL;
   size_t length = 0U;
   char key[LAGHU_RUNTIME_KEY_SIZE];
   laghu_runtime_cache_entry entry;
-  bool encoded_ok =
-      coding == LAGHU_PRECOMPRESSED_GZIP
-          ? laghu_precompressed_encode_gzip(source, &encoded, &length)
-          : laghu_precompressed_encode_brotli(source, &encoded, &length);
+  bool encoded_ok = coding == LAGHU_PRECOMPRESSED_GZIP ? laghu_precompressed_encode_gzip(source, &encoded, &length)
+                                                       : laghu_precompressed_encode_brotli(source, &encoded, &length);
   bool published = false;
-  if (!encoded_ok || length >= source.length ||
-      !laghu_precompressed_key(payload_hash, coding, key)) {
+  if (!encoded_ok || length >= source.length || !laghu_precompressed_key(payload_hash, coding, key)) {
     free(encoded);
     return false;
   }
-  published = laghu_runtime_cache_publish(
-      cache_path, key, key, validator == NULL ? "" : validator, content_type,
-      laghu_precompressed_coding_name(coding), (laghu_buffer){encoded, length},
-      &entry);
+  published = laghu_runtime_cache_publish(cache_path, key, key, validator == NULL ? "" : validator, content_type,
+                                          laghu_precompressed_coding_name(coding), (laghu_buffer){encoded, length}, &entry);
   free(encoded);
   return published;
 }
 
-bool laghu_precompressed_publish(const char *cache_path, laghu_buffer body,
-                                 const char *content_type,
-                                 const char *validator) {
+bool laghu_precompressed_publish(const char *cache_path, laghu_buffer body, const char *content_type, const char *validator) {
   char payload_hash[LAGHU_RUNTIME_KEY_SIZE];
-  if (cache_path == NULL || !laghu_precompressed_text_type(content_type) ||
-      body.data == NULL || body.length < LAGHU_PRECOMPRESSED_MINIMUM ||
+  if (cache_path == NULL || !laghu_precompressed_text_type(content_type) || body.data == NULL || body.length < LAGHU_PRECOMPRESSED_MINIMUM ||
       !laghu_sha256_hex(body, payload_hash))
     return false;
-  (void)laghu_precompressed_publish_one(cache_path, payload_hash, content_type,
-                                        validator, LAGHU_PRECOMPRESSED_GZIP,
-                                        body);
-  (void)laghu_precompressed_publish_one(cache_path, payload_hash, content_type,
-                                        validator, LAGHU_PRECOMPRESSED_BROTLI,
-                                        body);
+  (void)laghu_precompressed_publish_one(cache_path, payload_hash, content_type, validator, LAGHU_PRECOMPRESSED_GZIP, body);
+  (void)laghu_precompressed_publish_one(cache_path, payload_hash, content_type, validator, LAGHU_PRECOMPRESSED_BROTLI, body);
   return true;
 }
 
@@ -163,17 +131,13 @@ static bool laghu_precompressed_q_zero(const char *start, const char *end) {
     if (parameter_end == NULL) parameter_end = end;
     while (cursor < parameter_end && isspace((unsigned char)*cursor)) ++cursor;
     equals = memchr(cursor, '=', (size_t)(parameter_end - cursor));
-    if (equals != NULL && equals - cursor == 1 &&
-        tolower((unsigned char)cursor[0]) == 'q') {
+    if (equals != NULL && equals - cursor == 1 && tolower((unsigned char)cursor[0]) == 'q') {
       const char *number = equals + 1U;
-      while (number < parameter_end && isspace((unsigned char)*number))
-        ++number;
+      while (number < parameter_end && isspace((unsigned char)*number)) ++number;
       if (number < parameter_end && *number == '0') {
         ++number;
         if (number == parameter_end || *number == '.') {
-          while (number < parameter_end && (*number == '.' || *number == '0' ||
-                                            isspace((unsigned char)*number)))
-            ++number;
+          while (number < parameter_end && (*number == '.' || *number == '0' || isspace((unsigned char)*number))) ++number;
           if (number == parameter_end) return true;
         }
       }
@@ -183,14 +147,11 @@ static bool laghu_precompressed_q_zero(const char *start, const char *end) {
   return false;
 }
 
-static bool laghu_precompressed_token_equal(const char *left, size_t length,
-                                            const char *right) {
+static bool laghu_precompressed_token_equal(const char *left, size_t length, const char *right) {
   size_t index;
   if (strlen(right) != length) return false;
   for (index = 0U; index < length; ++index)
-    if (tolower((unsigned char)left[index]) !=
-        tolower((unsigned char)right[index]))
-      return false;
+    if (tolower((unsigned char)left[index]) != tolower((unsigned char)right[index])) return false;
   return true;
 }
 
@@ -205,35 +166,25 @@ static bool laghu_precompressed_accepts(const char *value, const char *coding) {
     while (cursor < token_end && isspace((unsigned char)*cursor)) ++cursor;
     parameter = memchr(cursor, ';', (size_t)(token_end - cursor));
     if (parameter == NULL) parameter = token_end;
-    while (parameter > cursor && isspace((unsigned char)parameter[-1]))
-      --parameter;
-    match = laghu_precompressed_token_equal(
-                cursor, (size_t)(parameter - cursor), coding) ||
-            laghu_precompressed_token_equal(cursor,
-                                            (size_t)(parameter - cursor), "*");
+    while (parameter > cursor && isspace((unsigned char)parameter[-1])) --parameter;
+    match = laghu_precompressed_token_equal(cursor, (size_t)(parameter - cursor), coding) ||
+            laghu_precompressed_token_equal(cursor, (size_t)(parameter - cursor), "*");
     if (match && !laghu_precompressed_q_zero(parameter, token_end)) return true;
     cursor = end == NULL ? token_end : end + 1U;
   }
   return false;
 }
 
-bool laghu_precompressed_select(const char *cache_path, laghu_buffer body,
-                                const char *accept_encoding,
-                                laghu_runtime_cache_entry *entry,
+bool laghu_precompressed_select(const char *cache_path, laghu_buffer body, const char *accept_encoding, laghu_runtime_cache_entry *entry,
                                 laghu_precompressed_coding *coding) {
   char payload_hash[LAGHU_RUNTIME_KEY_SIZE];
   char key[LAGHU_RUNTIME_KEY_SIZE];
-  static const laghu_precompressed_coding preferences[] = {
-      LAGHU_PRECOMPRESSED_BROTLI, LAGHU_PRECOMPRESSED_GZIP};
+  static const laghu_precompressed_coding preferences[] = {LAGHU_PRECOMPRESSED_BROTLI, LAGHU_PRECOMPRESSED_GZIP};
   size_t index;
-  if (entry == NULL || coding == NULL || body.data == NULL ||
-      !laghu_sha256_hex(body, payload_hash))
-    return false;
-  for (index = 0U; index < sizeof(preferences) / sizeof(preferences[0]);
-       ++index) {
+  if (entry == NULL || coding == NULL || body.data == NULL || !laghu_sha256_hex(body, payload_hash)) return false;
+  for (index = 0U; index < sizeof(preferences) / sizeof(preferences[0]); ++index) {
     const char *name = laghu_precompressed_coding_name(preferences[index]);
-    if (laghu_precompressed_accepts(accept_encoding, name) &&
-        laghu_precompressed_key(payload_hash, preferences[index], key) &&
+    if (laghu_precompressed_accepts(accept_encoding, name) && laghu_precompressed_key(payload_hash, preferences[index], key) &&
         laghu_runtime_cache_lookup_variant(cache_path, key, entry)) {
       *coding = preferences[index];
       return true;

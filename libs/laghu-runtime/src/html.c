@@ -25,16 +25,12 @@ typedef struct {
   char *inline_uri;
 } laghu_runtime_resource_storage;
 
-static bool laghu_runtime_replace_cached_urls(
-    const char *cache_path, const char *policy_key,
-    laghu_image_discovery_result *discovery, laghu_buffer input,
-    unsigned char **output, size_t *output_length) {
+static bool laghu_runtime_replace_cached_urls(const char *cache_path, const char *policy_key, laghu_image_discovery_result *discovery,
+                                              laghu_buffer input, unsigned char **output, size_t *output_length) {
   unsigned char *current;
   size_t current_length;
   size_t index;
-  if (output == NULL || output_length == NULL ||
-      (input.data == NULL && input.length != 0U))
-    return false;
+  if (output == NULL || output_length == NULL || (input.data == NULL && input.length != 0U)) return false;
   current = malloc(input.length + 1U);
   if (current == NULL) return false;
   memcpy(current, input.data, input.length);
@@ -49,17 +45,13 @@ static bool laghu_runtime_replace_cached_urls(
     size_t source_position = 0U;
     size_t matches = 0U;
     unsigned char *next;
-    if (source_length == 0U ||
-        !laghu_runtime_index_key(discovery->resources[index].source_url, "",
-                                 policy_key, false, false, resource_index) ||
+    if (source_length == 0U || !laghu_runtime_index_key(discovery->resources[index].source_url, "", policy_key, false, false, resource_index) ||
         !laghu_runtime_cache_lookup(cache_path, resource_index, "", &entry))
       continue;
-    (void)snprintf(replacement, sizeof(replacement), "/.laghu/media/%s",
-                   entry.variant_key);
+    (void)snprintf(replacement, sizeof(replacement), "/.laghu/media/%s", entry.variant_key);
     replacement_length = strlen(replacement);
     while (source_position + source_length <= current_length) {
-      if (memcmp(current + source_position,
-                 discovery->resources[index].source_url, source_length) == 0) {
+      if (memcmp(current + source_position, discovery->resources[index].source_url, source_length) == 0) {
         ++matches;
         source_position += source_length;
       } else {
@@ -67,8 +59,7 @@ static bool laghu_runtime_replace_cached_urls(
       }
     }
     if (matches == 0U) continue;
-    next = malloc(current_length +
-                  matches * (replacement_length - source_length) + 1U);
+    next = malloc(current_length + matches * (replacement_length - source_length) + 1U);
     if (next == NULL) {
       free(current);
       return false;
@@ -76,8 +67,7 @@ static bool laghu_runtime_replace_cached_urls(
     source_position = 0U;
     while (source_position < current_length) {
       if (source_position + source_length <= current_length &&
-          memcmp(current + source_position,
-                 discovery->resources[index].source_url, source_length) == 0) {
+          memcmp(current + source_position, discovery->resources[index].source_url, source_length) == 0) {
         memcpy(next + position, replacement, replacement_length);
         position += replacement_length;
         source_position += source_length;
@@ -95,9 +85,7 @@ static bool laghu_runtime_replace_cached_urls(
   return true;
 }
 
-static bool laghu_runtime_variant_seen(
-    const laghu_runtime_resource_storage *storage, size_t count,
-    const char *variant_url, bool two_x) {
+static bool laghu_runtime_variant_seen(const laghu_runtime_resource_storage *storage, size_t count, const char *variant_url, bool two_x) {
   size_t index;
   for (index = 0U; index < count; ++index) {
     const char *existing = two_x ? storage[index].two_x : storage[index].one_x;
@@ -108,8 +96,7 @@ static bool laghu_runtime_variant_seen(
   return false;
 }
 
-static laghu_catalog_variant *laghu_runtime_variant(
-    laghu_catalog_record *record, unsigned int width) {
+static laghu_catalog_variant *laghu_runtime_variant(laghu_catalog_record *record, unsigned int width) {
   unsigned int index;
   for (index = 0U; index < record->variant_count; ++index) {
     if (record->variants[index].width == width) {
@@ -119,16 +106,12 @@ static laghu_catalog_variant *laghu_runtime_variant(
   return NULL;
 }
 
-static bool laghu_runtime_inline(const char *cache_path,
-                                 const laghu_catalog_variant *variant,
-                                 size_t limit, char **output) {
+static bool laghu_runtime_inline(const char *cache_path, const laghu_catalog_variant *variant, size_t limit, char **output) {
   laghu_runtime_cache_entry entry;
   laghu_image_markup_result encoded;
   unsigned char *body;
   laghu_image_format format;
-  if (!variant->ready || variant->variant_length > limit ||
-      !laghu_runtime_cache_lookup_variant(cache_path, variant->variant_key,
-                                          &entry)) {
+  if (!variant->ready || variant->variant_length > limit || !laghu_runtime_cache_lookup_variant(cache_path, variant->variant_key, &entry)) {
     return true;
   }
   body = malloc(entry.length);
@@ -137,24 +120,19 @@ static bool laghu_runtime_inline(const char *cache_path,
     return false;
   }
   format = laghu_image_detect_format((laghu_buffer){body, entry.length});
-  if (laghu_image_data_uri(format, (laghu_buffer){body, entry.length}, limit,
-                           &encoded)) {
+  if (laghu_image_data_uri(format, (laghu_buffer){body, entry.length}, limit, &encoded)) {
     *output = (char *)encoded.data;
   }
   free(body);
   return true;
 }
 
-bool laghu_runtime_rewrite_html(
-    laghu_rum_engine *rum, const char *cache_path, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *policy_key,
-    uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
-    laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline,
-    bool allow_css_outline, bool allow_css_combine,
-    laghu_html_planner_mask html_plan, const laghu_csp_policy *csp,
-    bool beacon_enabled, size_t inline_limit, unsigned int css_inline_limit,
-    unsigned int css_outline_threshold, unsigned int viewport_width,
-    unsigned int dpr_hundredths, laghu_runtime_html_result *result) {
+bool laghu_runtime_rewrite_html(laghu_rum_engine *rum, const char *cache_path, laghu_buffer html, const char *page_path, const char *page_origin,
+                                const char *policy_key, uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+                                laghu_image_filter_mask filters, bool allow_inline, bool allow_css_inline, bool allow_css_outline,
+                                bool allow_css_combine, laghu_html_planner_mask html_plan, const laghu_csp_policy *csp, bool beacon_enabled,
+                                size_t inline_limit, unsigned int css_inline_limit, unsigned int css_outline_threshold, unsigned int viewport_width,
+                                unsigned int dpr_hundredths, laghu_runtime_html_result *result) {
   laghu_image_discovery_result *discovery = NULL;
   laghu_image_resource *resources = NULL;
   laghu_runtime_resource_storage *storage = NULL;
@@ -165,23 +143,18 @@ bool laghu_runtime_rewrite_html(
   bool success = false;
   bool csp_allows_data = laghu_csp_allows_data_image(csp);
   bool csp_allows_style_attributes = laghu_csp_allows_style_attribute(csp);
-  if (result == NULL || rum == NULL || cache_path == NULL ||
-      policy_key == NULL || ttl_seconds == 0U) {
+  if (result == NULL || rum == NULL || cache_path == NULL || policy_key == NULL || ttl_seconds == 0U) {
     return false;
   }
   memset(result, 0, sizeof(*result));
   discovery = calloc(1U, sizeof(*discovery));
-  if (discovery == NULL ||
-      !laghu_image_discover_html(html, page_path, page_origin, discovery)) {
+  if (discovery == NULL || !laghu_image_discover_html(html, page_path, page_origin, discovery)) {
     free(discovery);
     return false;
   }
   {
     laghu_css_parse_result *styles = calloc(1U, sizeof(*styles));
-    if (styles == NULL ||
-        !laghu_css_discover_style_attributes(html, page_path, page_origin,
-                                             styles) ||
-        !styles->bounded) {
+    if (styles == NULL || !laghu_css_discover_style_attributes(html, page_path, page_origin, styles) || !styles->bounded) {
       free(styles);
       free(discovery);
       return false;
@@ -190,8 +163,7 @@ bool laghu_runtime_rewrite_html(
       size_t existing;
       bool duplicate = false;
       for (existing = 0U; existing < discovery->resource_count; ++existing) {
-        if (strcmp(discovery->resources[existing].source_url,
-                   styles->dependencies[index].source_url) == 0) {
+        if (strcmp(discovery->resources[existing].source_url, styles->dependencies[index].source_url) == 0) {
           duplicate = true;
           break;
         }
@@ -202,18 +174,13 @@ bool laghu_runtime_rewrite_html(
           free(discovery);
           return false;
         }
-        memcpy(discovery->resources[discovery->resource_count++].source_url,
-               styles->dependencies[index].source_url, LAGHU_IMAGE_URL_SIZE);
+        memcpy(discovery->resources[discovery->resource_count++].source_url, styles->dependencies[index].source_url, LAGHU_IMAGE_URL_SIZE);
       }
     }
     free(styles);
   }
-  resources =
-      calloc(discovery->resource_count == 0U ? 1U : discovery->resource_count,
-             sizeof(*resources));
-  storage =
-      calloc(discovery->resource_count == 0U ? 1U : discovery->resource_count,
-             sizeof(*storage));
+  resources = calloc(discovery->resource_count == 0U ? 1U : discovery->resource_count, sizeof(*resources));
+  storage = calloc(discovery->resource_count == 0U ? 1U : discovery->resource_count, sizeof(*storage));
   if (resources == NULL || storage == NULL) {
     goto finished;
   }
@@ -226,25 +193,18 @@ bool laghu_runtime_rewrite_html(
     laghu_catalog_variant *two = NULL;
     bool changed = false;
     resources[index].source_url = discovery->resources[index].source_url;
-    resources[index].declared_width =
-        discovery->resources[index].declared_width;
-    resources[index].declared_height =
-        discovery->resources[index].declared_height;
-    if (!laghu_catalog_lookup_url(
-            cache_path, discovery->resources[index].source_url, policy_key,
-            capability_mask, now, ttl_seconds, &catalog)) {
+    resources[index].declared_width = discovery->resources[index].declared_width;
+    resources[index].declared_height = discovery->resources[index].declared_height;
+    if (!laghu_catalog_lookup_url(cache_path, discovery->resources[index].source_url, policy_key, capability_mask, now, ttl_seconds, &catalog)) {
       pending = true;
       continue;
     }
     {
       char identity[LAGHU_RUNTIME_KEY_SIZE];
       laghu_rum_value value;
-      if (laghu_catalog_url_identity(discovery->resources[index].source_url,
-                                     policy_key, capability_mask, identity) &&
-          laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_IMAGE, identity, now,
-                                &learning, sizeof(learning), &value) &&
-          value.length == sizeof(learning) && learning.version == 1U &&
-          strcmp(learning.identity, identity) == 0) {
+      if (laghu_catalog_url_identity(discovery->resources[index].source_url, policy_key, capability_mask, identity) &&
+          laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_IMAGE, identity, now, &learning, sizeof(learning), &value) &&
+          value.length == sizeof(learning) && learning.version == 1U && strcmp(learning.identity, identity) == 0) {
         catalog.learned_width = learning.width;
         catalog.learned_height = learning.height;
         catalog.learned_mobile_width = learning.mobile_width;
@@ -255,8 +215,7 @@ bool laghu_runtime_rewrite_html(
         catalog.learned_at = learning.updated_at;
       }
     }
-    memcpy(storage[index].source_hash, catalog.source_hash,
-           sizeof(storage[index].source_hash));
+    memcpy(storage[index].source_hash, catalog.source_hash, sizeof(storage[index].source_hash));
     resources[index].source_hash = storage[index].source_hash;
     resources[index].width = catalog.natural_width;
     resources[index].height = catalog.natural_height;
@@ -268,20 +227,17 @@ bool laghu_runtime_rewrite_html(
     geometry.natural_height = catalog.natural_height;
     geometry.declared_width = discovery->resources[index].declared_width;
     geometry.declared_height = discovery->resources[index].declared_height;
-    if ((filters & LAGHU_IMAGE_RESIZE_MOBILE) != 0U &&
-        catalog.learned_mobile_width > 0U) {
+    if ((filters & LAGHU_IMAGE_RESIZE_MOBILE) != 0U && catalog.learned_mobile_width > 0U) {
       geometry.learned_width = catalog.learned_mobile_width;
       geometry.learned_height = catalog.learned_mobile_height;
       geometry.viewport_width = catalog.learned_viewport_width;
       geometry.dpr_hundredths = catalog.learned_dpr_hundredths;
       geometry.use_mobile_dimensions = true;
-    } else if ((filters & LAGHU_IMAGE_RESIZE_MOBILE) != 0U &&
-               viewport_width > 0U) {
+    } else if ((filters & LAGHU_IMAGE_RESIZE_MOBILE) != 0U && viewport_width > 0U) {
       geometry.viewport_width = viewport_width;
       geometry.dpr_hundredths = dpr_hundredths;
       geometry.use_mobile_dimensions = true;
-    } else if ((filters & LAGHU_IMAGE_RESIZE_RENDERED) != 0U &&
-               catalog.learned_width > 0U) {
+    } else if ((filters & LAGHU_IMAGE_RESIZE_RENDERED) != 0U && catalog.learned_width > 0U) {
       geometry.learned_width = catalog.learned_width;
       geometry.learned_height = catalog.learned_height;
       geometry.dpr_hundredths = catalog.learned_dpr_hundredths;
@@ -315,8 +271,7 @@ bool laghu_runtime_rewrite_html(
         goto finished;
       }
     }
-    if (one == NULL || (!one->ready && !one->terminally_excluded) ||
-        (two != NULL && !two->ready && !two->terminally_excluded)) {
+    if (one == NULL || (!one->ready && !one->terminally_excluded) || (two != NULL && !two->ready && !two->terminally_excluded)) {
       pending = true;
       continue;
     }
@@ -327,50 +282,32 @@ bool laghu_runtime_rewrite_html(
     if (!laghu_image_variant_url(one->variant_key, storage[index].one_x)) {
       goto finished;
     }
-    memcpy(storage[index].optimized, storage[index].one_x,
-           sizeof(storage[index].optimized));
+    memcpy(storage[index].optimized, storage[index].one_x, sizeof(storage[index].optimized));
     resources[index].optimized_url = storage[index].optimized;
     resources[index].responsive_1x_url = storage[index].one_x;
     resources[index].responsive_1x_width = one->width;
-    if (!laghu_runtime_variant_seen(storage, index, storage[index].one_x,
-                                    false)) {
-      options.unique_variant_savings_1x +=
-          one->original_length > one->variant_length
-              ? one->original_length - one->variant_length
-              : 0U;
+    if (!laghu_runtime_variant_seen(storage, index, storage[index].one_x, false)) {
+      options.unique_variant_savings_1x += one->original_length > one->variant_length ? one->original_length - one->variant_length : 0U;
     }
-    if (two != NULL &&
-        laghu_image_variant_url(two->variant_key, storage[index].two_x)) {
+    if (two != NULL && laghu_image_variant_url(two->variant_key, storage[index].two_x)) {
       resources[index].responsive_2x_url = storage[index].two_x;
       resources[index].responsive_2x_width = two->width;
-      if (!laghu_runtime_variant_seen(storage, index, storage[index].two_x,
-                                      true)) {
-        options.unique_variant_savings_2x +=
-            two->original_length > two->variant_length
-                ? two->original_length - two->variant_length
-                : 0U;
+      if (!laghu_runtime_variant_seen(storage, index, storage[index].two_x, true)) {
+        options.unique_variant_savings_2x += two->original_length > two->variant_length ? two->original_length - two->variant_length : 0U;
       }
     } else {
-      memcpy(storage[index].two_x, storage[index].one_x,
-             sizeof(storage[index].two_x));
+      memcpy(storage[index].two_x, storage[index].one_x, sizeof(storage[index].two_x));
       resources[index].responsive_2x_url = storage[index].one_x;
       resources[index].responsive_2x_width = one->width;
-      if (!laghu_runtime_variant_seen(storage, index, storage[index].two_x,
-                                      true)) {
-        options.unique_variant_savings_2x +=
-            one->original_length > one->variant_length
-                ? one->original_length - one->variant_length
-                : 0U;
+      if (!laghu_runtime_variant_seen(storage, index, storage[index].two_x, true)) {
+        options.unique_variant_savings_2x += one->original_length > one->variant_length ? one->original_length - one->variant_length : 0U;
       }
     }
     if (catalog.preview_data_uri[0] != '\0') {
-      memcpy(storage[index].preview_data_uri, catalog.preview_data_uri,
-             sizeof(storage[index].preview_data_uri));
+      memcpy(storage[index].preview_data_uri, catalog.preview_data_uri, sizeof(storage[index].preview_data_uri));
       resources[index].preview_data_uri = storage[index].preview_data_uri;
     }
-    if (allow_inline && csp_allows_data &&
-        laghu_runtime_inline(cache_path, one, inline_limit,
-                             &storage[index].inline_uri)) {
+    if (allow_inline && csp_allows_data && laghu_runtime_inline(cache_path, one, inline_limit, &storage[index].inline_uri)) {
       resources[index].inline_data_uri = storage[index].inline_uri;
       resources[index].inline_payload_length = one->variant_length;
     }
@@ -395,9 +332,7 @@ bool laghu_runtime_rewrite_html(
   if (laghu_image_rewrite_html(html, &options, &rewritten)) {
     laghu_image_markup_result styled;
     if (csp_allows_style_attributes &&
-        laghu_css_rewrite_style_attributes(
-            (laghu_buffer){rewritten.data, rewritten.length}, page_path,
-            page_origin, &options, &styled)) {
+        laghu_css_rewrite_style_attributes((laghu_buffer){rewritten.data, rewritten.length}, page_path, page_origin, &options, &styled)) {
       if (styled.applied_filters != 0U && styled.length <= rewritten.length) {
         laghu_image_markup_result_release(&rewritten);
         rewritten = styled;
@@ -405,15 +340,11 @@ bool laghu_runtime_rewrite_html(
         laghu_image_markup_result_release(&styled);
       }
     }
-    if (allow_css_inline || allow_css_outline || allow_css_combine ||
-        html_plan != 0U) {
+    if (allow_css_inline || allow_css_outline || allow_css_combine || html_plan != 0U) {
       laghu_runtime_html_result css_markup;
-      if (!laghu_runtime_rewrite_css_markup_csp(
-              cache_path, (laghu_buffer){rewritten.data, rewritten.length},
-              page_path, page_origin, policy_key, capability_mask, now,
-              ttl_seconds, allow_css_inline, allow_css_outline,
-              allow_css_combine, html_plan, csp, css_inline_limit,
-              css_outline_threshold, &css_markup)) {
+      if (!laghu_runtime_rewrite_css_markup_csp(cache_path, (laghu_buffer){rewritten.data, rewritten.length}, page_path, page_origin, policy_key,
+                                                capability_mask, now, ttl_seconds, allow_css_inline, allow_css_outline, allow_css_combine, html_plan,
+                                                csp, css_inline_limit, css_outline_threshold, &css_markup)) {
         laghu_image_markup_result_release(&rewritten);
         goto finished;
       }
@@ -428,22 +359,18 @@ bool laghu_runtime_rewrite_html(
         rewritten.data = css_markup.data;
         rewritten.length = css_markup.length;
         rewritten.applied_filters = 1U;
-        memcpy(rewritten.dependency_key, css_markup.dependency_key,
-               sizeof(rewritten.dependency_key));
+        memcpy(rewritten.dependency_key, css_markup.dependency_key, sizeof(rewritten.dependency_key));
       }
     }
     {
       unsigned char *cached_urls = NULL;
       size_t cached_length = 0U;
-      if (!laghu_runtime_replace_cached_urls(
-              cache_path, policy_key, discovery,
-              (laghu_buffer){rewritten.data, rewritten.length}, &cached_urls,
-              &cached_length)) {
+      if (!laghu_runtime_replace_cached_urls(cache_path, policy_key, discovery, (laghu_buffer){rewritten.data, rewritten.length}, &cached_urls,
+                                             &cached_length)) {
         laghu_image_markup_result_release(&rewritten);
         goto finished;
       }
-      if (cached_length != rewritten.length ||
-          memcmp(cached_urls, rewritten.data, cached_length) != 0) {
+      if (cached_length != rewritten.length || memcmp(cached_urls, rewritten.data, cached_length) != 0) {
         laghu_image_markup_result_release(&rewritten);
         rewritten.data = cached_urls;
         rewritten.length = cached_length;
@@ -452,17 +379,14 @@ bool laghu_runtime_rewrite_html(
         free(cached_urls);
       }
     }
-    static const unsigned char beacon[] =
-        "<script src=\"/.laghu/beacon/images.js\" defer></script>";
+    static const unsigned char beacon[] = "<script src=\"/.laghu/beacon/images.js\" defer></script>";
     result->data = rewritten.data;
     result->length = rewritten.length;
     result->rewritten = rewritten.applied_filters != 0U;
     if (beacon_enabled && result->rewritten) {
       size_t final_length = rewritten.length + sizeof(beacon) - 1U;
-      size_t savings =
-          options.unique_variant_savings_1x < options.unique_variant_savings_2x
-              ? options.unique_variant_savings_1x
-              : options.unique_variant_savings_2x;
+      size_t savings = options.unique_variant_savings_1x < options.unique_variant_savings_2x ? options.unique_variant_savings_1x
+                                                                                             : options.unique_variant_savings_2x;
       if (final_length <= html.length || final_length - html.length < savings) {
         unsigned char *with_beacon = malloc(final_length + 1U);
         if (with_beacon == NULL) {
@@ -476,8 +400,7 @@ bool laghu_runtime_rewrite_html(
         result->length = final_length;
       }
     }
-    memcpy(result->dependency_key, rewritten.dependency_key,
-           sizeof(result->dependency_key));
+    memcpy(result->dependency_key, rewritten.dependency_key, sizeof(result->dependency_key));
     success = true;
   }
 

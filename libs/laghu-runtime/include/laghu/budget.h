@@ -42,17 +42,11 @@ typedef struct {
 } laghu_transform_budget;
 
 uint64_t laghu_runtime_monotonic_ms(void);
-void laghu_transform_budget_init(laghu_transform_budget *budget,
-                                 size_t memory_limit, unsigned int deadline_ms,
-                                 unsigned int variant_limit);
-bool laghu_transform_budget_reserve(laghu_transform_budget *budget,
-                                    size_t bytes);
-void laghu_transform_budget_release(laghu_transform_budget *budget,
-                                    size_t bytes);
-bool laghu_transform_budget_checkpoint(laghu_transform_budget *budget,
-                                       uint64_t work_units);
-bool laghu_transform_budget_generate(laghu_transform_budget *budget,
-                                     size_t bytes);
+void laghu_transform_budget_init(laghu_transform_budget *budget, size_t memory_limit, unsigned int deadline_ms, unsigned int variant_limit);
+bool laghu_transform_budget_reserve(laghu_transform_budget *budget, size_t bytes);
+void laghu_transform_budget_release(laghu_transform_budget *budget, size_t bytes);
+bool laghu_transform_budget_checkpoint(laghu_transform_budget *budget, uint64_t work_units);
+bool laghu_transform_budget_generate(laghu_transform_budget *budget, size_t bytes);
 bool laghu_transform_budget_variant(laghu_transform_budget *budget);
 
 #ifdef __cplusplus

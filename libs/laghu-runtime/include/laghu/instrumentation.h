@@ -38,9 +38,7 @@ typedef struct laghu_rum_instrumentation_record {
   unsigned char media_kind[LAGHU_LCP_MAX_CANDIDATES];
   unsigned char media_keys[LAGHU_LCP_MAX_CANDIDATES][LAGHU_SHA256_DIGEST_SIZE];
   unsigned char media_resource_count[LAGHU_LCP_MAX_CANDIDATES];
-  unsigned char media_resource_keys[LAGHU_LCP_MAX_CANDIDATES]
-                                   [LAGHU_LCP_MAX_RESOURCES]
-                                   [LAGHU_SHA256_DIGEST_SIZE];
+  unsigned char media_resource_keys[LAGHU_LCP_MAX_CANDIDATES][LAGHU_LCP_MAX_RESOURCES][LAGHU_SHA256_DIGEST_SIZE];
   uint64_t observations[2];
   uint64_t metric_sums[2][5];
   unsigned int metric_maxima[2][5];
@@ -79,24 +77,18 @@ typedef struct {
   unsigned int lcp_ordinal;
   char lcp_resource_key[LAGHU_RUNTIME_KEY_SIZE];
 } laghu_instrumentation_beacon;
-bool laghu_runtime_add_instrumentation(
-    laghu_rum_engine *rum, const char *cache_path,
-    const laghu_javascript_observation_set *providers, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *policy_key,
-    uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
-    const laghu_csp_policy *csp, laghu_runtime_html_result *result);
-bool laghu_runtime_instrumentation_template_key(
-    laghu_rum_engine *rum, const char *cache_path,
-    const laghu_javascript_observation_set *providers, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *policy_key,
-    uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
-    char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_runtime_add_instrumentation(laghu_rum_engine *rum, const char *cache_path, const laghu_javascript_observation_set *providers,
+                                       laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key, uint64_t now,
+                                       unsigned int ttl_seconds, unsigned int sample_rate, const laghu_csp_policy *csp,
+                                       laghu_runtime_html_result *result);
+bool laghu_runtime_instrumentation_template_key(laghu_rum_engine *rum, const char *cache_path, const laghu_javascript_observation_set *providers,
+                                                laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key,
+                                                uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
+                                                char output[LAGHU_RUNTIME_KEY_SIZE]);
 const char *laghu_runtime_instrumentation_script(void);
-bool laghu_runtime_parse_instrumentation_beacon(
-    laghu_buffer json, laghu_instrumentation_beacon *record);
-bool laghu_instrumentation_apply_beacon(
-    laghu_rum_engine *rum, const char *cache_path, uint64_t now,
-    unsigned int ttl_seconds, const laghu_instrumentation_beacon *beacon);
+bool laghu_runtime_parse_instrumentation_beacon(laghu_buffer json, laghu_instrumentation_beacon *record);
+bool laghu_instrumentation_apply_beacon(laghu_rum_engine *rum, const char *cache_path, uint64_t now, unsigned int ttl_seconds,
+                                        const laghu_instrumentation_beacon *beacon);
 
 #ifdef __cplusplus
 }

@@ -80,35 +80,19 @@ typedef struct {
   unsigned int dpr_hundredths;
   bool above_fold;
 } laghu_rum_image_record;
-bool laghu_catalog_key(const char *normalized_url, const char *source_hash,
-                       const char *policy_key, uint32_t capability_mask,
+bool laghu_catalog_key(const char *normalized_url, const char *source_hash, const char *policy_key, uint32_t capability_mask,
                        char output[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
-                           const laghu_catalog_record *record);
-bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key,
-                          uint64_t now, unsigned int ttl_seconds,
-                          laghu_catalog_record *record);
-bool laghu_catalog_lookup_url(const char *cache_path,
-                              const char *normalized_url,
-                              const char *policy_key, uint32_t capability_mask,
-                              uint64_t now, unsigned int ttl_seconds,
-                              laghu_catalog_record *record);
-bool laghu_catalog_publish_url(const char *cache_path,
-                               const laghu_catalog_record *record);
-bool laghu_catalog_url_identity(const char *normalized_url,
-                                const char *policy_key,
-                                uint32_t capability_mask,
-                                char output[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_runtime_parse_image_beacon(laghu_buffer json,
-                                      laghu_image_beacon_record *record);
+bool laghu_catalog_publish(const char *cache_path, const char *catalog_key, const laghu_catalog_record *record);
+bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key, uint64_t now, unsigned int ttl_seconds, laghu_catalog_record *record);
+bool laghu_catalog_lookup_url(const char *cache_path, const char *normalized_url, const char *policy_key, uint32_t capability_mask, uint64_t now,
+                              unsigned int ttl_seconds, laghu_catalog_record *record);
+bool laghu_catalog_publish_url(const char *cache_path, const laghu_catalog_record *record);
+bool laghu_catalog_url_identity(const char *normalized_url, const char *policy_key, uint32_t capability_mask, char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_runtime_parse_image_beacon(laghu_buffer json, laghu_image_beacon_record *record);
 const char *laghu_runtime_image_beacon_script(void);
-bool laghu_catalog_apply_beacon(laghu_rum_engine *rum, const char *cache_path,
-                                const char *policy_key,
-                                uint32_t capability_mask, uint64_t now,
-                                unsigned int ttl_seconds,
-                                const laghu_image_beacon_record *beacon);
-bool laghu_catalog_prune(const char *cache_path, uint64_t now,
-                         unsigned int metadata_limit, unsigned int ttl_seconds);
+bool laghu_catalog_apply_beacon(laghu_rum_engine *rum, const char *cache_path, const char *policy_key, uint32_t capability_mask, uint64_t now,
+                                unsigned int ttl_seconds, const laghu_image_beacon_record *beacon);
+bool laghu_catalog_prune(const char *cache_path, uint64_t now, unsigned int metadata_limit, unsigned int ttl_seconds);
 
 #ifdef __cplusplus
 }

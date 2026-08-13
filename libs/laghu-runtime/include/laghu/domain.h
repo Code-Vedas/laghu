@@ -21,12 +21,8 @@ typedef struct {
 /* Rewrites URL-bearing HTML attributes (including srcset and style) and CSS
  * url() values.
  * The result owns data only when rewritten is true. */
-bool laghu_domain_rewrite_html(laghu_buffer input,
-                               const laghu_domain_policy *policy,
-                               laghu_domain_rewrite_result *result);
-bool laghu_domain_rewrite_css(laghu_buffer input,
-                              const laghu_domain_policy *policy,
-                              laghu_domain_rewrite_result *result);
+bool laghu_domain_rewrite_html(laghu_buffer input, const laghu_domain_policy *policy, laghu_domain_rewrite_result *result);
+bool laghu_domain_rewrite_css(laghu_buffer input, const laghu_domain_policy *policy, laghu_domain_rewrite_result *result);
 void laghu_domain_rewrite_result_release(laghu_domain_rewrite_result *result);
 
 #endif

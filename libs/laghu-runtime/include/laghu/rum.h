@@ -34,11 +34,7 @@ typedef enum {
   LAGHU_RUM_RECORD_DECISION = 4
 } laghu_rum_record_type;
 
-typedef enum {
-  LAGHU_RUM_HEALTH_READY = 0,
-  LAGHU_RUM_HEALTH_DEGRADED,
-  LAGHU_RUM_HEALTH_UNAVAILABLE
-} laghu_rum_health;
+typedef enum { LAGHU_RUM_HEALTH_READY = 0, LAGHU_RUM_HEALTH_DEGRADED, LAGHU_RUM_HEALTH_UNAVAILABLE } laghu_rum_health;
 
 typedef struct laghu_rum_engine laghu_rum_engine;
 
@@ -66,24 +62,17 @@ typedef bool (*laghu_rum_mutator)(void *data, size_t length, void *context);
 
 void laghu_rum_options_init(laghu_rum_options *options);
 bool laghu_rum_store_validate(const char *uri, char *error, size_t error_size);
-laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
-                                          char *error, size_t error_size);
+laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options, char *error, size_t error_size);
 void laghu_rum_engine_destroy(laghu_rum_engine *engine);
-bool laghu_rum_engine_read(laghu_rum_engine *engine, laghu_rum_record_type type,
-                           const char *key, uint64_t now, void *data,
-                           size_t capacity, laghu_rum_value *value);
-bool laghu_rum_engine_publish(laghu_rum_engine *engine,
-                              laghu_rum_record_type type, const char *key,
-                              uint64_t updated_at, const void *data,
+bool laghu_rum_engine_read(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t now, void *data, size_t capacity,
+                           laghu_rum_value *value);
+bool laghu_rum_engine_publish(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, const void *data,
                               size_t length, uint64_t *generation);
-bool laghu_rum_engine_update(laghu_rum_engine *engine,
-                             laghu_rum_record_type type, const char *key,
-                             uint64_t updated_at, laghu_rum_mutator mutator,
+bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, laghu_rum_mutator mutator,
                              void *context, uint64_t *generation);
 laghu_rum_health laghu_rum_engine_health(laghu_rum_engine *engine);
 size_t laghu_rum_engine_memory_used(laghu_rum_engine *engine);
-bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
-                            const void *delta, size_t length);
+bool laghu_rum_record_merge(laghu_rum_record_type type, void *target, const void *delta, size_t length);
 
 #ifdef __cplusplus
 }

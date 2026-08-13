@@ -58,12 +58,9 @@ typedef struct {
   const char *failure;
 } laghu_log_job;
 
-bool laghu_log_render_transaction(const laghu_log_transaction *record,
-                                  char *output, size_t capacity);
-bool laghu_log_render_lifecycle(const laghu_log_lifecycle *record, char *output,
-                                size_t capacity);
-bool laghu_log_render_job(const laghu_log_job *record, char *output,
-                          size_t capacity);
+bool laghu_log_render_transaction(const laghu_log_transaction *record, char *output, size_t capacity);
+bool laghu_log_render_lifecycle(const laghu_log_lifecycle *record, char *output, size_t capacity);
+bool laghu_log_render_job(const laghu_log_job *record, char *output, size_t capacity);
 
 #ifdef __cplusplus
 }

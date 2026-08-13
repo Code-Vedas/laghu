@@ -85,11 +85,7 @@ typedef enum {
   LAGHU_SERVICE_VALUE_PAIR
 } laghu_service_value_type;
 
-typedef enum {
-  LAGHU_SERVICE_INHERIT_SCALAR = 0,
-  LAGHU_SERVICE_INHERIT_REPLACE,
-  LAGHU_SERVICE_INHERIT_APPEND
-} laghu_service_inheritance;
+typedef enum { LAGHU_SERVICE_INHERIT_SCALAR = 0, LAGHU_SERVICE_INHERIT_REPLACE, LAGHU_SERVICE_INHERIT_APPEND } laghu_service_inheritance;
 
 typedef enum {
   LAGHU_SERVICE_DIAGNOSTIC_NONE = 0,
@@ -192,38 +188,23 @@ typedef struct {
 void laghu_service_config_init(laghu_service_config *config);
 void laghu_service_config_dispose(laghu_service_config *config);
 laghu_service_setting laghu_service_setting_find(const char *name);
-const laghu_service_setting_descriptor *laghu_service_setting_describe(
-    laghu_service_setting setting);
-bool laghu_service_config_apply(laghu_service_config *config,
-                                laghu_service_setting setting,
-                                const char *value,
-                                laghu_service_diagnostic *diagnostic);
-bool laghu_service_config_apply_pair(laghu_service_config *config,
-                                     laghu_service_setting setting,
-                                     const char *first, const char *second,
+const laghu_service_setting_descriptor *laghu_service_setting_describe(laghu_service_setting setting);
+bool laghu_service_config_apply(laghu_service_config *config, laghu_service_setting setting, const char *value, laghu_service_diagnostic *diagnostic);
+bool laghu_service_config_apply_pair(laghu_service_config *config, laghu_service_setting setting, const char *first, const char *second,
                                      laghu_service_diagnostic *diagnostic);
-bool laghu_service_config_merge(laghu_service_config *merged,
-                                const laghu_service_config *parent,
-                                const laghu_service_config *child,
+bool laghu_service_config_merge(laghu_service_config *merged, const laghu_service_config *parent, const laghu_service_config *child,
                                 laghu_service_diagnostic *diagnostic);
 /* Resolves backend values and checks cross-setting invariants without file,
  * network, queue, or other request-path I/O.  File-backed resources must
  * already have been prepared. */
-bool laghu_service_config_validate(
-    laghu_service_config *config, const laghu_service_finalize_options *options,
-    laghu_service_diagnostic *diagnostic);
-bool laghu_service_config_finalize(
-    laghu_service_config *config, const laghu_service_finalize_options *options,
-    laghu_service_diagnostic *diagnostic);
+bool laghu_service_config_validate(laghu_service_config *config, const laghu_service_finalize_options *options, laghu_service_diagnostic *diagnostic);
+bool laghu_service_config_finalize(laghu_service_config *config, const laghu_service_finalize_options *options, laghu_service_diagnostic *diagnostic);
 /* Startup-only. Loads file-backed service resources once; it performs no
  * request-path I/O and clears every prepared object after any load failure. */
-bool laghu_service_config_prepare_resources(
-    laghu_service_config *config, laghu_service_diagnostic *diagnostic);
+bool laghu_service_config_prepare_resources(laghu_service_config *config, laghu_service_diagnostic *diagnostic);
 bool laghu_service_cidr_parse(const char *value, laghu_service_cidr *cidr);
-bool laghu_service_cidr_equal(const laghu_service_cidr *left,
-                              const laghu_service_cidr *right);
-bool laghu_service_cidr_matches(const laghu_service_cidr *cidr,
-                                const unsigned char address[16],
+bool laghu_service_cidr_equal(const laghu_service_cidr *left, const laghu_service_cidr *right);
+bool laghu_service_cidr_matches(const laghu_service_cidr *cidr, const unsigned char address[16],
                                 /* LAGHU_SERVICE_CIDR_FAMILY_IPV4 or IPV6. */
                                 unsigned int family);
 

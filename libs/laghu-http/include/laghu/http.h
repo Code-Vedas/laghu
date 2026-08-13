@@ -130,8 +130,7 @@ typedef struct {
 typedef struct {
   unsigned int count;
   unsigned int limit;
-  laghu_http_administrative_history_record
-      records[LAGHU_OPERATIONAL_HISTORY_SIZE];
+  laghu_http_administrative_history_record records[LAGHU_OPERATIONAL_HISTORY_SIZE];
 } laghu_http_administrative_history_model;
 
 typedef struct {
@@ -279,11 +278,7 @@ typedef struct {
   uint64_t now;
 } laghu_http_environment;
 
-typedef enum {
-  LAGHU_HTTP_HEADER_SET = 0,
-  LAGHU_HTTP_HEADER_APPEND,
-  LAGHU_HTTP_HEADER_REMOVE
-} laghu_http_header_operation_kind;
+typedef enum { LAGHU_HTTP_HEADER_SET = 0, LAGHU_HTTP_HEADER_APPEND, LAGHU_HTTP_HEADER_REMOVE } laghu_http_header_operation_kind;
 
 typedef struct {
   laghu_http_header_operation_kind kind;
@@ -316,8 +311,7 @@ typedef struct {
   laghu_buffer cache_selected;
   unsigned char *cache_owned_body;
   size_t capture_limit;
-  laghu_http_header_operation
-      header_operations[LAGHU_HTTP_MAX_HEADER_OPERATIONS];
+  laghu_http_header_operation header_operations[LAGHU_HTTP_MAX_HEADER_OPERATIONS];
   size_t header_operation_count;
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
   char cache_key[LAGHU_RUNTIME_KEY_SIZE];
@@ -370,82 +364,50 @@ typedef struct {
   laghu_transform_budget budget;
 } laghu_http_transaction;
 
-void laghu_http_administrative_options_init(
-    laghu_http_administrative_options *options);
-bool laghu_http_administrative_plan_build(
-    laghu_http_administrative_plan *plan, laghu_buffer method,
-    laghu_buffer target, const laghu_http_administrative_options *options);
-bool laghu_http_administrative_render_operational(
-    const laghu_http_administrative_plan *plan,
-    const laghu_operational_snapshot *snapshot, uint64_t now,
-    bool runtime_ready, bool cache_ready, bool strict_workers, char *output,
-    size_t capacity, laghu_http_administrative_response *response);
-bool laghu_http_administrative_render_console_model(
-    const laghu_http_administrative_console_model *model, char *output,
-    size_t capacity, laghu_http_administrative_response *response);
-bool laghu_http_administrative_render_console(
-    const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
-    bool as_json, char *output, size_t capacity,
-    const laghu_http_administrative_console_query *query,
-    laghu_http_administrative_response *response);
-bool laghu_http_administrative_build_console_page_model(
-    const laghu_http_administrative_plan *plan, const laghu_cache_stats *stats,
-    const laghu_operational_readiness *ready,
-    const laghu_operational_snapshot *snapshot,
-    laghu_http_administrative_console_page_model *model);
-bool laghu_http_administrative_render_console_page(
-    const laghu_http_administrative_plan *plan,
-    const laghu_http_administrative_console_page_model *model, char *output,
-    size_t capacity, laghu_http_administrative_response *response);
-bool laghu_http_administrative_build_console_model(
-    const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
-    const laghu_http_administrative_console_query *query,
-    laghu_http_administrative_console_model *model);
-bool laghu_http_administrative_render_purge(
-    laghu_cache_purge_result purge_result, uint64_t matched_artifacts,
-    char *output, size_t capacity,
-    laghu_http_administrative_response *response);
-bool laghu_http_administrative_render_stats(
-    const laghu_cache_limits *limits, const laghu_cache_stats *stats,
-    char *output, size_t capacity,
-    laghu_http_administrative_response *response);
-bool laghu_http_administrative_render_history(
-    const laghu_http_administrative_history_model *model, bool as_json,
-    char *output, size_t capacity,
-    laghu_http_administrative_response *response);
-bool laghu_http_administrative_render_explain(
-    const laghu_http_administrative_explain_model *model, char *output,
-    size_t capacity, laghu_http_administrative_response *response);
-bool laghu_http_administrative_build_history_model(
-    const laghu_operational_snapshot *snapshot,
-    const laghu_http_administrative_history_query *query,
-    laghu_http_administrative_history_model *model);
-bool laghu_http_administrative_build_explain_model(
-    const laghu_http_administrative_explain_query *query,
-    const laghu_operational_readiness *ready, const laghu_cache_stats *stats,
-    bool as_json, laghu_http_administrative_explain_model *model);
+void laghu_http_administrative_options_init(laghu_http_administrative_options *options);
+bool laghu_http_administrative_plan_build(laghu_http_administrative_plan *plan, laghu_buffer method, laghu_buffer target,
+                                          const laghu_http_administrative_options *options);
+bool laghu_http_administrative_render_operational(const laghu_http_administrative_plan *plan, const laghu_operational_snapshot *snapshot,
+                                                  uint64_t now, bool runtime_ready, bool cache_ready, bool strict_workers, char *output,
+                                                  size_t capacity, laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_console_model(const laghu_http_administrative_console_model *model, char *output, size_t capacity,
+                                                    laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_console(const laghu_cache_stats *stats, const laghu_operational_readiness *ready, bool as_json, char *output,
+                                              size_t capacity, const laghu_http_administrative_console_query *query,
+                                              laghu_http_administrative_response *response);
+bool laghu_http_administrative_build_console_page_model(const laghu_http_administrative_plan *plan, const laghu_cache_stats *stats,
+                                                        const laghu_operational_readiness *ready, const laghu_operational_snapshot *snapshot,
+                                                        laghu_http_administrative_console_page_model *model);
+bool laghu_http_administrative_render_console_page(const laghu_http_administrative_plan *plan,
+                                                   const laghu_http_administrative_console_page_model *model, char *output, size_t capacity,
+                                                   laghu_http_administrative_response *response);
+bool laghu_http_administrative_build_console_model(const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
+                                                   const laghu_http_administrative_console_query *query,
+                                                   laghu_http_administrative_console_model *model);
+bool laghu_http_administrative_render_purge(laghu_cache_purge_result purge_result, uint64_t matched_artifacts, char *output, size_t capacity,
+                                            laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_stats(const laghu_cache_limits *limits, const laghu_cache_stats *stats, char *output, size_t capacity,
+                                            laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_history(const laghu_http_administrative_history_model *model, bool as_json, char *output, size_t capacity,
+                                              laghu_http_administrative_response *response);
+bool laghu_http_administrative_render_explain(const laghu_http_administrative_explain_model *model, char *output, size_t capacity,
+                                              laghu_http_administrative_response *response);
+bool laghu_http_administrative_build_history_model(const laghu_operational_snapshot *snapshot, const laghu_http_administrative_history_query *query,
+                                                   laghu_http_administrative_history_model *model);
+bool laghu_http_administrative_build_explain_model(const laghu_http_administrative_explain_query *query, const laghu_operational_readiness *ready,
+                                                   const laghu_cache_stats *stats, bool as_json, laghu_http_administrative_explain_model *model);
 void laghu_http_beacon_options_init(laghu_http_beacon_options *options);
-bool laghu_http_beacon_plan_build(laghu_http_beacon_plan *plan,
-                                  laghu_buffer method, laghu_buffer target,
-                                  const laghu_http_beacon_options *options);
+bool laghu_http_beacon_plan_build(laghu_http_beacon_plan *plan, laghu_buffer method, laghu_buffer target, const laghu_http_beacon_options *options);
 
 void laghu_http_transaction_init(laghu_http_transaction *transaction);
-bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
-                                    const laghu_http_request *request,
-                                    const laghu_http_response *response,
-                                    const laghu_http_environment *environment,
-                                    laghu_http_transaction_result *result);
-bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
-                                     laghu_buffer captured_body,
-                                     laghu_http_transaction_result *result);
+bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const laghu_http_request *request, const laghu_http_response *response,
+                                    const laghu_http_environment *environment, laghu_http_transaction_result *result);
+bool laghu_http_transaction_finalize(laghu_http_transaction *transaction, laghu_buffer captured_body, laghu_http_transaction_result *result);
 /* Implements HTTP weak comparison for If-None-Match against a generated ETag.
  * Call after finalize, because transformed representations own their validator.
  */
-bool laghu_http_request_matches_result_etag(
-    const laghu_http_request *request,
-    const laghu_http_transaction_result *result);
-void laghu_http_transaction_result_release(
-    laghu_http_transaction_result *result);
+bool laghu_http_request_matches_result_etag(const laghu_http_request *request, const laghu_http_transaction_result *result);
+void laghu_http_transaction_result_release(laghu_http_transaction_result *result);
 
 #ifdef __cplusplus
 }

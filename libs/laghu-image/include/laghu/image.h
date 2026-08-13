@@ -266,64 +266,29 @@ bool laghu_image_backend_probe(laghu_image_backend *backend);
 laghu_image_format laghu_image_detect_format(laghu_buffer input);
 const char *laghu_image_format_name(laghu_image_format format);
 const char *laghu_image_content_type(laghu_image_format format);
-laghu_image_filter_mask laghu_image_effective_filters(
-    laghu_image_filter_mask requested,
-    laghu_image_capability_mask capabilities);
-bool laghu_image_optimize(const laghu_image_backend *backend,
-                          const laghu_image_request *request,
-                          laghu_image_result *result);
-bool laghu_image_variant_key(const laghu_image_backend *backend,
-                             const laghu_image_request *request,
-                             const char policy_key[LAGHU_SHA256_HEX_SIZE],
+laghu_image_filter_mask laghu_image_effective_filters(laghu_image_filter_mask requested, laghu_image_capability_mask capabilities);
+bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_request *request, laghu_image_result *result);
+bool laghu_image_variant_key(const laghu_image_backend *backend, const laghu_image_request *request, const char policy_key[LAGHU_SHA256_HEX_SIZE],
                              char output[LAGHU_SHA256_HEX_SIZE]);
 void laghu_image_result_release(laghu_image_result *result);
-bool laghu_image_rewrite_html(laghu_buffer input,
-                              const laghu_image_markup_options *options,
-                              laghu_image_markup_result *result);
-bool laghu_image_discover_html(laghu_buffer input, const char *page_path,
-                               const char *page_origin,
-                               laghu_image_discovery_result *result);
-bool laghu_image_variant_url(
-    const char *hash,
-    char output[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE]);
-bool laghu_image_plan_geometry(const laghu_image_geometry_input *input,
-                               laghu_image_geometry_plan *plan);
-bool laghu_image_rewrite_css(laghu_buffer input,
-                             const laghu_image_markup_options *options,
-                             laghu_image_markup_result *result);
-bool laghu_css_discover(laghu_buffer input, const char *base_path,
-                        const char *page_origin,
-                        laghu_css_parse_result *result);
-bool laghu_css_discover_style_attributes(laghu_buffer html,
-                                         const char *page_path,
-                                         const char *page_origin,
-                                         laghu_css_parse_result *result);
-bool laghu_css_minify_and_rewrite(laghu_buffer input, const char *base_path,
-                                  const char *page_origin,
-                                  const laghu_image_markup_options *options,
-                                  bool declaration_list,
-                                  laghu_image_markup_result *result);
-bool laghu_css_fallback_rewrite_urls(laghu_buffer input, const char *base_path,
-                                     const char *page_origin,
-                                     const laghu_image_markup_options *options,
+bool laghu_image_rewrite_html(laghu_buffer input, const laghu_image_markup_options *options, laghu_image_markup_result *result);
+bool laghu_image_discover_html(laghu_buffer input, const char *page_path, const char *page_origin, laghu_image_discovery_result *result);
+bool laghu_image_variant_url(const char *hash, char output[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE]);
+bool laghu_image_plan_geometry(const laghu_image_geometry_input *input, laghu_image_geometry_plan *plan);
+bool laghu_image_rewrite_css(laghu_buffer input, const laghu_image_markup_options *options, laghu_image_markup_result *result);
+bool laghu_css_discover(laghu_buffer input, const char *base_path, const char *page_origin, laghu_css_parse_result *result);
+bool laghu_css_discover_style_attributes(laghu_buffer html, const char *page_path, const char *page_origin, laghu_css_parse_result *result);
+bool laghu_css_minify_and_rewrite(laghu_buffer input, const char *base_path, const char *page_origin, const laghu_image_markup_options *options,
+                                  bool declaration_list, laghu_image_markup_result *result);
+bool laghu_css_fallback_rewrite_urls(laghu_buffer input, const char *base_path, const char *page_origin, const laghu_image_markup_options *options,
                                      laghu_image_markup_result *result);
-bool laghu_css_rebase_urls(laghu_buffer input, const char *base_path,
-                           const char *page_origin,
-                           laghu_image_markup_result *result);
-bool laghu_css_rewrite_style_attributes(
-    laghu_buffer html, const char *page_path, const char *page_origin,
-    const laghu_image_markup_options *options,
-    laghu_image_markup_result *result);
-bool laghu_image_data_uri(laghu_image_format format, laghu_buffer input,
-                          size_t max_input_bytes,
-                          laghu_image_markup_result *result);
-bool laghu_image_preview_data_uri(const laghu_image_backend *backend,
-                                  const laghu_image_request *request,
-                                  unsigned int max_dimension,
+bool laghu_css_rebase_urls(laghu_buffer input, const char *base_path, const char *page_origin, laghu_image_markup_result *result);
+bool laghu_css_rewrite_style_attributes(laghu_buffer html, const char *page_path, const char *page_origin, const laghu_image_markup_options *options,
+                                        laghu_image_markup_result *result);
+bool laghu_image_data_uri(laghu_image_format format, laghu_buffer input, size_t max_input_bytes, laghu_image_markup_result *result);
+bool laghu_image_preview_data_uri(const laghu_image_backend *backend, const laghu_image_request *request, unsigned int max_dimension,
                                   laghu_image_markup_result *result);
-bool laghu_image_build_sprite(const laghu_image_backend *backend,
-                              laghu_image_sprite_item *items, size_t item_count,
-                              laghu_image_format output_format,
+bool laghu_image_build_sprite(const laghu_image_backend *backend, laghu_image_sprite_item *items, size_t item_count, laghu_image_format output_format,
                               laghu_image_sprite_result *result);
 void laghu_image_sprite_result_release(laghu_image_sprite_result *result);
 void laghu_image_markup_result_release(laghu_image_markup_result *result);

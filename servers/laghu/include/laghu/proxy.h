@@ -52,21 +52,12 @@ typedef struct {
   bool origin_tls;
 } laghu_proxy_options;
 
-typedef enum {
-  LAGHU_PROXY_PARSE_OK = 0,
-  LAGHU_PROXY_PARSE_HELP,
-  LAGHU_PROXY_PARSE_VERSION,
-  LAGHU_PROXY_PARSE_ERROR
-} laghu_proxy_parse_result;
+typedef enum { LAGHU_PROXY_PARSE_OK = 0, LAGHU_PROXY_PARSE_HELP, LAGHU_PROXY_PARSE_VERSION, LAGHU_PROXY_PARSE_ERROR } laghu_proxy_parse_result;
 
 void laghu_proxy_options_init(laghu_proxy_options *options);
 void laghu_proxy_options_dispose(laghu_proxy_options *options);
-laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv,
-                                                   laghu_proxy_options *options,
-                                                   char *error,
-                                                   size_t error_size);
-bool laghu_proxy_decode_chunked(laghu_buffer encoded, unsigned char *decoded,
-                                size_t capacity, size_t *decoded_length);
+laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_proxy_options *options, char *error, size_t error_size);
+bool laghu_proxy_decode_chunked(laghu_buffer encoded, unsigned char *decoded, size_t capacity, size_t *decoded_length);
 int laghu_proxy_run(const laghu_proxy_options *options);
 
 #ifdef __cplusplus

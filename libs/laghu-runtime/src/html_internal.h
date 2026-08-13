@@ -16,11 +16,7 @@
 #define LAGHU_HTML_MAX_ATTRIBUTES 128U
 #define LAGHU_HTML_ATTRIBUTE_NAME_SIZE 64U
 
-typedef enum {
-  LAGHU_HEAD_TOKEN_TAG = 0,
-  LAGHU_HEAD_TOKEN_COMMENT,
-  LAGHU_HEAD_TOKEN_DOCTYPE
-} laghu_head_token_kind;
+typedef enum { LAGHU_HEAD_TOKEN_TAG = 0, LAGHU_HEAD_TOKEN_COMMENT, LAGHU_HEAD_TOKEN_DOCTYPE } laghu_head_token_kind;
 
 typedef struct {
   size_t start;
@@ -63,23 +59,15 @@ typedef struct {
   bool enabled;
 } laghu_html_url_base;
 
-bool laghu_head_append(laghu_head_builder *builder, const void *data,
-                       size_t length);
-bool laghu_head_equal(const unsigned char *value, size_t length,
-                      const char *expected);
+bool laghu_head_append(laghu_head_builder *builder, const void *data, size_t length);
+bool laghu_head_equal(const unsigned char *value, size_t length, const char *expected);
 bool laghu_html_ascii_space(unsigned char value);
-bool laghu_html_contains_ci(const unsigned char *data, size_t length,
-                            const char *needle);
+bool laghu_html_contains_ci(const unsigned char *data, size_t length, const char *needle);
 bool laghu_html_protected_element(const char *name);
-bool laghu_head_tokenize(laghu_buffer html, laghu_head_token *tokens,
-                         size_t *token_count);
+bool laghu_head_tokenize(laghu_buffer html, laghu_head_token *tokens, size_t *token_count);
 bool laghu_head_pair_tokens(laghu_head_token *tokens, size_t count);
-bool laghu_html_trim_resource_urls(laghu_buffer html,
-                                   const laghu_head_token *tokens,
-                                   size_t token_count, const char *page_path,
-                                   const char *page_origin,
-                                   laghu_runtime_head_result *result);
-bool laghu_html_lexical(laghu_buffer html, laghu_html_planner_mask plan,
-                        laghu_runtime_head_result *result);
+bool laghu_html_trim_resource_urls(laghu_buffer html, const laghu_head_token *tokens, size_t token_count, const char *page_path,
+                                   const char *page_origin, laghu_runtime_head_result *result);
+bool laghu_html_lexical(laghu_buffer html, laghu_html_planner_mask plan, laghu_runtime_head_result *result);
 
 #endif

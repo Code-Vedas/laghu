@@ -123,48 +123,26 @@ typedef struct {
   unsigned int healthy_workers;
 } laghu_operational_readiness;
 void laghu_operational_registry_init(laghu_operational_registry *registry);
-bool laghu_operational_registry_open(laghu_operational_registry *registry,
-                                     const char *cache_path,
-                                     laghu_operational_surface surface,
-                                     laghu_operational_process_kind kind,
-                                     bool required, uint64_t now);
+bool laghu_operational_registry_open(laghu_operational_registry *registry, const char *cache_path, laghu_operational_surface surface,
+                                     laghu_operational_process_kind kind, bool required, uint64_t now);
 void laghu_operational_registry_close(laghu_operational_registry *registry);
-bool laghu_operational_registry_heartbeat(laghu_operational_registry *registry,
-                                          uint64_t now, bool healthy,
-                                          uint64_t queue_capacity,
+bool laghu_operational_registry_heartbeat(laghu_operational_registry *registry, uint64_t now, bool healthy, uint64_t queue_capacity,
                                           uint64_t queue_occupied);
-void laghu_operational_registry_record(laghu_operational_registry *registry,
-                                       laghu_operational_decision decision,
-                                       size_t original_bytes,
-                                       size_t selected_bytes,
-                                       uint64_t elapsed_microseconds);
-void laghu_operational_registry_failure(laghu_operational_registry *registry,
-                                        laghu_operational_failure failure);
-void laghu_operational_registry_worker_job(laghu_operational_registry *registry,
-                                           bool success,
-                                           uint64_t elapsed_microseconds,
+void laghu_operational_registry_record(laghu_operational_registry *registry, laghu_operational_decision decision, size_t original_bytes,
+                                       size_t selected_bytes, uint64_t elapsed_microseconds);
+void laghu_operational_registry_failure(laghu_operational_registry *registry, laghu_operational_failure failure);
+void laghu_operational_registry_worker_job(laghu_operational_registry *registry, bool success, uint64_t elapsed_microseconds,
                                            laghu_operational_failure failure);
-void laghu_operational_registry_cache(laghu_operational_registry *registry,
-                                      const laghu_cache_stats *stats);
-void laghu_operational_registry_budget(laghu_operational_registry *registry,
-                                       const laghu_transform_budget *budget,
-                                       unsigned int deadline_limit_ms);
-void laghu_operational_registry_lcp(laghu_operational_registry *registry,
-                                    laghu_lcp_decision decision, bool applied,
-                                    const unsigned int observations[4],
-                                    const bool ready[4]);
-bool laghu_operational_registry_snapshot(laghu_operational_registry *registry,
-                                         laghu_operational_snapshot *snapshot);
-bool laghu_operational_render_prometheus(
-    const laghu_operational_snapshot *snapshot, uint64_t now, char *output,
-    size_t capacity, size_t *length);
-bool laghu_operational_readiness_evaluate(
-    const laghu_operational_snapshot *snapshot, uint64_t now,
-    bool runtime_ready, bool cache_ready, bool strict_workers,
-    laghu_operational_readiness *readiness);
-bool laghu_operational_render_readiness(
-    const laghu_operational_readiness *readiness, bool strict_workers,
-    char *output, size_t capacity, size_t *length);
+void laghu_operational_registry_cache(laghu_operational_registry *registry, const laghu_cache_stats *stats);
+void laghu_operational_registry_budget(laghu_operational_registry *registry, const laghu_transform_budget *budget, unsigned int deadline_limit_ms);
+void laghu_operational_registry_lcp(laghu_operational_registry *registry, laghu_lcp_decision decision, bool applied,
+                                    const unsigned int observations[4], const bool ready[4]);
+bool laghu_operational_registry_snapshot(laghu_operational_registry *registry, laghu_operational_snapshot *snapshot);
+bool laghu_operational_render_prometheus(const laghu_operational_snapshot *snapshot, uint64_t now, char *output, size_t capacity, size_t *length);
+bool laghu_operational_readiness_evaluate(const laghu_operational_snapshot *snapshot, uint64_t now, bool runtime_ready, bool cache_ready,
+                                          bool strict_workers, laghu_operational_readiness *readiness);
+bool laghu_operational_render_readiness(const laghu_operational_readiness *readiness, bool strict_workers, char *output, size_t capacity,
+                                        size_t *length);
 
 #ifdef __cplusplus
 }

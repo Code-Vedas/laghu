@@ -35,11 +35,8 @@ static laghu_response html_response(void) {
   return response;
 }
 
-static void assert_policy(laghu_preset preset, uint32_t expected_filters,
-                          laghu_risk_level expected_risk, bool allow_lossy,
-                          bool allow_structural_rewrite,
-                          bool allow_resource_inlining,
-                          bool allow_script_reordering) {
+static void assert_policy(laghu_preset preset, uint32_t expected_filters, laghu_risk_level expected_risk, bool allow_lossy,
+                          bool allow_structural_rewrite, bool allow_resource_inlining, bool allow_script_reordering) {
   laghu_policy policy;
 
   assert(laghu_resolve_policy(preset, &policy));
@@ -52,19 +49,15 @@ static void assert_policy(laghu_preset preset, uint32_t expected_filters,
   assert(policy.allow_resource_inlining == allow_resource_inlining);
   assert(policy.allow_script_reordering == allow_script_reordering);
   assert(!policy.allow_experimental);
-  assert(policy.image_quality ==
-         (preset == LAGHU_PRESET_SAFE        ? 0U
-          : preset == LAGHU_PRESET_ECOMMERCE ? 85U
-          : preset == LAGHU_PRESET_BALANCED || preset == LAGHU_PRESET_BLOG
-              ? 82U
-              : 75U));
+  assert(policy.image_quality == (preset == LAGHU_PRESET_SAFE                                      ? 0U
+                                  : preset == LAGHU_PRESET_ECOMMERCE                               ? 85U
+                                  : preset == LAGHU_PRESET_BALANCED || preset == LAGHU_PRESET_BLOG ? 82U
+                                                                                                   : 75U));
 }
 
-static void assert_rewrite_policy(
-    laghu_rewrite_level rewrite_level, uint32_t expected_filters,
-    laghu_risk_level expected_risk, bool allow_lossy,
-    bool allow_structural_rewrite, bool allow_resource_inlining,
-    bool allow_script_reordering, bool allow_experimental) {
+static void assert_rewrite_policy(laghu_rewrite_level rewrite_level, uint32_t expected_filters, laghu_risk_level expected_risk, bool allow_lossy,
+                                  bool allow_structural_rewrite, bool allow_resource_inlining, bool allow_script_reordering,
+                                  bool allow_experimental) {
   laghu_policy policy;
 
   assert(laghu_resolve_rewrite_level(rewrite_level, &policy));
@@ -77,12 +70,9 @@ static void assert_rewrite_policy(
   assert(policy.allow_resource_inlining == allow_resource_inlining);
   assert(policy.allow_script_reordering == allow_script_reordering);
   assert(policy.allow_experimental == allow_experimental);
-  assert(policy.image_quality ==
-         (rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH ? 0U
-          : rewrite_level == LAGHU_REWRITE_LEVEL_CORE ||
-                  rewrite_level == LAGHU_REWRITE_LEVEL_BANDWIDTH
-              ? 82U
-              : 75U));
+  assert(policy.image_quality == (rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH                                              ? 0U
+                                  : rewrite_level == LAGHU_REWRITE_LEVEL_CORE || rewrite_level == LAGHU_REWRITE_LEVEL_BANDWIDTH ? 82U
+                                                                                                                                : 75U));
 }
 
 static void test_config_defaults_and_inheritance(void) {
@@ -104,17 +94,14 @@ static void test_config_defaults_and_inheritance(void) {
   assert(result.optimization_profiles == LAGHU_MODE_OFF);
   assert(result.javascript_defer_suggestions == LAGHU_MODE_ON);
   assert(result.include_js_source_maps == LAGHU_MODE_OFF);
-  assert(result.instrumentation_sample_rate ==
-         LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT);
+  assert(result.instrumentation_sample_rate == LAGHU_INSTRUMENTATION_SAMPLE_RATE_DEFAULT);
   assert(result.image_inline_limit == LAGHU_IMAGE_INLINE_LIMIT_DEFAULT);
   assert(result.image_metadata_limit == LAGHU_IMAGE_METADATA_LIMIT_DEFAULT);
   assert(result.image_metadata_ttl == LAGHU_IMAGE_METADATA_TTL_DEFAULT);
   assert(result.css_inline_limit == LAGHU_CSS_INLINE_LIMIT_DEFAULT);
   assert(result.css_outline_threshold == LAGHU_CSS_OUTLINE_THRESHOLD_DEFAULT);
-  assert(result.javascript_inline_limit ==
-         LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT);
-  assert(result.javascript_outline_threshold ==
-         LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT);
+  assert(result.javascript_inline_limit == LAGHU_JAVASCRIPT_INLINE_LIMIT_DEFAULT);
+  assert(result.javascript_outline_threshold == LAGHU_JAVASCRIPT_OUTLINE_THRESHOLD_DEFAULT);
   assert(result.html_cache_origin[0] == '\0');
   assert(result.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET);
   assert(result.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET);
@@ -144,8 +131,7 @@ static void test_config_defaults_and_inheritance(void) {
   parent.css_outline_threshold = 16384U;
   parent.javascript_inline_limit = 4096U;
   parent.javascript_outline_threshold = 32768U;
-  (void)snprintf(parent.html_cache_origin, sizeof(parent.html_cache_origin),
-                 "%s", "https://origin.example");
+  (void)snprintf(parent.html_cache_origin, sizeof(parent.html_cache_origin), "%s", "https://origin.example");
   parent.html_cache_ttl = 30U;
   parent.html_cache_stale_ttl = 300U;
   child.preset = LAGHU_PRESET_STATIC;
@@ -246,16 +232,11 @@ static void test_domain_policy(void) {
   assert(laghu_domain_policy_add_domain(&parent, "https://a-one.example"));
   assert(laghu_domain_policy_add_domain(&parent, "https://a-two.example"));
   assert(laghu_domain_policy_add_domain(&parent, "https://b-one.example"));
-  assert(laghu_domain_policy_add_mapping(&child, "https://origin.example",
-                                         "https://cdn-a.example"));
-  assert(laghu_domain_policy_add_mapping(&child, "https://other.example",
-                                         "https://cdn-b.example"));
-  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example",
-                                       "https://a-one.example"));
-  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example",
-                                       "https://a-two.example"));
-  assert(laghu_domain_policy_add_shard(&child, "https://cdn-b.example",
-                                       "https://b-one.example"));
+  assert(laghu_domain_policy_add_mapping(&child, "https://origin.example", "https://cdn-a.example"));
+  assert(laghu_domain_policy_add_mapping(&child, "https://other.example", "https://cdn-b.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example", "https://a-one.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-a.example", "https://a-two.example"));
+  assert(laghu_domain_policy_add_shard(&child, "https://cdn-b.example", "https://b-one.example"));
   assert(laghu_domain_policy_merge_valid(&parent, &child));
   assert(!laghu_domain_policy_validate(&child));
 
@@ -266,33 +247,21 @@ static void test_domain_policy(void) {
   assert(laghu_domain_policy_validate(&merged.domain_policy));
   assert(laghu_resolve_config_policy(&merged, &policy));
   assert(laghu_resolve_config_policy(&config, &baseline_policy));
-  assert(laghu_variant_key((laghu_buffer){(const unsigned char *)"x", 1U},
-                           &policy, domain_key));
-  assert(laghu_variant_key((laghu_buffer){(const unsigned char *)"x", 1U},
-                           &baseline_policy, baseline_key));
+  assert(laghu_variant_key((laghu_buffer){(const unsigned char *)"x", 1U}, &policy, domain_key));
+  assert(laghu_variant_key((laghu_buffer){(const unsigned char *)"x", 1U}, &baseline_policy, baseline_key));
   assert(strcmp(domain_key, baseline_key) != 0);
-  assert(laghu_domain_url_rewrite(&merged.domain_policy,
-                                  "https://origin.example/assets/a.js?x=1#top",
-                                  output, sizeof(output)));
+  assert(laghu_domain_url_rewrite(&merged.domain_policy, "https://origin.example/assets/a.js?x=1#top", output, sizeof(output)));
   assert(strstr(output, "/assets/a.js?x=1#top") != NULL);
   assert(strncmp(output, "https://a-", 10U) == 0);
-  assert(laghu_domain_url_rewrite(&merged.domain_policy,
-                                  "https://origin.example/assets/a.js?x=1#top",
-                                  first, sizeof(first)));
+  assert(laghu_domain_url_rewrite(&merged.domain_policy, "https://origin.example/assets/a.js?x=1#top", first, sizeof(first)));
   assert(strcmp(output, first) == 0);
-  assert(laghu_domain_url_rewrite(&merged.domain_policy,
-                                  "https://other.example/assets/a.js", output,
-                                  sizeof(output)));
+  assert(laghu_domain_url_rewrite(&merged.domain_policy, "https://other.example/assets/a.js", output, sizeof(output)));
   assert(strncmp(output, "https://b-one.example/", 22U) == 0);
-  assert(!laghu_domain_url_rewrite(&merged.domain_policy,
-                                   "https://unknown.example", output,
-                                   sizeof(output)));
+  assert(!laghu_domain_url_rewrite(&merged.domain_policy, "https://unknown.example", output, sizeof(output)));
   assert(!laghu_domain_policy_add_domain(&parent, "http://insecure.example"));
   assert(!laghu_domain_policy_add_domain(&parent, "https://user@bad.example"));
-  assert(!laghu_domain_policy_add_mapping(&child, "https://origin.example",
-                                          "https://cdn-b.example"));
-  assert(!laghu_domain_policy_add_shard(&child, "https://missing.example",
-                                        "https://a-one.example"));
+  assert(!laghu_domain_policy_add_mapping(&child, "https://origin.example", "https://cdn-b.example"));
+  assert(!laghu_domain_policy_add_shard(&child, "https://missing.example", "https://a-one.example"));
 }
 
 static void test_request_policy_controls(void) {
@@ -314,8 +283,7 @@ static void test_request_policy_controls(void) {
   assert(!laghu_resource_allowed(&config, "/assets/private/key.css"));
   assert(!laghu_resource_allowed(&config, "/other/app.css"));
   assert(!laghu_resource_allowed(&config, "/.laghu/stats"));
-  assert(!laghu_resource_allowed(&config,
-                                 "https://user@example.test/assets/a.css"));
+  assert(!laghu_resource_allowed(&config, "https://user@example.test/assets/a.css"));
 
   laghu_config_init(&child);
   assert(laghu_resource_rule_add(&child, false, "/assets/generated/*"));
@@ -333,24 +301,17 @@ static void test_request_policy_controls(void) {
   assert(!laghu_vary_supported("Accept, Cookie"));
 
   config.query_filter_overrides = LAGHU_MODE_ON;
-  assert(laghu_apply_query_filter_overrides(
-      &config, "x=1&laghuFilters=%2Bhtml_minify,-image_modern", &policy,
-      &enabled, &disabled));
+  assert(laghu_apply_query_filter_overrides(&config, "x=1&laghuFilters=%2Bhtml_minify,-image_modern", &policy, &enabled, &disabled));
   assert(enabled == LAGHU_FILTER_HTML_MINIFY);
   assert(disabled == LAGHU_FILTER_IMAGE_MODERN);
   assert((policy.filter_families & LAGHU_FILTER_HTML_MINIFY) != 0U);
   assert((policy.filter_families & LAGHU_FILTER_IMAGE_MODERN) == 0U);
-  assert(!laghu_apply_query_filter_overrides(
-      &config, "laghuFilters=%2Bhtml_minify,%2Bhtml_minify", &policy, NULL,
-      NULL));
-  assert(!laghu_apply_query_filter_overrides(&config, "laghuFilters=%2Bunknown",
-                                             &policy, NULL, NULL));
+  assert(!laghu_apply_query_filter_overrides(&config, "laghuFilters=%2Bhtml_minify,%2Bhtml_minify", &policy, NULL, NULL));
+  assert(!laghu_apply_query_filter_overrides(&config, "laghuFilters=%2Bunknown", &policy, NULL, NULL));
   config.forbidden_filters = LAGHU_FILTER_HTML_MINIFY;
-  assert(!laghu_apply_query_filter_overrides(
-      &config, "laghuFilters=%2Bhtml_minify", &policy, NULL, NULL));
+  assert(!laghu_apply_query_filter_overrides(&config, "laghuFilters=%2Bhtml_minify", &policy, NULL, NULL));
   config.query_filter_overrides = LAGHU_MODE_OFF;
-  assert(laghu_apply_query_filter_overrides(
-      &config, "laghuFilters=%2Bhtml_minify", &policy, &enabled, &disabled));
+  assert(laghu_apply_query_filter_overrides(&config, "laghuFilters=%2Bhtml_minify", &policy, &enabled, &disabled));
   assert(enabled == 0U && disabled == 0U);
 }
 
@@ -368,11 +329,9 @@ static void test_query_control_parser(void) {
   assert(control == LAGHU_QUERY_CONTROL_NONE);
   assert(laghu_apply_query_control("laghu=bad", &control) == false);
   assert(!laghu_apply_query_control("laghu=off&laghu=explain", &control));
-  assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&laghu=off",
-                                   &control));
+  assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&laghu=off", &control));
   assert(control == LAGHU_QUERY_CONTROL_OFF);
-  assert(
-      laghu_apply_query_control("x=1&laghuFilters=%2Bhtml_minify", &control));
+  assert(laghu_apply_query_control("x=1&laghuFilters=%2Bhtml_minify", &control));
   assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&", &control));
   assert(!laghu_apply_query_control("laghu=", &control));
   assert(laghu_apply_query_control("?", &control));
@@ -386,12 +345,8 @@ static void test_preset_parser(void) {
     const char *name;
     laghu_preset preset;
   } cases[] = {
-      {"safe", LAGHU_PRESET_SAFE},
-      {"balanced", LAGHU_PRESET_BALANCED},
-      {"aggressive", LAGHU_PRESET_AGGRESSIVE},
-      {"ecommerce", LAGHU_PRESET_ECOMMERCE},
-      {"blog", LAGHU_PRESET_BLOG},
-      {"static", LAGHU_PRESET_STATIC},
+      {"safe", LAGHU_PRESET_SAFE},           {"balanced", LAGHU_PRESET_BALANCED}, {"aggressive", LAGHU_PRESET_AGGRESSIVE},
+      {"ecommerce", LAGHU_PRESET_ECOMMERCE}, {"blog", LAGHU_PRESET_BLOG},         {"static", LAGHU_PRESET_STATIC},
   };
   laghu_preset preset = LAGHU_PRESET_UNSET;
   size_t index;
@@ -409,37 +364,22 @@ static void test_preset_parser(void) {
 }
 
 static void test_preset_policies(void) {
-  const uint32_t safe = LAGHU_FILTER_IMAGE_LOSSLESS |
-                        LAGHU_FILTER_IMAGE_METADATA |
-                        LAGHU_FILTER_IMAGE_DIMENSIONS;
-  const uint32_t balanced =
-      safe | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE |
-      LAGHU_FILTER_IMAGE_LAZYLOAD | LAGHU_FILTER_HTML_MINIFY |
-      LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY |
-      LAGHU_FILTER_RESOURCE_HINTS | LAGHU_FILTER_CACHE_EXTENSION;
+  const uint32_t safe = LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA | LAGHU_FILTER_IMAGE_DIMENSIONS;
+  const uint32_t balanced = safe | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE | LAGHU_FILTER_IMAGE_LAZYLOAD |
+                            LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY | LAGHU_FILTER_RESOURCE_HINTS |
+                            LAGHU_FILTER_CACHE_EXTENSION;
   const uint32_t aggressive =
-      balanced | LAGHU_FILTER_RESOURCE_COMBINE | LAGHU_FILTER_RESOURCE_INLINE |
-      LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER;
-  const uint32_t ecommerce =
-      safe | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE |
-      LAGHU_FILTER_IMAGE_LAZYLOAD | LAGHU_FILTER_CSS_MINIFY |
-      LAGHU_FILTER_RESOURCE_HINTS | LAGHU_FILTER_CACHE_EXTENSION;
-  const uint32_t blog = balanced | LAGHU_FILTER_RESOURCE_INLINE |
-                        LAGHU_FILTER_CRITICAL_CSS |
-                        LAGHU_FILTER_JAVASCRIPT_DEFER;
+      balanced | LAGHU_FILTER_RESOURCE_COMBINE | LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER;
+  const uint32_t ecommerce = safe | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE | LAGHU_FILTER_IMAGE_LAZYLOAD |
+                             LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_RESOURCE_HINTS | LAGHU_FILTER_CACHE_EXTENSION;
+  const uint32_t blog = balanced | LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER;
 
-  assert_policy(LAGHU_PRESET_SAFE, safe, LAGHU_RISK_CONSERVATIVE, false, false,
-                false, false);
-  assert_policy(LAGHU_PRESET_BALANCED, balanced, LAGHU_RISK_MODERATE, true,
-                true, false, false);
-  assert_policy(LAGHU_PRESET_AGGRESSIVE, aggressive, LAGHU_RISK_EXPANSIVE, true,
-                true, true, true);
-  assert_policy(LAGHU_PRESET_ECOMMERCE, ecommerce, LAGHU_RISK_CONSERVATIVE,
-                true, true, false, false);
-  assert_policy(LAGHU_PRESET_BLOG, blog, LAGHU_RISK_MODERATE, true, true, true,
-                true);
-  assert_policy(LAGHU_PRESET_STATIC, aggressive | LAGHU_FILTER_IMMUTABLE_CACHE,
-                LAGHU_RISK_EXPANSIVE, true, true, true, true);
+  assert_policy(LAGHU_PRESET_SAFE, safe, LAGHU_RISK_CONSERVATIVE, false, false, false, false);
+  assert_policy(LAGHU_PRESET_BALANCED, balanced, LAGHU_RISK_MODERATE, true, true, false, false);
+  assert_policy(LAGHU_PRESET_AGGRESSIVE, aggressive, LAGHU_RISK_EXPANSIVE, true, true, true, true);
+  assert_policy(LAGHU_PRESET_ECOMMERCE, ecommerce, LAGHU_RISK_CONSERVATIVE, true, true, false, false);
+  assert_policy(LAGHU_PRESET_BLOG, blog, LAGHU_RISK_MODERATE, true, true, true, true);
+  assert_policy(LAGHU_PRESET_STATIC, aggressive | LAGHU_FILTER_IMMUTABLE_CACHE, LAGHU_RISK_EXPANSIVE, true, true, true, true);
 
   assert(!laghu_resolve_policy(LAGHU_PRESET_UNSET, &(laghu_policy){0}));
   assert(!laghu_resolve_policy(LAGHU_PRESET_SAFE, NULL));
@@ -450,29 +390,18 @@ static void test_rewrite_level_parser_and_policies(void) {
     const char *name;
     laghu_rewrite_level rewrite_level;
   } cases[] = {
-      {"passthrough", LAGHU_REWRITE_LEVEL_PASSTHROUGH},
-      {"core", LAGHU_REWRITE_LEVEL_CORE},
-      {"bandwidth", LAGHU_REWRITE_LEVEL_BANDWIDTH},
-      {"all", LAGHU_REWRITE_LEVEL_ALL},
+      {"passthrough", LAGHU_REWRITE_LEVEL_PASSTHROUGH},   {"core", LAGHU_REWRITE_LEVEL_CORE},
+      {"bandwidth", LAGHU_REWRITE_LEVEL_BANDWIDTH},       {"all", LAGHU_REWRITE_LEVEL_ALL},
       {"experimental", LAGHU_REWRITE_LEVEL_EXPERIMENTAL},
   };
-  const uint32_t safe = LAGHU_FILTER_IMAGE_LOSSLESS |
-                        LAGHU_FILTER_IMAGE_METADATA |
-                        LAGHU_FILTER_IMAGE_DIMENSIONS;
-  const uint32_t balanced =
-      safe | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE |
-      LAGHU_FILTER_IMAGE_LAZYLOAD | LAGHU_FILTER_HTML_MINIFY |
-      LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY |
-      LAGHU_FILTER_RESOURCE_HINTS | LAGHU_FILTER_CACHE_EXTENSION;
-  const uint32_t bandwidth =
-      LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA |
-      LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_HTML_MINIFY |
-      LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY |
-      LAGHU_FILTER_CACHE_EXTENSION;
-  const uint32_t all =
-      balanced | LAGHU_FILTER_RESOURCE_COMBINE | LAGHU_FILTER_RESOURCE_INLINE |
-      LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER |
-      LAGHU_FILTER_IMMUTABLE_CACHE | LAGHU_FILTER_CACHE_MEDIA;
+  const uint32_t safe = LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA | LAGHU_FILTER_IMAGE_DIMENSIONS;
+  const uint32_t balanced = safe | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_IMAGE_RESPONSIVE | LAGHU_FILTER_IMAGE_LAZYLOAD |
+                            LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY | LAGHU_FILTER_RESOURCE_HINTS |
+                            LAGHU_FILTER_CACHE_EXTENSION;
+  const uint32_t bandwidth = LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA | LAGHU_FILTER_IMAGE_MODERN | LAGHU_FILTER_HTML_MINIFY |
+                             LAGHU_FILTER_CSS_MINIFY | LAGHU_FILTER_JAVASCRIPT_MINIFY | LAGHU_FILTER_CACHE_EXTENSION;
+  const uint32_t all = balanced | LAGHU_FILTER_RESOURCE_COMBINE | LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS |
+                       LAGHU_FILTER_JAVASCRIPT_DEFER | LAGHU_FILTER_IMMUTABLE_CACHE | LAGHU_FILTER_CACHE_MEDIA;
   laghu_rewrite_level rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   laghu_config config = enabled_config();
   laghu_policy policy;
@@ -481,27 +410,19 @@ static void test_rewrite_level_parser_and_policies(void) {
   for (index = 0U; index < sizeof(cases) / sizeof(cases[0]); ++index) {
     assert(laghu_parse_rewrite_level(cases[index].name, &rewrite_level));
     assert(rewrite_level == cases[index].rewrite_level);
-    assert(strcmp(laghu_rewrite_level_name(rewrite_level), cases[index].name) ==
-           0);
+    assert(strcmp(laghu_rewrite_level_name(rewrite_level), cases[index].name) == 0);
   }
 
   assert(!laghu_parse_rewrite_level("unknown", &rewrite_level));
   assert(!laghu_parse_rewrite_level(NULL, &rewrite_level));
   assert(!laghu_parse_rewrite_level("core", NULL));
-  assert(strcmp(laghu_rewrite_level_name(LAGHU_REWRITE_LEVEL_UNSET), "unset") ==
-         0);
+  assert(strcmp(laghu_rewrite_level_name(LAGHU_REWRITE_LEVEL_UNSET), "unset") == 0);
 
-  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_PASSTHROUGH, 0U,
-                        LAGHU_RISK_CONSERVATIVE, false, false, false, false,
-                        false);
-  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_CORE, balanced, LAGHU_RISK_MODERATE,
-                        true, true, false, false, false);
-  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_BANDWIDTH, bandwidth,
-                        LAGHU_RISK_MODERATE, true, false, false, false, false);
-  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_ALL, all, LAGHU_RISK_EXPANSIVE,
-                        true, true, true, true, false);
-  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_EXPERIMENTAL, all,
-                        LAGHU_RISK_EXPANSIVE, true, true, true, true, true);
+  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_PASSTHROUGH, 0U, LAGHU_RISK_CONSERVATIVE, false, false, false, false, false);
+  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_CORE, balanced, LAGHU_RISK_MODERATE, true, true, false, false, false);
+  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_BANDWIDTH, bandwidth, LAGHU_RISK_MODERATE, true, false, false, false, false);
+  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_ALL, all, LAGHU_RISK_EXPANSIVE, true, true, true, true, false);
+  assert_rewrite_policy(LAGHU_REWRITE_LEVEL_EXPERIMENTAL, all, LAGHU_RISK_EXPANSIVE, true, true, true, true, true);
   assert(!laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_UNSET, &policy));
   assert(!laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_CORE, NULL));
 
@@ -589,8 +510,7 @@ static void test_filter_controls(void) {
 
   parent = enabled_config();
   parent.preset = LAGHU_PRESET_SAFE;
-  parent.enabled_filters =
-      LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_JAVASCRIPT_DEFER;
+  parent.enabled_filters = LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_JAVASCRIPT_DEFER;
   assert(laghu_resolve_config_policy(&parent, &policy));
   assert(policy.allow_structural_rewrite);
   assert(policy.allow_resource_inlining);
@@ -617,8 +537,7 @@ static void test_decision_precedence(void) {
   config.preset = LAGHU_PRESET_UNSET;
   config.rewrite_level = LAGHU_REWRITE_LEVEL_PASSTHROUGH;
   assert(laghu_decide(&config, NULL) == LAGHU_DECISION_BYPASS_PASSTHROUGH);
-  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_PASSTHROUGH),
-                "bypass-passthrough") == 0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_PASSTHROUGH), "bypass-passthrough") == 0);
   config.rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
   assert(laghu_decide(&config, &response) == LAGHU_DECISION_PASS);
   config.rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
@@ -642,20 +561,15 @@ static void test_decision_precedence(void) {
   assert(laghu_decide(&config, &response) == LAGHU_DECISION_BYPASS_API);
 
   config.allow_api = LAGHU_MODE_ON;
-  assert(laghu_decide(&config, &response) ==
-         LAGHU_DECISION_BYPASS_CONTENT_TYPE);
+  assert(laghu_decide(&config, &response) == LAGHU_DECISION_BYPASS_CONTENT_TYPE);
 
   config.mode = LAGHU_MODE_OFF;
   assert(laghu_decide(&config, NULL) == LAGHU_DECISION_BYPASS_DISABLED);
 
-  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_API), "bypass-api") ==
-         0);
-  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_OFF),
-                "bypass-query-off") == 0);
-  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_EXPLAIN),
-                "bypass-query-explain") == 0);
-  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_PREVIEW),
-                "bypass-query-preview") == 0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_API), "bypass-api") == 0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_OFF), "bypass-query-off") == 0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_EXPLAIN), "bypass-query-explain") == 0);
+  assert(strcmp(laghu_decision_name(LAGHU_DECISION_BYPASS_QUERY_PREVIEW), "bypass-query-preview") == 0);
   assert(strcmp(laghu_decision_name((laghu_decision)999), "bypass-error") == 0);
 }
 
@@ -663,28 +577,22 @@ static void test_config_policy_validation_error(void) {
   laghu_config config = enabled_config();
   laghu_policy policy;
   char error[160U];
-  assert(!laghu_resolve_config_policy_with_error(NULL, &policy, error,
-                                                 sizeof(error)));
+  assert(!laghu_resolve_config_policy_with_error(NULL, &policy, error, sizeof(error)));
   assert(strcmp(error, "missing configuration") == 0);
-  assert(!laghu_resolve_config_policy_with_error(&config, NULL, error,
-                                                 sizeof(error)));
+  assert(!laghu_resolve_config_policy_with_error(&config, NULL, error, sizeof(error)));
   assert(strcmp(error, "missing configuration") == 0);
   config.rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
   config.preset = LAGHU_PRESET_SAFE;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
   assert(strcmp(error, "set exactly one of preset or rewrite-level") == 0);
   config.preset = LAGHU_PRESET_UNSET;
   config.rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
   assert(strcmp(error, "set exactly one of preset or rewrite-level") == 0);
   config.rewrite_level = LAGHU_REWRITE_LEVEL_PASSTHROUGH;
   config.enabled_filters = LAGHU_FILTER_HTML_MINIFY;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
-  assert(strcmp(error, "passthrough policy does not allow enabled filters") ==
-         0);
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
+  assert(strcmp(error, "passthrough policy does not allow enabled filters") == 0);
 }
 
 static void test_rollout_policy_validation(void) {
@@ -693,48 +601,35 @@ static void test_rollout_policy_validation(void) {
   char error[160U];
   config.rollout = LAGHU_MODE_OFF;
   config.rollout_percentage = 10U;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
-  assert(strcmp(error, "rollout percentage requires rollout to be enabled") ==
-         0);
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
+  assert(strcmp(error, "rollout percentage requires rollout to be enabled") == 0);
   config.rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   config.rollout_preset = LAGHU_PRESET_SAFE;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
   assert(strcmp(error, "rollout preset requires rollout to be enabled") == 0);
   config.rollout_preset = LAGHU_PRESET_UNSET;
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
-  assert(strcmp(error,
-                "rollout rewrite-level requires rollout to be enabled") == 0);
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
+  assert(strcmp(error, "rollout rewrite-level requires rollout to be enabled") == 0);
   config.rollout = LAGHU_MODE_ON;
   config.rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
   assert(strcmp(error, "rollout percentage required") == 0);
   config.rollout_percentage = 100U;
-  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                 sizeof(error)));
-  assert(strcmp(error,
-                "set exactly one of rollout preset or rollout rewrite-level") ==
-         0);
+  assert(!laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
+  assert(strcmp(error, "set exactly one of rollout preset or rollout rewrite-level") == 0);
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
-  assert(laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+  assert(laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
   config.rollout = LAGHU_MODE_OFF;
   config.rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
-  assert(laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+  assert(laghu_resolve_config_policy_with_error(&config, &policy, error, sizeof(error)));
 }
 
 static void test_api_path_policy(void) {
-  static const char *excluded[] = {"/api", "/api/", "/api/v1/products",
-                                   "/graphql", "/graphql/query"};
-  static const char *allowed[] = {
-      NULL, "", "/", "/apiary", "/api-v1", "/API", "/graphql-ui", "/graphqled"};
+  static const char *excluded[] = {"/api", "/api/", "/api/v1/products", "/graphql", "/graphql/query"};
+  static const char *allowed[] = {NULL, "", "/", "/apiary", "/api-v1", "/API", "/graphql-ui", "/graphqled"};
   laghu_config config = enabled_config();
   laghu_response response = html_response();
   size_t index;
@@ -765,8 +660,7 @@ static void test_rewrite_level_safety_precedence(void) {
   size_t index;
 
   config.preset = LAGHU_PRESET_UNSET;
-  for (index = 0U; index < sizeof(rewrite_levels) / sizeof(rewrite_levels[0]);
-       ++index) {
+  for (index = 0U; index < sizeof(rewrite_levels) / sizeof(rewrite_levels[0]); ++index) {
     laghu_response response = html_response();
 
     config.rewrite_level = rewrite_levels[index];
@@ -777,8 +671,7 @@ static void test_rewrite_level_safety_precedence(void) {
     response.status = 200U;
 
     response.has_authorization = true;
-    assert(laghu_decide(&config, &response) ==
-           LAGHU_DECISION_BYPASS_AUTHORIZED);
+    assert(laghu_decide(&config, &response) == LAGHU_DECISION_BYPASS_AUTHORIZED);
     response.has_authorization = false;
 
     response.cache_control = "private";
@@ -790,8 +683,7 @@ static void test_rewrite_level_safety_precedence(void) {
     response.request_path = "/";
 
     response.content_type = "application/json";
-    assert(laghu_decide(&config, &response) ==
-           LAGHU_DECISION_BYPASS_CONTENT_TYPE);
+    assert(laghu_decide(&config, &response) == LAGHU_DECISION_BYPASS_CONTENT_TYPE);
   }
 }
 
@@ -815,13 +707,11 @@ static void test_candidate_finalization(void) {
   assert(result.decision == LAGHU_CANDIDATE_REJECTED_IDENTICAL);
   assert(result.selected.data == original.data);
 
-  result = laghu_finalize_candidate(
-      original, (laghu_buffer){equal_data, sizeof(equal_data) - 1U}, true);
+  result = laghu_finalize_candidate(original, (laghu_buffer){equal_data, sizeof(equal_data) - 1U}, true);
   assert(result.decision == LAGHU_CANDIDATE_REJECTED_NOT_SMALLER);
   assert(result.selected.data == original.data);
 
-  result = laghu_finalize_candidate(
-      original, (laghu_buffer){larger_data, sizeof(larger_data) - 1U}, true);
+  result = laghu_finalize_candidate(original, (laghu_buffer){larger_data, sizeof(larger_data) - 1U}, true);
   assert(result.decision == LAGHU_CANDIDATE_REJECTED_NOT_SMALLER);
   assert(result.selected.data == original.data);
 
@@ -846,8 +736,7 @@ static void test_candidate_finalization(void) {
 static void test_hashing(void) {
   static const unsigned char abc[] = "abc";
   static const unsigned char abd[] = "abd";
-  static const unsigned char multi_block[] =
-      "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+  static const unsigned char multi_block[] = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
   char output[LAGHU_SHA256_HEX_SIZE];
   char key[LAGHU_SHA256_HEX_SIZE];
   char repeated_key[LAGHU_SHA256_HEX_SIZE];
@@ -866,14 +755,12 @@ static void test_hashing(void) {
                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f200"
                 "15ad") == 0);
 
-  assert(laghu_sha256_hex((laghu_buffer){overlapping_output, 3U},
-                          (char *)overlapping_output));
+  assert(laghu_sha256_hex((laghu_buffer){overlapping_output, 3U}, (char *)overlapping_output));
   assert(strcmp((char *)overlapping_output,
                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f200"
                 "15ad") == 0);
 
-  assert(laghu_sha256_hex((laghu_buffer){multi_block, sizeof(multi_block) - 1U},
-                          output));
+  assert(laghu_sha256_hex((laghu_buffer){multi_block, sizeof(multi_block) - 1U}, output));
   assert(strcmp(output,
                 "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db"
                 "06c1") == 0);
@@ -884,70 +771,53 @@ static void test_hashing(void) {
   assert(!laghu_sha256_hex((laghu_buffer){abc, sizeof(abc) - 1U}, NULL));
 
   assert(laghu_resolve_policy(LAGHU_PRESET_BALANCED, &policy));
-  assert(
-      laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
+  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, key));
   assert(strlen(key) == LAGHU_SHA256_HEX_SIZE - 1U);
 
   memcpy(overlapping_output, abc, sizeof(abc));
-  assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy,
-                           (char *)overlapping_output));
+  assert(laghu_variant_key((laghu_buffer){overlapping_output, 3U}, &policy, (char *)overlapping_output));
   assert(strcmp((char *)overlapping_output, key) == 0);
-  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy,
-                           repeated_key));
+  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &policy, repeated_key));
   assert(strcmp(key, repeated_key) == 0);
 
-  assert(laghu_variant_key((laghu_buffer){abd, sizeof(abd) - 1U}, &policy,
-                           changed_key));
+  assert(laghu_variant_key((laghu_buffer){abd, sizeof(abd) - 1U}, &policy, changed_key));
   assert(strcmp(key, changed_key) != 0);
 
   changed_policy = policy;
   changed_policy.allow_resource_inlining = true;
-  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                           &changed_policy, changed_key));
+  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, changed_key));
   assert(strcmp(key, changed_key) != 0);
 
-  assert(
-      laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_CORE, &changed_policy));
-  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                           &changed_policy, changed_key));
+  assert(laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_CORE, &changed_policy));
+  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, changed_key));
   assert(strcmp(key, changed_key) != 0);
 
   assert(laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_ALL, &changed_policy));
-  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                           &changed_policy, changed_key));
+  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, changed_key));
   changed_policy.allow_experimental = true;
-  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                           &changed_policy, repeated_key));
+  assert(laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, repeated_key));
   assert(strcmp(changed_key, repeated_key) != 0);
 
   changed_policy.filter_families = UINT32_MAX;
-  assert(!laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                            &changed_policy, changed_key));
+  assert(!laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, changed_key));
   assert(changed_key[0] == '\0');
 
   assert(laghu_resolve_policy(LAGHU_PRESET_BALANCED, &changed_policy));
   changed_policy.rewrite_level = (laghu_rewrite_level)99;
-  assert(!laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                            &changed_policy, changed_key));
+  assert(!laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, changed_key));
   assert(changed_key[0] == '\0');
 
-  assert(
-      laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_CORE, &changed_policy));
+  assert(laghu_resolve_rewrite_level(LAGHU_REWRITE_LEVEL_CORE, &changed_policy));
   changed_policy.preset = (laghu_preset)99;
-  assert(!laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U},
-                            &changed_policy, changed_key));
+  assert(!laghu_variant_key((laghu_buffer){abc, sizeof(abc) - 1U}, &changed_policy, changed_key));
   assert(changed_key[0] == '\0');
 }
 
 int main(void) {
-  assert(laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
-                                 "IMAGE/PNG; charset=binary"));
-  assert(laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
-                                 "application/pdf"));
-  assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
-                                  "video/mp4"));
-  assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2",
-                                  "image/pngx"));
+  assert(laghu_mime_type_allowed("image/png, application/pdf, font/woff2", "IMAGE/PNG; charset=binary"));
+  assert(laghu_mime_type_allowed("image/png, application/pdf, font/woff2", "application/pdf"));
+  assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2", "video/mp4"));
+  assert(!laghu_mime_type_allowed("image/png, application/pdf, font/woff2", "image/pngx"));
   test_config_defaults_and_inheritance();
   test_domain_policy();
   test_request_policy_controls();

@@ -10,10 +10,8 @@
 int main(void) {
   static const unsigned char html[] = "<p>unchanged</p>";
   laghu_runtime_html_result result;
-  assert(laghu_runtime_rewrite_css_markup(
-      "/nonexistent", (laghu_buffer){html, sizeof(html) - 1U}, "/",
-      "https://example.test", "policy", 0U, 1U, 60U, true, true, true, 0U, true,
-      true, 1024U, 1024U, &result));
+  assert(laghu_runtime_rewrite_css_markup("/nonexistent", (laghu_buffer){html, sizeof(html) - 1U}, "/", "https://example.test", "policy", 0U, 1U, 60U,
+                                          true, true, true, 0U, true, true, 1024U, 1024U, &result));
   assert(!result.rewritten);
   laghu_runtime_html_result_release(&result);
   return 0;

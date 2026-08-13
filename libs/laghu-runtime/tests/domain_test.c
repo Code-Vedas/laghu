@@ -24,32 +24,21 @@ int main(void) {
       "b{background:noturl(https://origin.example/no.png)}"
       "c{background:url(https://origin.example/escaped\\).png)}";
   assert(laghu_domain_policy_add_domain(&policy, "https://cdn.example"));
-  assert(laghu_domain_policy_add_mapping(&policy, "https://origin.example",
-                                         "https://cdn.example"));
-  assert(laghu_domain_rewrite_html((laghu_buffer){html, sizeof(html) - 1U},
-                                   &policy, &result));
+  assert(laghu_domain_policy_add_mapping(&policy, "https://origin.example", "https://cdn.example"));
+  assert(laghu_domain_rewrite_html((laghu_buffer){html, sizeof(html) - 1U}, &policy, &result));
   assert(result.rewritten);
   assert(strstr((const char *)result.data, "https://cdn.example/a") != NULL);
-  assert(strstr((const char *)result.data, "https://cdn.example/i.png") !=
-         NULL);
-  assert(strstr((const char *)result.data, "https://cdn.example/i@2x.png") !=
-         NULL);
-  assert(strstr((const char *)result.data, "https://cdn.example/bg.png") !=
-         NULL);
+  assert(strstr((const char *)result.data, "https://cdn.example/i.png") != NULL);
+  assert(strstr((const char *)result.data, "https://cdn.example/i@2x.png") != NULL);
+  assert(strstr((const char *)result.data, "https://cdn.example/bg.png") != NULL);
   laghu_domain_rewrite_result_release(&result);
-  assert(laghu_domain_rewrite_css((laghu_buffer){css, sizeof(css) - 1U},
-                                  &policy, &result));
+  assert(laghu_domain_rewrite_css((laghu_buffer){css, sizeof(css) - 1U}, &policy, &result));
   assert(result.rewritten);
-  assert(strstr((const char *)result.data, "https://cdn.example/a.png") !=
-         NULL);
-  assert(strstr((const char *)result.data,
-                "https://origin.example/comment.png") != NULL);
-  assert(strstr((const char *)result.data,
-                "https://origin.example/string.png") != NULL);
-  assert(strstr((const char *)result.data, "https://origin.example/no.png") !=
-         NULL);
-  assert(strstr((const char *)result.data,
-                "https://origin.example/escaped\\).png") != NULL);
+  assert(strstr((const char *)result.data, "https://cdn.example/a.png") != NULL);
+  assert(strstr((const char *)result.data, "https://origin.example/comment.png") != NULL);
+  assert(strstr((const char *)result.data, "https://origin.example/string.png") != NULL);
+  assert(strstr((const char *)result.data, "https://origin.example/no.png") != NULL);
+  assert(strstr((const char *)result.data, "https://origin.example/escaped\\).png") != NULL);
   laghu_domain_rewrite_result_release(&result);
   return 0;
 }

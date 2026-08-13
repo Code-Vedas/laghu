@@ -22,18 +22,10 @@ typedef void *laghu_rum_library;
 #define laghu_rum_library_open(path) dlopen((path), RTLD_NOW | RTLD_LOCAL)
 #define laghu_rum_library_symbol(handle, name) dlsym((handle), (name))
 #define laghu_rum_library_close(handle) dlclose(handle)
-static bool laghu_rum_mutex_init(laghu_rum_mutex *mutex) {
-  return pthread_mutex_init(mutex, NULL) == 0;
-}
-static void laghu_rum_mutex_lock(laghu_rum_mutex *mutex) {
-  (void)pthread_mutex_lock(mutex);
-}
-static void laghu_rum_mutex_unlock(laghu_rum_mutex *mutex) {
-  (void)pthread_mutex_unlock(mutex);
-}
-static void laghu_rum_mutex_destroy(laghu_rum_mutex *mutex) {
-  (void)pthread_mutex_destroy(mutex);
-}
+static bool laghu_rum_mutex_init(laghu_rum_mutex *mutex) { return pthread_mutex_init(mutex, NULL) == 0; }
+static void laghu_rum_mutex_lock(laghu_rum_mutex *mutex) { (void)pthread_mutex_lock(mutex); }
+static void laghu_rum_mutex_unlock(laghu_rum_mutex *mutex) { (void)pthread_mutex_unlock(mutex); }
+static void laghu_rum_mutex_destroy(laghu_rum_mutex *mutex) { (void)pthread_mutex_destroy(mutex); }
 static void laghu_rum_pause(void) { usleep(100000U); }
 static uint64_t laghu_rum_monotonic_ms(void) {
   struct timespec value;
@@ -82,11 +74,7 @@ typedef struct laghu_redis_reply {
   struct laghu_redis_reply **element;
 } laghu_redis_reply;
 
-typedef enum {
-  LAGHU_RUM_BACKEND_MEMORY = 0,
-  LAGHU_RUM_BACKEND_LOCAL,
-  LAGHU_RUM_BACKEND_REDIS
-} laghu_rum_backend;
+typedef enum { LAGHU_RUM_BACKEND_MEMORY = 0, LAGHU_RUM_BACKEND_LOCAL, LAGHU_RUM_BACKEND_REDIS } laghu_rum_backend;
 
 typedef struct {
   char key[LAGHU_RUNTIME_KEY_SIZE];
@@ -136,13 +124,10 @@ struct laghu_rum_engine {
   int (*redis_set_timeout)(laghu_redis_context *, struct timeval);
   void (*redis_free)(laghu_redis_context *);
   void *(*redis_command)(laghu_redis_context *, const char *, ...);
-  void *(*redis_command_argv)(laghu_redis_context *, int, const char **,
-                              const size_t *);
+  void *(*redis_command_argv)(laghu_redis_context *, int, const char **, const size_t *);
   void (*redis_reply_free)(void *);
   int (*redis_init_openssl)(void);
-  laghu_redis_ssl_context *(*redis_ssl_create)(const char *, const char *,
-                                               const char *, const char *,
-                                               const char *, int *);
+  laghu_redis_ssl_context *(*redis_ssl_create)(const char *, const char *, const char *, const char *, const char *, int *);
   int (*redis_ssl_start)(laghu_redis_context *, laghu_redis_ssl_context *);
   void (*redis_ssl_free)(laghu_redis_ssl_context *);
   void *retry_entries;
@@ -163,9 +148,7 @@ typedef struct {
   uint64_t updated_at;
 } laghu_rum_snapshot_entry;
 
-static laghu_rum_slot *laghu_rum_find(laghu_rum_engine *engine,
-                                      laghu_rum_record_type type,
-                                      const char *key);
+static laghu_rum_slot *laghu_rum_find(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key);
 static laghu_rum_slot *laghu_rum_select_slot(laghu_rum_engine *engine);
 static void laghu_rum_snapshot_load(laghu_rum_engine *engine);
 
@@ -173,36 +156,25 @@ static bool laghu_rum_key_valid(const char *key) {
   size_t index;
   if (key == NULL || strlen(key) != LAGHU_SHA256_HEX_LENGTH) return false;
   for (index = 0U; index < LAGHU_SHA256_HEX_LENGTH; ++index)
-    if (!((key[index] >= '0' && key[index] <= '9') ||
-          (key[index] >= 'a' && key[index] <= 'f')))
-      return false;
+    if (!((key[index] >= '0' && key[index] <= '9') || (key[index] >= 'a' && key[index] <= 'f'))) return false;
   return true;
 }
 
-static size_t laghu_rum_record_size(laghu_rum_record_type type,
-                                    size_t encoded_length) {
+static size_t laghu_rum_record_size(laghu_rum_record_type type, size_t encoded_length) {
   if (type == LAGHU_RUM_RECORD_IMAGE) return sizeof(laghu_rum_image_record);
-  if (type == LAGHU_RUM_RECORD_CRITICAL_CSS)
-    return sizeof(laghu_critical_css_record);
-  if (type == LAGHU_RUM_RECORD_INSTRUMENTATION)
-    return sizeof(laghu_rum_instrumentation_record);
+  if (type == LAGHU_RUM_RECORD_CRITICAL_CSS) return sizeof(laghu_critical_css_record);
+  if (type == LAGHU_RUM_RECORD_INSTRUMENTATION) return sizeof(laghu_rum_instrumentation_record);
   return encoded_length;
 }
 
-static uint64_t laghu_rum_record_updated_at(laghu_rum_record_type type,
-                                            const void *record,
-                                            uint64_t fallback) {
-  if (type == LAGHU_RUM_RECORD_IMAGE)
-    return ((const laghu_rum_image_record *)record)->updated_at;
-  if (type == LAGHU_RUM_RECORD_CRITICAL_CSS)
-    return ((const laghu_critical_css_record *)record)->updated_at;
-  if (type == LAGHU_RUM_RECORD_INSTRUMENTATION)
-    return ((const laghu_rum_instrumentation_record *)record)->updated_at;
+static uint64_t laghu_rum_record_updated_at(laghu_rum_record_type type, const void *record, uint64_t fallback) {
+  if (type == LAGHU_RUM_RECORD_IMAGE) return ((const laghu_rum_image_record *)record)->updated_at;
+  if (type == LAGHU_RUM_RECORD_CRITICAL_CSS) return ((const laghu_critical_css_record *)record)->updated_at;
+  if (type == LAGHU_RUM_RECORD_INSTRUMENTATION) return ((const laghu_rum_instrumentation_record *)record)->updated_at;
   return fallback;
 }
 
-static bool laghu_rum_copy(char *target, size_t capacity, const char *source,
-                           size_t length) {
+static bool laghu_rum_copy(char *target, size_t capacity, const char *source, size_t length) {
   if (length == 0U || length >= capacity) return false;
   memcpy(target, source, length);
   target[length] = '\0';
@@ -216,8 +188,7 @@ static int laghu_rum_hex_value(char value) {
   return -1;
 }
 
-static bool laghu_rum_uri_decode(char *target, size_t capacity,
-                                 const char *source) {
+static bool laghu_rum_uri_decode(char *target, size_t capacity, const char *source) {
   size_t input = 0U, output = 0U;
   while (source[input] != '\0') {
     unsigned char value = (unsigned char)source[input++];
@@ -239,16 +210,13 @@ static bool laghu_rum_uri_decode(char *target, size_t capacity,
 static bool laghu_rum_prefix_valid(const char *prefix) {
   size_t index;
   for (index = 0U; prefix[index] != '\0'; ++index)
-    if (!((prefix[index] >= 'a' && prefix[index] <= 'z') ||
-          (prefix[index] >= 'A' && prefix[index] <= 'Z') ||
-          (prefix[index] >= '0' && prefix[index] <= '9') ||
-          prefix[index] == ':' || prefix[index] == '_' || prefix[index] == '-'))
+    if (!((prefix[index] >= 'a' && prefix[index] <= 'z') || (prefix[index] >= 'A' && prefix[index] <= 'Z') ||
+          (prefix[index] >= '0' && prefix[index] <= '9') || prefix[index] == ':' || prefix[index] == '_' || prefix[index] == '-'))
       return false;
   return index != 0U;
 }
 
-static bool laghu_rum_expand_environment(const char *source, char *target,
-                                         size_t capacity) {
+static bool laghu_rum_expand_environment(const char *source, char *target, size_t capacity) {
   size_t input = 0U, output = 0U;
   while (source[input] != '\0') {
     if (source[input] == '$' && source[input + 1U] == '{') {
@@ -258,8 +226,7 @@ static bool laghu_rum_expand_environment(const char *source, char *target,
       size_t name_length, value_length;
       if (end == NULL) return false;
       name_length = (size_t)(end - (source + input + 2U));
-      if (!laghu_rum_copy(name, sizeof(name), source + input + 2U, name_length))
-        return false;
+      if (!laghu_rum_copy(name, sizeof(name), source + input + 2U, name_length)) return false;
       value = getenv(name);
       if (value == NULL) return false;
       value_length = strlen(value);
@@ -283,8 +250,7 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
   size_t authority_length;
   unsigned long value;
   char *end;
-  if (!laghu_rum_expand_environment(uri, expanded, sizeof(expanded)))
-    return false;
+  if (!laghu_rum_expand_environment(uri, expanded, sizeof(expanded))) return false;
   if (strncmp(expanded, "rediss://", 9U) == 0) {
     engine->redis_tls = true;
     cursor = expanded + 9U;
@@ -297,8 +263,7 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
   path = strchr(cursor, '/');
   if (path == NULL) return false;
   authority_length = (size_t)(path - cursor);
-  if (!laghu_rum_copy(authority, sizeof(authority), cursor, authority_length))
-    return false;
+  if (!laghu_rum_copy(authority, sizeof(authority), cursor, authority_length)) return false;
   host = authority;
   at = strrchr(authority, '@');
   if (at != NULL) {
@@ -306,17 +271,11 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
     *at = '\0';
     credential_colon = strchr(authority, ':');
     if (credential_colon == NULL) {
-      if (!laghu_rum_uri_decode(engine->redis_password,
-                                sizeof(engine->redis_password), authority))
-        return false;
+      if (!laghu_rum_uri_decode(engine->redis_password, sizeof(engine->redis_password), authority)) return false;
     } else {
       *credential_colon = '\0';
-      if ((authority[0] != '\0' &&
-           !laghu_rum_uri_decode(engine->redis_username,
-                                 sizeof(engine->redis_username), authority)) ||
-          !laghu_rum_uri_decode(engine->redis_password,
-                                sizeof(engine->redis_password),
-                                credential_colon + 1U))
+      if ((authority[0] != '\0' && !laghu_rum_uri_decode(engine->redis_username, sizeof(engine->redis_username), authority)) ||
+          !laghu_rum_uri_decode(engine->redis_password, sizeof(engine->redis_password), credential_colon + 1U))
         return false;
     }
     host = at + 1U;
@@ -328,8 +287,7 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
     host_length = (size_t)(close - host - 1U);
     if (close[1] == ':') {
       value = strtoul(close + 2U, &end, 10);
-      if (end == close + 2U || *end != '\0' || value == 0U || value > 65535U)
-        return false;
+      if (end == close + 2U || *end != '\0' || value == 0U || value > 65535U) return false;
       engine->redis_port = (unsigned int)value;
     } else if (close[1] != '\0')
       return false;
@@ -341,16 +299,11 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
   if (colon != NULL) {
     *colon = '\0';
     value = strtoul(colon + 1U, &end, 10);
-    if (end == colon + 1U || *end != '\0' || value == 0U || value > 65535U)
-      return false;
+    if (end == colon + 1U || *end != '\0' || value == 0U || value > 65535U) return false;
     engine->redis_port = (unsigned int)value;
   }
-  if (!laghu_rum_copy(engine->redis_host, sizeof(engine->redis_host), host,
-                      strlen(host)))
-    return false;
-  if (!engine->redis_tls && strcmp(host, "localhost") != 0 &&
-      strcmp(host, "127.0.0.1") != 0 && strcmp(host, "::1") != 0)
-    return false;
+  if (!laghu_rum_copy(engine->redis_host, sizeof(engine->redis_host), host, strlen(host))) return false;
+  if (!engine->redis_tls && strcmp(host, "localhost") != 0 && strcmp(host, "127.0.0.1") != 0 && strcmp(host, "::1") != 0) return false;
   query = strchr(path, '?');
   if (query != NULL) *query++ = '\0';
   value = strtoul(path + 1U, &end, 10);
@@ -365,14 +318,10 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
     if (equals == NULL) return false;
     *equals++ = '\0';
     if (strcmp(query, "prefix") == 0) {
-      if (!laghu_rum_uri_decode(engine->redis_prefix,
-                                sizeof(engine->redis_prefix), equals) ||
-          !laghu_rum_prefix_valid(engine->redis_prefix))
+      if (!laghu_rum_uri_decode(engine->redis_prefix, sizeof(engine->redis_prefix), equals) || !laghu_rum_prefix_valid(engine->redis_prefix))
         return false;
     } else if (strcmp(query, "ca_file") == 0) {
-      if (!laghu_rum_uri_decode(engine->redis_ca_file,
-                                sizeof(engine->redis_ca_file), equals))
-        return false;
+      if (!laghu_rum_uri_decode(engine->redis_ca_file, sizeof(engine->redis_ca_file), equals)) return false;
     } else
       return false;
     query = next;
@@ -383,24 +332,19 @@ static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
 bool laghu_rum_store_validate(const char *uri, char *error, size_t error_size) {
   laghu_rum_engine temporary = {0};
   bool valid = false;
-  if (uri != NULL &&
-      (strcmp(uri, "memory:") == 0 || strncmp(uri, "local:", 6U) == 0))
+  if (uri != NULL && (strcmp(uri, "memory:") == 0 || strncmp(uri, "local:", 6U) == 0))
     valid = true;
-  else if (uri != NULL && (strncmp(uri, "redis://", 8U) == 0 ||
-                           strncmp(uri, "rediss://", 9U) == 0))
+  else if (uri != NULL && (strncmp(uri, "redis://", 8U) == 0 || strncmp(uri, "rediss://", 9U) == 0))
     valid = laghu_rum_redis_uri(&temporary, uri);
   memset(temporary.redis_password, 0, sizeof(temporary.redis_password));
-  if (!valid && error != NULL && error_size != 0U)
-    (void)snprintf(error, error_size, "invalid or unsupported RUM store URI");
+  if (!valid && error != NULL && error_size != 0U) (void)snprintf(error, error_size, "invalid or unsupported RUM store URI");
   return valid;
 }
 
-static laghu_rum_library laghu_rum_open_first(const char *configured,
-                                              const char *const *names) {
+static laghu_rum_library laghu_rum_open_first(const char *configured, const char *const *names) {
   laghu_rum_library library;
   size_t index;
-  if (configured != NULL && configured[0] != '\0')
-    return laghu_rum_library_open(configured);
+  if (configured != NULL && configured[0] != '\0') return laghu_rum_library_open(configured);
   for (index = 0U; names[index] != NULL; ++index) {
     library = laghu_rum_library_open(names[index]);
     if (library != NULL) return library;
@@ -408,16 +352,13 @@ static laghu_rum_library laghu_rum_open_first(const char *configured,
   return NULL;
 }
 
-static bool laghu_rum_redis_load(laghu_rum_engine *engine,
-                                 const char *configured) {
+static bool laghu_rum_redis_load(laghu_rum_engine *engine, const char *configured) {
 #if defined(__APPLE__)
   static const char *const base_names[] = {"libhiredis.dylib", NULL};
   static const char *const ssl_names[] = {"libhiredis_ssl.dylib", NULL};
 #else
-  static const char *const base_names[] = {"libhiredis.so.1", "libhiredis.so",
-                                           NULL};
-  static const char *const ssl_names[] = {"libhiredis_ssl.so.1",
-                                          "libhiredis_ssl.so", NULL};
+  static const char *const base_names[] = {"libhiredis.so.1", "libhiredis.so", NULL};
+  static const char *const ssl_names[] = {"libhiredis_ssl.so.1", "libhiredis_ssl.so", NULL};
 #endif
   void *symbol;
   char ssl_path[LAGHU_RUNTIME_PATH_SIZE] = {0};
@@ -430,9 +371,7 @@ static bool laghu_rum_redis_load(laghu_rum_engine *engine,
   } while (0)
   engine->redis_library = laghu_rum_open_first(configured, base_names);
   if (engine->redis_library == NULL) return false;
-  if (laghu_rum_library_symbol(engine->redis_library, "redisSetPushCallback") ==
-      NULL)
-    return false;
+  if (laghu_rum_library_symbol(engine->redis_library, "redisSetPushCallback") == NULL) return false;
   LOAD(engine->redis_connect, engine->redis_library, "redisConnectWithTimeout");
   LOAD(engine->redis_set_timeout, engine->redis_library, "redisSetTimeout");
   LOAD(engine->redis_free, engine->redis_library, "redisFree");
@@ -458,22 +397,16 @@ static bool laghu_rum_redis_load(laghu_rum_engine *engine,
     }
     engine->redis_ssl_library = laghu_rum_open_first(ssl_configured, ssl_names);
     if (engine->redis_ssl_library == NULL) return false;
-    LOAD(engine->redis_init_openssl, engine->redis_ssl_library,
-         "redisInitOpenSSL");
-    LOAD(engine->redis_ssl_create, engine->redis_ssl_library,
-         "redisCreateSSLContext");
-    LOAD(engine->redis_ssl_start, engine->redis_ssl_library,
-         "redisInitiateSSLWithContext");
-    LOAD(engine->redis_ssl_free, engine->redis_ssl_library,
-         "redisFreeSSLContext");
+    LOAD(engine->redis_init_openssl, engine->redis_ssl_library, "redisInitOpenSSL");
+    LOAD(engine->redis_ssl_create, engine->redis_ssl_library, "redisCreateSSLContext");
+    LOAD(engine->redis_ssl_start, engine->redis_ssl_library, "redisInitiateSSLWithContext");
+    LOAD(engine->redis_ssl_free, engine->redis_ssl_library, "redisFreeSSLContext");
   }
 #undef LOAD
   return true;
 }
 
-static bool laghu_rum_redis_reply_ok(const laghu_redis_reply *reply) {
-  return reply != NULL && reply->type != LAGHU_REDIS_REPLY_ERROR;
-}
+static bool laghu_rum_redis_reply_ok(const laghu_redis_reply *reply) { return reply != NULL && reply->type != LAGHU_REDIS_REPLY_ERROR; }
 
 static laghu_redis_context *laghu_rum_redis_connect(laghu_rum_engine *engine) {
   struct timeval timeout;
@@ -483,28 +416,20 @@ static laghu_redis_context *laghu_rum_redis_connect(laghu_rum_engine *engine) {
   int ssl_error = 0;
   timeout.tv_sec = (long)(engine->timeout_ms / 1000U);
   timeout.tv_usec = (long)((engine->timeout_ms % 1000U) * 1000U);
-  context = engine->redis_connect(engine->redis_host, (int)engine->redis_port,
-                                  timeout);
+  context = engine->redis_connect(engine->redis_host, (int)engine->redis_port, timeout);
   if (context == NULL) return NULL;
   if (engine->redis_set_timeout(context, timeout) != 0) goto fail;
   if (engine->redis_tls) {
     if (engine->redis_init_openssl() != 0) goto fail;
-    ssl = engine->redis_ssl_create(
-        engine->redis_ca_file[0] == '\0' ? NULL : engine->redis_ca_file, NULL,
-        NULL, NULL, engine->redis_host, &ssl_error);
+    ssl = engine->redis_ssl_create(engine->redis_ca_file[0] == '\0' ? NULL : engine->redis_ca_file, NULL, NULL, NULL, engine->redis_host, &ssl_error);
     if (ssl == NULL || engine->redis_ssl_start(context, ssl) != 0) goto fail;
     engine->redis_ssl_free(ssl);
     ssl = NULL;
   }
   if (engine->redis_password[0] != '\0') {
-    reply =
-        engine->redis_username[0] == '\0'
-            ? engine->redis_command(context, "AUTH %b", engine->redis_password,
-                                    strlen(engine->redis_password))
-            : engine->redis_command(
-                  context, "AUTH %b %b", engine->redis_username,
-                  strlen(engine->redis_username), engine->redis_password,
-                  strlen(engine->redis_password));
+    reply = engine->redis_username[0] == '\0' ? engine->redis_command(context, "AUTH %b", engine->redis_password, strlen(engine->redis_password))
+                                              : engine->redis_command(context, "AUTH %b %b", engine->redis_username, strlen(engine->redis_username),
+                                                                      engine->redis_password, strlen(engine->redis_password));
     if (!laghu_rum_redis_reply_ok(reply)) {
       if (reply != NULL) engine->redis_reply_free(reply);
       goto fail;
@@ -540,13 +465,10 @@ static bool laghu_rum_instance_id(laghu_rum_engine *engine) {
   char material[192U];
   uint64_t now = (uint64_t)time(NULL);
   unsigned long process = (unsigned long)getpid();
-  int length = snprintf(material, sizeof(material), "%llu\n%lu\n%p\n%llu",
-                        (unsigned long long)now, process, (void *)engine,
-                        (unsigned long long)clock());
+  int length =
+      snprintf(material, sizeof(material), "%llu\n%lu\n%p\n%llu", (unsigned long long)now, process, (void *)engine, (unsigned long long)clock());
   return length > 0 && (size_t)length < sizeof(material) &&
-         laghu_sha256_hex(
-             (laghu_buffer){(const unsigned char *)material, (size_t)length},
-             engine->instance_id);
+         laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, engine->instance_id);
 }
 
 static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
@@ -573,8 +495,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
     laghu_rum_mutex_unlock(&engine->mutex);
     return true;
   }
-  length =
-      snprintf(lock_path, sizeof(lock_path), "%s.lock", engine->snapshot_path);
+  length = snprintf(lock_path, sizeof(lock_path), "%s.lock", engine->snapshot_path);
   if (length <= 0 || (size_t)length >= sizeof(lock_path)) return false;
   backend_lock = laghu_rum_backend_lock_acquire(lock_path);
   if (backend_lock < 0) return false;
@@ -585,8 +506,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
   disk.pending_limit = SIZE_MAX;
   disk.ttl_seconds = engine->ttl_seconds;
   disk.slots = calloc(disk.slot_count, sizeof(*disk.slots));
-  if (entries == NULL || deltas == NULL || disk.slots == NULL ||
-      !laghu_rum_mutex_init(&disk.mutex)) {
+  if (entries == NULL || deltas == NULL || disk.slots == NULL || !laghu_rum_mutex_init(&disk.mutex)) {
     free(entries);
     free(deltas);
     free(disk.slots);
@@ -594,8 +514,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
     return false;
   }
   disk.mutex_ready = true;
-  (void)snprintf(disk.snapshot_path, sizeof(disk.snapshot_path), "%s",
-                 engine->snapshot_path);
+  (void)snprintf(disk.snapshot_path, sizeof(disk.snapshot_path), "%s", engine->snapshot_path);
   laghu_rum_snapshot_load(&disk);
   laghu_rum_mutex_lock(&engine->mutex);
   for (index = 0U; index < engine->slot_count; ++index) {
@@ -613,16 +532,12 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
   }
   laghu_rum_mutex_unlock(&engine->mutex);
   for (index = 0U; index < delta_count; ++index) {
-    laghu_rum_slot *slot =
-        laghu_rum_find(&disk, deltas[index].type, deltas[index].key);
+    laghu_rum_slot *slot = laghu_rum_find(&disk, deltas[index].type, deltas[index].key);
     if (slot == NULL) {
-      if (!laghu_rum_engine_publish(&disk, deltas[index].type,
-                                    deltas[index].key, deltas[index].updated_at,
-                                    deltas[index].data, deltas[index].length,
+      if (!laghu_rum_engine_publish(&disk, deltas[index].type, deltas[index].key, deltas[index].updated_at, deltas[index].data, deltas[index].length,
                                     NULL))
         goto done;
-    } else if (!laghu_rum_record_merge(slot->type, slot->data,
-                                       deltas[index].data, slot->length))
+    } else if (!laghu_rum_record_merge(slot->type, slot->data, deltas[index].data, slot->length))
       goto done;
     else if (deltas[index].updated_at > slot->updated_at)
       slot->updated_at = deltas[index].updated_at;
@@ -640,11 +555,8 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
     entries[count].updated_at = slot->updated_at;
     ++count;
   }
-  length =
-      snprintf(temporary, sizeof(temporary), "%s.tmp", engine->snapshot_path);
-  if (length <= 0 || (size_t)length >= sizeof(temporary) ||
-      (file = fopen(temporary, "wb")) == NULL)
-    goto done;
+  length = snprintf(temporary, sizeof(temporary), "%s.tmp", engine->snapshot_path);
+  if (length <= 0 || (size_t)length >= sizeof(temporary) || (file = fopen(temporary, "wb")) == NULL) goto done;
   if (fputs("LAGHU-RUM-2\n", file) < 0) goto done;
   for (index = 0U; index < count; ++index) {
     char checksum[LAGHU_RUNTIME_KEY_SIZE];
@@ -652,11 +564,9 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
     size_t encoded_length;
     size_t byte;
     laghu_rum_snapshot_entry *entry = &entries[index];
-    if (!laghu_rum_encode(entry->type, entry->data, entry->length, encoded,
-                          sizeof(encoded), &encoded_length) ||
+    if (!laghu_rum_encode(entry->type, entry->data, entry->length, encoded, sizeof(encoded), &encoded_length) ||
         !laghu_sha256_hex((laghu_buffer){encoded, encoded_length}, checksum) ||
-        fprintf(file, "%u %s %llu %llu %zu ", (unsigned int)entry->type,
-                entry->key, (unsigned long long)entry->generation,
+        fprintf(file, "%u %s %llu %llu %zu ", (unsigned int)entry->type, entry->key, (unsigned long long)entry->generation,
                 (unsigned long long)entry->updated_at, encoded_length) < 0)
       goto done;
     for (byte = 0U; byte < encoded_length; ++byte)
@@ -671,8 +581,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
   if (!laghu_rum_replace(temporary, engine->snapshot_path)) goto done;
   laghu_rum_mutex_lock(&engine->mutex);
   for (index = 0U; index < count; ++index) {
-    laghu_rum_slot *slot =
-        laghu_rum_find(engine, entries[index].type, entries[index].key);
+    laghu_rum_slot *slot = laghu_rum_find(engine, entries[index].type, entries[index].key);
     unsigned char *copy = malloc(entries[index].length);
     if (copy == NULL) continue;
     memcpy(copy, entries[index].data, entries[index].length);
@@ -681,9 +590,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
       free(copy);
       continue;
     }
-    if (engine->memory_used - (slot->used ? slot->length : 0U) +
-            entries[index].length >
-        engine->memory_limit) {
+    if (engine->memory_used - (slot->used ? slot->length : 0U) + entries[index].length > engine->memory_limit) {
       free(copy);
       continue;
     }
@@ -709,9 +616,7 @@ static bool laghu_rum_snapshot_write(laghu_rum_engine *engine) {
     slot->accessed_at = entries[index].updated_at;
     slot->generation = ++engine->generation;
     engine->memory_used += slot->length;
-    if (slot->pending != NULL)
-      (void)laghu_rum_record_merge(slot->type, slot->data, slot->pending,
-                                   slot->length);
+    if (slot->pending != NULL) (void)laghu_rum_record_merge(slot->type, slot->data, slot->pending, slot->length);
     slot->dirty = slot->pending != NULL;
   }
   laghu_rum_mutex_unlock(&engine->mutex);
@@ -726,27 +631,23 @@ done:
   if (!success) {
     laghu_rum_mutex_lock(&engine->mutex);
     for (index = 0U; index < delta_count; ++index) {
-      laghu_rum_slot *slot =
-          laghu_rum_find(engine, deltas[index].type, deltas[index].key);
+      laghu_rum_slot *slot = laghu_rum_find(engine, deltas[index].type, deltas[index].key);
       if (slot == NULL) continue;
       if (slot->pending == NULL) {
         slot->pending = deltas[index].data;
         slot->pending_length = deltas[index].length;
         deltas[index].data = NULL;
       } else {
-        (void)laghu_rum_record_merge(slot->type, slot->pending,
-                                     deltas[index].data, slot->length);
+        (void)laghu_rum_record_merge(slot->type, slot->pending, deltas[index].data, slot->length);
       }
     }
     laghu_rum_mutex_unlock(&engine->mutex);
   }
   if (success) {
     size_t released = 0U;
-    for (index = 0U; index < delta_count; ++index)
-      released += deltas[index].length;
+    for (index = 0U; index < delta_count; ++index) released += deltas[index].length;
     laghu_rum_mutex_lock(&engine->mutex);
-    engine->pending_used =
-        released > engine->pending_used ? 0U : engine->pending_used - released;
+    engine->pending_used = released > engine->pending_used ? 0U : engine->pending_used - released;
     laghu_rum_mutex_unlock(&engine->mutex);
   }
   for (index = 0U; index < delta_count; ++index) free(deltas[index].data);
@@ -762,30 +663,21 @@ done:
   return success;
 }
 
-static bool laghu_rum_hex(unsigned char value) {
-  return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
-}
+static bool laghu_rum_hex(unsigned char value) { return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); }
 
-static unsigned char laghu_rum_unhex(unsigned char value) {
-  return value <= '9' ? (unsigned char)(value - '0')
-                      : (unsigned char)(value - 'a' + 10U);
-}
+static unsigned char laghu_rum_unhex(unsigned char value) { return value <= '9' ? (unsigned char)(value - '0') : (unsigned char)(value - 'a' + 10U); }
 
 static void laghu_rum_snapshot_load(laghu_rum_engine *engine) {
   char *line;
   FILE *file;
   size_t capacity = LAGHU_RUM_MAX_RECORD_BYTES * 2U + 512U;
-  if (engine->snapshot_path[0] == '\0' ||
-      (file = fopen(engine->snapshot_path, "rb")) == NULL)
-    return;
+  if (engine->snapshot_path[0] == '\0' || (file = fopen(engine->snapshot_path, "rb")) == NULL) return;
   line = malloc(capacity);
   if (line == NULL) {
     (void)fclose(file);
     return;
   }
-  if (fgets(line, (int)capacity, file) == NULL ||
-      strcmp(line, "LAGHU-RUM-2\n") != 0)
-    goto done;
+  if (fgets(line, (int)capacity, file) == NULL || strcmp(line, "LAGHU-RUM-2\n") != 0) goto done;
   while (fgets(line, (int)capacity, file) != NULL) {
     unsigned int type;
     char key[LAGHU_RUNTIME_KEY_SIZE], hex[LAGHU_RUM_MAX_RECORD_BYTES * 2U + 1U];
@@ -794,12 +686,9 @@ static void laghu_rum_snapshot_load(laghu_rum_engine *engine) {
     size_t bytes, index;
     unsigned char *data, *decoded;
     size_t decoded_length;
-    if (sscanf(line, "%u %64s %llu %llu %zu %32768s %64s", &type, key,
-               &generation, &updated, &bytes, hex, checksum) != 7 ||
-        type < LAGHU_RUM_RECORD_INSTRUMENTATION ||
-        type > LAGHU_RUM_RECORD_DECISION || bytes == 0U ||
-        bytes > LAGHU_RUM_MAX_RECORD_BYTES || strlen(hex) != bytes * 2U ||
-        !laghu_rum_key_valid(key))
+    if (sscanf(line, "%u %64s %llu %llu %zu %32768s %64s", &type, key, &generation, &updated, &bytes, hex, checksum) != 7 ||
+        type < LAGHU_RUM_RECORD_INSTRUMENTATION || type > LAGHU_RUM_RECORD_DECISION || bytes == 0U || bytes > LAGHU_RUM_MAX_RECORD_BYTES ||
+        strlen(hex) != bytes * 2U || !laghu_rum_key_valid(key))
       continue;
     data = malloc(bytes);
     if (data == NULL) break;
@@ -807,8 +696,7 @@ static void laghu_rum_snapshot_load(laghu_rum_engine *engine) {
       unsigned char high = (unsigned char)hex[index * 2U];
       unsigned char low = (unsigned char)hex[index * 2U + 1U];
       if (!laghu_rum_hex(high) || !laghu_rum_hex(low)) break;
-      data[index] =
-          (unsigned char)((laghu_rum_unhex(high) << 4U) | laghu_rum_unhex(low));
+      data[index] = (unsigned char)((laghu_rum_unhex(high) << 4U) | laghu_rum_unhex(low));
     }
     decoded_length = laghu_rum_record_size((laghu_rum_record_type)type, bytes);
     decoded = malloc(decoded_length);
@@ -816,31 +704,21 @@ static void laghu_rum_snapshot_load(laghu_rum_engine *engine) {
       free(data);
       break;
     }
-    if (index == bytes &&
-        laghu_sha256_hex((laghu_buffer){data, bytes}, actual) &&
-        strcmp(actual, checksum) == 0 &&
-        laghu_rum_decode((laghu_rum_record_type)type, data, bytes, decoded,
-                         decoded_length)) {
+    if (index == bytes && laghu_sha256_hex((laghu_buffer){data, bytes}, actual) && strcmp(actual, checksum) == 0 &&
+        laghu_rum_decode((laghu_rum_record_type)type, data, bytes, decoded, decoded_length)) {
       uint64_t published;
-      (void)laghu_rum_engine_publish(engine, (laghu_rum_record_type)type, key,
-                                     (uint64_t)updated, decoded, decoded_length,
-                                     &published);
+      (void)laghu_rum_engine_publish(engine, (laghu_rum_record_type)type, key, (uint64_t)updated, decoded, decoded_length, &published);
       laghu_rum_mutex_lock(&engine->mutex);
       {
-        laghu_rum_slot *slot =
-            laghu_rum_find(engine, (laghu_rum_record_type)type, key);
+        laghu_rum_slot *slot = laghu_rum_find(engine, (laghu_rum_record_type)type, key);
         if (slot != NULL) {
           slot->generation = (uint64_t)generation;
           slot->dirty = false;
           free(slot->pending);
-          engine->pending_used =
-              slot->pending_length > engine->pending_used
-                  ? 0U
-                  : engine->pending_used - slot->pending_length;
+          engine->pending_used = slot->pending_length > engine->pending_used ? 0U : engine->pending_used - slot->pending_length;
           slot->pending = NULL;
           slot->pending_length = 0U;
-          if (slot->generation > engine->generation)
-            engine->generation = slot->generation;
+          if (slot->generation > engine->generation) engine->generation = slot->generation;
         }
       }
       laghu_rum_mutex_unlock(&engine->mutex);
@@ -853,8 +731,7 @@ done:
   (void)fclose(file);
 }
 
-static void laghu_rum_entries_free(laghu_rum_snapshot_entry *entries,
-                                   size_t count) {
+static void laghu_rum_entries_free(laghu_rum_snapshot_entry *entries, size_t count) {
   size_t index;
   if (entries == NULL) return;
   for (index = 0U; index < count; ++index) free(entries[index].data);
@@ -888,30 +765,21 @@ static bool laghu_rum_snapshot_cache(laghu_rum_engine *engine) {
   }
   laghu_rum_mutex_unlock(&engine->mutex);
   if (index != engine->slot_count) goto done_without_lock;
-  length =
-      snprintf(lock_path, sizeof(lock_path), "%s.lock", engine->snapshot_path);
-  if (length <= 0 || (size_t)length >= sizeof(lock_path))
-    goto done_without_lock;
+  length = snprintf(lock_path, sizeof(lock_path), "%s.lock", engine->snapshot_path);
+  if (length <= 0 || (size_t)length >= sizeof(lock_path)) goto done_without_lock;
   lock = laghu_rum_backend_lock_acquire(lock_path);
   if (lock < 0) goto done_without_lock;
-  length =
-      snprintf(temporary, sizeof(temporary), "%s.tmp", engine->snapshot_path);
-  if (length <= 0 || (size_t)length >= sizeof(temporary) ||
-      (file = fopen(temporary, "wb")) == NULL)
-    goto done;
+  length = snprintf(temporary, sizeof(temporary), "%s.tmp", engine->snapshot_path);
+  if (length <= 0 || (size_t)length >= sizeof(temporary) || (file = fopen(temporary, "wb")) == NULL) goto done;
   if (fputs("LAGHU-RUM-2\n", file) < 0) goto done;
   for (index = 0U; index < count; ++index) {
     unsigned char encoded[LAGHU_RUM_MAX_RECORD_BYTES];
     char checksum[LAGHU_RUNTIME_KEY_SIZE];
     size_t encoded_length, byte;
-    if (!laghu_rum_encode(entries[index].type, entries[index].data,
-                          entries[index].length, encoded, sizeof(encoded),
-                          &encoded_length) ||
+    if (!laghu_rum_encode(entries[index].type, entries[index].data, entries[index].length, encoded, sizeof(encoded), &encoded_length) ||
         !laghu_sha256_hex((laghu_buffer){encoded, encoded_length}, checksum) ||
-        fprintf(
-            file, "%u %s %llu %llu %zu ", (unsigned int)entries[index].type,
-            entries[index].key, (unsigned long long)entries[index].generation,
-            (unsigned long long)entries[index].updated_at, encoded_length) < 0)
+        fprintf(file, "%u %s %llu %llu %zu ", (unsigned int)entries[index].type, entries[index].key, (unsigned long long)entries[index].generation,
+                (unsigned long long)entries[index].updated_at, encoded_length) < 0)
       goto done;
     for (byte = 0U; byte < encoded_length; ++byte)
       if (fprintf(file, "%02x", encoded[byte]) < 0) goto done;
@@ -932,21 +800,14 @@ done_without_lock:
   return success;
 }
 
-static bool laghu_rum_redis_key(char *target, size_t capacity,
-                                laghu_rum_engine *engine, const char *kind,
-                                const char *suffix) {
-  int length =
-      snprintf(target, capacity, "%srum:v2:%s%s%s", engine->redis_prefix, kind,
-               suffix == NULL ? "" : ":", suffix == NULL ? "" : suffix);
+static bool laghu_rum_redis_key(char *target, size_t capacity, laghu_rum_engine *engine, const char *kind, const char *suffix) {
+  int length = snprintf(target, capacity, "%srum:v2:%s%s%s", engine->redis_prefix, kind, suffix == NULL ? "" : ":", suffix == NULL ? "" : suffix);
   return length > 0 && (size_t)length < capacity;
 }
 
-static bool laghu_rum_redis_status(laghu_rum_engine *engine,
-                                   laghu_redis_reply *reply) {
+static bool laghu_rum_redis_status(laghu_rum_engine *engine, laghu_redis_reply *reply) {
   bool valid = laghu_rum_redis_reply_ok(reply) &&
-               (reply->type == LAGHU_REDIS_REPLY_STATUS ||
-                reply->type == LAGHU_REDIS_REPLY_INTEGER ||
-                reply->type == LAGHU_REDIS_REPLY_ARRAY);
+               (reply->type == LAGHU_REDIS_REPLY_STATUS || reply->type == LAGHU_REDIS_REPLY_INTEGER || reply->type == LAGHU_REDIS_REPLY_ARRAY);
   if (reply != NULL) engine->redis_reply_free(reply);
   return valid;
 }
@@ -978,13 +839,10 @@ static bool laghu_rum_rotate_retry(laghu_rum_engine *engine) {
   }
   engine->retry_entries = entries;
   engine->retry_count = count;
-  length = snprintf(material, sizeof(material), "%u\n%s\n%llu",
-                    LAGHU_RUM_REDIS_MERGE_VERSION, engine->instance_id,
+  length = snprintf(material, sizeof(material), "%u\n%s\n%llu", LAGHU_RUM_REDIS_MERGE_VERSION, engine->instance_id,
                     (unsigned long long)++engine->batch_sequence);
   if (length <= 0 || (size_t)length >= sizeof(material) ||
-      !laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)material, (size_t)length},
-          engine->retry_batch)) {
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, engine->retry_batch)) {
     engine->retry_entries = NULL;
     engine->retry_count = 0U;
     laghu_rum_mutex_unlock(&engine->mutex);
@@ -995,14 +853,11 @@ static bool laghu_rum_rotate_retry(laghu_rum_engine *engine) {
   return true;
 }
 
-static void laghu_rum_reconcile(laghu_rum_engine *engine,
-                                laghu_rum_snapshot_entry *entries,
-                                size_t count) {
+static void laghu_rum_reconcile(laghu_rum_engine *engine, laghu_rum_snapshot_entry *entries, size_t count) {
   size_t index;
   laghu_rum_mutex_lock(&engine->mutex);
   for (index = 0U; index < count; ++index) {
-    laghu_rum_slot *slot =
-        laghu_rum_find(engine, entries[index].type, entries[index].key);
+    laghu_rum_slot *slot = laghu_rum_find(engine, entries[index].type, entries[index].key);
     unsigned char *copy = malloc(entries[index].length);
     if (copy == NULL) continue;
     memcpy(copy, entries[index].data, entries[index].length);
@@ -1011,9 +866,7 @@ static void laghu_rum_reconcile(laghu_rum_engine *engine,
       free(copy);
       continue;
     }
-    if (engine->memory_used - (slot->used ? slot->length : 0U) +
-            entries[index].length >
-        engine->memory_limit) {
+    if (engine->memory_used - (slot->used ? slot->length : 0U) + entries[index].length > engine->memory_limit) {
       free(copy);
       continue;
     }
@@ -1035,44 +888,34 @@ static void laghu_rum_reconcile(laghu_rum_engine *engine,
     slot->updated_at = entries[index].updated_at;
     slot->accessed_at = entries[index].updated_at;
     slot->generation = ++engine->generation;
-    if (slot->pending != NULL)
-      (void)laghu_rum_record_merge(slot->type, slot->data, slot->pending,
-                                   slot->length);
+    if (slot->pending != NULL) (void)laghu_rum_record_merge(slot->type, slot->data, slot->pending, slot->length);
     slot->dirty = slot->pending != NULL;
     engine->memory_used += slot->length;
   }
   laghu_rum_mutex_unlock(&engine->mutex);
 }
 
-static laghu_rum_snapshot_entry *laghu_rum_redis_pull(
-    laghu_rum_engine *engine, laghu_redis_context *context, size_t *count,
-    uint64_t deadline) {
+static laghu_rum_snapshot_entry *laghu_rum_redis_pull(laghu_rum_engine *engine, laghu_redis_context *context, size_t *count, uint64_t deadline) {
   char index_key[512U];
   laghu_redis_reply *members;
   laghu_rum_snapshot_entry *entries;
   size_t found = 0U, index;
   *count = 0U;
-  if (!laghu_rum_redis_key(index_key, sizeof(index_key), engine, "records",
-                           NULL))
-    return NULL;
-  members = engine->redis_command(context, "ZREMRANGEBYSCORE %s -inf %llu",
-                                  index_key, (unsigned long long)time(NULL));
+  if (!laghu_rum_redis_key(index_key, sizeof(index_key), engine, "records", NULL)) return NULL;
+  members = engine->redis_command(context, "ZREMRANGEBYSCORE %s -inf %llu", index_key, (unsigned long long)time(NULL));
   if (!laghu_rum_redis_status(engine, members)) return NULL;
   members = engine->redis_command(context, "ZCARD %s", index_key);
-  if (members == NULL || members->type != LAGHU_REDIS_REPLY_INTEGER ||
-      members->integer < 0 || (size_t)members->integer > engine->slot_count) {
+  if (members == NULL || members->type != LAGHU_REDIS_REPLY_INTEGER || members->integer < 0 || (size_t)members->integer > engine->slot_count) {
     if (members != NULL) engine->redis_reply_free(members);
     return NULL;
   }
   engine->redis_reply_free(members);
   members = engine->redis_command(context, "ZRANGE %s 0 -1", index_key);
-  if (members == NULL || members->type != LAGHU_REDIS_REPLY_ARRAY ||
-      members->elements > engine->slot_count) {
+  if (members == NULL || members->type != LAGHU_REDIS_REPLY_ARRAY || members->elements > engine->slot_count) {
     if (members != NULL) engine->redis_reply_free(members);
     return NULL;
   }
-  entries = calloc(members->elements == 0U ? 1U : members->elements,
-                   sizeof(*entries));
+  entries = calloc(members->elements == 0U ? 1U : members->elements, sizeof(*entries));
   if (entries == NULL) {
     engine->redis_reply_free(members);
     return NULL;
@@ -1090,50 +933,35 @@ static laghu_rum_snapshot_entry *laghu_rum_redis_pull(
       laghu_rum_entries_free(entries, found);
       return NULL;
     }
-    if (member == NULL || member->type != LAGHU_REDIS_REPLY_STRING ||
-        member->len >= sizeof(redis_key))
-      continue;
+    if (member == NULL || member->type != LAGHU_REDIS_REPLY_STRING || member->len >= sizeof(redis_key)) continue;
     memcpy(redis_key, member->str, member->len);
     redis_key[member->len] = '\0';
     colon = strchr(redis_key, ':');
     if (colon == NULL || (size_t)(colon - redis_key) >= sizeof(type_text) ||
-        !laghu_rum_copy(type_text, sizeof(type_text), redis_key,
-                        (size_t)(colon - redis_key)) ||
-        !laghu_rum_key_valid(colon + 1U))
+        !laghu_rum_copy(type_text, sizeof(type_text), redis_key, (size_t)(colon - redis_key)) || !laghu_rum_key_valid(colon + 1U))
       continue;
     type = strtoul(type_text, NULL, 10);
-    if (type < LAGHU_RUM_RECORD_INSTRUMENTATION ||
-        type > LAGHU_RUM_RECORD_DECISION)
-      continue;
+    if (type < LAGHU_RUM_RECORD_INSTRUMENTATION || type > LAGHU_RUM_RECORD_DECISION) continue;
     strcpy(key, colon + 1U);
     prefix_length = strlen(engine->redis_prefix);
-    if (prefix_length + sizeof("rum:v2:record:") + member->len >=
-        sizeof(redis_key))
-      continue;
-    (void)snprintf(redis_key, sizeof(redis_key), "%srum:v2:record:%.*s",
-                   engine->redis_prefix, (int)member->len, member->str);
+    if (prefix_length + sizeof("rum:v2:record:") + member->len >= sizeof(redis_key)) continue;
+    (void)snprintf(redis_key, sizeof(redis_key), "%srum:v2:record:%.*s", engine->redis_prefix, (int)member->len, member->str);
     reply = engine->redis_command(context, "GET %s", redis_key);
     if (reply == NULL || reply->type == LAGHU_REDIS_REPLY_NIL) {
       if (reply != NULL) engine->redis_reply_free(reply);
       continue;
     }
-    if (reply->type != LAGHU_REDIS_REPLY_STRING ||
-        reply->len > LAGHU_RUM_MAX_RECORD_BYTES) {
+    if (reply->type != LAGHU_REDIS_REPLY_STRING || reply->len > LAGHU_RUM_MAX_RECORD_BYTES) {
       engine->redis_reply_free(reply);
       continue;
     }
-    decoded_length =
-        laghu_rum_record_size((laghu_rum_record_type)type, reply->len);
+    decoded_length = laghu_rum_record_size((laghu_rum_record_type)type, reply->len);
     decoded = malloc(decoded_length);
-    if (decoded != NULL &&
-        laghu_rum_decode((laghu_rum_record_type)type,
-                         (const unsigned char *)reply->str, reply->len, decoded,
-                         decoded_length)) {
+    if (decoded != NULL && laghu_rum_decode((laghu_rum_record_type)type, (const unsigned char *)reply->str, reply->len, decoded, decoded_length)) {
       entries[found].data = decoded;
       entries[found].length = decoded_length;
       entries[found].type = (laghu_rum_record_type)type;
-      entries[found].updated_at = laghu_rum_record_updated_at(
-          (laghu_rum_record_type)type, decoded, engine->clock_now);
+      entries[found].updated_at = laghu_rum_record_updated_at((laghu_rum_record_type)type, decoded, engine->clock_now);
       strcpy(entries[found].key, key);
       ++found;
     } else
@@ -1145,8 +973,7 @@ static laghu_rum_snapshot_entry *laghu_rum_redis_pull(
   return entries;
 }
 
-static bool laghu_rum_redis_script_load(laghu_rum_engine *engine,
-                                        laghu_redis_context *context) {
+static bool laghu_rum_redis_script_load(laghu_rum_engine *engine, laghu_redis_context *context) {
   const size_t one = sizeof(laghu_rum_redis_merge_script_one) - 1U;
   const size_t two = sizeof(laghu_rum_redis_merge_script_two) - 1U;
   char *script = malloc(one + two);
@@ -1157,8 +984,7 @@ static bool laghu_rum_redis_script_load(laghu_rum_engine *engine,
   memcpy(script + one, laghu_rum_redis_merge_script_two, two);
   reply = engine->redis_command(context, "SCRIPT LOAD %b", script, one + two);
   free(script);
-  if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_STRING ||
-      reply->len != 40U) {
+  if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_STRING || reply->len != 40U) {
     if (reply != NULL) engine->redis_reply_free(reply);
     return false;
   }
@@ -1173,10 +999,8 @@ static bool laghu_rum_redis_script_load(laghu_rum_engine *engine,
   return true;
 }
 
-static laghu_redis_reply *laghu_rum_redis_merge_eval(
-    laghu_rum_engine *engine, laghu_redis_context *context,
-    const laghu_rum_snapshot_entry *deltas, size_t count, const char *batch_key,
-    const char *index_key, bool allow_reload) {
+static laghu_redis_reply *laghu_rum_redis_merge_eval(laghu_rum_engine *engine, laghu_redis_context *context, const laghu_rum_snapshot_entry *deltas,
+                                                     size_t count, const char *batch_key, const char *index_key, bool allow_reload) {
   const size_t maximum = 9U + 4U * LAGHU_RUM_REDIS_BATCH_RECORDS;
   const char *arguments[9U + 4U * LAGHU_RUM_REDIS_BATCH_RECORDS];
   size_t lengths[9U + 4U * LAGHU_RUM_REDIS_BATCH_RECORDS];
@@ -1193,10 +1017,7 @@ static laghu_redis_reply *laghu_rum_redis_merge_eval(
     arguments[argc] = (value_);  \
     lengths[argc++] = (length_); \
   } while (0)
-  if (count > LAGHU_RUM_REDIS_BATCH_RECORDS ||
-      (engine->redis_script_sha[0] == '\0' &&
-       !laghu_rum_redis_script_load(engine, context)))
-    return NULL;
+  if (count > LAGHU_RUM_REDIS_BATCH_RECORDS || (engine->redis_script_sha[0] == '\0' && !laghu_rum_redis_script_load(engine, context))) return NULL;
   encoded = malloc((count == 0U ? 1U : count) * LAGHU_RUM_MAX_RECORD_BYTES);
   if (encoded == NULL) return NULL;
   (void)snprintf(number_keys, sizeof(number_keys), "%zu", count + 2U);
@@ -1210,20 +1031,13 @@ static laghu_redis_reply *laghu_rum_redis_merge_eval(
   ARG(batch_key, strlen(batch_key));
   ARG(index_key, strlen(index_key));
   for (index = 0U; index < count; ++index) {
-    int member_length =
-        snprintf(members[index], sizeof(members[index]), "%u:%s",
-                 (unsigned int)deltas[index].type, deltas[index].key);
-    int key_length =
-        member_length <= 0
-            ? -1
-            : snprintf(record_keys[index], sizeof(record_keys[index]),
-                       "%srum:v2:record:%s", engine->redis_prefix,
-                       members[index]);
-    if (member_length <= 0 || (size_t)member_length >= sizeof(members[index]) ||
-        key_length <= 0 || (size_t)key_length >= sizeof(record_keys[index]) ||
-        !laghu_rum_encode(deltas[index].type, deltas[index].data,
-                          deltas[index].length,
-                          encoded + index * LAGHU_RUM_MAX_RECORD_BYTES,
+    int member_length = snprintf(members[index], sizeof(members[index]), "%u:%s", (unsigned int)deltas[index].type, deltas[index].key);
+    int key_length = member_length <= 0
+                         ? -1
+                         : snprintf(record_keys[index], sizeof(record_keys[index]), "%srum:v2:record:%s", engine->redis_prefix, members[index]);
+    if (member_length <= 0 || (size_t)member_length >= sizeof(members[index]) || key_length <= 0 ||
+        (size_t)key_length >= sizeof(record_keys[index]) ||
+        !laghu_rum_encode(deltas[index].type, deltas[index].data, deltas[index].length, encoded + index * LAGHU_RUM_MAX_RECORD_BYTES,
                           LAGHU_RUM_MAX_RECORD_BYTES, &encoded_lengths[index]))
       goto done;
     ARG(record_keys[index], (size_t)key_length);
@@ -1233,23 +1047,18 @@ static laghu_redis_reply *laghu_rum_redis_merge_eval(
   ARG(now, strlen(now));
   ARG(records, strlen(records));
   for (index = 0U; index < count; ++index) {
-    (void)snprintf(types[index], sizeof(types[index]), "%u",
-                   (unsigned int)deltas[index].type);
+    (void)snprintf(types[index], sizeof(types[index]), "%u", (unsigned int)deltas[index].type);
     ARG(types[index], strlen(types[index]));
     ARG(members[index], strlen(members[index]));
-    ARG((const char *)(encoded + index * LAGHU_RUM_MAX_RECORD_BYTES),
-        encoded_lengths[index]);
+    ARG((const char *)(encoded + index * LAGHU_RUM_MAX_RECORD_BYTES), encoded_lengths[index]);
   }
   if (argc > maximum) goto done;
   reply = engine->redis_command_argv(context, (int)argc, arguments, lengths);
-  if (allow_reload && reply != NULL && reply->type == LAGHU_REDIS_REPLY_ERROR &&
-      reply->str != NULL && strncmp(reply->str, "NOSCRIPT", 8U) == 0) {
+  if (allow_reload && reply != NULL && reply->type == LAGHU_REDIS_REPLY_ERROR && reply->str != NULL && strncmp(reply->str, "NOSCRIPT", 8U) == 0) {
     engine->redis_reply_free(reply);
     reply = NULL;
     engine->redis_script_sha[0] = '\0';
-    if (laghu_rum_redis_script_load(engine, context))
-      reply = laghu_rum_redis_merge_eval(engine, context, deltas, count,
-                                         batch_key, index_key, false);
+    if (laghu_rum_redis_script_load(engine, context)) reply = laghu_rum_redis_merge_eval(engine, context, deltas, count, batch_key, index_key, false);
   }
 done:
   free(encoded);
@@ -1268,40 +1077,27 @@ static bool laghu_rum_redis_sync(laghu_rum_engine *engine, uint64_t deadline) {
   deltas = engine->retry_entries;
   delta_count = engine->retry_count;
   context = laghu_rum_redis_connect(engine);
-  if (context == NULL ||
-      !laghu_rum_redis_key(batch_key, sizeof(batch_key), engine, "batch",
-                           engine->retry_batch) ||
-      !laghu_rum_redis_key(index_key, sizeof(index_key), engine, "records",
-                           NULL) ||
-      laghu_rum_monotonic_ms() > deadline)
+  if (context == NULL || !laghu_rum_redis_key(batch_key, sizeof(batch_key), engine, "batch", engine->retry_batch) ||
+      !laghu_rum_redis_key(index_key, sizeof(index_key), engine, "records", NULL) || laghu_rum_monotonic_ms() > deadline)
     goto done;
   if (delta_count != 0U) {
-    reply = laghu_rum_redis_merge_eval(engine, context, deltas, delta_count,
-                                       batch_key, index_key, true);
-    if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_ARRAY ||
-        reply->elements != delta_count + 1U || reply->element[0] == NULL ||
-        reply->element[0]->type != LAGHU_REDIS_REPLY_INTEGER ||
-        (reply->element[0]->integer != 0 && reply->element[0]->integer != 1))
+    reply = laghu_rum_redis_merge_eval(engine, context, deltas, delta_count, batch_key, index_key, true);
+    if (reply == NULL || reply->type != LAGHU_REDIS_REPLY_ARRAY || reply->elements != delta_count + 1U || reply->element[0] == NULL ||
+        reply->element[0]->type != LAGHU_REDIS_REPLY_INTEGER || (reply->element[0]->integer != 0 && reply->element[0]->integer != 1))
       goto done;
     aggregates = calloc(delta_count, sizeof(*aggregates));
     if (aggregates == NULL) goto done;
     for (index = 0U; index < delta_count; ++index) {
       laghu_redis_reply *item = reply->element[index + 1U];
-      if (item == NULL || item->type != LAGHU_REDIS_REPLY_STRING ||
-          item->len > LAGHU_RUM_MAX_RECORD_BYTES)
-        goto done;
+      if (item == NULL || item->type != LAGHU_REDIS_REPLY_STRING || item->len > LAGHU_RUM_MAX_RECORD_BYTES) goto done;
       aggregates[index].data = malloc(deltas[index].length);
       if (aggregates[index].data == NULL ||
-          !laghu_rum_decode(deltas[index].type,
-                            (const unsigned char *)item->str, item->len,
-                            aggregates[index].data, deltas[index].length) ||
-          !laghu_rum_same_identity(deltas[index].type, aggregates[index].data,
-                                   deltas[index].data, deltas[index].length))
+          !laghu_rum_decode(deltas[index].type, (const unsigned char *)item->str, item->len, aggregates[index].data, deltas[index].length) ||
+          !laghu_rum_same_identity(deltas[index].type, aggregates[index].data, deltas[index].data, deltas[index].length))
         goto done;
       aggregates[index].length = deltas[index].length;
       aggregates[index].type = deltas[index].type;
-      aggregates[index].updated_at = laghu_rum_record_updated_at(
-          deltas[index].type, aggregates[index].data, engine->clock_now);
+      aggregates[index].updated_at = laghu_rum_record_updated_at(deltas[index].type, aggregates[index].data, engine->clock_now);
       strcpy(aggregates[index].key, deltas[index].key);
       ++aggregate_count;
     }
@@ -1321,12 +1117,9 @@ done:
   laghu_rum_entries_free(pulled, pulled_count);
   if (success) {
     size_t released = 0U;
-    for (index = 0U; index < engine->retry_count; ++index)
-      released +=
-          ((laghu_rum_snapshot_entry *)engine->retry_entries)[index].length;
+    for (index = 0U; index < engine->retry_count; ++index) released += ((laghu_rum_snapshot_entry *)engine->retry_entries)[index].length;
     laghu_rum_mutex_lock(&engine->mutex);
-    engine->pending_used =
-        released > engine->pending_used ? 0U : engine->pending_used - released;
+    engine->pending_used = released > engine->pending_used ? 0U : engine->pending_used - released;
     laghu_rum_mutex_unlock(&engine->mutex);
     laghu_rum_entries_free(engine->retry_entries, engine->retry_count);
     engine->retry_entries = NULL;
@@ -1334,8 +1127,7 @@ done:
     engine->retry_batch[0] = '\0';
   }
   laghu_rum_mutex_lock(&engine->mutex);
-  engine->health = success && snapshot_ok ? LAGHU_RUM_HEALTH_READY
-                                          : LAGHU_RUM_HEALTH_DEGRADED;
+  engine->health = success && snapshot_ok ? LAGHU_RUM_HEALTH_READY : LAGHU_RUM_HEALTH_DEGRADED;
   laghu_rum_mutex_unlock(&engine->mutex);
   return success;
 }
@@ -1347,9 +1139,7 @@ static bool laghu_rum_sync(laghu_rum_engine *engine) {
   now = engine->clock_now;
   for (index = 0U; index < engine->slot_count; ++index) {
     laghu_rum_slot *slot = &engine->slots[index];
-    if (!slot->used || slot->updated_at > now ||
-        now - slot->updated_at <= engine->ttl_seconds)
-      continue;
+    if (!slot->used || slot->updated_at > now || now - slot->updated_at <= engine->ttl_seconds) continue;
     engine->memory_used -= slot->length;
     engine->pending_used -= slot->pending_length;
     free(slot->data);
@@ -1359,11 +1149,8 @@ static bool laghu_rum_sync(laghu_rum_engine *engine) {
   laghu_rum_mutex_unlock(&engine->mutex);
   if (engine->backend == LAGHU_RUM_BACKEND_REDIS) {
     unsigned int attempt;
-    uint64_t deadline =
-        laghu_rum_monotonic_ms() + (uint64_t)engine->timeout_ms * 4U;
-    for (attempt = 0U;
-         attempt <= engine->retry_limit && laghu_rum_monotonic_ms() <= deadline;
-         ++attempt)
+    uint64_t deadline = laghu_rum_monotonic_ms() + (uint64_t)engine->timeout_ms * 4U;
+    for (attempt = 0U; attempt <= engine->retry_limit && laghu_rum_monotonic_ms() <= deadline; ++attempt)
       if (laghu_rum_redis_sync(engine, deadline)) return true;
     return false;
   }
@@ -1389,31 +1176,22 @@ static void *laghu_rum_sync_main(void *data) {
   return NULL;
 }
 
-laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
-                                          char *error, size_t error_size) {
+laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options, char *error, size_t error_size) {
   laghu_rum_options defaults;
   laghu_rum_engine *engine;
   size_t memory_limit, pending_limit;
   laghu_rum_options_init(&defaults);
   if (options == NULL) options = &defaults;
-  memory_limit = options->memory_limit == 0U ? defaults.memory_limit
-                                             : options->memory_limit;
-  pending_limit = options->pending_limit == 0U ? defaults.pending_limit
-                                               : options->pending_limit;
-  if (memory_limit < LAGHU_RUM_MAX_RECORD_BYTES ||
-      pending_limit < LAGHU_RUM_MAX_RECORD_BYTES ||
-      options->ttl_seconds == 0U || options->retry_limit > 10U ||
-      (options->timeout_ms != 0U &&
-       (options->timeout_ms < 10U || options->timeout_ms > 10000U)) ||
-      (options->sync_interval_seconds != 0U &&
-       options->sync_interval_seconds > 300U)) {
-    if (error != NULL)
-      (void)snprintf(error, error_size, "invalid RUM memory or TTL bound");
+  memory_limit = options->memory_limit == 0U ? defaults.memory_limit : options->memory_limit;
+  pending_limit = options->pending_limit == 0U ? defaults.pending_limit : options->pending_limit;
+  if (memory_limit < LAGHU_RUM_MAX_RECORD_BYTES || pending_limit < LAGHU_RUM_MAX_RECORD_BYTES || options->ttl_seconds == 0U ||
+      options->retry_limit > 10U || (options->timeout_ms != 0U && (options->timeout_ms < 10U || options->timeout_ms > 10000U)) ||
+      (options->sync_interval_seconds != 0U && options->sync_interval_seconds > 300U)) {
+    if (error != NULL) (void)snprintf(error, error_size, "invalid RUM memory or TTL bound");
     return NULL;
   }
   if (options->store_uri == NULL || options->store_uri[0] == '\0') {
-    if (error != NULL)
-      (void)snprintf(error, error_size, "RUM store URI is empty");
+    if (error != NULL) (void)snprintf(error, error_size, "RUM store URI is empty");
     return NULL;
   }
   engine = calloc(1U, sizeof(*engine));
@@ -1426,26 +1204,18 @@ laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
     engine->backend = LAGHU_RUM_BACKEND_MEMORY;
   else if (strncmp(options->store_uri, "local:", 6U) == 0)
     engine->backend = LAGHU_RUM_BACKEND_LOCAL;
-  else if (strncmp(options->store_uri, "redis://", 8U) == 0 ||
-           strncmp(options->store_uri, "rediss://", 9U) == 0) {
+  else if (strncmp(options->store_uri, "redis://", 8U) == 0 || strncmp(options->store_uri, "rediss://", 9U) == 0) {
     engine->backend = LAGHU_RUM_BACKEND_REDIS;
-    if (!laghu_rum_redis_uri(engine, options->store_uri) ||
-        !laghu_rum_redis_load(engine, options->client_library)) {
-      if (error != NULL)
-        (void)snprintf(
-            error, error_size,
-            "Redis RUM configuration or client library is unavailable");
-      if (engine->redis_ssl_library != NULL)
-        (void)laghu_rum_library_close(engine->redis_ssl_library);
-      if (engine->redis_library != NULL)
-        (void)laghu_rum_library_close(engine->redis_library);
+    if (!laghu_rum_redis_uri(engine, options->store_uri) || !laghu_rum_redis_load(engine, options->client_library)) {
+      if (error != NULL) (void)snprintf(error, error_size, "Redis RUM configuration or client library is unavailable");
+      if (engine->redis_ssl_library != NULL) (void)laghu_rum_library_close(engine->redis_ssl_library);
+      if (engine->redis_library != NULL) (void)laghu_rum_library_close(engine->redis_library);
       memset(engine->redis_password, 0, sizeof(engine->redis_password));
       free(engine);
       return NULL;
     }
   } else {
-    if (error != NULL)
-      (void)snprintf(error, error_size, "unsupported RUM store backend");
+    if (error != NULL) (void)snprintf(error, error_size, "unsupported RUM store backend");
     free(engine);
     return NULL;
   }
@@ -1459,22 +1229,14 @@ laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
   engine->mutex_ready = true;
   engine->memory_limit = memory_limit;
   engine->pending_limit = pending_limit;
-  engine->timeout_ms =
-      options->timeout_ms == 0U ? defaults.timeout_ms : options->timeout_ms;
+  engine->timeout_ms = options->timeout_ms == 0U ? defaults.timeout_ms : options->timeout_ms;
   engine->retry_limit = options->retry_limit;
   engine->ttl_seconds = options->ttl_seconds;
-  engine->sync_interval_seconds = options->sync_interval_seconds == 0U
-                                      ? defaults.sync_interval_seconds
-                                      : options->sync_interval_seconds;
+  engine->sync_interval_seconds = options->sync_interval_seconds == 0U ? defaults.sync_interval_seconds : options->sync_interval_seconds;
   if (engine->backend != LAGHU_RUM_BACKEND_MEMORY &&
-      (options->snapshot_path != NULL ||
-       (strncmp(options->store_uri, "local:", 6U) == 0 &&
-        options->store_uri[6] != '\0'))) {
-    const char *snapshot_path = options->snapshot_path != NULL
-                                    ? options->snapshot_path
-                                    : options->store_uri + 6U;
-    int copied = snprintf(engine->snapshot_path, sizeof(engine->snapshot_path),
-                          "%s", snapshot_path);
+      (options->snapshot_path != NULL || (strncmp(options->store_uri, "local:", 6U) == 0 && options->store_uri[6] != '\0'))) {
+    const char *snapshot_path = options->snapshot_path != NULL ? options->snapshot_path : options->store_uri + 6U;
+    int copied = snprintf(engine->snapshot_path, sizeof(engine->snapshot_path), "%s", snapshot_path);
     if (copied <= 0 || (size_t)copied >= sizeof(engine->snapshot_path)) {
       laghu_rum_engine_destroy(engine);
       return NULL;
@@ -1485,24 +1247,18 @@ laghu_rum_engine *laghu_rum_engine_create(const laghu_rum_options *options,
   if (engine->backend == LAGHU_RUM_BACKEND_REDIS) {
     laghu_redis_context *context = laghu_rum_redis_connect(engine);
     if (context == NULL) {
-      if (error != NULL)
-        (void)snprintf(error, error_size, "Redis RUM backend is unreachable");
+      if (error != NULL) (void)snprintf(error, error_size, "Redis RUM backend is unreachable");
       laghu_rum_engine_destroy(engine);
       return NULL;
     }
     engine->redis_free(context);
-    if (!laghu_rum_redis_sync(engine, laghu_rum_monotonic_ms() +
-                                          (uint64_t)engine->timeout_ms * 4U) &&
-        options->required) {
-      if (error != NULL)
-        (void)snprintf(error, error_size,
-                       "Redis RUM initial synchronization failed");
+    if (!laghu_rum_redis_sync(engine, laghu_rum_monotonic_ms() + (uint64_t)engine->timeout_ms * 4U) && options->required) {
+      if (error != NULL) (void)snprintf(error, error_size, "Redis RUM initial synchronization failed");
       laghu_rum_engine_destroy(engine);
       return NULL;
     }
   }
-  engine->thread_ready =
-      pthread_create(&engine->thread, NULL, laghu_rum_sync_main, engine) == 0;
+  engine->thread_ready = pthread_create(&engine->thread, NULL, laghu_rum_sync_main, engine) == 0;
   if (!engine->thread_ready && engine->backend != LAGHU_RUM_BACKEND_MEMORY) {
     laghu_rum_engine_destroy(engine);
     return NULL;
@@ -1532,21 +1288,15 @@ void laghu_rum_engine_destroy(laghu_rum_engine *engine) {
   }
   laghu_rum_entries_free(engine->retry_entries, engine->retry_count);
   memset(engine->redis_password, 0, sizeof(engine->redis_password));
-  if (engine->redis_ssl_library != NULL)
-    (void)laghu_rum_library_close(engine->redis_ssl_library);
-  if (engine->redis_library != NULL)
-    (void)laghu_rum_library_close(engine->redis_library);
+  if (engine->redis_ssl_library != NULL) (void)laghu_rum_library_close(engine->redis_ssl_library);
+  if (engine->redis_library != NULL) (void)laghu_rum_library_close(engine->redis_library);
   free(engine);
 }
 
-static laghu_rum_slot *laghu_rum_find(laghu_rum_engine *engine,
-                                      laghu_rum_record_type type,
-                                      const char *key) {
+static laghu_rum_slot *laghu_rum_find(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key) {
   size_t index;
   for (index = 0U; index < engine->slot_count; ++index)
-    if (engine->slots[index].used && engine->slots[index].type == type &&
-        strcmp(engine->slots[index].key, key) == 0)
-      return &engine->slots[index];
+    if (engine->slots[index].used && engine->slots[index].type == type && strcmp(engine->slots[index].key, key) == 0) return &engine->slots[index];
   return NULL;
 }
 
@@ -1556,25 +1306,20 @@ static laghu_rum_slot *laghu_rum_select_slot(laghu_rum_engine *engine) {
   for (index = 0U; index < engine->slot_count; ++index) {
     laghu_rum_slot *slot = &engine->slots[index];
     if (!slot->used) return slot;
-    if (!slot->dirty &&
-        (oldest == NULL || slot->accessed_at < oldest->accessed_at))
-      oldest = slot;
+    if (!slot->dirty && (oldest == NULL || slot->accessed_at < oldest->accessed_at)) oldest = slot;
   }
   return oldest;
 }
 
-bool laghu_rum_engine_read(laghu_rum_engine *engine, laghu_rum_record_type type,
-                           const char *key, uint64_t now, void *data,
-                           size_t capacity, laghu_rum_value *value) {
+bool laghu_rum_engine_read(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t now, void *data, size_t capacity,
+                           laghu_rum_value *value) {
   laghu_rum_slot *slot;
   bool found = false;
   if (engine == NULL || !laghu_rum_key_valid(key) || data == NULL) return false;
   laghu_rum_mutex_lock(&engine->mutex);
   if (now > engine->clock_now) engine->clock_now = now;
   slot = laghu_rum_find(engine, type, key);
-  if (slot != NULL && slot->updated_at <= now &&
-      now - slot->updated_at <= engine->ttl_seconds &&
-      slot->length <= capacity) {
+  if (slot != NULL && slot->updated_at <= now && now - slot->updated_at <= engine->ttl_seconds && slot->length <= capacity) {
     memcpy(data, slot->data, slot->length);
     slot->accessed_at = now;
     if (value != NULL) {
@@ -1589,15 +1334,11 @@ bool laghu_rum_engine_read(laghu_rum_engine *engine, laghu_rum_record_type type,
   return found;
 }
 
-bool laghu_rum_engine_publish(laghu_rum_engine *engine,
-                              laghu_rum_record_type type, const char *key,
-                              uint64_t updated_at, const void *data,
+bool laghu_rum_engine_publish(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, const void *data,
                               size_t length, uint64_t *generation) {
   laghu_rum_slot *slot;
   unsigned char *copy, *pending;
-  if (engine == NULL || !laghu_rum_key_valid(key) || data == NULL ||
-      length == 0U || length > LAGHU_RUM_MAX_RECORD_BYTES)
-    return false;
+  if (engine == NULL || !laghu_rum_key_valid(key) || data == NULL || length == 0U || length > LAGHU_RUM_MAX_RECORD_BYTES) return false;
   copy = malloc(length);
   pending = malloc(length);
   if (copy == NULL || pending == NULL) {
@@ -1611,11 +1352,8 @@ bool laghu_rum_engine_publish(laghu_rum_engine *engine,
   if (updated_at > engine->clock_now) engine->clock_now = updated_at;
   slot = laghu_rum_find(engine, type, key);
   if (slot == NULL) slot = laghu_rum_select_slot(engine);
-  if (slot == NULL ||
-      engine->memory_used - (slot->used ? slot->length : 0U) + length >
-          engine->memory_limit ||
-      engine->pending_used - (slot->used ? slot->pending_length : 0U) + length >
-          engine->pending_limit) {
+  if (slot == NULL || engine->memory_used - (slot->used ? slot->length : 0U) + length > engine->memory_limit ||
+      engine->pending_used - (slot->used ? slot->pending_length : 0U) + length > engine->pending_limit) {
     laghu_rum_mutex_unlock(&engine->mutex);
     free(copy);
     free(pending);
@@ -1646,21 +1384,17 @@ bool laghu_rum_engine_publish(laghu_rum_engine *engine,
   return true;
 }
 
-bool laghu_rum_engine_update(laghu_rum_engine *engine,
-                             laghu_rum_record_type type, const char *key,
-                             uint64_t updated_at, laghu_rum_mutator mutator,
+bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, laghu_rum_mutator mutator,
                              void *context, uint64_t *generation) {
   laghu_rum_slot *slot;
   bool changed = false;
-  if (engine == NULL || !laghu_rum_key_valid(key) || mutator == NULL)
-    return false;
+  if (engine == NULL || !laghu_rum_key_valid(key) || mutator == NULL) return false;
   laghu_rum_mutex_lock(&engine->mutex);
   if (updated_at > engine->clock_now) engine->clock_now = updated_at;
   slot = laghu_rum_find(engine, type, key);
   if (slot != NULL) {
     if (slot->pending == NULL) {
-      if (slot->length <= engine->pending_limit - engine->pending_used)
-        slot->pending = malloc(slot->length);
+      if (slot->length <= engine->pending_limit - engine->pending_used) slot->pending = malloc(slot->length);
       if (slot->pending != NULL) {
         memcpy(slot->pending, slot->data, slot->length);
         slot->pending_length = slot->length;
@@ -1669,9 +1403,7 @@ bool laghu_rum_engine_update(laghu_rum_engine *engine,
       }
     }
   }
-  if (slot != NULL && slot->pending != NULL &&
-      mutator(slot->data, slot->length, context) &&
-      mutator(slot->pending, slot->pending_length, context)) {
+  if (slot != NULL && slot->pending != NULL && mutator(slot->data, slot->length, context) && mutator(slot->pending, slot->pending_length, context)) {
     slot->updated_at = updated_at;
     slot->accessed_at = updated_at;
     slot->generation = ++engine->generation;

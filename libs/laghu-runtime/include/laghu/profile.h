@@ -34,11 +34,8 @@ typedef struct {
 /* Derives a bounded profile from the existing instrumentation record.  It
  * never writes RUM state: stale, undersampled, malformed, or unhealthy
  * evidence simply leaves the original response unchanged. */
-bool laghu_template_profile_decide(laghu_rum_engine *rum,
-                                   const char *template_key, uint64_t now,
-                                   unsigned int ttl_seconds,
-                                   unsigned int viewport_bucket,
-                                   laghu_template_profile *profile);
+bool laghu_template_profile_decide(laghu_rum_engine *rum, const char *template_key, uint64_t now, unsigned int ttl_seconds,
+                                   unsigned int viewport_bucket, laghu_template_profile *profile);
 
 #ifdef __cplusplus
 }

@@ -23,19 +23,12 @@ typedef struct {
 } laghu_worker_lifecycle;
 
 void laghu_worker_lifecycle_init(laghu_worker_lifecycle *lifecycle);
-bool laghu_worker_lifecycle_start(laghu_worker_lifecycle *lifecycle,
-                                  const char *cache_path,
-                                  laghu_operational_process_kind kind,
-                                  laghu_runtime_queue *queue, bool required,
-                                  uint64_t now);
-void laghu_worker_lifecycle_heartbeat(laghu_worker_lifecycle *lifecycle,
-                                      uint64_t now, bool healthy);
+bool laghu_worker_lifecycle_start(laghu_worker_lifecycle *lifecycle, const char *cache_path, laghu_operational_process_kind kind,
+                                  laghu_runtime_queue *queue, bool required, uint64_t now);
+void laghu_worker_lifecycle_heartbeat(laghu_worker_lifecycle *lifecycle, uint64_t now, bool healthy);
 uint64_t laghu_worker_lifecycle_clock(void);
-void laghu_worker_lifecycle_job(laghu_worker_lifecycle *lifecycle, bool success,
-                                uint64_t elapsed_microseconds,
-                                laghu_operational_failure failure);
-void laghu_worker_lifecycle_stop(laghu_worker_lifecycle *lifecycle,
-                                 uint64_t now);
+void laghu_worker_lifecycle_job(laghu_worker_lifecycle *lifecycle, bool success, uint64_t elapsed_microseconds, laghu_operational_failure failure);
+void laghu_worker_lifecycle_stop(laghu_worker_lifecycle *lifecycle, uint64_t now);
 
 #ifdef __cplusplus
 }

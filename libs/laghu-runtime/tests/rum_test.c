@@ -12,7 +12,6 @@ int main(void) {
   laghu_rum_options options;
   laghu_rum_options_init(&options);
   assert(laghu_rum_store_validate("local:", error, sizeof(error)));
-  assert(
-      !laghu_rum_store_validate("http://secret.example", error, sizeof(error)));
+  assert(!laghu_rum_store_validate("http://secret.example", error, sizeof(error)));
   return 0;
 }

@@ -19,41 +19,30 @@
 static bool laghu_test_relative_path_valid(const char *relative) {
   const char *segment;
   size_t length;
-  if (relative == NULL || relative[0] == '\0' || relative[0] == '/' ||
-      relative[0] == '\\')
-    return false;
+  if (relative == NULL || relative[0] == '\0' || relative[0] == '/' || relative[0] == '\\') return false;
   segment = relative;
   for (;;) {
     const char *cursor = segment;
     while (*cursor != '\0' && *cursor != '/') {
-      if (*cursor == '\\' || *cursor == ':' || (unsigned char)*cursor < 32U)
-        return false;
+      if (*cursor == '\\' || *cursor == ':' || (unsigned char)*cursor < 32U) return false;
       ++cursor;
     }
     length = (size_t)(cursor - segment);
-    if (length == 0U || (length == 1U && segment[0] == '.') ||
-        (length == 2U && segment[0] == '.' && segment[1] == '.'))
-      return false;
+    if (length == 0U || (length == 1U && segment[0] == '.') || (length == 2U && segment[0] == '.' && segment[1] == '.')) return false;
     if (*cursor == '\0') return true;
     segment = cursor + 1U;
   }
 }
 
-static bool laghu_test_join(const char *directory, const char *relative,
-                            char *path, size_t capacity) {
+static bool laghu_test_join(const char *directory, const char *relative, char *path, size_t capacity) {
   size_t directory_length, relative_length, index;
-  if (directory == NULL || !laghu_test_relative_path_valid(relative) ||
-      path == NULL || capacity == 0U)
-    return false;
+  if (directory == NULL || !laghu_test_relative_path_valid(relative) || path == NULL || capacity == 0U) return false;
   directory_length = strlen(directory);
   relative_length = strlen(relative);
-  if (directory_length == 0U || directory_length > capacity - 2U ||
-      relative_length > capacity - directory_length - 2U)
-    return false;
+  if (directory_length == 0U || directory_length > capacity - 2U || relative_length > capacity - directory_length - 2U) return false;
   memcpy(path, directory, directory_length);
   path[directory_length] = '/';
-  for (index = 0U; index < relative_length; ++index)
-    path[directory_length + 1U + index] = relative[index];
+  for (index = 0U; index < relative_length; ++index) path[directory_length + 1U + index] = relative[index];
   path[directory_length + 1U + relative_length] = '\0';
   return true;
 }
@@ -82,12 +71,9 @@ static bool laghu_test_remove_tree(const char *path) {
   directory = opendir(path);
   if (directory == NULL) return errno == ENOENT;
   while ((entry = readdir(directory)) != NULL) {
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-      continue;
-    if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) < 0 ||
-        strlen(child) >= sizeof(child) || lstat(child, &status) != 0 ||
-        (S_ISDIR(status.st_mode) ? !laghu_test_remove_tree(child)
-                                 : unlink(child) != 0)) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+    if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) < 0 || strlen(child) >= sizeof(child) || lstat(child, &status) != 0 ||
+        (S_ISDIR(status.st_mode) ? !laghu_test_remove_tree(child) : unlink(child) != 0)) {
       (void)closedir(directory);
       return false;
     }
@@ -106,8 +92,7 @@ bool laghu_test_directory(char *path, size_t capacity) {
 bool laghu_test_workspace_create(laghu_test_workspace *workspace) {
   if (workspace == NULL) return false;
   memset(workspace, 0, sizeof(*workspace));
-  if (!laghu_test_directory(workspace->path, sizeof(workspace->path)))
-    return false;
+  if (!laghu_test_directory(workspace->path, sizeof(workspace->path))) return false;
   workspace->created = true;
   return true;
 }
@@ -124,22 +109,15 @@ bool laghu_test_workspace_remove(laghu_test_workspace *workspace) {
   return removed;
 }
 
-bool laghu_test_workspace_path(const laghu_test_workspace *workspace,
-                               const char *relative, char *path,
-                               size_t capacity) {
-  return workspace != NULL && workspace->created &&
-         laghu_test_join(workspace->path, relative, path, capacity);
+bool laghu_test_workspace_path(const laghu_test_workspace *workspace, const char *relative, char *path, size_t capacity) {
+  return workspace != NULL && workspace->created && laghu_test_join(workspace->path, relative, path, capacity);
 }
 
-bool laghu_test_workspace_write(const laghu_test_workspace *workspace,
-                                const char *relative, const unsigned char *data,
-                                size_t length) {
+bool laghu_test_workspace_write(const laghu_test_workspace *workspace, const char *relative, const unsigned char *data, size_t length) {
   char path[LAGHU_RUNTIME_PATH_SIZE];
   FILE *file;
   bool written;
-  if ((data == NULL && length != 0U) ||
-      !laghu_test_workspace_path(workspace, relative, path, sizeof(path)) ||
-      !laghu_test_make_parents(path))
+  if ((data == NULL && length != 0U) || !laghu_test_workspace_path(workspace, relative, path, sizeof(path)) || !laghu_test_make_parents(path))
     return false;
   file = fopen(path, "wb");
   if (file == NULL) return false;
@@ -152,8 +130,7 @@ bool laghu_test_cache_uri(const char *path, char *uri, size_t capacity) {
   char normalized[LAGHU_RUNTIME_PATH_SIZE];
   static const char hexadecimal[] = "0123456789ABCDEF";
   size_t length, index, used;
-  if (path == NULL || uri == NULL || capacity == 0U || path[0] == '\0')
-    return false;
+  if (path == NULL || uri == NULL || capacity == 0U || path[0] == '\0') return false;
   length = strlen(path);
   if (length >= sizeof(normalized)) return false;
   for (index = 0U; index < length; ++index) normalized[index] = path[index];
@@ -178,21 +155,14 @@ bool laghu_test_cache_uri(const char *path, char *uri, size_t capacity) {
   return true;
 }
 
-bool laghu_test_queue_pair_open(laghu_test_queue_pair *pair,
-                                const laghu_test_workspace *workspace,
-                                const char *relative, unsigned int slots,
+bool laghu_test_queue_pair_open(laghu_test_queue_pair *pair, const laghu_test_workspace *workspace, const char *relative, unsigned int slots,
                                 size_t payload_capacity) {
   if (pair == NULL) return false;
   memset(pair, 0, sizeof(*pair));
-  if (!laghu_test_workspace_path(workspace, relative, pair->path,
-                                 sizeof(pair->path)) ||
-      !laghu_test_make_parents(pair->path))
-    return false;
+  if (!laghu_test_workspace_path(workspace, relative, pair->path, sizeof(pair->path)) || !laghu_test_make_parents(pair->path)) return false;
   laghu_runtime_queue_init(&pair->producer);
   laghu_runtime_queue_init(&pair->consumer);
-  if (!laghu_runtime_queue_create(&pair->producer, pair->path, slots,
-                                  payload_capacity))
-    return false;
+  if (!laghu_runtime_queue_create(&pair->producer, pair->path, slots, payload_capacity)) return false;
   pair->producer_open = true;
   if (!laghu_runtime_queue_open(&pair->consumer, pair->path)) {
     laghu_test_queue_pair_close(pair);

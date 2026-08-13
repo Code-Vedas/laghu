@@ -62,8 +62,7 @@ static void laghu_chrome_analyze_signal(int number) {
 }
 
 static void laghu_chrome_analyze_sleep_ms(unsigned int value) {
-  struct timespec pause = {.tv_sec = (time_t)(value / 1000U),
-                           .tv_nsec = (long)(value % 1000U) * 1000000L};
+  struct timespec pause = {.tv_sec = (time_t)(value / 1000U), .tv_nsec = (long)(value % 1000U) * 1000000L};
   (void)nanosleep(&pause, NULL);
 }
 
@@ -74,13 +73,10 @@ static uint64_t laghu_chrome_analyze_clock_ms(void) {
 }
 
 static bool laghu_chrome_analyze_timeout(unsigned int value) {
-  return value >= LAGHU_CHROME_ANALYZE_MIN_TIMEOUT_MS &&
-         value <= LAGHU_CHROME_ANALYZE_MAX_TIMEOUT_MS;
+  return value >= LAGHU_CHROME_ANALYZE_MIN_TIMEOUT_MS && value <= LAGHU_CHROME_ANALYZE_MAX_TIMEOUT_MS;
 }
 
-static bool laghu_chrome_analyze_write_all(int descriptor,
-                                           const unsigned char *data,
-                                           size_t length) {
+static bool laghu_chrome_analyze_write_all(int descriptor, const unsigned char *data, size_t length) {
   while (length != 0U) {
     ssize_t written = write(descriptor, data, length);
     if (written <= 0) return false;
@@ -101,9 +97,7 @@ static void laghu_chrome_analyze_remove_tree(const char *path) {
     char child[LAGHU_RUNTIME_PATH_SIZE * 2U + 64U];
     struct stat status;
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 ||
-        snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >=
-            (int)sizeof(child) ||
-        lstat(child, &status) != 0)
+        snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int)sizeof(child) || lstat(child, &status) != 0)
       continue;
     if (S_ISDIR(status.st_mode))
       laghu_chrome_analyze_remove_tree(child);
@@ -114,29 +108,21 @@ static void laghu_chrome_analyze_remove_tree(const char *path) {
   (void)rmdir(path);
 }
 
-static bool laghu_chrome_analyze_append(int descriptor,
-                                        const laghu_runtime_job *job) {
+static bool laghu_chrome_analyze_append(int descriptor, const laghu_runtime_job *job) {
   static const char closing[] = "</body></html>";
   const unsigned char *close;
   size_t prefix;
-  if (job == NULL || job->payload.length == 0U ||
-      memchr(job->payload.data, '\0', job->payload.length) != NULL)
-    return false;
+  if (job == NULL || job->payload.length == 0U || memchr(job->payload.data, '\0', job->payload.length) != NULL) return false;
   close = (const unsigned char *)"</body>";
   prefix = job->payload.length;
   for (size_t index = 0U; index + 7U <= job->payload.length; ++index)
-    if (strncasecmp((const char *)job->payload.data + index,
-                    (const char *)close, 7U) == 0) {
+    if (strncasecmp((const char *)job->payload.data + index, (const char *)close, 7U) == 0) {
       prefix = index;
       break;
     }
-  return laghu_chrome_analyze_write_all(descriptor, job->payload.data,
-                                        prefix) &&
-         laghu_chrome_analyze_write_all(
-             descriptor, (const unsigned char *)laghu_chrome_analyze_script,
-             sizeof(laghu_chrome_analyze_script) - 1U) &&
-         laghu_chrome_analyze_write_all(
-             descriptor, (const unsigned char *)closing, sizeof(closing) - 1U);
+  return laghu_chrome_analyze_write_all(descriptor, job->payload.data, prefix) &&
+         laghu_chrome_analyze_write_all(descriptor, (const unsigned char *)laghu_chrome_analyze_script, sizeof(laghu_chrome_analyze_script) - 1U) &&
+         laghu_chrome_analyze_write_all(descriptor, (const unsigned char *)closing, sizeof(closing) - 1U);
 }
 
 static int laghu_chrome_analyze_base64(unsigned char value) {
@@ -148,35 +134,22 @@ static int laghu_chrome_analyze_base64(unsigned char value) {
   return -1;
 }
 
-static bool laghu_chrome_analyze_decode(const unsigned char *input,
-                                        size_t input_length,
-                                        unsigned char **output,
-                                        size_t *output_length) {
+static bool laghu_chrome_analyze_decode(const unsigned char *input, size_t input_length, unsigned char **output, size_t *output_length) {
   unsigned char *decoded;
   size_t cursor = 0U, length = 0U;
-  if (input == NULL || output == NULL || output_length == NULL ||
-      input_length == 0U || input_length > LAGHU_CHROME_ANALYZE_MAX_OUTPUT)
-    return false;
+  if (input == NULL || output == NULL || output_length == NULL || input_length == 0U || input_length > LAGHU_CHROME_ANALYZE_MAX_OUTPUT) return false;
   decoded = malloc(input_length + 1U);
   if (decoded == NULL) return false;
   while (cursor < input_length) {
     int a, b, c, d;
-    while (cursor < input_length &&
-           (input[cursor] == ' ' || input[cursor] == '\n' ||
-            input[cursor] == '\r' || input[cursor] == '\t'))
-      ++cursor;
-    if (cursor + 4U > input_length ||
-        (a = laghu_chrome_analyze_base64(input[cursor])) < 0 ||
+    while (cursor < input_length && (input[cursor] == ' ' || input[cursor] == '\n' || input[cursor] == '\r' || input[cursor] == '\t')) ++cursor;
+    if (cursor + 4U > input_length || (a = laghu_chrome_analyze_base64(input[cursor])) < 0 ||
         (b = laghu_chrome_analyze_base64(input[cursor + 1U])) < 0) {
       free(decoded);
       return false;
     }
-    c = input[cursor + 2U] == '='
-            ? -2
-            : laghu_chrome_analyze_base64(input[cursor + 2U]);
-    d = input[cursor + 3U] == '='
-            ? -2
-            : laghu_chrome_analyze_base64(input[cursor + 3U]);
+    c = input[cursor + 2U] == '=' ? -2 : laghu_chrome_analyze_base64(input[cursor + 2U]);
+    d = input[cursor + 3U] == '=' ? -2 : laghu_chrome_analyze_base64(input[cursor + 3U]);
     if ((c != -2 && c < 0) || (d != -2 && d < 0) || (c == -2 && d != -2)) {
       free(decoded);
       return false;
@@ -193,10 +166,7 @@ static bool laghu_chrome_analyze_decode(const unsigned char *input,
   return true;
 }
 
-static bool laghu_chrome_analyze_run(const char *chrome, const char *file,
-                                     unsigned int timeout_ms,
-                                     unsigned char **report,
-                                     size_t *report_length) {
+static bool laghu_chrome_analyze_run(const char *chrome, const char *file, unsigned int timeout_ms, unsigned char **report, size_t *report_length) {
   char virtual_time[32], window_size[] = "--window-size=1365,768";
   char file_url[LAGHU_RUNTIME_PATH_SIZE * 2U + 16U];
   char profile[LAGHU_RUNTIME_PATH_SIZE * 2U + 32U];
@@ -207,17 +177,11 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file,
   int pipefd[2], wait_status = 0;
   pid_t child;
   uint64_t deadline;
-  if (chrome == NULL || file == NULL ||
-      !laghu_chrome_analyze_timeout(timeout_ms) ||
-      snprintf(virtual_time, sizeof(virtual_time), "--virtual-time-budget=%u",
-               timeout_ms) <= 0 ||
-      snprintf(file_url, sizeof(file_url), "file://%s", file) >=
-          (int)sizeof(file_url) ||
-      snprintf(profile, sizeof(profile), "%s.profile", file) >=
-          (int)sizeof(profile) ||
-      snprintf(profile_argument, sizeof(profile_argument), "--user-data-dir=%s",
-               profile) >= (int)sizeof(profile_argument) ||
-      pipe(pipefd) != 0)
+  if (chrome == NULL || file == NULL || !laghu_chrome_analyze_timeout(timeout_ms) ||
+      snprintf(virtual_time, sizeof(virtual_time), "--virtual-time-budget=%u", timeout_ms) <= 0 ||
+      snprintf(file_url, sizeof(file_url), "file://%s", file) >= (int)sizeof(file_url) ||
+      snprintf(profile, sizeof(profile), "%s.profile", file) >= (int)sizeof(profile) ||
+      snprintf(profile_argument, sizeof(profile_argument), "--user-data-dir=%s", profile) >= (int)sizeof(profile_argument) || pipe(pipefd) != 0)
     return false;
   child = fork();
   if (child < 0) {
@@ -255,13 +219,11 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file,
     struct pollfd ready = {.fd = pipefd[0], .events = POLLIN};
     int polled = poll(&ready, 1U, 20);
     if (polled > 0 && (ready.revents & POLLIN) != 0 && used < sizeof(raw)) {
-      ssize_t read_count =
-          read(pipefd[0], raw + used, LAGHU_CHROME_ANALYZE_MAX_OUTPUT - used);
+      ssize_t read_count = read(pipefd[0], raw + used, LAGHU_CHROME_ANALYZE_MAX_OUTPUT - used);
       if (read_count > 0) used += (size_t)read_count;
     }
     if (waitpid(child, &wait_status, WNOHANG) == child) break;
-    if (laghu_chrome_analyze_stop ||
-        laghu_chrome_analyze_clock_ms() >= deadline) {
+    if (laghu_chrome_analyze_stop || laghu_chrome_analyze_clock_ms() >= deadline) {
       (void)kill(-child, SIGKILL);
       (void)waitpid(child, &wait_status, 0);
       (void)close(pipefd[0]);
@@ -271,8 +233,7 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file,
   for (;;) {
     ssize_t read_count;
     if (used == LAGHU_CHROME_ANALYZE_MAX_OUTPUT) break;
-    read_count =
-        read(pipefd[0], raw + used, LAGHU_CHROME_ANALYZE_MAX_OUTPUT - used);
+    read_count = read(pipefd[0], raw + used, LAGHU_CHROME_ANALYZE_MAX_OUTPUT - used);
     if (read_count <= 0) break;
     used += (size_t)read_count;
   }
@@ -283,49 +244,35 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file,
   }
   raw[used] = '\0';
   {
-    const unsigned char *begin = (const unsigned char *)strstr(
-        (const char *)raw, "<pre id=\"laghu-analysis\">");
+    const unsigned char *begin = (const unsigned char *)strstr((const char *)raw, "<pre id=\"laghu-analysis\">");
     const unsigned char *end;
     if (begin == NULL) {
       fprintf(stderr,
               "laghu-chrome-analyze: chrome did not emit an analysis report "
               "(bytes=%zu marker=%s)\n",
-              used,
-              strstr((const char *)raw, "laghu-analysis") == NULL ? "absent"
-                                                                  : "present");
+              used, strstr((const char *)raw, "laghu-analysis") == NULL ? "absent" : "present");
       return false;
     }
     begin += sizeof("<pre id=\"laghu-analysis\">") - 1U;
     end = (const unsigned char *)strstr((const char *)begin, "</pre>");
     if (end == NULL || end <= begin) {
-      fprintf(
-          stderr,
-          "laghu-chrome-analyze: chrome emitted a malformed analysis report\n");
+      fprintf(stderr, "laghu-chrome-analyze: chrome emitted a malformed analysis report\n");
       return false;
     }
-    return laghu_chrome_analyze_decode(begin, (size_t)(end - begin), report,
-                                       report_length);
+    return laghu_chrome_analyze_decode(begin, (size_t)(end - begin), report, report_length);
   }
 }
 
-static bool laghu_chrome_analyze_publish(const char *directory,
-                                         const laghu_runtime_job *job,
-                                         const unsigned char *report,
-                                         size_t report_length) {
-  char output[LAGHU_RUNTIME_PATH_SIZE * 2U],
-      temporary[LAGHU_RUNTIME_PATH_SIZE * 2U];
+static bool laghu_chrome_analyze_publish(const char *directory, const laghu_runtime_job *job, const unsigned char *report, size_t report_length) {
+  char output[LAGHU_RUNTIME_PATH_SIZE * 2U], temporary[LAGHU_RUNTIME_PATH_SIZE * 2U];
   int descriptor;
-  if (directory == NULL || job == NULL || report == NULL ||
-      report_length == 0U ||
-      snprintf(output, sizeof(output), "%s/%s.json", directory,
-               job->index_key) >= (int)sizeof(output) ||
-      snprintf(temporary, sizeof(temporary), "%s/.%s.XXXXXX", directory,
-               job->index_key) >= (int)sizeof(temporary))
+  if (directory == NULL || job == NULL || report == NULL || report_length == 0U ||
+      snprintf(output, sizeof(output), "%s/%s.json", directory, job->index_key) >= (int)sizeof(output) ||
+      snprintf(temporary, sizeof(temporary), "%s/.%s.XXXXXX", directory, job->index_key) >= (int)sizeof(temporary))
     return false;
   descriptor = mkstemp(temporary);
   if (descriptor < 0) return false;
-  if (!laghu_chrome_analyze_write_all(descriptor, report, report_length) ||
-      fsync(descriptor) != 0 || close(descriptor) != 0 ||
+  if (!laghu_chrome_analyze_write_all(descriptor, report, report_length) || fsync(descriptor) != 0 || close(descriptor) != 0 ||
       rename(temporary, output) != 0) {
     (void)close(descriptor);
     (void)unlink(temporary);
@@ -334,9 +281,7 @@ static bool laghu_chrome_analyze_publish(const char *directory,
   return true;
 }
 
-static bool laghu_chrome_analyze_process(const char *chrome,
-                                         const char *directory,
-                                         const laghu_runtime_job *job) {
+static bool laghu_chrome_analyze_process(const char *chrome, const char *directory, const laghu_runtime_job *job) {
   char temporary[] = "/tmp/laghu-chrome-analyze.XXXXXX";
   char input[sizeof(temporary) + 6U];
   char profile[sizeof(input) + 9U];
@@ -344,35 +289,26 @@ static bool laghu_chrome_analyze_process(const char *chrome,
   size_t report_length = 0U;
   int descriptor;
   bool result;
-  if (job == NULL || job->kind != LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS ||
-      strcmp(job->content_type, "text/html") != 0 ||
-      !laghu_chrome_analyze_timeout(job->analysis_timeout_ms) ||
-      job->payload.length > LAGHU_CHROME_ANALYZE_MAX_HTML)
+  if (job == NULL || job->kind != LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS || strcmp(job->content_type, "text/html") != 0 ||
+      !laghu_chrome_analyze_timeout(job->analysis_timeout_ms) || job->payload.length > LAGHU_CHROME_ANALYZE_MAX_HTML)
     return false;
   descriptor = mkstemp(temporary);
   if (descriptor < 0) return false;
-  if (snprintf(input, sizeof(input), "%s.html", temporary) >=
-          (int)sizeof(input) ||
-      rename(temporary, input) != 0) {
+  if (snprintf(input, sizeof(input), "%s.html", temporary) >= (int)sizeof(input) || rename(temporary, input) != 0) {
     (void)close(descriptor);
     (void)unlink(temporary);
     return false;
   }
-  if (snprintf(profile, sizeof(profile), "%s.profile", input) >=
-          (int)sizeof(profile) ||
-      mkdir(profile, 0700) != 0) {
+  if (snprintf(profile, sizeof(profile), "%s.profile", input) >= (int)sizeof(profile) || mkdir(profile, 0700) != 0) {
     (void)close(descriptor);
     (void)unlink(input);
     return false;
   }
-  result = laghu_chrome_analyze_append(descriptor, job) &&
-           fsync(descriptor) == 0 && close(descriptor) == 0;
+  result = laghu_chrome_analyze_append(descriptor, job) && fsync(descriptor) == 0 && close(descriptor) == 0;
   descriptor = -1;
   if (result)
-    result =
-        laghu_chrome_analyze_run(chrome, input, job->analysis_timeout_ms,
-                                 &report, &report_length) &&
-        laghu_chrome_analyze_publish(directory, job, report, report_length);
+    result = laghu_chrome_analyze_run(chrome, input, job->analysis_timeout_ms, &report, &report_length) &&
+             laghu_chrome_analyze_publish(directory, job, report, report_length);
   free(report);
   if (descriptor >= 0) (void)close(descriptor);
   (void)unlink(input);
@@ -380,9 +316,7 @@ static bool laghu_chrome_analyze_process(const char *chrome,
   return result;
 }
 
-static int laghu_chrome_analyze_serve(const char *queue_path,
-                                      const char *directory, const char *chrome,
-                                      bool once) {
+static int laghu_chrome_analyze_serve(const char *queue_path, const char *directory, const char *chrome, bool once) {
   laghu_runtime_queue queue;
   laghu_runtime_queue_snapshot snapshot;
   unsigned char *payload = NULL;
@@ -392,8 +326,7 @@ static int laghu_chrome_analyze_serve(const char *queue_path,
   laghu_runtime_queue_init(&queue);
   while (!laghu_chrome_analyze_stop) {
     laghu_runtime_job job;
-    if (!laghu_runtime_queue_open(&queue, queue_path) ||
-        !laghu_runtime_queue_snapshot_get(&queue, &snapshot)) {
+    if (!laghu_runtime_queue_open(&queue, queue_path) || !laghu_runtime_queue_snapshot_get(&queue, &snapshot)) {
       if (once) {
         result = 1;
         break;
@@ -401,23 +334,18 @@ static int laghu_chrome_analyze_serve(const char *queue_path,
       laghu_chrome_analyze_sleep_ms(100U);
       continue;
     }
-    if (snapshot.payload_capacity > LAGHU_CHROME_ANALYZE_MAX_HTML ||
-        (payload == NULL &&
-         (payload = malloc(snapshot.payload_capacity)) == NULL)) {
+    if (snapshot.payload_capacity > LAGHU_CHROME_ANALYZE_MAX_HTML || (payload == NULL && (payload = malloc(snapshot.payload_capacity)) == NULL)) {
       result = 1;
       break;
     }
-    if (!configured && !laghu_runtime_queue_set_backend(
-                           &queue, 1U, LAGHU_CHROME_ANALYZE_BACKEND)) {
+    if (!configured && !laghu_runtime_queue_set_backend(&queue, 1U, LAGHU_CHROME_ANALYZE_BACKEND)) {
       result = 1;
       break;
     }
     configured = true;
     (void)laghu_runtime_queue_heartbeat(&queue, (uint64_t)time(NULL));
-    if (laghu_runtime_queue_try_take(&queue, &job, payload,
-                                     snapshot.payload_capacity)) {
-      if (!laghu_chrome_analyze_process(chrome, directory, &job))
-        result = once ? 1 : result;
+    if (laghu_runtime_queue_try_take(&queue, &job, payload, snapshot.payload_capacity)) {
+      if (!laghu_chrome_analyze_process(chrome, directory, &job)) result = once ? 1 : result;
       if (once) break;
     } else if (once) {
       break;
@@ -434,25 +362,20 @@ int main(int argc, char **argv) {
   laghu_runtime_queue queue;
   bool initialize, once;
   const char *chrome;
-  if ((argc != 4 && argc != 5) ||
-      (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 &&
-       strcmp(argv[1], "--init-and-serve") != 0 &&
-       strcmp(argv[1], "--once") != 0)) {
+  if ((argc != 4 && argc != 5) || (strcmp(argv[1], "--init") != 0 && strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--init-and-serve") != 0 &&
+                                   strcmp(argv[1], "--once") != 0)) {
     fputs(
         "Usage: laghu-chrome-analyze --init|--serve|--init-and-serve|--once "
         "QUEUE OUTPUT_DIR [CHROME]\n",
         stderr);
     return 2;
   }
-  initialize =
-      strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--once") != 0;
+  initialize = strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--once") != 0;
   once = strcmp(argv[1], "--once") == 0;
   chrome = argc == 5 ? argv[4] : "chromium";
   if (initialize) {
     laghu_runtime_queue_init(&queue);
-    if (!laghu_runtime_queue_create(&queue, argv[2], LAGHU_CHROME_ANALYZE_SLOTS,
-                                    LAGHU_CHROME_ANALYZE_MAX_HTML))
-      return 1;
+    if (!laghu_runtime_queue_create(&queue, argv[2], LAGHU_CHROME_ANALYZE_SLOTS, LAGHU_CHROME_ANALYZE_MAX_HTML)) return 1;
     laghu_runtime_queue_close(&queue);
     if (strcmp(argv[1], "--init") == 0) return 0;
   }

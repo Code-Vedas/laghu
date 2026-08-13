@@ -60,11 +60,7 @@ extern "C" {
 #define LAGHU_HTML_CACHE_STALE_TTL_MAX 86400U
 #define LAGHU_ROLLOUT_PERCENTAGE_UNSET 101U
 
-typedef enum {
-  LAGHU_MODE_UNSET = -1,
-  LAGHU_MODE_OFF = 0,
-  LAGHU_MODE_ON = 1
-} laghu_mode;
+typedef enum { LAGHU_MODE_UNSET = -1, LAGHU_MODE_OFF = 0, LAGHU_MODE_ON = 1 } laghu_mode;
 
 typedef enum {
   LAGHU_PRESET_UNSET = -1,
@@ -85,11 +81,7 @@ typedef enum {
   LAGHU_REWRITE_LEVEL_EXPERIMENTAL
 } laghu_rewrite_level;
 
-typedef enum {
-  LAGHU_RISK_CONSERVATIVE = 0,
-  LAGHU_RISK_MODERATE,
-  LAGHU_RISK_EXPANSIVE
-} laghu_risk_level;
+typedef enum { LAGHU_RISK_CONSERVATIVE = 0, LAGHU_RISK_MODERATE, LAGHU_RISK_EXPANSIVE } laghu_risk_level;
 
 typedef enum {
   LAGHU_FILTER_IMAGE_LOSSLESS = UINT32_C(1) << 0,
@@ -111,15 +103,11 @@ typedef enum {
   LAGHU_FILTER_CACHE_MEDIA = UINT32_C(1) << 16
 } laghu_filter_family;
 
-#define LAGHU_FILTER_ALL_MASK                                                \
-  ((uint32_t)(LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA |    \
-              LAGHU_FILTER_IMAGE_DIMENSIONS | LAGHU_FILTER_IMAGE_MODERN |    \
-              LAGHU_FILTER_IMAGE_RESPONSIVE | LAGHU_FILTER_IMAGE_LAZYLOAD |  \
-              LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY |           \
-              LAGHU_FILTER_JAVASCRIPT_MINIFY | LAGHU_FILTER_RESOURCE_HINTS | \
-              LAGHU_FILTER_CACHE_EXTENSION | LAGHU_FILTER_RESOURCE_COMBINE | \
-              LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS |     \
-              LAGHU_FILTER_JAVASCRIPT_DEFER | LAGHU_FILTER_IMMUTABLE_CACHE | \
+#define LAGHU_FILTER_ALL_MASK                                                                                                               \
+  ((uint32_t)(LAGHU_FILTER_IMAGE_LOSSLESS | LAGHU_FILTER_IMAGE_METADATA | LAGHU_FILTER_IMAGE_DIMENSIONS | LAGHU_FILTER_IMAGE_MODERN |       \
+              LAGHU_FILTER_IMAGE_RESPONSIVE | LAGHU_FILTER_IMAGE_LAZYLOAD | LAGHU_FILTER_HTML_MINIFY | LAGHU_FILTER_CSS_MINIFY |            \
+              LAGHU_FILTER_JAVASCRIPT_MINIFY | LAGHU_FILTER_RESOURCE_HINTS | LAGHU_FILTER_CACHE_EXTENSION | LAGHU_FILTER_RESOURCE_COMBINE | \
+              LAGHU_FILTER_RESOURCE_INLINE | LAGHU_FILTER_CRITICAL_CSS | LAGHU_FILTER_JAVASCRIPT_DEFER | LAGHU_FILTER_IMMUTABLE_CACHE |     \
               LAGHU_FILTER_CACHE_MEDIA))
 
 typedef struct {
@@ -208,8 +196,7 @@ typedef struct {
   unsigned int allow_resource_count;
   unsigned int disallow_resource_count;
   char allow_resources[LAGHU_RESOURCE_RULE_LIMIT][LAGHU_RESOURCE_PATTERN_SIZE];
-  char disallow_resources[LAGHU_RESOURCE_RULE_LIMIT]
-                         [LAGHU_RESOURCE_PATTERN_SIZE];
+  char disallow_resources[LAGHU_RESOURCE_RULE_LIMIT][LAGHU_RESOURCE_PATTERN_SIZE];
   laghu_domain_policy domain_policy;
 } laghu_config;
 
@@ -243,12 +230,7 @@ typedef enum {
   LAGHU_DECISION_BYPASS_ERROR
 } laghu_decision;
 
-typedef enum {
-  LAGHU_QUERY_CONTROL_NONE = 0,
-  LAGHU_QUERY_CONTROL_OFF,
-  LAGHU_QUERY_CONTROL_EXPLAIN,
-  LAGHU_QUERY_CONTROL_PREVIEW
-} laghu_query_control;
+typedef enum { LAGHU_QUERY_CONTROL_NONE = 0, LAGHU_QUERY_CONTROL_OFF, LAGHU_QUERY_CONTROL_EXPLAIN, LAGHU_QUERY_CONTROL_PREVIEW } laghu_query_control;
 
 typedef enum {
   LAGHU_CANDIDATE_ACCEPTED = 0,
@@ -266,64 +248,42 @@ typedef struct {
 } laghu_candidate_result;
 
 void laghu_config_init(laghu_config *config);
-void laghu_config_merge(laghu_config *result, const laghu_config *parent,
-                        const laghu_config *child);
+void laghu_config_merge(laghu_config *result, const laghu_config *parent, const laghu_config *child);
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset);
 const char *laghu_preset_name(laghu_preset preset);
 bool laghu_resolve_policy(laghu_preset preset, laghu_policy *policy);
 
-bool laghu_parse_rewrite_level(const char *value,
-                               laghu_rewrite_level *rewrite_level);
+bool laghu_parse_rewrite_level(const char *value, laghu_rewrite_level *rewrite_level);
 const char *laghu_rewrite_level_name(laghu_rewrite_level rewrite_level);
-bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
-                                 laghu_policy *policy);
-bool laghu_resolve_config_policy(const laghu_config *config,
-                                 laghu_policy *policy);
-bool laghu_resolve_config_policy_with_error(const laghu_config *config,
-                                            laghu_policy *policy, char *error,
-                                            size_t error_size);
+bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level, laghu_policy *policy);
+bool laghu_resolve_config_policy(const laghu_config *config, laghu_policy *policy);
+bool laghu_resolve_config_policy_with_error(const laghu_config *config, laghu_policy *policy, char *error, size_t error_size);
 bool laghu_parse_filter(const char *value, uint32_t *filter);
 const char *laghu_filter_name(uint32_t filter);
 bool laghu_mime_type_allowed(const char *allowlist, const char *content_type);
 bool laghu_resource_pattern_valid(const char *pattern);
-bool laghu_resource_rule_add(laghu_config *config, bool allow,
-                             const char *pattern);
-bool laghu_resource_rules_merge_valid(const laghu_config *parent,
-                                      const laghu_config *child);
+bool laghu_resource_rule_add(laghu_config *config, bool allow, const char *pattern);
+bool laghu_resource_rules_merge_valid(const laghu_config *parent, const laghu_config *child);
 bool laghu_resource_allowed(const laghu_config *config, const char *url);
-bool laghu_domain_policy_add_domain(laghu_domain_policy *policy,
-                                    const char *origin);
-bool laghu_domain_policy_add_mapping(laghu_domain_policy *policy,
-                                     const char *source_origin,
-                                     const char *public_origin);
-bool laghu_domain_policy_add_shard(laghu_domain_policy *policy,
-                                   const char *public_origin,
-                                   const char *origin);
+bool laghu_domain_policy_add_domain(laghu_domain_policy *policy, const char *origin);
+bool laghu_domain_policy_add_mapping(laghu_domain_policy *policy, const char *source_origin, const char *public_origin);
+bool laghu_domain_policy_add_shard(laghu_domain_policy *policy, const char *public_origin, const char *origin);
 bool laghu_domain_policy_validate(const laghu_domain_policy *policy);
-bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent,
-                                     const laghu_domain_policy *child);
+bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent, const laghu_domain_policy *child);
 /* A pure, allocation-free rewrite. The caller supplies storage for the exact
  * original path, query, fragment, and percent-encoding to be retained. */
-bool laghu_domain_url_rewrite(const laghu_domain_policy *policy,
-                              const char *source_url, char *output,
-                              size_t output_size);
+bool laghu_domain_url_rewrite(const laghu_domain_policy *policy, const char *source_url, char *output, size_t output_size);
 bool laghu_vary_supported(const char *vary);
 bool laghu_apply_query_control(const char *query, laghu_query_control *control);
-bool laghu_apply_query_filter_overrides(const laghu_config *config,
-                                        const char *query, laghu_policy *policy,
-                                        uint32_t *enabled, uint32_t *disabled);
+bool laghu_apply_query_filter_overrides(const laghu_config *config, const char *query, laghu_policy *policy, uint32_t *enabled, uint32_t *disabled);
 
-laghu_decision laghu_decide(const laghu_config *config,
-                            const laghu_response *response);
+laghu_decision laghu_decide(const laghu_config *config, const laghu_response *response);
 const char *laghu_decision_name(laghu_decision decision);
 
-laghu_candidate_result laghu_finalize_candidate(laghu_buffer original,
-                                                laghu_buffer candidate,
-                                                bool candidate_valid);
+laghu_candidate_result laghu_finalize_candidate(laghu_buffer original, laghu_buffer candidate, bool candidate_valid);
 
-bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy,
-                       char output[LAGHU_SHA256_HEX_SIZE]);
+bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy, char output[LAGHU_SHA256_HEX_SIZE]);
 
 #ifdef __cplusplus
 }

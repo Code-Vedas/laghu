@@ -48,17 +48,14 @@ static bool laghu_catalog_hash_valid(const char *hash) {
     return false;
   }
   for (index = 0U; index < LAGHU_SHA256_HEX_LENGTH; ++index) {
-    if (!((hash[index] >= '0' && hash[index] <= '9') ||
-          (hash[index] >= 'a' && hash[index] <= 'f'))) {
+    if (!((hash[index] >= '0' && hash[index] <= '9') || (hash[index] >= 'a' && hash[index] <= 'f'))) {
       return false;
     }
   }
   return true;
 }
 
-static bool laghu_catalog_paths(const char *cache_path, const char *key,
-                                char *directory, size_t directory_size,
-                                char *path, size_t path_size) {
+static bool laghu_catalog_paths(const char *cache_path, const char *key, char *directory, size_t directory_size, char *path, size_t path_size) {
   int first;
   int second;
   if (cache_path == NULL || !laghu_catalog_hash_valid(key)) {
@@ -66,65 +63,43 @@ static bool laghu_catalog_paths(const char *cache_path, const char *key,
   }
   first = snprintf(directory, directory_size, "%s/catalog", cache_path);
   second = snprintf(path, path_size, "%s/%s.meta", directory, key);
-  return first > 0 && (size_t)first < directory_size && second > 0 &&
-         (size_t)second < path_size;
+  return first > 0 && (size_t)first < directory_size && second > 0 && (size_t)second < path_size;
 }
 
-static laghu_catalog_lock laghu_catalog_try_lock(const char *path) {
-  return open(path, O_WRONLY | O_CREAT | O_EXCL, 0640);
-}
+static laghu_catalog_lock laghu_catalog_try_lock(const char *path) { return open(path, O_WRONLY | O_CREAT | O_EXCL, 0640); }
 
 static void laghu_catalog_unlock(laghu_catalog_lock lock, const char *path) {
   (void)close(lock);
   (void)remove(path);
 }
 
-static bool laghu_catalog_url_key(const char *normalized_url,
-                                  const char *policy_key,
-                                  uint32_t capability_mask,
-                                  char output[LAGHU_RUNTIME_KEY_SIZE]) {
+static bool laghu_catalog_url_key(const char *normalized_url, const char *policy_key, uint32_t capability_mask, char output[LAGHU_RUNTIME_KEY_SIZE]) {
   char material[LAGHU_RUNTIME_PATH_SIZE + LAGHU_RUNTIME_KEY_SIZE + 32U];
   int length;
-  if (normalized_url == NULL || normalized_url[0] != '/' ||
-      !laghu_catalog_hash_valid(policy_key)) {
+  if (normalized_url == NULL || normalized_url[0] != '/' || !laghu_catalog_hash_valid(policy_key)) {
     return false;
   }
-  length = snprintf(material, sizeof(material), "catalog-url-v1\n%s\n%s\n%u",
-                    normalized_url, policy_key, capability_mask);
-  return length > 0 && (size_t)length < sizeof(material) &&
-         laghu_sha256_hex(
-             (laghu_buffer){(const unsigned char *)material, (size_t)length},
-             output);
+  length = snprintf(material, sizeof(material), "catalog-url-v1\n%s\n%s\n%u", normalized_url, policy_key, capability_mask);
+  return length > 0 && (size_t)length < sizeof(material) && laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, output);
 }
 
-bool laghu_catalog_url_identity(const char *normalized_url,
-                                const char *policy_key,
-                                uint32_t capability_mask,
-                                char output[LAGHU_RUNTIME_KEY_SIZE]) {
-  return output != NULL && laghu_catalog_url_key(normalized_url, policy_key,
-                                                 capability_mask, output);
+bool laghu_catalog_url_identity(const char *normalized_url, const char *policy_key, uint32_t capability_mask, char output[LAGHU_RUNTIME_KEY_SIZE]) {
+  return output != NULL && laghu_catalog_url_key(normalized_url, policy_key, capability_mask, output);
 }
 
-bool laghu_catalog_key(const char *normalized_url, const char *source_hash,
-                       const char *policy_key, uint32_t capability_mask,
+bool laghu_catalog_key(const char *normalized_url, const char *source_hash, const char *policy_key, uint32_t capability_mask,
                        char output[LAGHU_RUNTIME_KEY_SIZE]) {
   char material[LAGHU_RUNTIME_PATH_SIZE + LAGHU_RUNTIME_KEY_SIZE * 2U + 32U];
   int length;
-  if (normalized_url == NULL || normalized_url[0] != '/' ||
-      !laghu_catalog_hash_valid(source_hash) ||
-      !laghu_catalog_hash_valid(policy_key) || output == NULL) {
+  if (normalized_url == NULL || normalized_url[0] != '/' || !laghu_catalog_hash_valid(source_hash) || !laghu_catalog_hash_valid(policy_key) ||
+      output == NULL) {
     return false;
   }
-  length = snprintf(material, sizeof(material), "catalog-v1\n%s\n%s\n%s\n%u",
-                    normalized_url, source_hash, policy_key, capability_mask);
-  return length > 0 && (size_t)length < sizeof(material) &&
-         laghu_sha256_hex(
-             (laghu_buffer){(const unsigned char *)material, (size_t)length},
-             output);
+  length = snprintf(material, sizeof(material), "catalog-v1\n%s\n%s\n%s\n%u", normalized_url, source_hash, policy_key, capability_mask);
+  return length > 0 && (size_t)length < sizeof(material) && laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, output);
 }
 
-bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
-                           const laghu_catalog_record *record) {
+bool laghu_catalog_publish(const char *cache_path, const char *catalog_key, const laghu_catalog_record *record) {
   char directory[LAGHU_RUNTIME_PATH_SIZE];
   char path[LAGHU_RUNTIME_PATH_SIZE];
   char temporary[LAGHU_RUNTIME_PATH_SIZE];
@@ -134,10 +109,8 @@ bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
   bool written;
   int length;
   laghu_catalog_lock lock;
-  if (record == NULL || record->version != LAGHU_CATALOG_VERSION ||
-      record->variant_count > LAGHU_CATALOG_MAX_WIDTHS ||
-      !laghu_catalog_paths(cache_path, catalog_key, directory,
-                           sizeof(directory), path, sizeof(path))) {
+  if (record == NULL || record->version != LAGHU_CATALOG_VERSION || record->variant_count > LAGHU_CATALOG_MAX_WIDTHS ||
+      !laghu_catalog_paths(cache_path, catalog_key, directory, sizeof(directory), path, sizeof(path))) {
     return false;
   }
   if (laghu_catalog_mkdir(cache_path) != 0 && errno != EEXIST) {
@@ -154,18 +127,14 @@ bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
   if (lock == LAGHU_CATALOG_LOCK_INVALID) {
     return false;
   }
-  length = snprintf(temporary, sizeof(temporary), "%s.tmp.%ld.%llu", path,
-                    (long)laghu_catalog_pid(),
-                    (unsigned long long)record->updated_at);
+  length = snprintf(temporary, sizeof(temporary), "%s.tmp.%ld.%llu", path, (long)laghu_catalog_pid(), (unsigned long long)record->updated_at);
   if (length <= 0 || (size_t)length >= sizeof(temporary)) {
     laghu_catalog_unlock(lock, lock_path);
     return false;
   }
   stored.magic = LAGHU_CATALOG_MAGIC;
   stored.record = *record;
-  if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record,
-                                       sizeof(stored.record)},
-                        stored.checksum)) {
+  if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record, sizeof(stored.record)}, stored.checksum)) {
     laghu_catalog_unlock(lock, lock_path);
     return false;
   }
@@ -174,8 +143,7 @@ bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
     laghu_catalog_unlock(lock, lock_path);
     return false;
   }
-  written =
-      fwrite(&stored, sizeof(stored), 1U, file) == 1U && fflush(file) == 0;
+  written = fwrite(&stored, sizeof(stored), 1U, file) == 1U && fflush(file) == 0;
   if (fclose(file) != 0) {
     written = false;
   }
@@ -187,27 +155,21 @@ bool laghu_catalog_publish(const char *cache_path, const char *catalog_key,
   laghu_catalog_unlock(lock, lock_path);
   {
     char url_key[LAGHU_RUNTIME_KEY_SIZE];
-    if (laghu_catalog_url_key(record->normalized_url, record->policy_key,
-                              record->capability_mask, url_key) &&
-        strcmp(url_key, catalog_key) != 0) {
+    if (laghu_catalog_url_key(record->normalized_url, record->policy_key, record->capability_mask, url_key) && strcmp(url_key, catalog_key) != 0) {
       return laghu_catalog_publish(cache_path, url_key, record);
     }
   }
   return true;
 }
 
-bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key,
-                          uint64_t now, unsigned int ttl_seconds,
-                          laghu_catalog_record *record) {
+bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key, uint64_t now, unsigned int ttl_seconds, laghu_catalog_record *record) {
   char directory[LAGHU_RUNTIME_PATH_SIZE];
   char path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_catalog_file stored;
   char checksum[LAGHU_RUNTIME_KEY_SIZE];
   FILE *file;
   bool read;
-  if (record == NULL || ttl_seconds == 0U ||
-      !laghu_catalog_paths(cache_path, catalog_key, directory,
-                           sizeof(directory), path, sizeof(path))) {
+  if (record == NULL || ttl_seconds == 0U || !laghu_catalog_paths(cache_path, catalog_key, directory, sizeof(directory), path, sizeof(path))) {
     return false;
   }
   file = fopen(path, "rb");
@@ -218,14 +180,9 @@ bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key,
   if (fclose(file) != 0) {
     read = false;
   }
-  if (!read || stored.magic != LAGHU_CATALOG_MAGIC ||
-      stored.record.version != LAGHU_CATALOG_VERSION ||
-      stored.record.variant_count > LAGHU_CATALOG_MAX_WIDTHS ||
-      stored.record.updated_at > now ||
-      now - stored.record.updated_at > ttl_seconds ||
-      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record,
-                                       sizeof(stored.record)},
-                        checksum) ||
+  if (!read || stored.magic != LAGHU_CATALOG_MAGIC || stored.record.version != LAGHU_CATALOG_VERSION ||
+      stored.record.variant_count > LAGHU_CATALOG_MAX_WIDTHS || stored.record.updated_at > now || now - stored.record.updated_at > ttl_seconds ||
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record, sizeof(stored.record)}, checksum) ||
       strcmp(checksum, stored.checksum) != 0) {
     (void)remove(path);
     return false;
@@ -234,30 +191,20 @@ bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key,
   return true;
 }
 
-bool laghu_catalog_lookup_url(const char *cache_path,
-                              const char *normalized_url,
-                              const char *policy_key, uint32_t capability_mask,
-                              uint64_t now, unsigned int ttl_seconds,
-                              laghu_catalog_record *record) {
+bool laghu_catalog_lookup_url(const char *cache_path, const char *normalized_url, const char *policy_key, uint32_t capability_mask, uint64_t now,
+                              unsigned int ttl_seconds, laghu_catalog_record *record) {
   char key[LAGHU_RUNTIME_KEY_SIZE];
-  return laghu_catalog_url_key(normalized_url, policy_key, capability_mask,
-                               key) &&
-         laghu_catalog_lookup(cache_path, key, now, ttl_seconds, record);
+  return laghu_catalog_url_key(normalized_url, policy_key, capability_mask, key) && laghu_catalog_lookup(cache_path, key, now, ttl_seconds, record);
 }
 
-bool laghu_catalog_publish_url(const char *cache_path,
-                               const laghu_catalog_record *record) {
+bool laghu_catalog_publish_url(const char *cache_path, const laghu_catalog_record *record) {
   char key[LAGHU_RUNTIME_KEY_SIZE];
-  return record != NULL &&
-         laghu_catalog_url_key(record->normalized_url, record->policy_key,
-                               record->capability_mask, key) &&
+  return record != NULL && laghu_catalog_url_key(record->normalized_url, record->policy_key, record->capability_mask, key) &&
          laghu_catalog_publish(cache_path, key, record);
 }
 
-static bool laghu_catalog_prune_add(const char *path, uint64_t now,
-                                    unsigned int ttl_seconds,
-                                    laghu_catalog_prune_item **items,
-                                    size_t *count, size_t *capacity) {
+static bool laghu_catalog_prune_add(const char *path, uint64_t now, unsigned int ttl_seconds, laghu_catalog_prune_item **items, size_t *count,
+                                    size_t *capacity) {
   laghu_catalog_file stored;
   laghu_catalog_prune_item *grown;
   FILE *file = fopen(path, "rb");
@@ -267,9 +214,7 @@ static bool laghu_catalog_prune_add(const char *path, uint64_t now,
   }
   read = fread(&stored, sizeof(stored), 1U, file) == 1U;
   (void)fclose(file);
-  if (!read || stored.magic != LAGHU_CATALOG_MAGIC ||
-      stored.record.updated_at > now ||
-      now - stored.record.updated_at > ttl_seconds) {
+  if (!read || stored.magic != LAGHU_CATALOG_MAGIC || stored.record.updated_at > now || now - stored.record.updated_at > ttl_seconds) {
     (void)remove(path);
     return true;
   }
@@ -282,14 +227,11 @@ static bool laghu_catalog_prune_add(const char *path, uint64_t now,
     *items = grown;
     *capacity = next;
   }
-  if (snprintf((*items)[*count].path, sizeof((*items)[*count].path), "%s",
-               path) <= 0) {
+  if (snprintf((*items)[*count].path, sizeof((*items)[*count].path), "%s", path) <= 0) {
     return false;
   }
   (*items)[*count].accessed = stored.record.last_accessed_at;
-  if (!laghu_catalog_url_key(
-          stored.record.normalized_url, stored.record.policy_key,
-          stored.record.capability_mask, (*items)[*count].identity)) {
+  if (!laghu_catalog_url_key(stored.record.normalized_url, stored.record.policy_key, stored.record.capability_mask, (*items)[*count].identity)) {
     (void)remove(path);
     return true;
   }
@@ -297,9 +239,7 @@ static bool laghu_catalog_prune_add(const char *path, uint64_t now,
   return true;
 }
 
-bool laghu_catalog_prune(const char *cache_path, uint64_t now,
-                         unsigned int metadata_limit,
-                         unsigned int ttl_seconds) {
+bool laghu_catalog_prune(const char *cache_path, uint64_t now, unsigned int metadata_limit, unsigned int ttl_seconds) {
   typedef char laghu_catalog_key[LAGHU_RUNTIME_KEY_SIZE];
   char directory[LAGHU_RUNTIME_PATH_SIZE];
   laghu_catalog_prune_item *items = NULL;
@@ -326,14 +266,11 @@ bool laghu_catalog_prune(const char *cache_path, uint64_t now,
     while ((entry = readdir(stream)) != NULL) {
       char path[LAGHU_RUNTIME_PATH_SIZE];
       size_t name_length = strlen(entry->d_name);
-      if (name_length < 5U ||
-          strcmp(entry->d_name + name_length - 5U, ".meta") != 0) {
+      if (name_length < 5U || strcmp(entry->d_name + name_length - 5U, ".meta") != 0) {
         continue;
       }
-      if (snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name) <=
-              0 ||
-          !laghu_catalog_prune_add(path, now, ttl_seconds, &items, &count,
-                                   &capacity)) {
+      if (snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name) <= 0 ||
+          !laghu_catalog_prune_add(path, now, ttl_seconds, &items, &count, &capacity)) {
         success = false;
         break;
       }
@@ -361,8 +298,7 @@ bool laghu_catalog_prune(const char *cache_path, uint64_t now,
         }
       }
       if (!found && kept_count < metadata_limit) {
-        memcpy(kept[kept_count++], items[index - 1U].identity,
-               LAGHU_RUNTIME_KEY_SIZE);
+        memcpy(kept[kept_count++], items[index - 1U].identity, LAGHU_RUNTIME_KEY_SIZE);
         found = true;
       }
       if (!found) {

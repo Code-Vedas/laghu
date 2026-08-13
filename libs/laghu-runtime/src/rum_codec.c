@@ -20,11 +20,8 @@ typedef struct {
   size_t offset;
 } laghu_rum_codec;
 
-static bool laghu_rum_codec_bytes(laghu_rum_codec *codec, void *value,
-                                  size_t length, bool write) {
-  if (codec->offset > codec->capacity ||
-      length > codec->capacity - codec->offset)
-    return false;
+static bool laghu_rum_codec_bytes(laghu_rum_codec *codec, void *value, size_t length, bool write) {
+  if (codec->offset > codec->capacity || length > codec->capacity - codec->offset) return false;
   if (write)
     memcpy(codec->data + codec->offset, value, length);
   else
@@ -33,8 +30,7 @@ static bool laghu_rum_codec_bytes(laghu_rum_codec *codec, void *value,
   return true;
 }
 
-static bool laghu_rum_codec_u16(laghu_rum_codec *codec, uint16_t *value,
-                                bool write) {
+static bool laghu_rum_codec_u16(laghu_rum_codec *codec, uint16_t *value, bool write) {
   unsigned char bytes[2];
   if (write) {
     bytes[0] = (unsigned char)(*value & 0xffU);
@@ -45,45 +41,37 @@ static bool laghu_rum_codec_u16(laghu_rum_codec *codec, uint16_t *value,
   return true;
 }
 
-static bool laghu_rum_codec_u32(laghu_rum_codec *codec, uint32_t *value,
-                                bool write) {
+static bool laghu_rum_codec_u32(laghu_rum_codec *codec, uint32_t *value, bool write) {
   unsigned char bytes[4];
   unsigned int index;
   if (write)
-    for (index = 0U; index < 4U; ++index)
-      bytes[index] = (unsigned char)(*value >> (index * 8U));
+    for (index = 0U; index < 4U; ++index) bytes[index] = (unsigned char)(*value >> (index * 8U));
   if (!laghu_rum_codec_bytes(codec, bytes, sizeof(bytes), write)) return false;
   if (!write) {
     *value = 0U;
-    for (index = 0U; index < 4U; ++index)
-      *value |= (uint32_t)bytes[index] << (index * 8U);
+    for (index = 0U; index < 4U; ++index) *value |= (uint32_t)bytes[index] << (index * 8U);
   }
   return true;
 }
 
-static bool laghu_rum_codec_u64(laghu_rum_codec *codec, uint64_t *value,
-                                bool write) {
+static bool laghu_rum_codec_u64(laghu_rum_codec *codec, uint64_t *value, bool write) {
   unsigned char bytes[8];
   unsigned int index;
   if (write)
-    for (index = 0U; index < 8U; ++index)
-      bytes[index] = (unsigned char)(*value >> (index * 8U));
+    for (index = 0U; index < 8U; ++index) bytes[index] = (unsigned char)(*value >> (index * 8U));
   if (!laghu_rum_codec_bytes(codec, bytes, sizeof(bytes), write)) return false;
   if (!write) {
     *value = 0U;
-    for (index = 0U; index < 8U; ++index)
-      *value |= (uint64_t)bytes[index] << (index * 8U);
+    for (index = 0U; index < 8U; ++index) *value |= (uint64_t)bytes[index] << (index * 8U);
   }
   return true;
 }
 
-static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record,
-                                   laghu_rum_codec *codec, bool write) {
+static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record, laghu_rum_codec *codec, bool write) {
   unsigned int i, j, k;
-#define BYTES(field)                                                  \
-  do {                                                                \
-    if (!laghu_rum_codec_bytes(codec, (field), sizeof(field), write)) \
-      return false;                                                   \
+#define BYTES(field)                                                                \
+  do {                                                                              \
+    if (!laghu_rum_codec_bytes(codec, (field), sizeof(field), write)) return false; \
   } while (0)
 #define U16(field)                                                  \
   do {                                                              \
@@ -111,8 +99,7 @@ static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record,
     U32(r->mobile_height);
     U32(r->viewport_width);
     U32(r->dpr_hundredths);
-    if (!laghu_rum_codec_bytes(codec, &flag, 1U, write) || flag > 1U)
-      return false;
+    if (!laghu_rum_codec_bytes(codec, &flag, 1U, write) || flag > 1U) return false;
     if (!write) r->above_fold = flag != 0U;
   } else if (type == LAGHU_RUM_RECORD_CRITICAL_CSS) {
     laghu_critical_css_record *r = record;
@@ -156,11 +143,9 @@ static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record,
     for (i = 0U; i < 4U; ++i) {
       U16(r->lcp_observations[i]);
       U16(r->lcp_unresolved[i]);
+      for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j) U16(r->lcp_candidates[i][j]);
       for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j)
-        U16(r->lcp_candidates[i][j]);
-      for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j)
-        for (k = 0U; k < LAGHU_LCP_MAX_RESOURCES; ++k)
-          U16(r->lcp_resources[i][j][k]);
+        for (k = 0U; k < LAGHU_LCP_MAX_RESOURCES; ++k) U16(r->lcp_resources[i][j][k]);
     }
   } else {
     return laghu_rum_codec_bytes(codec, record, codec->capacity, write);
@@ -172,8 +157,7 @@ static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record,
   return true;
 }
 
-bool laghu_rum_encode(laghu_rum_record_type type, const void *record,
-                      size_t length, unsigned char *encoded, size_t capacity,
+bool laghu_rum_encode(laghu_rum_record_type type, const void *record, size_t length, unsigned char *encoded, size_t capacity,
                       size_t *encoded_length) {
   laghu_rum_codec codec = {encoded, capacity, 0U};
   unsigned char *copy;
@@ -193,8 +177,7 @@ bool laghu_rum_encode(laghu_rum_record_type type, const void *record,
   return success;
 }
 
-bool laghu_rum_decode(laghu_rum_record_type type, const unsigned char *encoded,
-                      size_t length, void *record, size_t record_length) {
+bool laghu_rum_decode(laghu_rum_record_type type, const unsigned char *encoded, size_t length, void *record, size_t record_length) {
   laghu_rum_codec codec = {(unsigned char *)encoded, length, 0U};
   if (type == LAGHU_RUM_RECORD_DECISION) {
     if (length != record_length) return false;
@@ -202,47 +185,31 @@ bool laghu_rum_decode(laghu_rum_record_type type, const unsigned char *encoded,
     return true;
   }
   memset(record, 0, record_length);
-  return laghu_rum_codec_record(type, record, &codec, false) &&
-         codec.offset == length;
+  return laghu_rum_codec_record(type, record, &codec, false) && codec.offset == length;
 }
 
-bool laghu_rum_same_identity(laghu_rum_record_type type, const void *left,
-                             const void *right, size_t length) {
-  if (type == LAGHU_RUM_RECORD_IMAGE &&
-      length == sizeof(laghu_rum_image_record))
-    return strcmp(((const laghu_rum_image_record *)left)->identity,
-                  ((const laghu_rum_image_record *)right)->identity) == 0;
-  if (type == LAGHU_RUM_RECORD_CRITICAL_CSS &&
-      length == sizeof(laghu_critical_css_record)) {
+bool laghu_rum_same_identity(laghu_rum_record_type type, const void *left, const void *right, size_t length) {
+  if (type == LAGHU_RUM_RECORD_IMAGE && length == sizeof(laghu_rum_image_record))
+    return strcmp(((const laghu_rum_image_record *)left)->identity, ((const laghu_rum_image_record *)right)->identity) == 0;
+  if (type == LAGHU_RUM_RECORD_CRITICAL_CSS && length == sizeof(laghu_critical_css_record)) {
     const laghu_critical_css_record *a = left, *b = right;
-    return strcmp(a->template_key, b->template_key) == 0 &&
-           strcmp(a->stylesheet_key, b->stylesheet_key) == 0 &&
+    return strcmp(a->template_key, b->template_key) == 0 && strcmp(a->stylesheet_key, b->stylesheet_key) == 0 &&
            strcmp(a->policy_key, b->policy_key) == 0;
   }
-  if (type == LAGHU_RUM_RECORD_INSTRUMENTATION &&
-      length == sizeof(laghu_rum_instrumentation_record)) {
+  if (type == LAGHU_RUM_RECORD_INSTRUMENTATION && length == sizeof(laghu_rum_instrumentation_record)) {
     const laghu_rum_instrumentation_record *a = left, *b = right;
-    return strcmp(a->template_key, b->template_key) == 0 &&
-           strcmp(a->provider_digest, b->provider_digest) == 0 &&
-           strcmp(a->policy_key, b->policy_key) == 0 &&
-           a->script_count == b->script_count &&
-           memcmp(a->script_keys, b->script_keys, sizeof(a->script_keys)) ==
-               0 &&
-           a->media_count == b->media_count &&
-           memcmp(a->media_kind, b->media_kind, sizeof(a->media_kind)) == 0 &&
-           memcmp(a->media_keys, b->media_keys, sizeof(a->media_keys)) == 0 &&
-           memcmp(a->media_resource_count, b->media_resource_count,
-                  sizeof(a->media_resource_count)) == 0 &&
-           memcmp(a->media_resource_keys, b->media_resource_keys,
-                  sizeof(a->media_resource_keys)) == 0;
+    return strcmp(a->template_key, b->template_key) == 0 && strcmp(a->provider_digest, b->provider_digest) == 0 &&
+           strcmp(a->policy_key, b->policy_key) == 0 && a->script_count == b->script_count &&
+           memcmp(a->script_keys, b->script_keys, sizeof(a->script_keys)) == 0 && a->media_count == b->media_count &&
+           memcmp(a->media_kind, b->media_kind, sizeof(a->media_kind)) == 0 && memcmp(a->media_keys, b->media_keys, sizeof(a->media_keys)) == 0 &&
+           memcmp(a->media_resource_count, b->media_resource_count, sizeof(a->media_resource_count)) == 0 &&
+           memcmp(a->media_resource_keys, b->media_resource_keys, sizeof(a->media_resource_keys)) == 0;
   }
-  if (type == LAGHU_RUM_RECORD_DECISION)
-    return memcmp(left, right, length) == 0;
+  if (type == LAGHU_RUM_RECORD_DECISION) return memcmp(left, right, length) == 0;
   return false;
 }
 
-bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
-                            const void *delta, size_t length) {
+bool laghu_rum_record_merge(laghu_rum_record_type type, void *target, const void *delta, size_t length) {
   unsigned int i, j, k;
   if (!laghu_rum_same_identity(type, target, delta, length)) return false;
   if (type == LAGHU_RUM_RECORD_DECISION) return true;
@@ -266,14 +233,11 @@ bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
     laghu_critical_css_record *a = target;
     const laghu_critical_css_record *b = delta;
     if (b->updated_at > a->updated_at) a->updated_at = b->updated_at;
-    a->generation = UINT32_MAX - a->generation < b->generation
-                        ? UINT32_MAX
-                        : a->generation + b->generation;
+    a->generation = UINT32_MAX - a->generation < b->generation ? UINT32_MAX : a->generation + b->generation;
     for (i = 0U; i < 4U; ++i) {
       unsigned int sum = a->observation_count[i] + b->observation_count[i];
       a->observation_count[i] = (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
-      for (j = 0U; j < LAGHU_CRITICAL_CSS_MAX_RULES / 8U; ++j)
-        a->critical_rules[i][j] |= b->critical_rules[i][j];
+      for (j = 0U; j < LAGHU_CRITICAL_CSS_MAX_RULES / 8U; ++j) a->critical_rules[i][j] |= b->critical_rules[i][j];
     }
     return true;
   }
@@ -282,22 +246,19 @@ bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
     const laghu_rum_instrumentation_record *b = delta;
     if (b->updated_at > a->updated_at) a->updated_at = b->updated_at;
     for (i = 0U; i < 2U; ++i) {
-#define SAT_ADD(target_, value_)                                               \
-  do {                                                                         \
-    (target_) =                                                                \
-        UINT64_MAX - (target_) < (value_) ? UINT64_MAX : (target_) + (value_); \
+#define SAT_ADD(target_, value_)                                                       \
+  do {                                                                                 \
+    (target_) = UINT64_MAX - (target_) < (value_) ? UINT64_MAX : (target_) + (value_); \
   } while (0)
       SAT_ADD(a->observations[i], b->observations[i]);
       SAT_ADD(a->errors[i], b->errors[i]);
       SAT_ADD(a->rejections[i], b->rejections[i]);
       for (j = 0U; j < 5U; ++j) {
         SAT_ADD(a->metric_sums[i][j], b->metric_sums[i][j]);
-        if (b->metric_maxima[i][j] > a->metric_maxima[i][j])
-          a->metric_maxima[i][j] = b->metric_maxima[i][j];
+        if (b->metric_maxima[i][j] > a->metric_maxima[i][j]) a->metric_maxima[i][j] = b->metric_maxima[i][j];
       }
       for (j = 0U; j < LAGHU_RUM_HISTOGRAMS; ++j)
-        for (k = 0U; k < LAGHU_RUM_BUCKETS; ++k)
-          SAT_ADD(a->histograms[i][j][k], b->histograms[i][j][k]);
+        for (k = 0U; k < LAGHU_RUM_BUCKETS; ++k) SAT_ADD(a->histograms[i][j][k], b->histograms[i][j][k]);
       for (j = 0U; j < a->script_count; ++j) {
         SAT_ADD(a->script_observations[i][j], b->script_observations[i][j]);
         SAT_ADD(a->script_before_dcl[i][j], b->script_before_dcl[i][j]);
@@ -312,12 +273,10 @@ bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
       a->lcp_unresolved[i] = (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
       for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j) {
         sum = a->lcp_candidates[i][j] + b->lcp_candidates[i][j];
-        a->lcp_candidates[i][j] =
-            (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
+        a->lcp_candidates[i][j] = (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
         for (k = 0U; k < LAGHU_LCP_MAX_RESOURCES; ++k) {
           sum = a->lcp_resources[i][j][k] + b->lcp_resources[i][j][k];
-          a->lcp_resources[i][j][k] =
-              (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
+          a->lcp_resources[i][j][k] = (uint16_t)(sum > UINT16_MAX ? UINT16_MAX : sum);
         }
       }
     }
@@ -326,26 +285,19 @@ bool laghu_rum_record_merge(laghu_rum_record_type type, void *target,
   return false;
 }
 
-void laghu_rum_zero_observations(laghu_rum_record_type type, void *data,
-                                 size_t length) {
-  if (type == LAGHU_RUM_RECORD_IMAGE &&
-      length == sizeof(laghu_rum_image_record)) {
+void laghu_rum_zero_observations(laghu_rum_record_type type, void *data, size_t length) {
+  if (type == LAGHU_RUM_RECORD_IMAGE && length == sizeof(laghu_rum_image_record)) {
     laghu_rum_image_record *record = data;
     record->width = record->height = record->mobile_width = 0U;
-    record->mobile_height = record->viewport_width = record->dpr_hundredths =
-        0U;
+    record->mobile_height = record->viewport_width = record->dpr_hundredths = 0U;
     record->above_fold = false;
-  } else if (type == LAGHU_RUM_RECORD_CRITICAL_CSS &&
-             length == sizeof(laghu_critical_css_record)) {
+  } else if (type == LAGHU_RUM_RECORD_CRITICAL_CSS && length == sizeof(laghu_critical_css_record)) {
     laghu_critical_css_record *record = data;
     memset(record->observation_count, 0, sizeof(record->observation_count));
     memset(record->critical_rules, 0, sizeof(record->critical_rules));
     record->generation = 0U;
-  } else if (type == LAGHU_RUM_RECORD_INSTRUMENTATION &&
-             length == sizeof(laghu_rum_instrumentation_record)) {
+  } else if (type == LAGHU_RUM_RECORD_INSTRUMENTATION && length == sizeof(laghu_rum_instrumentation_record)) {
     laghu_rum_instrumentation_record *record = data;
-    memset(record->observations, 0,
-           sizeof(*record) -
-               offsetof(laghu_rum_instrumentation_record, observations));
+    memset(record->observations, 0, sizeof(*record) - offsetof(laghu_rum_instrumentation_record, observations));
   }
 }

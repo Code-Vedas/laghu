@@ -55,9 +55,7 @@ static char *laghu_asset_trim(char *value) {
 }
 
 static bool laghu_asset_safe_path(const char *path) {
-  return path != NULL && path[0] != '\0' &&
-         strlen(path) < LAGHU_RUNTIME_PATH_SIZE && strstr(path, "..") == NULL &&
-         strpbrk(path, "\r\n") == NULL;
+  return path != NULL && path[0] != '\0' && strlen(path) < LAGHU_RUNTIME_PATH_SIZE && strstr(path, "..") == NULL && strpbrk(path, "\r\n") == NULL;
 }
 
 static bool laghu_asset_hash_valid(const char *value) {
@@ -68,8 +66,7 @@ static bool laghu_asset_hash_valid(const char *value) {
   return true;
 }
 
-static bool laghu_asset_source_identity(const char *source, char *output,
-                                        size_t output_size) {
+static bool laghu_asset_source_identity(const char *source, char *output, size_t output_size) {
   const char *tail;
   size_t length;
   if (source == NULL || output == NULL || output_size == 0U) return false;
@@ -86,8 +83,7 @@ static bool laghu_asset_directory(const char *path) {
   return laghu_asset_mkdir(path) == 0 || errno == EEXIST;
 }
 
-static bool laghu_asset_directory_has_capacity(const char *path,
-                                               unsigned int limit) {
+static bool laghu_asset_directory_has_capacity(const char *path, unsigned int limit) {
   unsigned int count = 0U;
   DIR *directory = opendir(path);
   struct dirent *entry;
@@ -107,16 +103,12 @@ static bool laghu_asset_https_origin(const char *value) {
   if (value == NULL || strncmp(value, "https://", 8U) != 0) return false;
   authority = value + 8U;
   end = authority + strlen(authority);
-  return authority[0] != '\0' && strchr(authority, '@') == NULL &&
-         strchr(authority, '?') == NULL && strchr(authority, '#') == NULL &&
-         strpbrk(authority, " \t\r\n") == NULL &&
-         strncmp(authority, "localhost", 9U) != 0 &&
-         !isdigit((unsigned char)authority[0]) && authority[0] != '[' &&
-         (end == authority || end[-1] != '/');
+  return authority[0] != '\0' && strchr(authority, '@') == NULL && strchr(authority, '?') == NULL && strchr(authority, '#') == NULL &&
+         strpbrk(authority, " \t\r\n") == NULL && strncmp(authority, "localhost", 9U) != 0 && !isdigit((unsigned char)authority[0]) &&
+         authority[0] != '[' && (end == authority || end[-1] != '/');
 }
 
-static bool laghu_asset_path_list(const char *list, const char *path,
-                                  bool empty_result) {
+static bool laghu_asset_path_list(const char *list, const char *path, bool empty_result) {
   const char *item = list;
   if (list == NULL || list[0] == '\0') return empty_result;
   while (*item != '\0') {
@@ -127,10 +119,7 @@ static bool laghu_asset_path_list(const char *list, const char *path,
       --length;
     }
     while (length != 0U && isspace((unsigned char)item[length - 1U])) --length;
-    if (length != 0U && strncmp(path, item, length) == 0 &&
-        (path[length] == '\0' || path[length] == '/' ||
-         item[length - 1U] == '/'))
-      return true;
+    if (length != 0U && strncmp(path, item, length) == 0 && (path[length] == '\0' || path[length] == '/' || item[length - 1U] == '/')) return true;
     if (end == NULL) break;
     item = end + 1U;
   }
@@ -148,41 +137,26 @@ void laghu_asset_policy_init(laghu_asset_policy *policy) {
   policy->stale_ttl_seconds = LAGHU_ASSET_DEFAULT_STALE_TTL;
 }
 
-bool laghu_asset_policy_validate(const laghu_asset_policy *policy, char *error,
-                                 size_t error_size) {
+bool laghu_asset_policy_validate(const laghu_asset_policy *policy, char *error, size_t error_size) {
   if (error != NULL && error_size > 0U) error[0] = '\0';
-  if (policy == NULL || !laghu_asset_https_origin(policy->source_domain) ||
-      !laghu_asset_https_origin(policy->public_domain) ||
-      policy->max_body_bytes == 0U ||
-      policy->max_body_bytes > LAGHU_ASSET_MAX_BODY_BYTES ||
-      policy->retry_limit > 10U || policy->timeout_seconds == 0U ||
-      policy->timeout_seconds > 300U || policy->stale_ttl_seconds < 60U ||
+  if (policy == NULL || !laghu_asset_https_origin(policy->source_domain) || !laghu_asset_https_origin(policy->public_domain) ||
+      policy->max_body_bytes == 0U || policy->max_body_bytes > LAGHU_ASSET_MAX_BODY_BYTES || policy->retry_limit > 10U ||
+      policy->timeout_seconds == 0U || policy->timeout_seconds > 300U || policy->stale_ttl_seconds < 60U ||
       policy->shard_count > LAGHU_ASSET_MAX_SHARDS) {
-    if (error != NULL && error_size > 0U)
-      (void)snprintf(error, error_size, "invalid asset domain policy");
+    if (error != NULL && error_size > 0U) (void)snprintf(error, error_size, "invalid asset domain policy");
     return false;
   }
-  if (strchr(policy->source_domain, '@') != NULL ||
-      strchr(policy->public_domain, '@') != NULL ||
-      strchr(policy->source_domain, '#') != NULL ||
+  if (strchr(policy->source_domain, '@') != NULL || strchr(policy->public_domain, '@') != NULL || strchr(policy->source_domain, '#') != NULL ||
       strchr(policy->public_domain, '#') != NULL) {
-    if (error != NULL && error_size > 0U)
-      (void)snprintf(error, error_size,
-                     "asset domains cannot contain credentials");
+    if (error != NULL && error_size > 0U) (void)snprintf(error, error_size, "asset domains cannot contain credentials");
     return false;
   }
   if ((policy->source_prefix[0] != '\0' &&
-       (policy->source_prefix[0] != '/' ||
-        strchr(policy->source_prefix, '?') != NULL ||
-        strchr(policy->source_prefix, '#') != NULL)) ||
+       (policy->source_prefix[0] != '/' || strchr(policy->source_prefix, '?') != NULL || strchr(policy->source_prefix, '#') != NULL)) ||
       (policy->public_prefix[0] != '\0' &&
-       (policy->public_prefix[0] != '/' ||
-        strchr(policy->public_prefix, '?') != NULL ||
-        strchr(policy->public_prefix, '#') != NULL ||
-        strstr(policy->public_prefix, "..") != NULL ||
-        strpbrk(policy->public_prefix, " \t\r\n") != NULL))) {
-    if (error != NULL && error_size > 0U)
-      (void)snprintf(error, error_size, "invalid asset path prefix");
+       (policy->public_prefix[0] != '/' || strchr(policy->public_prefix, '?') != NULL || strchr(policy->public_prefix, '#') != NULL ||
+        strstr(policy->public_prefix, "..") != NULL || strpbrk(policy->public_prefix, " \t\r\n") != NULL))) {
+    if (error != NULL && error_size > 0U) (void)snprintf(error, error_size, "invalid asset path prefix");
     return false;
   }
   {
@@ -196,85 +170,60 @@ bool laghu_asset_policy_validate(const laghu_asset_policy *policy, char *error,
   return true;
 }
 
-static bool laghu_asset_source_match(const laghu_asset_policy *policy,
-                                     const char *source_url,
-                                     const char **suffix) {
+static bool laghu_asset_source_match(const laghu_asset_policy *policy, const char *source_url, const char **suffix) {
   size_t domain_length;
   size_t prefix_length;
   if (policy == NULL || source_url == NULL || suffix == NULL) return false;
   domain_length = strlen(policy->source_domain);
   prefix_length = strlen(policy->source_prefix);
-  if (strncmp(source_url, policy->source_domain, domain_length) != 0)
-    return false;
-  if (prefix_length != 0U && strncmp(source_url + domain_length,
-                                     policy->source_prefix, prefix_length) != 0)
-    return false;
-  if (prefix_length != 0U && policy->source_prefix[prefix_length - 1U] != '/' &&
-      source_url[domain_length + prefix_length] != '/' &&
-      source_url[domain_length + prefix_length] != '?' &&
-      source_url[domain_length + prefix_length] != '#')
+  if (strncmp(source_url, policy->source_domain, domain_length) != 0) return false;
+  if (prefix_length != 0U && strncmp(source_url + domain_length, policy->source_prefix, prefix_length) != 0) return false;
+  if (prefix_length != 0U && policy->source_prefix[prefix_length - 1U] != '/' && source_url[domain_length + prefix_length] != '/' &&
+      source_url[domain_length + prefix_length] != '?' && source_url[domain_length + prefix_length] != '#')
     return false;
   *suffix = source_url + domain_length + prefix_length;
-  if (!laghu_asset_path_list(policy->allow_paths, *suffix, true) ||
-      laghu_asset_path_list(policy->deny_paths, *suffix, false))
-    return false;
+  if (!laghu_asset_path_list(policy->allow_paths, *suffix, true) || laghu_asset_path_list(policy->deny_paths, *suffix, false)) return false;
   return **suffix == '/' || **suffix == '?' || **suffix == '#';
 }
 
-bool laghu_asset_source_allowed(const laghu_asset_policy *policy,
-                                const char *source_url,
-                                const char *content_type, size_t body_length) {
+bool laghu_asset_source_allowed(const laghu_asset_policy *policy, const char *source_url, const char *content_type, size_t body_length) {
   const char *suffix;
-  return policy != NULL && content_type != NULL && body_length != 0U &&
-         body_length <= policy->max_body_bytes &&
-         laghu_mime_type_allowed(policy->mime_types, content_type) &&
-         laghu_asset_source_match(policy, source_url, &suffix);
+  return policy != NULL && content_type != NULL && body_length != 0U && body_length <= policy->max_body_bytes &&
+         laghu_mime_type_allowed(policy->mime_types, content_type) && laghu_asset_source_match(policy, source_url, &suffix);
 }
 
-bool laghu_asset_object_key(const laghu_asset_policy *policy,
-                            const char *source_url, const char *content_hash,
+bool laghu_asset_object_key(const laghu_asset_policy *policy, const char *source_url, const char *content_hash,
                             char output[LAGHU_RUNTIME_PATH_SIZE]) {
   const char *suffix;
   const char *end;
   size_t base_length;
   int written;
-  if (output == NULL || content_hash == NULL ||
-      strlen(content_hash) != LAGHU_SHA256_HEX_LENGTH ||
-      !laghu_asset_policy_validate(policy, NULL, 0U) ||
+  if (output == NULL || content_hash == NULL || strlen(content_hash) != LAGHU_SHA256_HEX_LENGTH || !laghu_asset_policy_validate(policy, NULL, 0U) ||
       !laghu_asset_source_match(policy, source_url, &suffix))
     return false;
   end = strpbrk(suffix, "?#");
   base_length = end == NULL ? strlen(suffix) : (size_t)(end - suffix);
   if (base_length == 0U || suffix[0] != '/') return false;
-  written =
-      snprintf(output, LAGHU_RUNTIME_PATH_SIZE, "%s/%s%.*s",
-               policy->public_prefix, content_hash, (int)base_length, suffix);
+  written = snprintf(output, LAGHU_RUNTIME_PATH_SIZE, "%s/%s%.*s", policy->public_prefix, content_hash, (int)base_length, suffix);
   if (written <= 0 || (size_t)written >= LAGHU_RUNTIME_PATH_SIZE) return false;
   {
     size_t index;
-    for (index = strlen(policy->public_prefix) + 1U + LAGHU_SHA256_HEX_LENGTH;
-         output[index] != '\0'; ++index)
-      if (!(isalnum((unsigned char)output[index]) || output[index] == '/' ||
-            output[index] == '-' || output[index] == '_' ||
-            output[index] == '.' || output[index] == '~'))
+    for (index = strlen(policy->public_prefix) + 1U + LAGHU_SHA256_HEX_LENGTH; output[index] != '\0'; ++index)
+      if (!(isalnum((unsigned char)output[index]) || output[index] == '/' || output[index] == '-' || output[index] == '_' || output[index] == '.' ||
+            output[index] == '~'))
         output[index] = '_';
   }
   return true;
 }
 
-bool laghu_asset_url_rewrite(const laghu_asset_policy *policy,
-                             const char *source_url, const char *content_type,
-                             const char *content_hash, char *output,
-                             size_t output_size) {
+bool laghu_asset_url_rewrite(const laghu_asset_policy *policy, const char *source_url, const char *content_type, const char *content_hash,
+                             char *output, size_t output_size) {
   const char *suffix;
   const char *tail;
   char object_key[LAGHU_RUNTIME_PATH_SIZE];
   int written;
-  if (output == NULL || output_size == 0U || content_type == NULL ||
-      !laghu_asset_policy_validate(policy, NULL, 0U) ||
-      !laghu_mime_type_allowed(policy == NULL ? NULL : policy->mime_types,
-                               content_type) ||
-      !laghu_asset_source_match(policy, source_url, &suffix) ||
+  if (output == NULL || output_size == 0U || content_type == NULL || !laghu_asset_policy_validate(policy, NULL, 0U) ||
+      !laghu_mime_type_allowed(policy == NULL ? NULL : policy->mime_types, content_type) || !laghu_asset_source_match(policy, source_url, &suffix) ||
       !laghu_asset_object_key(policy, source_url, content_hash, object_key))
     return false;
   tail = strpbrk(suffix, "?#");
@@ -287,36 +236,22 @@ bool laghu_asset_url_rewrite(const laghu_asset_policy *policy,
     if (policy->shard_count != 0U) {
       char hash[LAGHU_RUNTIME_KEY_SIZE];
       char shard_hash[9];
-      if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)source_url,
-                                           strlen(source_url)},
-                            hash))
-        return false;
+      if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)source_url, strlen(source_url)}, hash)) return false;
       memcpy(shard_hash, hash, 8U);
       shard_hash[8] = '\0';
-      public_domain =
-          policy->shards[(unsigned int)strtoul(shard_hash, NULL, 16) %
-                         policy->shard_count];
+      public_domain = policy->shards[(unsigned int)strtoul(shard_hash, NULL, 16) % policy->shard_count];
     }
-    written = snprintf(output, output_size, "%s%s%s", public_domain, object_key,
-                       tail == NULL ? "" : tail);
+    written = snprintf(output, output_size, "%s%s%s", public_domain, object_key, tail == NULL ? "" : tail);
   }
   return written > 0 && (size_t)written < output_size;
 }
 
-bool laghu_asset_record_rewrite(const laghu_asset_policy *policy,
-                                const laghu_asset_record *record, char *output,
-                                size_t output_size) {
+bool laghu_asset_record_rewrite(const laghu_asset_policy *policy, const laghu_asset_record *record, char *output, size_t output_size) {
   char expected[LAGHU_RUNTIME_PATH_SIZE];
-  if (record == NULL || record->state != LAGHU_ASSET_READY ||
-      record->body_length == 0U ||
-      record->body_length > policy->max_body_bytes ||
-      !laghu_asset_object_key(policy, record->source_url, record->content_hash,
-                              expected) ||
-      strcmp(expected, record->object_key) != 0)
+  if (record == NULL || record->state != LAGHU_ASSET_READY || record->body_length == 0U || record->body_length > policy->max_body_bytes ||
+      !laghu_asset_object_key(policy, record->source_url, record->content_hash, expected) || strcmp(expected, record->object_key) != 0)
     return false;
-  return laghu_asset_url_rewrite(policy, record->source_url,
-                                 record->content_type, record->content_hash,
-                                 output, output_size);
+  return laghu_asset_url_rewrite(policy, record->source_url, record->content_type, record->content_hash, output, output_size);
 }
 
 void laghu_asset_config_init(laghu_asset_config *config) {
@@ -337,19 +272,16 @@ static bool laghu_asset_parse_bool(const char *value, bool *output) {
   return true;
 }
 
-static bool laghu_asset_config_value(laghu_asset_config *config,
-                                     const char *name, const char *value) {
+static bool laghu_asset_config_value(laghu_asset_config *config, const char *name, const char *value) {
   if (strcmp(name, "version") == 0) {
     char *end = NULL;
     unsigned long version = strtoul(value, &end, 10);
-    if (end == value || *end != '\0' || version != LAGHU_ASSET_CONFIG_VERSION)
-      return false;
+    if (end == value || *end != '\0' || version != LAGHU_ASSET_CONFIG_VERSION) return false;
     config->version = (unsigned int)version;
     return true;
   }
 #define COPY_FIELD(key, field) \
-  if (strcmp(name, key) == 0)  \
-  return laghu_asset_copy(field, sizeof(field), value)
+  if (strcmp(name, key) == 0) return laghu_asset_copy(field, sizeof(field), value)
   COPY_FIELD("source_domain", config->policy.source_domain);
   COPY_FIELD("public_domain", config->policy.public_domain);
   COPY_FIELD("source_prefix", config->policy.source_prefix);
@@ -368,10 +300,8 @@ static bool laghu_asset_config_value(laghu_asset_config *config,
   COPY_FIELD("access_key_env", config->access_key_env);
   COPY_FIELD("secret_key_env", config->secret_key_env);
 #undef COPY_FIELD
-  if (strncmp(name, "shard", 5U) == 0 &&
-      config->policy.shard_count < LAGHU_ASSET_MAX_SHARDS)
-    return laghu_asset_copy(config->policy.shards[config->policy.shard_count++],
-                            LAGHU_RUNTIME_PATH_SIZE, value);
+  if (strncmp(name, "shard", 5U) == 0 && config->policy.shard_count < LAGHU_ASSET_MAX_SHARDS)
+    return laghu_asset_copy(config->policy.shards[config->policy.shard_count++], LAGHU_RUNTIME_PATH_SIZE, value);
   if (strcmp(name, "mode") == 0) {
     if (strcmp(value, "rewrite_only") == 0)
       config->policy.upload = false;
@@ -381,11 +311,8 @@ static bool laghu_asset_config_value(laghu_asset_config *config,
       return false;
     return true;
   }
-  if (strcmp(name, "preserve_query") == 0)
-    return laghu_asset_parse_bool(value, &config->policy.preserve_query);
-  if (strcmp(name, "trusted_origin_fallback") == 0)
-    return laghu_asset_parse_bool(value,
-                                  &config->policy.trusted_origin_fallback);
+  if (strcmp(name, "preserve_query") == 0) return laghu_asset_parse_bool(value, &config->policy.preserve_query);
+  if (strcmp(name, "trusted_origin_fallback") == 0) return laghu_asset_parse_bool(value, &config->policy.trusted_origin_fallback);
   if (strcmp(name, "max_body_bytes") == 0) {
     config->policy.max_body_bytes = (size_t)strtoull(value, NULL, 10);
     return config->policy.max_body_bytes != 0U;
@@ -405,8 +332,7 @@ static bool laghu_asset_config_value(laghu_asset_config *config,
   return false;
 }
 
-bool laghu_asset_config_load(const char *path, laghu_asset_config *config,
-                             char *error, size_t error_size) {
+bool laghu_asset_config_load(const char *path, laghu_asset_config *config, char *error, size_t error_size) {
   FILE *file;
   char line[4096];
   char material[16384];
@@ -436,134 +362,88 @@ bool laghu_asset_config_load(const char *path, laghu_asset_config *config,
       unsigned int index;
       for (index = 0U; index < name_count; ++index)
         if (strcmp(names[index], name) == 0) goto invalid;
-      if (name_count >= LAGHU_ASSET_MAX_RULES ||
-          !laghu_asset_copy(names[name_count], sizeof(names[name_count]), name))
-        goto invalid;
+      if (name_count >= LAGHU_ASSET_MAX_RULES || !laghu_asset_copy(names[name_count], sizeof(names[name_count]), name)) goto invalid;
       ++name_count;
     }
     if (strcmp(name, "version") == 0) version_seen = true;
-    if (strstr(name, "secret") != NULL && strcmp(name, "secret_key_env") != 0)
-      goto invalid;
+    if (strstr(name, "secret") != NULL && strcmp(name, "secret_key_env") != 0) goto invalid;
     if (!laghu_asset_config_value(&parsed, name, value)) goto invalid;
     length = strlen(name) + strlen(value) + 2U;
     if (used + length >= sizeof(material)) goto invalid;
-    used += (size_t)snprintf(material + used, sizeof(material) - used,
-                             "%s=%s\n", name, value);
+    used += (size_t)snprintf(material + used, sizeof(material) - used, "%s=%s\n", name, value);
   }
   (void)fclose(file);
-  if (!version_seen || strcmp(parsed.provider, "s3") != 0 ||
-      !laghu_asset_policy_validate(&parsed.policy, error, error_size) ||
-      !laghu_asset_safe_path(parsed.catalog_path) ||
-      !laghu_asset_safe_path(parsed.queue_path) ||
-      (parsed.operational_cache_path[0] != '\0' &&
-       !laghu_asset_safe_path(parsed.operational_cache_path)) ||
-      !laghu_asset_https_origin(parsed.endpoint) || parsed.region[0] == '\0' ||
-      parsed.bucket[0] == '\0' || parsed.access_key_env[0] == '\0' ||
+  if (!version_seen || strcmp(parsed.provider, "s3") != 0 || !laghu_asset_policy_validate(&parsed.policy, error, error_size) ||
+      !laghu_asset_safe_path(parsed.catalog_path) || !laghu_asset_safe_path(parsed.queue_path) ||
+      (parsed.operational_cache_path[0] != '\0' && !laghu_asset_safe_path(parsed.operational_cache_path)) ||
+      !laghu_asset_https_origin(parsed.endpoint) || parsed.region[0] == '\0' || parsed.bucket[0] == '\0' || parsed.access_key_env[0] == '\0' ||
       parsed.secret_key_env[0] == '\0' ||
       (parsed.object_prefix[0] != '\0' &&
-       (parsed.object_prefix[0] == '/' ||
-        strstr(parsed.object_prefix, "..") != NULL ||
-        strpbrk(parsed.object_prefix, " \t\r\n?#") != NULL)) ||
-      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, used},
-                        parsed.digest)) {
-    if (error != NULL && error[0] == '\0')
-      laghu_asset_error(error, error_size, "incomplete asset configuration");
+       (parsed.object_prefix[0] == '/' || strstr(parsed.object_prefix, "..") != NULL || strpbrk(parsed.object_prefix, " \t\r\n?#") != NULL)) ||
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, used}, parsed.digest)) {
+    if (error != NULL && error[0] == '\0') laghu_asset_error(error, error_size, "incomplete asset configuration");
     return false;
   }
   *config = parsed;
   return true;
 invalid:
   (void)fclose(file);
-  if (error != NULL && error_size != 0U)
-    (void)snprintf(error, error_size, "invalid asset configuration line %u",
-                   line_number);
+  if (error != NULL && error_size != 0U) (void)snprintf(error, error_size, "invalid asset configuration line %u", line_number);
   return false;
 }
 
-bool laghu_asset_catalog_key(const laghu_asset_record *record,
-                             char output[LAGHU_RUNTIME_KEY_SIZE]) {
+bool laghu_asset_catalog_key(const laghu_asset_record *record, char output[LAGHU_RUNTIME_KEY_SIZE]) {
   char material[4096];
   int written;
-  if (record == NULL || output == NULL ||
-      !laghu_asset_hash_valid(record->content_hash))
-    return false;
-  written = snprintf(material, sizeof(material), "%s\n%s\n%s\n%s\n%s",
-                     record->source_url, record->source_validator,
-                     record->content_hash, record->policy_digest,
-                     record->provider_digest);
+  if (record == NULL || output == NULL || !laghu_asset_hash_valid(record->content_hash)) return false;
+  written = snprintf(material, sizeof(material), "%s\n%s\n%s\n%s\n%s", record->source_url, record->source_validator, record->content_hash,
+                     record->policy_digest, record->provider_digest);
   return written > 0 && (size_t)written < sizeof(material) &&
-         laghu_sha256_hex(
-             (laghu_buffer){(const unsigned char *)material, (size_t)written},
-             output);
+         laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)written}, output);
 }
 
-static bool laghu_asset_file_paths(const char *directory, const char *key,
-                                   const char *extension, char *path,
-                                   char *temporary) {
+static bool laghu_asset_file_paths(const char *directory, const char *key, const char *extension, char *path, char *temporary) {
   int a, b;
-  if (!laghu_asset_safe_path(directory) || !laghu_asset_hash_valid(key))
-    return false;
-  a = snprintf(path, LAGHU_RUNTIME_PATH_SIZE, "%s/%s.%s", directory, key,
-               extension);
-  b = snprintf(temporary, LAGHU_RUNTIME_PATH_SIZE, "%s/.%s.%lu.tmp", directory,
-               key, (unsigned long)laghu_asset_pid());
-  return a > 0 && b > 0 && (size_t)a < LAGHU_RUNTIME_PATH_SIZE &&
-         (size_t)b < LAGHU_RUNTIME_PATH_SIZE;
+  if (!laghu_asset_safe_path(directory) || !laghu_asset_hash_valid(key)) return false;
+  a = snprintf(path, LAGHU_RUNTIME_PATH_SIZE, "%s/%s.%s", directory, key, extension);
+  b = snprintf(temporary, LAGHU_RUNTIME_PATH_SIZE, "%s/.%s.%lu.tmp", directory, key, (unsigned long)laghu_asset_pid());
+  return a > 0 && b > 0 && (size_t)a < LAGHU_RUNTIME_PATH_SIZE && (size_t)b < LAGHU_RUNTIME_PATH_SIZE;
 }
 
-bool laghu_asset_catalog_publish(const char *catalog_path,
-                                 const laghu_asset_record *record) {
+bool laghu_asset_catalog_publish(const char *catalog_path, const laghu_asset_record *record) {
   laghu_asset_catalog_file stored = {0};
   char key[LAGHU_RUNTIME_KEY_SIZE], path[LAGHU_RUNTIME_PATH_SIZE];
   char temporary[LAGHU_RUNTIME_PATH_SIZE];
   FILE *file;
-  if (record == NULL || record->state > LAGHU_ASSET_STALE ||
-      !laghu_asset_catalog_key(record, key) ||
-      !laghu_asset_directory(catalog_path) ||
+  if (record == NULL || record->state > LAGHU_ASSET_STALE || !laghu_asset_catalog_key(record, key) || !laghu_asset_directory(catalog_path) ||
       !laghu_asset_file_paths(catalog_path, key, "asset", path, temporary))
     return false;
   file = fopen(path, "rb");
   if (file != NULL)
     (void)fclose(file);
-  else if (!laghu_asset_directory_has_capacity(catalog_path,
-                                               LAGHU_ASSET_MAX_RECORDS * 2U))
+  else if (!laghu_asset_directory_has_capacity(catalog_path, LAGHU_ASSET_MAX_RECORDS * 2U))
     return false;
   stored.version = LAGHU_ASSET_CONFIG_VERSION;
   stored.record = *record;
-  if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record,
-                                       sizeof(stored.record)},
-                        stored.checksum))
-    return false;
+  if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record, sizeof(stored.record)}, stored.checksum)) return false;
   file = fopen(temporary, "wb");
   if (file == NULL) return false;
-  if (fwrite(&stored, sizeof(stored), 1U, file) != 1U || fflush(file) != 0 ||
-      fclose(file) != 0 || !laghu_asset_replace(temporary, path)) {
+  if (fwrite(&stored, sizeof(stored), 1U, file) != 1U || fflush(file) != 0 || fclose(file) != 0 || !laghu_asset_replace(temporary, path)) {
     (void)laghu_asset_unlink(temporary);
     return false;
   }
   {
     char identity_material[3072], identity[LAGHU_RUNTIME_KEY_SIZE];
     char source_identity[LAGHU_RUNTIME_PATH_SIZE];
-    char index_path[LAGHU_RUNTIME_PATH_SIZE],
-        index_temporary[LAGHU_RUNTIME_PATH_SIZE];
+    char index_path[LAGHU_RUNTIME_PATH_SIZE], index_temporary[LAGHU_RUNTIME_PATH_SIZE];
     FILE *index;
     int length;
-    if (!laghu_asset_source_identity(record->source_url, source_identity,
-                                     sizeof(source_identity)))
-      return false;
-    length = snprintf(identity_material, sizeof(identity_material),
-                      "%s\n%s\n%s", source_identity, record->policy_digest,
-                      record->provider_digest);
+    if (!laghu_asset_source_identity(record->source_url, source_identity, sizeof(source_identity))) return false;
+    length = snprintf(identity_material, sizeof(identity_material), "%s\n%s\n%s", source_identity, record->policy_digest, record->provider_digest);
     if (length <= 0 || (size_t)length >= sizeof(identity_material) ||
-        !laghu_sha256_hex(
-            (laghu_buffer){(const unsigned char *)identity_material,
-                           (size_t)length},
-            identity) ||
-        !laghu_asset_file_paths(catalog_path, identity, "asset-index",
-                                index_path, index_temporary) ||
-        (index = fopen(index_temporary, "wb")) == NULL ||
-        fwrite(key, sizeof(key), 1U, index) != 1U || fflush(index) != 0 ||
-        fclose(index) != 0 ||
+        !laghu_sha256_hex((laghu_buffer){(const unsigned char *)identity_material, (size_t)length}, identity) ||
+        !laghu_asset_file_paths(catalog_path, identity, "asset-index", index_path, index_temporary) ||
+        (index = fopen(index_temporary, "wb")) == NULL || fwrite(key, sizeof(key), 1U, index) != 1U || fflush(index) != 0 || fclose(index) != 0 ||
         !laghu_asset_replace(index_temporary, index_path)) {
       (void)laghu_asset_unlink(index_temporary);
       return false;
@@ -572,30 +452,21 @@ bool laghu_asset_catalog_publish(const char *catalog_path,
   return true;
 }
 
-bool laghu_asset_catalog_lookup(const char *catalog_path, const char *key,
-                                laghu_asset_record *record) {
+bool laghu_asset_catalog_lookup(const char *catalog_path, const char *key, laghu_asset_record *record) {
   laghu_asset_catalog_file stored;
   char path[LAGHU_RUNTIME_PATH_SIZE], temporary[LAGHU_RUNTIME_PATH_SIZE];
   char checksum[LAGHU_RUNTIME_KEY_SIZE];
   FILE *file;
-  if (record == NULL ||
-      !laghu_asset_file_paths(catalog_path, key, "asset", path, temporary) ||
-      (file = fopen(path, "rb")) == NULL)
-    return false;
-  if (fread(&stored, sizeof(stored), 1U, file) != 1U || fgetc(file) != EOF ||
-      fclose(file) != 0 || stored.version != LAGHU_ASSET_CONFIG_VERSION ||
-      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record,
-                                       sizeof(stored.record)},
-                        checksum) ||
+  if (record == NULL || !laghu_asset_file_paths(catalog_path, key, "asset", path, temporary) || (file = fopen(path, "rb")) == NULL) return false;
+  if (fread(&stored, sizeof(stored), 1U, file) != 1U || fgetc(file) != EOF || fclose(file) != 0 || stored.version != LAGHU_ASSET_CONFIG_VERSION ||
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record, sizeof(stored.record)}, checksum) ||
       strcmp(checksum, stored.checksum) != 0)
     return false;
   *record = stored.record;
   return true;
 }
 
-bool laghu_asset_catalog_lookup_url(const laghu_asset_config *config,
-                                    const char *source_url,
-                                    laghu_asset_record *record) {
+bool laghu_asset_catalog_lookup_url(const laghu_asset_config *config, const char *source_url, laghu_asset_record *record) {
   char material[3072], identity[LAGHU_RUNTIME_KEY_SIZE];
   char source_identity[LAGHU_RUNTIME_PATH_SIZE];
   char path[LAGHU_RUNTIME_PATH_SIZE], temporary[LAGHU_RUNTIME_PATH_SIZE];
@@ -603,32 +474,21 @@ bool laghu_asset_catalog_lookup_url(const laghu_asset_config *config,
   FILE *file;
   int length;
   if (config == NULL || source_url == NULL || record == NULL) return false;
-  if (!laghu_asset_source_identity(source_url, source_identity,
-                                   sizeof(source_identity)))
-    return false;
-  length = snprintf(material, sizeof(material), "%s\n%s\n%s", source_identity,
-                    config->digest, config->digest);
+  if (!laghu_asset_source_identity(source_url, source_identity, sizeof(source_identity))) return false;
+  length = snprintf(material, sizeof(material), "%s\n%s\n%s", source_identity, config->digest, config->digest);
   if (length <= 0 || (size_t)length >= sizeof(material) ||
-      !laghu_sha256_hex(
-          (laghu_buffer){(const unsigned char *)material, (size_t)length},
-          identity) ||
-      !laghu_asset_file_paths(config->catalog_path, identity, "asset-index",
-                              path, temporary) ||
-      (file = fopen(path, "rb")) == NULL ||
-      fread(key, sizeof(key), 1U, file) != 1U || fgetc(file) != EOF ||
-      fclose(file) != 0 || !laghu_asset_hash_valid(key))
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, identity) ||
+      !laghu_asset_file_paths(config->catalog_path, identity, "asset-index", path, temporary) || (file = fopen(path, "rb")) == NULL ||
+      fread(key, sizeof(key), 1U, file) != 1U || fgetc(file) != EOF || fclose(file) != 0 || !laghu_asset_hash_valid(key))
     return false;
   return laghu_asset_catalog_lookup(config->catalog_path, key, record);
 }
 
 static bool laghu_asset_url_end(unsigned char value) {
-  return value == '\0' || isspace(value) || value == '\'' || value == '"' ||
-         value == '<' || value == '>' || value == ')' || value == ']';
+  return value == '\0' || isspace(value) || value == '\'' || value == '"' || value == '<' || value == '>' || value == ')' || value == ']';
 }
 
-bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
-                                     laghu_buffer input, const char *page_path,
-                                     unsigned char **output,
+bool laghu_asset_rewrite_document_at(const laghu_asset_config *config, laghu_buffer input, const char *page_path, unsigned char **output,
                                      size_t *output_length) {
   size_t index = 0U, copied = 0U, capacity;
   unsigned char *result;
@@ -637,35 +497,22 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
   if (output == NULL || output_length == NULL) return false;
   *output = NULL;
   *output_length = 0U;
-  if (config == NULL || input.data == NULL || input.length == 0U ||
-      !laghu_asset_policy_validate(&config->policy, NULL, 0U))
-    return true;
+  if (config == NULL || input.data == NULL || input.length == 0U || !laghu_asset_policy_validate(&config->policy, NULL, 0U)) return true;
   domain_length = strlen(config->policy.source_domain);
   prefix_length = domain_length + strlen(config->policy.source_prefix);
   capacity = input.length + 1U;
   result = malloc(capacity);
   if (result == NULL) return false;
   while (index < input.length) {
-    bool absolute =
-        index + prefix_length <= input.length &&
-        memcmp(input.data + index, config->policy.source_domain,
-               domain_length) == 0 &&
-        memcmp(input.data + index + domain_length, config->policy.source_prefix,
-               strlen(config->policy.source_prefix)) == 0;
-    bool delimited =
-        index != 0U &&
-        (input.data[index - 1U] == '\'' || input.data[index - 1U] == '"' ||
-         input.data[index - 1U] == '(' || input.data[index - 1U] == '=');
-    bool root_relative = delimited && input.data[index] == '/' &&
-                         index + 1U < input.length &&
-                         input.data[index + 1U] != '/';
+    bool absolute = index + prefix_length <= input.length && memcmp(input.data + index, config->policy.source_domain, domain_length) == 0 &&
+                    memcmp(input.data + index + domain_length, config->policy.source_prefix, strlen(config->policy.source_prefix)) == 0;
+    bool delimited = index != 0U && (input.data[index - 1U] == '\'' || input.data[index - 1U] == '"' || input.data[index - 1U] == '(' ||
+                                     input.data[index - 1U] == '=');
+    bool root_relative = delimited && input.data[index] == '/' && index + 1U < input.length && input.data[index + 1U] != '/';
     bool document_relative =
-        delimited && page_path != NULL && input.data[index] != '/' &&
-        input.data[index] != '#' && input.data[index] != '?' &&
+        delimited && page_path != NULL && input.data[index] != '/' && input.data[index] != '#' && input.data[index] != '?' &&
         (isalnum(input.data[index]) || input.data[index] == '.') &&
-        !(index + 5U < input.length &&
-          (memcmp(input.data + index, "data:", 5U) == 0 ||
-           memcmp(input.data + index, "blob:", 5U) == 0));
+        !(index + 5U < input.length && (memcmp(input.data + index, "data:", 5U) == 0 || memcmp(input.data + index, "blob:", 5U) == 0));
     if (absolute || root_relative || document_relative) {
       size_t end = absolute ? index + prefix_length : index;
       char source[LAGHU_RUNTIME_PATH_SIZE], rewritten[LAGHU_RUNTIME_PATH_SIZE];
@@ -674,29 +521,23 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
       if (absolute && end - index < sizeof(source)) {
         memcpy(source, input.data + index, end - index);
         source[end - index] = '\0';
-      } else if (root_relative &&
-                 domain_length + end - index < sizeof(source)) {
+      } else if (root_relative && domain_length + end - index < sizeof(source)) {
         memcpy(source, config->policy.source_domain, domain_length);
         memcpy(source + domain_length, input.data + index, end - index);
         source[domain_length + end - index] = '\0';
-      } else if (document_relative &&
-                 !(end - index >= 2U && input.data[index] == '.' &&
-                   input.data[index + 1U] == '.')) {
+      } else if (document_relative && !(end - index >= 2U && input.data[index] == '.' && input.data[index + 1U] == '.')) {
         const char *slash = strrchr(page_path, '/');
-        size_t directory_length =
-            slash == NULL ? 1U : (size_t)(slash - page_path) + 1U;
+        size_t directory_length = slash == NULL ? 1U : (size_t)(slash - page_path) + 1U;
         const unsigned char *relative = input.data + index;
         size_t relative_length = end - index;
         if (relative_length >= 2U && relative[0] == '.' && relative[1] == '/') {
           relative += 2U;
           relative_length -= 2U;
         }
-        if (domain_length + directory_length + relative_length <
-            sizeof(source)) {
+        if (domain_length + directory_length + relative_length < sizeof(source)) {
           memcpy(source, config->policy.source_domain, domain_length);
           memcpy(source + domain_length, page_path, directory_length);
-          memcpy(source + domain_length + directory_length, relative,
-                 relative_length);
+          memcpy(source + domain_length + directory_length, relative, relative_length);
           source[domain_length + directory_length + relative_length] = '\0';
         } else
           source[0] = '\0';
@@ -706,20 +547,15 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
       if (source[0] != '\0') {
         bool found = laghu_asset_catalog_lookup_url(config, source, &record);
         uint64_t now = (uint64_t)time(NULL);
-        bool stale = found && record.state == LAGHU_ASSET_READY &&
-                     record.updated_at <= now &&
-                     now - record.updated_at > config->policy.stale_ttl_seconds;
+        bool stale =
+            found && record.state == LAGHU_ASSET_READY && record.updated_at <= now && now - record.updated_at > config->policy.stale_ttl_seconds;
         if (stale) {
           record.state = LAGHU_ASSET_STALE;
           record.updated_at = now;
           (void)laghu_asset_catalog_publish(config->catalog_path, &record);
         }
-        if (found && !stale &&
-            laghu_asset_record_rewrite(&config->policy, &record, rewritten,
-                                       sizeof(rewritten)) &&
-            laghu_asset_url_rewrite(&config->policy, source,
-                                    record.content_type, record.content_hash,
-                                    rewritten, sizeof(rewritten))) {
+        if (found && !stale && laghu_asset_record_rewrite(&config->policy, &record, rewritten, sizeof(rewritten)) &&
+            laghu_asset_url_rewrite(&config->policy, source, record.content_type, record.content_hash, rewritten, sizeof(rewritten))) {
           size_t replacement = strlen(rewritten);
           if (copied + replacement + input.length - end + 1U > capacity) {
             size_t next = copied + replacement + input.length - end + 1U;
@@ -741,17 +577,12 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
           const char *ignored;
           laghu_asset_record pending = {0};
           if (laghu_asset_source_match(&config->policy, source, &ignored) &&
-              laghu_asset_copy(pending.source_url, sizeof(pending.source_url),
-                               source) &&
-              laghu_asset_copy(pending.policy_digest,
-                               sizeof(pending.policy_digest), config->digest) &&
-              laghu_asset_copy(pending.provider_digest,
-                               sizeof(pending.provider_digest),
-                               config->digest)) {
+              laghu_asset_copy(pending.source_url, sizeof(pending.source_url), source) &&
+              laghu_asset_copy(pending.policy_digest, sizeof(pending.policy_digest), config->digest) &&
+              laghu_asset_copy(pending.provider_digest, sizeof(pending.provider_digest), config->digest)) {
             pending.state = LAGHU_ASSET_PENDING;
             pending.updated_at = (uint64_t)time(NULL);
-            (void)laghu_asset_job_publish(config, &pending,
-                                          (laghu_buffer){NULL, 0U});
+            (void)laghu_asset_job_publish(config, &pending, (laghu_buffer){NULL, 0U});
           }
         }
       }
@@ -768,64 +599,42 @@ bool laghu_asset_rewrite_document_at(const laghu_asset_config *config,
   return true;
 }
 
-bool laghu_asset_rewrite_document(const laghu_asset_config *config,
-                                  laghu_buffer input, unsigned char **output,
-                                  size_t *output_length) {
-  return laghu_asset_rewrite_document_at(config, input, "/", output,
-                                         output_length);
+bool laghu_asset_rewrite_document(const laghu_asset_config *config, laghu_buffer input, unsigned char **output, size_t *output_length) {
+  return laghu_asset_rewrite_document_at(config, input, "/", output, output_length);
 }
 
-bool laghu_asset_job_publish(const laghu_asset_config *config,
-                             const laghu_asset_record *record,
-                             laghu_buffer body) {
+bool laghu_asset_job_publish(const laghu_asset_config *config, const laghu_asset_record *record, laghu_buffer body) {
   laghu_asset_job_file header = {0};
   char key[LAGHU_RUNTIME_KEY_SIZE], path[LAGHU_RUNTIME_PATH_SIZE];
   char temporary[LAGHU_RUNTIME_PATH_SIZE];
   FILE *file;
-  if (config == NULL || record == NULL ||
-      (body.length != 0U && body.data == NULL) ||
-      body.length > config->policy.max_body_bytes ||
-      ((laghu_asset_hash_valid(record->content_hash) &&
-        !laghu_asset_catalog_key(record, key)) ||
+  if (config == NULL || record == NULL || (body.length != 0U && body.data == NULL) || body.length > config->policy.max_body_bytes ||
+      ((laghu_asset_hash_valid(record->content_hash) && !laghu_asset_catalog_key(record, key)) ||
        (!laghu_asset_hash_valid(record->content_hash) &&
-        !laghu_sha256_hex(
-            (laghu_buffer){(const unsigned char *)record->source_url,
-                           strlen(record->source_url)},
-            key))) ||
-      !laghu_asset_directory(config->queue_path) ||
-      !laghu_asset_file_paths(config->queue_path, key, "job", path, temporary))
+        !laghu_sha256_hex((laghu_buffer){(const unsigned char *)record->source_url, strlen(record->source_url)}, key))) ||
+      !laghu_asset_directory(config->queue_path) || !laghu_asset_file_paths(config->queue_path, key, "job", path, temporary))
     return false;
   file = fopen(path, "rb");
   if (file != NULL) {
     (void)fclose(file);
     return true;
   }
-  if (!laghu_asset_directory_has_capacity(config->queue_path,
-                                          LAGHU_ASSET_MAX_JOBS))
-    return false;
+  if (!laghu_asset_directory_has_capacity(config->queue_path, LAGHU_ASSET_MAX_JOBS)) return false;
   header.version = LAGHU_ASSET_CONFIG_VERSION;
   header.record = *record;
   header.body_length = body.length;
-  if (!laghu_sha256_hex(body, header.body_hash) ||
-      (file = fopen(temporary, "wb")) == NULL)
-    return false;
-  if (fwrite(&header, sizeof(header), 1U, file) != 1U ||
-      (body.length != 0U && fwrite(body.data, body.length, 1U, file) != 1U) ||
-      fflush(file) != 0 || fclose(file) != 0 ||
-      !laghu_asset_replace(temporary, path)) {
+  if (!laghu_sha256_hex(body, header.body_hash) || (file = fopen(temporary, "wb")) == NULL) return false;
+  if (fwrite(&header, sizeof(header), 1U, file) != 1U || (body.length != 0U && fwrite(body.data, body.length, 1U, file) != 1U) || fflush(file) != 0 ||
+      fclose(file) != 0 || !laghu_asset_replace(temporary, path)) {
     (void)laghu_asset_unlink(temporary);
     return false;
   }
   return true;
 }
 
-bool laghu_asset_job_take(const laghu_asset_config *config,
-                          laghu_asset_record *record, unsigned char **body,
-                          size_t *body_length,
+bool laghu_asset_job_take(const laghu_asset_config *config, laghu_asset_record *record, unsigned char **body, size_t *body_length,
                           char job_path[LAGHU_RUNTIME_PATH_SIZE]) {
-  if (config == NULL || record == NULL || body == NULL || body_length == NULL ||
-      job_path == NULL)
-    return false;
+  if (config == NULL || record == NULL || body == NULL || body_length == NULL || job_path == NULL) return false;
   *body = NULL;
   *body_length = 0U;
   DIR *directory;
@@ -850,22 +659,15 @@ bool laghu_asset_job_take(const laghu_asset_config *config,
     char actual[LAGHU_RUNTIME_KEY_SIZE];
     FILE *file;
     int a = snprintf(source, sizeof(source), "%s/%s", config->queue_path, name);
-    int b = snprintf(job_path, LAGHU_RUNTIME_PATH_SIZE, "%s/%s.work",
-                     config->queue_path, name);
+    int b = snprintf(job_path, LAGHU_RUNTIME_PATH_SIZE, "%s/%s.work", config->queue_path, name);
     (void)closedir(directory);
-    if (a <= 0 || b <= 0 || (size_t)a >= sizeof(source) ||
-        (size_t)b >= LAGHU_RUNTIME_PATH_SIZE ||
-        !laghu_asset_replace(source, job_path) ||
+    if (a <= 0 || b <= 0 || (size_t)a >= sizeof(source) || (size_t)b >= LAGHU_RUNTIME_PATH_SIZE || !laghu_asset_replace(source, job_path) ||
         (file = fopen(job_path, "rb")) == NULL)
       return false;
-    if (fread(&header, sizeof(header), 1U, file) != 1U ||
-        header.version != LAGHU_ASSET_CONFIG_VERSION ||
+    if (fread(&header, sizeof(header), 1U, file) != 1U || header.version != LAGHU_ASSET_CONFIG_VERSION ||
         header.body_length > config->policy.max_body_bytes ||
-        (header.body_length != 0U &&
-         ((*body = malloc(header.body_length)) == NULL ||
-          fread(*body, header.body_length, 1U, file) != 1U)) ||
-        fgetc(file) != EOF || fclose(file) != 0 ||
-        !laghu_sha256_hex((laghu_buffer){*body, header.body_length}, actual) ||
+        (header.body_length != 0U && ((*body = malloc(header.body_length)) == NULL || fread(*body, header.body_length, 1U, file) != 1U)) ||
+        fgetc(file) != EOF || fclose(file) != 0 || !laghu_sha256_hex((laghu_buffer){*body, header.body_length}, actual) ||
         strcmp(actual, header.body_hash) != 0) {
       free(*body);
       *body = NULL;
@@ -884,12 +686,9 @@ bool laghu_asset_job_take(const laghu_asset_config *config,
   return true;
 }
 
-bool laghu_asset_job_complete(const char *job_path) {
-  return laghu_asset_safe_path(job_path) && laghu_asset_unlink(job_path) == 0;
-}
+bool laghu_asset_job_complete(const char *job_path) { return laghu_asset_safe_path(job_path) && laghu_asset_unlink(job_path) == 0; }
 
-uint64_t laghu_asset_retry_after(const laghu_asset_policy *policy,
-                                 unsigned int attempts, uint64_t now) {
+uint64_t laghu_asset_retry_after(const laghu_asset_policy *policy, unsigned int attempts, uint64_t now) {
   uint64_t delay = 1U;
   unsigned int index;
   if (policy == NULL || attempts > policy->retry_limit) return UINT64_MAX;

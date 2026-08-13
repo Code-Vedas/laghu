@@ -33,14 +33,11 @@ int main(void) {
   assert(laghu_test_directory(root, sizeof(root)));
   laghu_test_hash(index, 'a');
   laghu_test_hash(variant, 'b');
-  assert(laghu_runtime_file_cache_publish(
-      root, index, variant, "etag", "text/plain", "test",
-      (laghu_buffer){payload, sizeof(payload) - 1U}, &entry));
+  assert(laghu_runtime_file_cache_publish(root, index, variant, "etag", "text/plain", "test", (laghu_buffer){payload, sizeof(payload) - 1U}, &entry));
   assert(laghu_runtime_file_cache_lookup(root, index, "etag", &entry));
   assert(laghu_runtime_file_cache_read(&entry, output, sizeof(output)));
   assert(memcmp(output, payload, sizeof(payload) - 1U) == 0);
-  assert(snprintf(metadata, sizeof(metadata), "%s/index-%s.meta", root, index) >
-         0);
+  assert(snprintf(metadata, sizeof(metadata), "%s/index-%s.meta", root, index) > 0);
   file = fopen(metadata, "r+b");
   assert(file != NULL && fputc(0, file) != EOF && fclose(file) == 0);
   assert(!laghu_runtime_file_cache_lookup(root, index, "etag", &entry));

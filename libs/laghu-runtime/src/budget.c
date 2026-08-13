@@ -14,41 +14,32 @@ uint64_t laghu_runtime_monotonic_ms(void) {
   return (uint64_t)value.tv_sec * 1000U + (uint64_t)value.tv_nsec / 1000000U;
 }
 
-void laghu_transform_budget_init(laghu_transform_budget *budget,
-                                 size_t memory_limit, unsigned int deadline_ms,
-                                 unsigned int variant_limit) {
+void laghu_transform_budget_init(laghu_transform_budget *budget, size_t memory_limit, unsigned int deadline_ms, unsigned int variant_limit) {
   uint64_t now;
   if (budget == NULL) return;
   memset(budget, 0, sizeof(*budget));
   budget->memory_limit = memory_limit;
   budget->variant_limit = variant_limit;
   now = laghu_runtime_monotonic_ms();
-  budget->deadline_ms =
-      now > UINT64_MAX - deadline_ms ? UINT64_MAX : now + deadline_ms;
+  budget->deadline_ms = now > UINT64_MAX - deadline_ms ? UINT64_MAX : now + deadline_ms;
 }
 
-bool laghu_transform_budget_reserve(laghu_transform_budget *budget,
-                                    size_t bytes) {
-  if (budget == NULL || bytes > budget->memory_limit ||
-      budget->current_memory > budget->memory_limit - bytes) {
+bool laghu_transform_budget_reserve(laghu_transform_budget *budget, size_t bytes) {
+  if (budget == NULL || bytes > budget->memory_limit || budget->current_memory > budget->memory_limit - bytes) {
     if (budget != NULL) budget->rejection = LAGHU_BUDGET_REJECTION_MEMORY;
     return false;
   }
   budget->current_memory += bytes;
-  if (budget->current_memory > budget->peak_memory)
-    budget->peak_memory = budget->current_memory;
+  if (budget->current_memory > budget->peak_memory) budget->peak_memory = budget->current_memory;
   return true;
 }
 
-void laghu_transform_budget_release(laghu_transform_budget *budget,
-                                    size_t bytes) {
+void laghu_transform_budget_release(laghu_transform_budget *budget, size_t bytes) {
   if (budget == NULL) return;
-  budget->current_memory =
-      bytes > budget->current_memory ? 0U : budget->current_memory - bytes;
+  budget->current_memory = bytes > budget->current_memory ? 0U : budget->current_memory - bytes;
 }
 
-bool laghu_transform_budget_checkpoint(laghu_transform_budget *budget,
-                                       uint64_t work_units) {
+bool laghu_transform_budget_checkpoint(laghu_transform_budget *budget, uint64_t work_units) {
   uint64_t now;
   if (budget == NULL || UINT64_MAX - budget->work_units < work_units) {
     if (budget != NULL) budget->rejection = LAGHU_BUDGET_REJECTION_CONTENT;
@@ -63,18 +54,14 @@ bool laghu_transform_budget_checkpoint(laghu_transform_budget *budget,
   return true;
 }
 
-bool laghu_transform_budget_generate(laghu_transform_budget *budget,
-                                     size_t bytes) {
-  if (budget == NULL || SIZE_MAX - budget->generated_bytes < bytes ||
-      budget->generated_bytes + bytes > budget->memory_limit ||
-      budget->current_memory >
-          budget->memory_limit - (budget->generated_bytes + bytes)) {
+bool laghu_transform_budget_generate(laghu_transform_budget *budget, size_t bytes) {
+  if (budget == NULL || SIZE_MAX - budget->generated_bytes < bytes || budget->generated_bytes + bytes > budget->memory_limit ||
+      budget->current_memory > budget->memory_limit - (budget->generated_bytes + bytes)) {
     if (budget != NULL) budget->rejection = LAGHU_BUDGET_REJECTION_MEMORY;
     return false;
   }
   budget->generated_bytes += bytes;
-  if (budget->current_memory + budget->generated_bytes > budget->peak_memory)
-    budget->peak_memory = budget->current_memory + budget->generated_bytes;
+  if (budget->current_memory + budget->generated_bytes > budget->peak_memory) budget->peak_memory = budget->current_memory + budget->generated_bytes;
   return true;
 }
 

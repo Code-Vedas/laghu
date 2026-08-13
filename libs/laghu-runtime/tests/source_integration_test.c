@@ -30,38 +30,30 @@ static void test_file_mapping(const char *directory) {
   assert(laghu_source_mode_parse("mapped", false, &source->mode));
   assert(!laghu_source_mode_parse("native", false, &source->mode));
   source->mode = LAGHU_SOURCE_FILE_MAPPED;
-  assert(laghu_source_mapping_add(source, "https://origin.example.test/assets/",
-                                  directory));
-  assert(!laghu_source_mapping_add(
-      source, "https://origin.example.test/assets/", directory));
+  assert(laghu_source_mapping_add(source, "https://origin.example.test/assets/", directory));
+  assert(!laghu_source_mapping_add(source, "https://origin.example.test/assets/", directory));
   assert(laghu_source_policy_validate(source, false, NULL, 0U));
   assert(snprintf(path, sizeof(path), "%s/source.png", directory) > 0);
   file = fopen(path, "wb");
   assert(file != NULL);
   assert(fwrite("png-body", sizeof("png-body") - 1U, 1U, file) == 1U);
   assert(fclose(file) == 0);
-  assert(snprintf(registry, sizeof(registry), "%s/source.queue", directory) >
-         0);
+  assert(snprintf(registry, sizeof(registry), "%s/source.queue", directory) > 0);
   assert(laghu_source_registry_publish(registry, source));
   assert(laghu_source_registry_load(registry, loaded));
-  assert(laghu_source_file_load(
-             loaded, "https://origin.example.test/assets/source.png", &body,
-             &length, type, validator, mapping) == LAGHU_SOURCE_LOAD_READY);
-  assert(length == sizeof("png-body") - 1U &&
-         memcmp(body, "png-body", length) == 0 &&
-         strcmp(type, "image/png") == 0 && validator[0] != '\0' &&
+  assert(laghu_source_file_load(loaded, "https://origin.example.test/assets/source.png", &body, &length, type, validator, mapping) ==
+         LAGHU_SOURCE_LOAD_READY);
+  assert(length == sizeof("png-body") - 1U && memcmp(body, "png-body", length) == 0 && strcmp(type, "image/png") == 0 && validator[0] != '\0' &&
          mapping[0] != '\0');
   free(body);
-  assert(laghu_source_file_load(
-             loaded, "https://origin.example.test/assets/../source.png", &body,
-             &length, type, validator, mapping) == LAGHU_SOURCE_LOAD_UNSAFE);
+  assert(laghu_source_file_load(loaded, "https://origin.example.test/assets/../source.png", &body, &length, type, validator, mapping) ==
+         LAGHU_SOURCE_LOAD_UNSAFE);
   {
     char link[LAGHU_RUNTIME_PATH_SIZE];
     assert(snprintf(link, sizeof(link), "%s/link.png", directory) > 0);
     assert(symlink(path, link) == 0);
-    assert(laghu_source_file_load(
-               loaded, "https://origin.example.test/assets/link.png", &body,
-               &length, type, validator, mapping) == LAGHU_SOURCE_LOAD_UNSAFE);
+    assert(laghu_source_file_load(loaded, "https://origin.example.test/assets/link.png", &body, &length, type, validator, mapping) ==
+           LAGHU_SOURCE_LOAD_UNSAFE);
   }
   free(loaded);
   free(source);

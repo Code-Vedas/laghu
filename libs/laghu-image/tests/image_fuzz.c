@@ -22,14 +22,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     laghu_image_markup_result_release(&result);
   }
   (void)laghu_css_discover(input, "/fuzz.css", "https://example.test", &parsed);
-  (void)laghu_css_discover_style_attributes(input, "/fuzz.html",
-                                            "https://example.test", &parsed);
-  if (laghu_css_fallback_rewrite_urls(
-          input, "/fuzz.css", "https://example.test", &options, &result)) {
+  (void)laghu_css_discover_style_attributes(input, "/fuzz.html", "https://example.test", &parsed);
+  if (laghu_css_fallback_rewrite_urls(input, "/fuzz.css", "https://example.test", &options, &result)) {
     laghu_image_markup_result_release(&result);
   }
-  if (laghu_css_rewrite_style_attributes(
-          input, "/fuzz.html", "https://example.test", &options, &result)) {
+  if (laghu_css_rewrite_style_attributes(input, "/fuzz.html", "https://example.test", &options, &result)) {
     laghu_image_markup_result_release(&result);
   }
   return 0;

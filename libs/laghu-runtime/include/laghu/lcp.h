@@ -46,24 +46,18 @@ typedef struct {
   bool rewritten;
   bool applied;
 } laghu_lcp_result;
-bool laghu_lcp_inventory_record(laghu_buffer html, const char *page_path,
-                                const char *page_origin,
-                                laghu_rum_instrumentation_record *record,
+bool laghu_lcp_inventory_record(laghu_buffer html, const char *page_path, const char *page_origin, laghu_rum_instrumentation_record *record,
                                 char digest[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_runtime_prioritize_lcp(
-    laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *template_key,
-    uint64_t now, unsigned int ttl_seconds, unsigned int viewport_width,
-    bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
-    laghu_lcp_result *result);
+bool laghu_runtime_prioritize_lcp(laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html, const char *page_path,
+                                  const char *page_origin, const char *template_key, uint64_t now, unsigned int ttl_seconds,
+                                  unsigned int viewport_width, bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
+                                  laghu_lcp_result *result);
 /* Applies no heuristic fallback: callers that have opted into template
  * profiles use this after profile evidence has passed its safety gate. */
-bool laghu_runtime_prioritize_learned_lcp(
-    laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html,
-    const char *page_path, const char *page_origin, const char *template_key,
-    uint64_t now, unsigned int ttl_seconds, unsigned int viewport_width,
-    bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
-    laghu_lcp_result *result);
+bool laghu_runtime_prioritize_learned_lcp(laghu_rum_engine *rum, laghu_buffer evidence_html, laghu_buffer html, const char *page_path,
+                                          const char *page_origin, const char *template_key, uint64_t now, unsigned int ttl_seconds,
+                                          unsigned int viewport_width, bool resource_hints, bool lazyload, const laghu_csp_policy *csp,
+                                          laghu_lcp_result *result);
 void laghu_lcp_result_release(laghu_lcp_result *result);
 
 #ifdef __cplusplus

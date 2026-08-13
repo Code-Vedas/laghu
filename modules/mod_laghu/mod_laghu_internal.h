@@ -105,66 +105,41 @@ typedef struct {
 } laghu_apache_context;
 
 extern module AP_MODULE_DECLARE_DATA laghu_module;
-void laghu_apache_log_defer_recommendation(
-    request_rec *request, const laghu_http_transaction_result *result);
-void laghu_apache_log_transaction(request_rec *request,
-                                  laghu_apache_context *context,
-                                  const laghu_http_transaction_result *result,
+void laghu_apache_log_defer_recommendation(request_rec *request, const laghu_http_transaction_result *result);
+void laghu_apache_log_transaction(request_rec *request, laghu_apache_context *context, const laghu_http_transaction_result *result,
                                   const char *failure);
-void laghu_apache_send_early_hints(request_rec *request,
-                                   const laghu_http_transaction_result *result);
+void laghu_apache_send_early_hints(request_rec *request, const laghu_http_transaction_result *result);
 extern laghu_rum_engine *laghu_apache_rum;
 extern laghu_operational_registry laghu_apache_operational;
 extern const char *laghu_apache_operational_cache;
 extern bool laghu_apache_operational_enabled;
 void laghu_apache_child_init(apr_pool_t *pool, server_rec *server);
 void laghu_apache_queue_registry_reset(void);
-bool laghu_apache_queue_registry_add(const laghu_apache_config *parent,
-                                     const laghu_apache_config *child,
-                                     const laghu_service_config *service);
-laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(
-    const laghu_service_config *service);
+bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const laghu_apache_config *child, const laghu_service_config *service);
+laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(const laghu_service_config *service);
 laghu_runtime_queue *laghu_apache_image_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_javascript_queue(laghu_apache_config *config);
-laghu_runtime_queue *laghu_apache_html_refresh_queue(
-    laghu_apache_config *config);
-laghu_runtime_queue *laghu_apache_chrome_analysis_queue(
-    laghu_apache_config *config);
-bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config,
-                                           const laghu_runtime_job *job,
-                                           uint64_t now);
+laghu_runtime_queue *laghu_apache_html_refresh_queue(laghu_apache_config *config);
+laghu_runtime_queue *laghu_apache_chrome_analysis_queue(laghu_apache_config *config);
+bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config, const laghu_runtime_job *job, uint64_t now);
 void *laghu_apache_create_config(apr_pool_t *pool, char *path);
 void *laghu_apache_create_server_config(apr_pool_t *pool, server_rec *server);
 void laghu_apache_service_defaults(laghu_service_config *service);
-bool laghu_apache_service_resolve(laghu_service_config *resolved,
-                                  const laghu_service_config *parent,
-                                  const laghu_service_config *child,
-                                  const laghu_config *core,
-                                  laghu_service_diagnostic *diagnostic);
-void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value,
-                                void *child_value);
-const char *laghu_apache_command(cmd_parms *command, void *value,
-                                 const char *arguments);
-bool laghu_apache_normalize(request_rec *request,
-                            laghu_apache_context *context);
-bool laghu_apache_peer_matches(request_rec *request,
-                               const laghu_service_cidr *cidrs, size_t count);
-bool laghu_apache_apply_result(request_rec *request,
-                               const laghu_http_transaction_result *result);
-apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
-                                             apr_bucket_brigade *brigade);
+bool laghu_apache_service_resolve(laghu_service_config *resolved, const laghu_service_config *parent, const laghu_service_config *child,
+                                  const laghu_config *core, laghu_service_diagnostic *diagnostic);
+void *laghu_apache_merge_config(apr_pool_t *pool, void *parent_value, void *child_value);
+const char *laghu_apache_command(cmd_parms *command, void *value, const char *arguments);
+bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context);
+bool laghu_apache_peer_matches(request_rec *request, const laghu_service_cidr *cidrs, size_t count);
+bool laghu_apache_apply_result(request_rec *request, const laghu_http_transaction_result *result);
+apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_brigade *brigade);
 void laghu_apache_insert_filter(request_rec *request);
 int laghu_apache_html_cache_entry_handler(request_rec *request);
 int laghu_apache_variant_handler(request_rec *request);
-int laghu_apache_admin_endpoint(request_rec *request,
-                                laghu_apache_config *config);
-int laghu_apache_beacon_endpoint(request_rec *request,
-                                 laghu_apache_config *config);
-int laghu_apache_asset_endpoint(request_rec *request,
-                                laghu_apache_config *config);
-int laghu_apache_post_config(apr_pool_t *configuration_pool,
-                             apr_pool_t *log_pool, apr_pool_t *temporary_pool,
-                             server_rec *server);
+int laghu_apache_admin_endpoint(request_rec *request, laghu_apache_config *config);
+int laghu_apache_beacon_endpoint(request_rec *request, laghu_apache_config *config);
+int laghu_apache_asset_endpoint(request_rec *request, laghu_apache_config *config);
+int laghu_apache_post_config(apr_pool_t *configuration_pool, apr_pool_t *log_pool, apr_pool_t *temporary_pool, server_rec *server);
 
 #endif

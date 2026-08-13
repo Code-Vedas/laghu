@@ -32,8 +32,7 @@ typedef struct {
   size_t css_length;
 } laghu_combine_link;
 
-static bool laghu_combine_append(laghu_combine_builder *builder,
-                                 const void *data, size_t length) {
+static bool laghu_combine_append(laghu_combine_builder *builder, const void *data, size_t length) {
   size_t needed;
   unsigned char *grown;
   if (length > SIZE_MAX - builder->length - 1U) {
@@ -58,8 +57,7 @@ static bool laghu_combine_append(laghu_combine_builder *builder,
   return true;
 }
 
-static bool laghu_combine_equal(const unsigned char *value, size_t length,
-                                const char *expected) {
+static bool laghu_combine_equal(const unsigned char *value, size_t length, const char *expected) {
   size_t index;
   if (strlen(expected) != length) {
     return false;
@@ -72,8 +70,7 @@ static bool laghu_combine_equal(const unsigned char *value, size_t length,
   return true;
 }
 
-static bool laghu_combine_contains(const unsigned char *data, size_t length,
-                                   const char *needle) {
+static bool laghu_combine_contains(const unsigned char *data, size_t length, const char *needle) {
   size_t index;
   size_t needle_length = strlen(needle);
   for (index = 0U; index + needle_length <= length; ++index) {
@@ -84,26 +81,19 @@ static bool laghu_combine_contains(const unsigned char *data, size_t length,
   return false;
 }
 
-static bool laghu_combine_starts_with(const unsigned char *data, size_t length,
-                                      const char *prefix) {
+static bool laghu_combine_starts_with(const unsigned char *data, size_t length, const char *prefix) {
   size_t prefix_length = strlen(prefix);
-  return length >= prefix_length &&
-         laghu_combine_equal(data, prefix_length, prefix);
+  return length >= prefix_length && laghu_combine_equal(data, prefix_length, prefix);
 }
 
-static bool laghu_combine_normalize_url(const unsigned char *url, size_t length,
-                                        const char *page_path,
-                                        const char *page_origin,
+static bool laghu_combine_normalize_url(const unsigned char *url, size_t length, const char *page_path, const char *page_origin,
                                         char output[LAGHU_RUNTIME_PATH_SIZE]) {
-  return laghu_base_url_resolve_same_origin(
-      page_path, page_origin, (laghu_buffer){url, length},
-      LAGHU_URL_REJECT_TRAVERSAL | LAGHU_URL_REJECT_API |
-          LAGHU_URL_REJECT_QUERY | LAGHU_URL_REJECT_FRAGMENT,
-      output, LAGHU_RUNTIME_PATH_SIZE);
+  return laghu_base_url_resolve_same_origin(page_path, page_origin, (laghu_buffer){url, length},
+                                            LAGHU_URL_REJECT_TRAVERSAL | LAGHU_URL_REJECT_API | LAGHU_URL_REJECT_QUERY | LAGHU_URL_REJECT_FRAGMENT,
+                                            output, LAGHU_RUNTIME_PATH_SIZE);
 }
 
-static bool laghu_combine_media(const unsigned char *value, size_t length,
-                                char output[128U]) {
+static bool laghu_combine_media(const unsigned char *value, size_t length, char output[128U]) {
   size_t start = 0U;
   size_t end = length;
   size_t written = 0U;
@@ -142,23 +132,17 @@ static bool laghu_combine_media(const unsigned char *value, size_t length,
   return true;
 }
 
-static bool laghu_combine_parse_link(laghu_buffer html, size_t start,
-                                     const char *page_path,
-                                     const char *page_origin,
-                                     laghu_combine_link *link) {
+static bool laghu_combine_parse_link(laghu_buffer html, size_t start, const char *page_path, const char *page_origin, laghu_combine_link *link) {
   size_t cursor = start + 1U;
   bool have_rel = false;
   bool have_href = false;
   bool have_media = false;
   bool have_type = false;
-  if (start >= html.length || html.data[start] != '<' ||
-      start + 5U > html.length ||
-      !laghu_combine_equal(html.data + start + 1U, 4U, "link")) {
+  if (start >= html.length || html.data[start] != '<' || start + 5U > html.length || !laghu_combine_equal(html.data + start + 1U, 4U, "link")) {
     return false;
   }
   cursor += 4U;
-  if (cursor < html.length && !isspace(html.data[cursor]) &&
-      html.data[cursor] != '>') {
+  if (cursor < html.length && !isspace(html.data[cursor]) && html.data[cursor] != '>') {
     return false;
   }
   memset(link, 0, sizeof(*link));
@@ -184,32 +168,26 @@ static bool laghu_combine_parse_link(laghu_buffer html, size_t start,
       continue;
     }
     name_start = cursor;
-    while (cursor < html.length &&
-           (isalnum(html.data[cursor]) || html.data[cursor] == '-' ||
-            html.data[cursor] == '_')) {
+    while (cursor < html.length && (isalnum(html.data[cursor]) || html.data[cursor] == '-' || html.data[cursor] == '_')) {
       ++cursor;
     }
     name_end = cursor;
     while (cursor < html.length && isspace(html.data[cursor])) {
       ++cursor;
     }
-    if (name_end == name_start || cursor >= html.length ||
-        html.data[cursor] != '=') {
+    if (name_end == name_start || cursor >= html.length || html.data[cursor] != '=') {
       return false;
     }
     ++cursor;
     while (cursor < html.length && isspace(html.data[cursor])) {
       ++cursor;
     }
-    if (cursor < html.length &&
-        (html.data[cursor] == '\'' || html.data[cursor] == '"')) {
+    if (cursor < html.length && (html.data[cursor] == '\'' || html.data[cursor] == '"')) {
       quote = html.data[cursor++];
     }
     value_start = cursor;
     while (cursor < html.length &&
-           ((quote != 0U && html.data[cursor] != quote) ||
-            (quote == 0U && !isspace(html.data[cursor]) &&
-             html.data[cursor] != '>'))) {
+           ((quote != 0U && html.data[cursor] != quote) || (quote == 0U && !isspace(html.data[cursor]) && html.data[cursor] != '>'))) {
       ++cursor;
     }
     value_end = cursor;
@@ -219,35 +197,23 @@ static bool laghu_combine_parse_link(laghu_buffer html, size_t start,
       }
       ++cursor;
     }
-    if (laghu_combine_equal(html.data + name_start, name_end - name_start,
-                            "rel")) {
-      if (have_rel ||
-          !laghu_combine_equal(html.data + value_start, value_end - value_start,
-                               "stylesheet")) {
+    if (laghu_combine_equal(html.data + name_start, name_end - name_start, "rel")) {
+      if (have_rel || !laghu_combine_equal(html.data + value_start, value_end - value_start, "stylesheet")) {
         return false;
       }
       have_rel = true;
-    } else if (laghu_combine_equal(html.data + name_start,
-                                   name_end - name_start, "href")) {
-      if (have_href || !laghu_combine_normalize_url(
-                           html.data + value_start, value_end - value_start,
-                           page_path, page_origin, link->url)) {
+    } else if (laghu_combine_equal(html.data + name_start, name_end - name_start, "href")) {
+      if (have_href || !laghu_combine_normalize_url(html.data + value_start, value_end - value_start, page_path, page_origin, link->url)) {
         return false;
       }
       have_href = true;
-    } else if (laghu_combine_equal(html.data + name_start,
-                                   name_end - name_start, "media")) {
-      if (have_media ||
-          !laghu_combine_media(html.data + value_start, value_end - value_start,
-                               link->media)) {
+    } else if (laghu_combine_equal(html.data + name_start, name_end - name_start, "media")) {
+      if (have_media || !laghu_combine_media(html.data + value_start, value_end - value_start, link->media)) {
         return false;
       }
       have_media = true;
-    } else if (laghu_combine_equal(html.data + name_start,
-                                   name_end - name_start, "type")) {
-      if (have_type ||
-          !laghu_combine_equal(html.data + value_start, value_end - value_start,
-                               "text/css")) {
+    } else if (laghu_combine_equal(html.data + name_start, name_end - name_start, "type")) {
+      if (have_type || !laghu_combine_equal(html.data + value_start, value_end - value_start, "text/css")) {
         return false;
       }
       have_type = true;
@@ -261,8 +227,7 @@ static bool laghu_combine_parse_link(laghu_buffer html, size_t start,
 static bool laghu_combine_css_safe(laghu_buffer css) {
   size_t cursor;
   static const char *const forbidden[] = {
-      "@import",    "@font-face",       "@charset",
-      "@namespace", "sourcemappingurl", "sourceurl",
+      "@import", "@font-face", "@charset", "@namespace", "sourcemappingurl", "sourceurl",
   };
   size_t index;
   for (index = 0U; index < sizeof(forbidden) / sizeof(forbidden[0]); ++index) {
@@ -280,20 +245,14 @@ static bool laghu_combine_css_safe(laghu_buffer css) {
     while (value < css.length && isspace(css.data[value])) {
       ++value;
     }
-    if (value < css.length &&
-        (css.data[value] == '\'' || css.data[value] == '"')) {
+    if (value < css.length && (css.data[value] == '\'' || css.data[value] == '"')) {
       quote = css.data[value++];
     }
     if (value >= css.length ||
-        !(css.data[value] == '/' || css.data[value] == '#' ||
-          laghu_combine_starts_with(css.data + value, css.length - value,
-                                    "data:") ||
-          laghu_combine_starts_with(css.data + value, css.length - value,
-                                    "blob:") ||
-          laghu_combine_starts_with(css.data + value, css.length - value,
-                                    "http://") ||
-          laghu_combine_starts_with(css.data + value, css.length - value,
-                                    "https://"))) {
+        !(css.data[value] == '/' || css.data[value] == '#' || laghu_combine_starts_with(css.data + value, css.length - value, "data:") ||
+          laghu_combine_starts_with(css.data + value, css.length - value, "blob:") ||
+          laghu_combine_starts_with(css.data + value, css.length - value, "http://") ||
+          laghu_combine_starts_with(css.data + value, css.length - value, "https://"))) {
       return false;
     }
     (void)quote;
@@ -301,17 +260,14 @@ static bool laghu_combine_css_safe(laghu_buffer css) {
   return true;
 }
 
-static bool laghu_combine_read(const char *cache_path,
-                               laghu_combine_link *link) {
+static bool laghu_combine_read(const char *cache_path, laghu_combine_link *link) {
   laghu_runtime_cache_entry entry;
   const char *key = link->record.derived_key;
-  if (!laghu_runtime_cache_lookup_variant(cache_path, key, &entry) ||
-      entry.length == 0U || entry.length > LAGHU_CSS_MAX_INPUT_BYTES) {
+  if (!laghu_runtime_cache_lookup_variant(cache_path, key, &entry) || entry.length == 0U || entry.length > LAGHU_CSS_MAX_INPUT_BYTES) {
     return false;
   }
   link->css = malloc(entry.length + 1U);
-  if (link->css == NULL ||
-      !laghu_runtime_cache_read(&entry, link->css, entry.length)) {
+  if (link->css == NULL || !laghu_runtime_cache_read(&entry, link->css, entry.length)) {
     free(link->css);
     link->css = NULL;
     return false;
@@ -321,14 +277,9 @@ static bool laghu_combine_read(const char *cache_path,
   return true;
 }
 
-static bool laghu_combine_key(const laghu_combine_link *links, size_t count,
-                              laghu_buffer combined, const char *policy_key,
-                              uint32_t capability_mask,
-                              unsigned int inline_limit,
-                              unsigned int outline_threshold,
-                              char output[LAGHU_RUNTIME_KEY_SIZE]) {
-  size_t capacity = 256U + count * (LAGHU_RUNTIME_PATH_SIZE +
-                                    LAGHU_RUNTIME_KEY_SIZE * 3U + 160U);
+static bool laghu_combine_key(const laghu_combine_link *links, size_t count, laghu_buffer combined, const char *policy_key, uint32_t capability_mask,
+                              unsigned int inline_limit, unsigned int outline_threshold, char output[LAGHU_RUNTIME_KEY_SIZE]) {
+  size_t capacity = 256U + count * (LAGHU_RUNTIME_PATH_SIZE + LAGHU_RUNTIME_KEY_SIZE * 3U + 160U);
   char combined_hash[LAGHU_RUNTIME_KEY_SIZE];
   char *material = malloc(capacity);
   size_t length;
@@ -338,30 +289,23 @@ static bool laghu_combine_key(const laghu_combine_link *links, size_t count,
     free(material);
     return false;
   }
-  written = snprintf(
-      material, capacity, "laghu-css-combine-v%u\n%s\n%s\n%u\n%u\n%u\n%u\n%u",
-      LAGHU_CSS_COMBINE_VERSION, combined_hash, policy_key, capability_mask,
-      LAGHU_CSS_DERIVATION_VERSION, inline_limit, outline_threshold,
-      LAGHU_CSS_COMBINE_MAX_INPUTS);
+  written = snprintf(material, capacity, "laghu-css-combine-v%u\n%s\n%s\n%u\n%u\n%u\n%u\n%u", LAGHU_CSS_COMBINE_VERSION, combined_hash, policy_key,
+                     capability_mask, LAGHU_CSS_DERIVATION_VERSION, inline_limit, outline_threshold, LAGHU_CSS_COMBINE_MAX_INPUTS);
   if (written <= 0 || (size_t)written >= capacity) {
     free(material);
     return false;
   }
   length = (size_t)written;
   for (index = 0U; index < count; ++index) {
-    written =
-        snprintf(material + length, capacity - length, "\n%s\n%s\n%s\n%s\n%s",
-                 links[index].url, links[index].record.source_hash,
-                 links[index].record.derived_key,
-                 links[index].record.dependency_key, links[index].media);
+    written = snprintf(material + length, capacity - length, "\n%s\n%s\n%s\n%s\n%s", links[index].url, links[index].record.source_hash,
+                       links[index].record.derived_key, links[index].record.dependency_key, links[index].media);
     if (written <= 0 || (size_t)written >= capacity - length) {
       free(material);
       return false;
     }
     length += (size_t)written;
   }
-  if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, length},
-                        output)) {
+  if (!laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, length}, output)) {
     free(material);
     return false;
   }
@@ -369,11 +313,9 @@ static bool laghu_combine_key(const laghu_combine_link *links, size_t count,
   return true;
 }
 
-bool laghu_runtime_combine_css_markup(
-    const char *cache_path, laghu_buffer html, const char *page_path,
-    const char *page_origin, const char *policy_key, uint32_t capability_mask,
-    uint64_t now, unsigned int ttl_seconds, unsigned int inline_limit,
-    unsigned int outline_threshold, laghu_runtime_css_combine_result *result) {
+bool laghu_runtime_combine_css_markup(const char *cache_path, laghu_buffer html, const char *page_path, const char *page_origin,
+                                      const char *policy_key, uint32_t capability_mask, uint64_t now, unsigned int ttl_seconds,
+                                      unsigned int inline_limit, unsigned int outline_threshold, laghu_runtime_css_combine_result *result) {
   typedef char laghu_seen_path[LAGHU_RUNTIME_PATH_SIZE];
   laghu_combine_builder output = {0};
   laghu_seen_path *seen = NULL;
@@ -381,8 +323,7 @@ bool laghu_runtime_combine_css_markup(
   size_t seen_count = 0U;
   size_t cursor = 0U;
   bool changed = false;
-  if (result == NULL || cache_path == NULL || page_path == NULL ||
-      policy_key == NULL || ttl_seconds == 0U) {
+  if (result == NULL || cache_path == NULL || page_path == NULL || policy_key == NULL || ttl_seconds == 0U) {
     return false;
   }
   memset(result, 0, sizeof(*result));
@@ -391,8 +332,7 @@ bool laghu_runtime_combine_css_markup(
     return false;
   }
   while (cursor < html.length) {
-    const unsigned char *open =
-        memchr(html.data + cursor, '<', html.length - cursor);
+    const unsigned char *open = memchr(html.data + cursor, '<', html.length - cursor);
     size_t count = 0U;
     size_t group_end;
     size_t next;
@@ -409,8 +349,7 @@ bool laghu_runtime_combine_css_markup(
       goto failed;
     }
     if (open == NULL) {
-      if (!laghu_combine_append(&output, html.data + cursor,
-                                html.length - cursor)) {
+      if (!laghu_combine_append(&output, html.data + cursor, html.length - cursor)) {
         goto failed;
       }
       free(links);
@@ -418,10 +357,8 @@ bool laghu_runtime_combine_css_markup(
       break;
     }
     next = (size_t)(open - html.data);
-    if (!laghu_combine_parse_link(html, next, page_path, page_origin,
-                                  &links[0])) {
-      if (!laghu_combine_append(&output, html.data + cursor,
-                                next + 1U - cursor)) {
+    if (!laghu_combine_parse_link(html, next, page_path, page_origin, &links[0])) {
+      if (!laghu_combine_append(&output, html.data + cursor, next + 1U - cursor)) {
         goto failed;
       }
       cursor = next + 1U;
@@ -441,35 +378,28 @@ bool laghu_runtime_combine_css_markup(
       }
       if (count == LAGHU_CSS_COMBINE_MAX_INPUTS) {
         laghu_combine_link extra;
-        overflow = laghu_combine_parse_link(html, next, page_path, page_origin,
-                                            &extra) &&
-                   strcmp(extra.media, links[0].media) == 0;
+        overflow = laghu_combine_parse_link(html, next, page_path, page_origin, &extra) && strcmp(extra.media, links[0].media) == 0;
         while (overflow) {
           group_end = extra.end + 1U;
           next = group_end;
           while (next < html.length && isspace(html.data[next])) {
             ++next;
           }
-          if (next >= html.length || html.data[next] != '<' ||
-              !laghu_combine_parse_link(html, next, page_path, page_origin,
-                                        &extra) ||
+          if (next >= html.length || html.data[next] != '<' || !laghu_combine_parse_link(html, next, page_path, page_origin, &extra) ||
               strcmp(extra.media, links[0].media) != 0) {
             break;
           }
         }
         break;
       }
-      if (!laghu_combine_parse_link(html, next, page_path, page_origin,
-                                    &links[count]) ||
-          strcmp(links[count].media, links[0].media) != 0) {
+      if (!laghu_combine_parse_link(html, next, page_path, page_origin, &links[count]) || strcmp(links[count].media, links[0].media) != 0) {
         break;
       }
       group_end = links[count].end + 1U;
       ++count;
     }
     if (count < 2U || overflow) {
-      if (!laghu_combine_append(&output, html.data + cursor,
-                                group_end - cursor)) {
+      if (!laghu_combine_append(&output, html.data + cursor, group_end - cursor)) {
         goto failed;
       }
       cursor = group_end;
@@ -478,9 +408,7 @@ bool laghu_runtime_combine_css_markup(
       continue;
     }
     for (index = 0U; index < count; ++index) {
-      if (!laghu_stylesheet_lookup(cache_path, links[index].url, policy_key,
-                                   capability_mask, inline_limit,
-                                   outline_threshold, now, ttl_seconds,
+      if (!laghu_stylesheet_lookup(cache_path, links[index].url, policy_key, capability_mask, inline_limit, outline_threshold, now, ttl_seconds,
                                    &links[index].record)) {
         result->dependencies_pending = true;
         for (index = 0U; index < count; ++index) {
@@ -491,15 +419,10 @@ bool laghu_runtime_combine_css_markup(
         links = NULL;
         goto unchanged;
       }
-      if (!links[index].record.ready ||
-          links[index].record.terminally_excluded ||
-          !laghu_combine_read(cache_path, &links[index]) ||
-          !laghu_combine_css_safe(
-              (laghu_buffer){links[index].css, links[index].css_length}) ||
+      if (!links[index].record.ready || links[index].record.terminally_excluded || !laghu_combine_read(cache_path, &links[index]) ||
+          !laghu_combine_css_safe((laghu_buffer){links[index].css, links[index].css_length}) ||
           (index != 0U && !laghu_combine_append(&combined, "\n", 1U)) ||
-          !laghu_combine_append(&combined, links[index].css,
-                                links[index].css_length) ||
-          combined.length > LAGHU_CSS_MAX_INPUT_BYTES) {
+          !laghu_combine_append(&combined, links[index].css, links[index].css_length) || combined.length > LAGHU_CSS_MAX_INPUT_BYTES) {
         blocked = true;
         break;
       }
@@ -509,15 +432,10 @@ bool laghu_runtime_combine_css_markup(
       if (parsed == NULL) {
         blocked = true;
       } else {
-        blocked =
-            !laghu_css_discover((laghu_buffer){combined.data, combined.length},
-                                "/.laghu/css/combined.css", page_origin,
-                                parsed) ||
-            !parsed->valid || !parsed->bounded ||
-            !laghu_combine_key(links, count,
-                               (laghu_buffer){combined.data, combined.length},
-                               policy_key, capability_mask, inline_limit,
-                               outline_threshold, key);
+        blocked = !laghu_css_discover((laghu_buffer){combined.data, combined.length}, "/.laghu/css/combined.css", page_origin, parsed) ||
+                  !parsed->valid || !parsed->bounded ||
+                  !laghu_combine_key(links, count, (laghu_buffer){combined.data, combined.length}, policy_key, capability_mask, inline_limit,
+                                     outline_threshold, key);
         free(parsed);
       }
     }
@@ -526,8 +444,7 @@ bool laghu_runtime_combine_css_markup(
         free(links[index].css);
       }
       free(combined.data);
-      if (!laghu_combine_append(&output, html.data + cursor,
-                                group_end - cursor)) {
+      if (!laghu_combine_append(&output, html.data + cursor, group_end - cursor)) {
         goto failed;
       }
       cursor = group_end;
@@ -536,9 +453,8 @@ bool laghu_runtime_combine_css_markup(
       continue;
     }
     if (!laghu_runtime_cache_lookup_variant(cache_path, key, &entry)) {
-      if (!laghu_runtime_cache_publish(
-              cache_path, key, key, key, "text/css", "laghu-css-combine-v1",
-              (laghu_buffer){combined.data, combined.length}, &entry)) {
+      if (!laghu_runtime_cache_publish(cache_path, key, key, key, "text/css", "laghu-css-combine-v1", (laghu_buffer){combined.data, combined.length},
+                                       &entry)) {
         for (index = 0U; index < count; ++index) {
           free(links[index].css);
         }
@@ -546,21 +462,16 @@ bool laghu_runtime_combine_css_markup(
         goto failed;
       }
     }
-    if (!laghu_combine_append(&output, html.data + cursor,
-                              links[0].start - cursor)) {
+    if (!laghu_combine_append(&output, html.data + cursor, links[0].start - cursor)) {
       for (index = 0U; index < count; ++index) {
         free(links[index].css);
       }
       free(combined.data);
       goto failed;
     }
-    link_length =
-        snprintf(link_markup, sizeof(link_markup),
-                 "<link rel=\"stylesheet\" href=\"/.laghu/css/%s\"%s%s%s>", key,
-                 links[0].media[0] == '\0' ? "" : " media=\"", links[0].media,
-                 links[0].media[0] == '\0' ? "" : "\"");
-    if (link_length <= 0 || (size_t)link_length >= sizeof(link_markup) ||
-        !laghu_combine_append(&output, link_markup, (size_t)link_length)) {
+    link_length = snprintf(link_markup, sizeof(link_markup), "<link rel=\"stylesheet\" href=\"/.laghu/css/%s\"%s%s%s>", key,
+                           links[0].media[0] == '\0' ? "" : " media=\"", links[0].media, links[0].media[0] == '\0' ? "" : "\"");
+    if (link_length <= 0 || (size_t)link_length >= sizeof(link_markup) || !laghu_combine_append(&output, link_markup, (size_t)link_length)) {
       for (index = 0U; index < count; ++index) {
         free(links[index].css);
       }
@@ -610,8 +521,7 @@ failed:
   return false;
 }
 
-void laghu_runtime_css_combine_result_release(
-    laghu_runtime_css_combine_result *result) {
+void laghu_runtime_css_combine_result_release(laghu_runtime_css_combine_result *result) {
   if (result != NULL) {
     free(result->data);
     memset(result, 0, sizeof(*result));

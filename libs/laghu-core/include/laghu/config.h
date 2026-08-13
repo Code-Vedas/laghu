@@ -54,14 +54,10 @@ typedef enum {
 } laghu_config_setting;
 
 laghu_config_setting laghu_config_setting_find(const char *name);
-bool laghu_config_setting_apply(laghu_config *config,
-                                laghu_config_setting setting, const char *value,
-                                char *error, size_t error_size);
+bool laghu_config_setting_apply(laghu_config *config, laghu_config_setting setting, const char *value, char *error, size_t error_size);
 /* MapRewriteDomain and MapProxyDomain retain their two migration arguments.
  * Single-value settings must use laghu_config_setting_apply instead. */
-bool laghu_config_setting_apply_pair(laghu_config *config,
-                                     laghu_config_setting setting,
-                                     const char *first, const char *second,
-                                     char *error, size_t error_size);
+bool laghu_config_setting_apply_pair(laghu_config *config, laghu_config_setting setting, const char *first, const char *second, char *error,
+                                     size_t error_size);
 
 #endif
