@@ -34,5 +34,18 @@ int main(void) {
   assert(strstr(output, "\"trace_id\"") == NULL);
   assert(strstr(output, "\"span_id\"") == NULL);
   assert(!laghu_log_render_transaction(&record, output, 32U));
+  {
+    laghu_log_job job = {.common = {0, "worker", "libvips", NULL, NULL},
+                         .job_kind = "image",
+                         .outcome = "success",
+                         .filters = 42U,
+                         .accept_webp = true,
+                         .accept_avif = false,
+                         .failure = "none"};
+    assert(laghu_log_render_job(&job, output, sizeof(output)));
+    assert(strstr(output, "\"filters\":42") != NULL);
+    assert(strstr(output, "\"accept_webp\":true") != NULL);
+    assert(strstr(output, "\"accept_avif\":false") != NULL);
+  }
   return 0;
 }

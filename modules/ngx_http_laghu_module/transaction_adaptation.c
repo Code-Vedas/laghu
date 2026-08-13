@@ -137,6 +137,8 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_co
                                       &context->request.header_count) ||
       !ngx_http_laghu_collect_headers(&request->headers_out.headers, context->response_headers, LAGHU_HTTP_MAX_RESPONSE_HEADERS,
                                       &context->response.header_count) ||
+      !ngx_http_laghu_add_normalized_header(context->request_headers, &context->request.header_count, LAGHU_HTTP_MAX_REQUEST_HEADERS, "Accept",
+                                            request->headers_in.accept == NULL ? NULL : &request->headers_in.accept->value) ||
       !ngx_http_laghu_add_normalized_header(context->response_headers, &context->response.header_count, LAGHU_HTTP_MAX_RESPONSE_HEADERS,
                                             "Content-Type", &request->headers_out.content_type)) {
     return false;

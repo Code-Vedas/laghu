@@ -152,6 +152,9 @@ bool laghu_log_render_job(const laghu_log_job *record, char *output, size_t capa
          laghu_log_string(&builder, record->outcome, 16U, NULL) && laghu_log_append(&builder, ",\"input_bytes\":") &&
          laghu_log_number(&builder, record->input_bytes) && laghu_log_append(&builder, ",\"output_bytes\":") &&
          laghu_log_number(&builder, record->output_bytes) && laghu_log_append(&builder, ",\"duration_ms\":") &&
-         laghu_log_number(&builder, record->duration_ms) && laghu_log_append(&builder, ",\"failure\":") &&
+         laghu_log_number(&builder, record->duration_ms) && laghu_log_append(&builder, ",\"filters\":") &&
+         laghu_log_number(&builder, record->filters) && laghu_log_append(&builder, ",\"accept_webp\":") &&
+         laghu_log_append(&builder, record->accept_webp ? "true" : "false") && laghu_log_append(&builder, ",\"accept_avif\":") &&
+         laghu_log_append(&builder, record->accept_avif ? "true" : "false") && laghu_log_append(&builder, ",\"failure\":") &&
          laghu_log_string(&builder, record->failure, 64U, NULL) && laghu_log_append(&builder, "}");
 }

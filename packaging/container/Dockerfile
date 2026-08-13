@@ -70,11 +70,11 @@ LABEL org.opencontainers.image.title="ngx-laghu" \
       org.codevedas.laghu.nginx.version="${NGINX_VERSION}"
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
-      ca-certificates curl libpcre2-8-0 libssl3t64 libvips42t64 tini zlib1g && \
+      ca-certificates curl libheif-plugin-aomenc libpcre2-8-0 libssl3t64 libvips42t64 tini zlib1g && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system laghu && useradd --system --gid laghu laghu && \
     install -d -o laghu -g laghu -m 0750 \
-      /run/laghu /var/cache/laghu/images /var/cache/laghu/chrome-analysis /var/cache/nginx/client_temp \
+      /run/laghu /var/cache/laghu /var/cache/laghu/images /var/cache/laghu/chrome-analysis /var/cache/nginx/client_temp \
       /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp \
       /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp \
       /usr/share/nginx/html && \

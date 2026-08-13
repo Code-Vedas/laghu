@@ -120,6 +120,9 @@ static void laghu_libvips_log_job(const laghu_runtime_job *job, int status, uint
                           .input_bytes = job->payload.length,
                           .output_bytes = 0U,
                           .duration_ms = elapsed / 1000U,
+                          .filters = job->filters,
+                          .accept_webp = job->accept_webp,
+                          .accept_avif = job->accept_avif,
                           .failure = status == 0   ? "none"
                                      : status == 4 ? "transform"
                                      : status == 2 ? "timeout"

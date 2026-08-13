@@ -55,6 +55,9 @@ typedef struct {
   uint64_t input_bytes;
   uint64_t output_bytes;
   uint64_t duration_ms;
+  uint64_t filters;
+  bool accept_webp;
+  bool accept_avif;
   const char *failure;
 } laghu_log_job;
 

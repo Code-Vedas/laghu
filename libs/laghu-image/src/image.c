@@ -614,8 +614,9 @@ static bool laghu_image_candidate_valid(laghu_buffer candidate, laghu_image_form
   height = laghu_image_page_height(decoded);
   frames = laghu_image_frames(decoded);
   valid = width == expected_width && height == expected_height && frames == expected_frames &&
-          vips_image_hasalpha(decoded) == vips_image_hasalpha(expected);
-  if (valid && vips_image_hasalpha(expected)) {
+          (vips_image_hasalpha(decoded) == vips_image_hasalpha(expected) ||
+           (vips_image_hasalpha(expected) && !vips_image_hasalpha(decoded) && laghu_image_is_opaque(expected, LAGHU_IMAGE_FORMAT_PNG)));
+  if (valid && vips_image_hasalpha(expected) && vips_image_hasalpha(decoded)) {
     valid = laghu_image_alpha_equal(expected, decoded);
   }
   if (valid && frames > 1U) {
@@ -657,13 +658,14 @@ static bool laghu_image_candidate_valid(laghu_buffer candidate, laghu_image_form
 
 static void laghu_image_consider(laghu_image_result *result, void *candidate, size_t candidate_length, laghu_image_format format,
                                  laghu_image_filter_mask filters, VipsImage *expected, bool lossless, unsigned int width, unsigned int height,
-                                 unsigned int frames) {
+                                 unsigned int frames, bool preferred) {
   laghu_candidate_result finalized;
-  laghu_buffer current = result->used_candidate ? result->selected : result->original;
+  laghu_buffer current = preferred ? result->original : (result->used_candidate ? result->selected : result->original);
   laghu_buffer proposed = {(const unsigned char *)candidate, candidate_length};
 
   finalized = laghu_finalize_candidate(current, proposed, true);
-  if (finalized.decision == LAGHU_CANDIDATE_ACCEPTED && laghu_image_candidate_valid(proposed, format, expected, lossless, width, height, frames)) {
+  if ((preferred || finalized.decision == LAGHU_CANDIDATE_ACCEPTED) &&
+      laghu_image_candidate_valid(proposed, format, expected, lossless, width, height, frames)) {
     if (result->owned_candidate != NULL) {
       g_free(result->owned_candidate);
     }
@@ -747,7 +749,9 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
     if (laghu_image_save(candidate_source, target_format, request, lossless_value, (effective & LAGHU_IMAGE_JPEG_PROGRESSIVE) != 0U,     \
                          (effective & LAGHU_IMAGE_JPEG_SAMPLING) != 0U, &candidate_bytes, &candidate_length) == 0) {                     \
       laghu_image_consider(result, candidate_bytes, candidate_length, target_format, prepared_filters | (filter_bits), candidate_source, \
-                           lossless_value, width, height, frames);                                                                       \
+                           lossless_value, width, height, frames,                                                                         \
+                           (target_format == LAGHU_IMAGE_FORMAT_AVIF && request->accept_avif) ||                                         \
+                               (target_format == LAGHU_IMAGE_FORMAT_WEBP && request->accept_webp));                                      \
     } else {                                                                                                                             \
       vips_error_clear();                                                                                                                \
     }                                                                                                                                    \
@@ -789,9 +793,17 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
         }
       }
       if (request->accept_webp && (effective & LAGHU_IMAGE_TO_WEBP_LOSSLESS) != 0U) {
+        if (opaque && vips_image_hasalpha(prepared) && opaque_rgb == NULL &&
+            vips_extract_band(prepared, &opaque_rgb, 0, "n", vips_image_get_bands(prepared) - 1, NULL) != 0) {
+          vips_error_clear();
+        }
+        if (opaque_rgb != NULL) {
+          candidate_source = opaque_rgb;
+        }
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_WEBP, true,
                        effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_STRIP_METADATA |
                                     LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
+        candidate_source = prepared;
       }
       if (request->accept_avif && request->allow_lossy) {
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_AVIF, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);

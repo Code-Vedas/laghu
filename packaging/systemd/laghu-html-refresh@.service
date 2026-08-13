@@ -23,7 +23,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/run/laghu /var/cache/laghu/images
+ReadWritePaths=/run/laghu /var/cache/laghu
 
 [Install]
 WantedBy=multi-user.target

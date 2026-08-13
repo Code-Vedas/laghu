@@ -450,6 +450,10 @@ static void test_byte_filters(void) {
   assert((result.applied_filters & LAGHU_IMAGE_IN_PLACE_BROWSER) != 0U);
   laghu_image_result_release(&result);
 
+  result = test_optimize(&backend, &jpeg, LAGHU_IMAGE_RECOMPRESS_JPEG | LAGHU_IMAGE_JPEG_TO_WEBP, true, true, 0U, 0U);
+  assert(result.used_candidate && result.output_format == LAGHU_IMAGE_FORMAT_WEBP);
+  laghu_image_result_release(&result);
+
   if ((backend.capabilities & LAGHU_IMAGE_CAP_AVIF_SAVE) != 0U) {
     laghu_image_request request;
     VipsImage *avif = NULL;
@@ -486,12 +490,22 @@ static void test_byte_filters(void) {
   assert(result.used_candidate && result.output_format == LAGHU_IMAGE_FORMAT_JPEG);
   laghu_image_result_release(&result);
 
+  result = test_optimize(&backend, &png, LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_PNG | LAGHU_IMAGE_PNG_TO_JPEG |
+                                            LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_JPEG_PROGRESSIVE | LAGHU_IMAGE_JPEG_SAMPLING,
+                         true, true, 0U, 0U);
+  assert(result.used_candidate && result.output_format == LAGHU_IMAGE_FORMAT_WEBP);
+  laghu_image_result_release(&result);
+
   result = test_optimize(&backend, &alpha_png, LAGHU_IMAGE_PNG_TO_JPEG, true, false, 0U, 0U);
   assert(!result.used_candidate);
   laghu_image_result_release(&result);
 
   result = test_optimize(&backend, &opaque_alpha_png, LAGHU_IMAGE_PNG_TO_JPEG, true, false, 0U, 0U);
   assert(result.used_candidate && result.output_format == LAGHU_IMAGE_FORMAT_JPEG);
+  laghu_image_result_release(&result);
+
+  result = test_optimize(&backend, &opaque_alpha_png, LAGHU_IMAGE_TO_WEBP_LOSSLESS, true, true, 0U, 0U);
+  assert(result.used_candidate && result.output_format == LAGHU_IMAGE_FORMAT_WEBP);
   laghu_image_result_release(&result);
 
   result = test_optimize(&backend, &gif, LAGHU_IMAGE_GIF_TO_PNG, false, false, 0U, 0U);

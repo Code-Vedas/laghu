@@ -20,7 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/run/laghu /var/cache/laghu/images
+ReadWritePaths=/run/laghu /var/cache/laghu
 
 [Install]
 WantedBy=multi-user.target

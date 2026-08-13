@@ -22,7 +22,16 @@ from urllib.parse import urljoin, urlparse
 
 
 TARGETS = {"plain": "http://127.0.0.1:18090", "pagespeed": "http://127.0.0.1:18091", "laghu": "http://127.0.0.1:18092"}
-PATHS = {"html": "/index.html", "css": "/css-100k.css", "javascript": "/js-100k.js", "image": "/image-480.png"}
+PATHS = {
+    "html": "/index.html",
+    "css": "/css-100k.css",
+    "javascript": "/js-100k.js",
+    "image": "/image-480.png",
+    "large_jpeg": "/image-3840.jpg",
+    "transparent_png": "/image-transparent-1440.png",
+    "svg": "/image.svg",
+    "animated_gif": "/image-animated.gif",
+}
 
 
 def get(url: str, headers: dict[str, str] | None = None, include_body: bool = False) -> dict[str, Any]:
@@ -51,22 +60,70 @@ def capability_image_url(target: str, base_url: str, headers: dict[str, str]) ->
     raise RuntimeError("Frozen ngx_pagespeed did not emit its rewritten image URL.")
 
 
-def load_k6(output: Path, target: str, url: str, requests: int, concurrency: int) -> dict[str, Any]:
-    summary_path = output / f"k6-{target}-{url.rsplit('/', 1)[-1]}.json"
+def warm_capability_image(target: str, url: str, headers: dict[str, str]) -> None:
+    """Wait for Laghu's async image worker before measuring browser delivery."""
+    if target != "laghu":
+        return
+    for _ in range(100):
+        response = get(url, headers)
+        normalized = {name.lower(): value for name, value in response["headers"].items()}
+        if normalized.get("x-laghu") == "image-hit" and normalized.get("x-laghu-transform") == "optimized":
+            return
+        time.sleep(0.1)
+    raise RuntimeError("Laghu did not publish a negotiated image variant before capability measurement.")
+
+
+def parse_bytes(value: str) -> float:
+    match = re.match(r"([0-9.]+)\s*([KMGT]?i?B)", value.strip())
+    if match is None:
+        return 0.0
+    unit = match.group(2)
+    multiplier = {"B": 1, "KB": 1000, "MB": 1000**2, "GB": 1000**3, "TB": 1000**4,
+                  "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4}[unit]
+    return float(match.group(1)) * multiplier
+
+
+def container_sample(target: str) -> dict[str, float] | None:
+    completed = subprocess.run(
+        ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}", f"laghu-bench-{target}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0 or "\t" not in completed.stdout:
+        return None
+    cpu, memory = completed.stdout.strip().split("\t", 1)
+    try:
+        return {"cpu_pct": float(cpu.rstrip("%")), "memory_bytes": parse_bytes(memory.split(" / ", 1)[0])}
+    except ValueError:
+        return None
+
+
+def load_k6(output: Path, target: str, url: str, requests: int, concurrency: int, profile: bool = False, scenario: str = "warm") -> dict[str, Any]:
+    summary_path = output / f"k6-{target}-{scenario}-{url.rsplit('/', 1)[-1]}.json"
     script_path = Path(__file__).with_name("k6.js").resolve()
-    subprocess.run(
-        [
+    command = [
             "docker", "run", "--rm", "--user", "0", "--network", "host", "-v", f"{script_path}:/scripts/k6.js:ro", "-v", f"{output.resolve()}:/output",
             "grafana/k6:0.57.0", "run", "--summary-export", f"/output/{summary_path.name}", "-e", f"BASE_URL={url.rsplit('/', 1)[0]}",
             "-e", f"REQUEST_PATH=/{url.rsplit('/', 1)[-1]}", "-e", f"ITERATIONS={requests}", "-e", f"VUS={concurrency}", "/scripts/k6.js",
-        ],
-        check=True,
-    )
+    ]
+    samples: list[dict[str, float]] = []
+    if profile:
+        process = subprocess.Popen(command)
+        while process.poll() is None:
+            sample = container_sample(target)
+            if sample is not None:
+                samples.append(sample)
+            time.sleep(0.25)
+        if process.wait() != 0:
+            raise subprocess.CalledProcessError(process.returncode, command)
+    else:
+        subprocess.run(command, check=True)
     summary = json.loads(summary_path.read_text(encoding="utf-8"))["metrics"]
     duration = summary["http_req_duration"]
     checks = summary["checks"]
     sample = get(url)
-    return {
+    result = {
         "requests": requests,
         "concurrency": concurrency,
         "errors": checks["fails"],
@@ -76,6 +133,13 @@ def load_k6(output: Path, target: str, url: str, requests: int, concurrency: int
         "p95_ms": duration["p(95)"],
         "p99_ms": duration["p(99)"],
     }
+    if profile:
+        result["profile"] = {
+            "samples": len(samples),
+            "cpu_pct_max": max((sample["cpu_pct"] for sample in samples), default=0.0),
+            "memory_bytes_max": max((sample["memory_bytes"] for sample in samples), default=0.0),
+        }
+    return result
 
 
 def container_stats() -> dict[str, Any]:
@@ -95,7 +159,7 @@ def measure_image_quality(output: Path) -> list[dict[str, Any]]:
     for target in TARGETS:
         candidate = output / f"quality-{target}.image"
         completed = subprocess.run(
-            ["docker", "run", "--rm", "-v", f"{output.resolve()}:/output:ro", "laghu-bench-quality:local", "/output/quality-reference.jpg", f"/output/{candidate.name}"],
+            ["docker", "run", "--rm", "-v", f"{output.resolve()}:/output:ro", "laghu-bench-quality:local", "/output/quality-reference.png", f"/output/{candidate.name}"],
             check=True,
             capture_output=True,
             text=True,
@@ -136,6 +200,8 @@ def main() -> None:
     parser.add_argument("--corpus", required=True, type=Path)
     parser.add_argument("--requests", type=int, default=100)
     parser.add_argument("--concurrency", type=int, default=10)
+    parser.add_argument("--sustained-requests", type=int, default=5000)
+    parser.add_argument("--sustained-concurrency", type=int, default=40)
     args = parser.parse_args()
     if platform.machine() not in {"x86_64", "amd64"}:
         raise SystemExit("This frozen ngx_pagespeed comparison is AMD64-only.")
@@ -156,13 +222,24 @@ def main() -> None:
             warm = load_k6(args.output, target, base_url + path, args.requests, args.concurrency)
             results["cells"].append({"target": target, "content_type": content_type, "scenario": "cold", **cold})
             results["cells"].append({"target": target, "content_type": content_type, "scenario": "warm", **warm})
-        for name, headers in {"webp": {"Accept": "image/webp,image/*;q=0.8"}, "avif": {"Accept": "image/avif,image/*;q=0.8"}, "dpr2": {"DPR": "2", "Viewport-Width": "320"}}.items():
+        sustained = load_k6(
+            args.output,
+            target,
+            base_url + PATHS["large_jpeg"],
+            args.sustained_requests,
+            args.sustained_concurrency,
+            profile=True,
+            scenario="sustained",
+        )
+        results["cells"].append({"target": target, "content_type": "large_jpeg", "scenario": "sustained", **sustained})
+        for name, headers in {"webp": {"Accept": "image/webp,image/*;q=0.8"}, "avif": {"Accept": "image/avif,image/*;q=0.8"}, "dpr2": {"Accept": "image/webp,image/*;q=0.8", "Sec-CH-DPR": "2", "Sec-CH-Viewport-Width": "128"}}.items():
             image_url = capability_image_url(target, base_url, headers)
+            warm_capability_image(target, image_url, headers)
             response = get(image_url, headers, include_body=name == "webp")
             if name == "webp":
                 (args.output / f"quality-{target}.image").write_bytes(response.pop("body"))
                 if target == "plain":
-                    (args.output / "quality-reference.jpg").write_bytes((args.corpus / "image-480.jpg").read_bytes())
+                    (args.output / "quality-reference.png").write_bytes((args.corpus / "image-480.png").read_bytes())
             results["cells"].append({"target": target, "content_type": "image", "scenario": f"capability-{name}", "source_path": urlparse(image_url).path, **response})
     results["resource_snapshot"] = container_stats()
     results["feature_interactions"] = [

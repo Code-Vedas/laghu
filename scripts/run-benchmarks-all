@@ -12,9 +12,13 @@ case "$(uname -m)" in x86_64|amd64) ;; *) echo 'Frozen ngx_pagespeed benchmark i
 command -v docker >/dev/null 2>&1 || { echo 'Docker is required.' >&2; exit 2; }
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 output="${LAGHU_BENCH_OUTPUT:-${REPO_ROOT}/tmp/benchmarks/${timestamp}}"
-corpus="${output}/corpus"
+corpus="${LAGHU_BENCH_CORPUS:-${output}/corpus}"
 mkdir -p "${output}"
-python3 "${REPO_ROOT}/performance/generate_corpus.py" --output "${corpus}"
+if [ -n "${LAGHU_BENCH_CORPUS:-}" ]; then
+  [ -f "${corpus}/manifest.json" ] || { echo 'LAGHU_BENCH_CORPUS must contain manifest.json.' >&2; exit 2; }
+else
+  python3 "${REPO_ROOT}/performance/generate_corpus.py" --output "${corpus}"
+fi
 docker build --tag laghu-bench-quality:local --file "${REPO_ROOT}/performance/Dockerfile.quality" "${REPO_ROOT}/performance"
 docker build --tag laghu-bench-lighthouse:local --file "${REPO_ROOT}/performance/Dockerfile.lighthouse" "${REPO_ROOT}/performance"
 LAGHU_BENCH_CORPUS="${corpus}" docker compose --project-directory "${REPO_ROOT}/performance" -f "${REPO_ROOT}/performance/docker-compose.yml" up --build --detach
