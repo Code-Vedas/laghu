@@ -157,7 +157,7 @@
 ## 4. Modern Optimization Features
 
 ### 4.1 Image Pipeline
-- [ ] AVIF encoding and `Accept`-based negotiation.
+- [x] AVIF encoding and `Accept`-based negotiation.
 - [ ] Flag-gated JPEG XL encoding when client support warrants it.
 - [x] Modern lossy, lossless, and animated WebP encoding.
 - [ ] Perceptual quality targeting with SSIMULACRA2 or DSSIM.

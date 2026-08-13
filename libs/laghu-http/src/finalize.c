@@ -1075,6 +1075,7 @@ static bool laghu_http_finalize_image(laghu_http_transaction *transaction,
          sizeof(job.resize_filter));
   job.allow_lossy = transaction->policy.allow_lossy;
   job.accept_webp = transaction->accept_webp;
+  job.accept_avif = transaction->accept_avif;
   job.payload = body;
   result->job_published =
       laghu_runtime_queue_try_publish(transaction->environment.queue, &job);
@@ -1126,7 +1127,7 @@ static bool laghu_http_finalize_resource(
   char resource_index[LAGHU_RUNTIME_KEY_SIZE];
   if (!laghu_sha256_hex(body, payload_hash) ||
       !laghu_runtime_index_key(transaction->path, "", transaction->policy_key,
-                               false, resource_index) ||
+                               false, false, resource_index) ||
       !laghu_runtime_cache_publish(
           transaction->environment.cache_path, transaction->cache_key,
           payload_hash, transaction->validator, transaction->content_type,

@@ -14,6 +14,7 @@
 
 bool laghu_runtime_index_key(const char *request_path, const char *validator,
                              const char *policy_key, bool accept_webp,
+                             bool accept_avif,
                              char output[LAGHU_RUNTIME_KEY_SIZE]) {
   size_t path_length, validator_length, policy_length, total;
   unsigned char *canonical;
@@ -25,20 +26,21 @@ bool laghu_runtime_index_key(const char *request_path, const char *validator,
   path_length = strlen(request_path);
   validator_length = strlen(validator);
   policy_length = strlen(policy_key);
-  if (validator_length > SIZE_MAX - 5U ||
-      path_length > SIZE_MAX - validator_length - 5U ||
-      path_length + validator_length + 5U > SIZE_MAX - policy_length) {
+  if (validator_length > SIZE_MAX - 7U ||
+      path_length > SIZE_MAX - validator_length - 7U ||
+      path_length + validator_length + 7U > SIZE_MAX - policy_length) {
     output[0] = '\0';
     return false;
   }
-  total = path_length + validator_length + policy_length + 5U;
+  total = path_length + validator_length + policy_length + 7U;
   canonical = malloc(total);
   if (canonical == NULL) {
     output[0] = '\0';
     return false;
   }
-  written = snprintf((char *)canonical, total, "%s\n%s\n%s\n%c", request_path,
-                     validator, policy_key, accept_webp ? '1' : '0');
+  written = snprintf((char *)canonical, total, "%s\n%s\n%s\n%c\n%c",
+                     request_path, validator, policy_key,
+                     accept_webp ? '1' : '0', accept_avif ? '1' : '0');
   success =
       written >= 0 && (size_t)written < total &&
       laghu_sha256_hex((laghu_buffer){canonical, (size_t)written}, output);

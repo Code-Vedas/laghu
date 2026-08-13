@@ -289,7 +289,7 @@ static void test_image_key_v4_vector(void) {
   assert(
       strcmp(
           output,
-          "aec01b96de3b37f52795551341c455e37c3c090be75adcf2a1fbc9e2d56c6d9c") ==
+          "9fef5ac33bfe89e7b6f05a06ff85c3310c62d1b67cb53709d867dbf843a049a3") ==
       0);
 }
 
@@ -514,6 +514,24 @@ static void test_byte_filters(void) {
   assert((result.applied_filters & LAGHU_IMAGE_IN_PLACE_BROWSER) != 0U);
   laghu_image_result_release(&result);
 
+  if ((backend.capabilities & LAGHU_IMAGE_CAP_AVIF_SAVE) != 0U) {
+    laghu_image_request request;
+    VipsImage *avif = NULL;
+    laghu_image_request_init(&request);
+    request.original = (laghu_buffer){jpeg.data, jpeg.length};
+    request.filters = LAGHU_IMAGE_REWRITE_IMAGES;
+    request.allow_lossy = true;
+    request.accept_avif = true;
+    assert(laghu_image_optimize(&backend, &request, &result));
+    assert(result.used_candidate &&
+           result.output_format == LAGHU_IMAGE_FORMAT_AVIF);
+    avif = vips_image_new_from_buffer(result.selected.data,
+                                      result.selected.length, "", NULL);
+    assert(avif != NULL);
+    g_object_unref(avif);
+    laghu_image_result_release(&result);
+  }
+
   result =
       test_optimize(&backend, &png,
                     LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_PNG,
@@ -521,6 +539,19 @@ static void test_byte_filters(void) {
   assert(result.used_candidate &&
          result.output_format == LAGHU_IMAGE_FORMAT_PNG);
   laghu_image_result_release(&result);
+
+  if ((backend.capabilities & LAGHU_IMAGE_CAP_AVIF_SAVE) != 0U) {
+    laghu_image_request request;
+    laghu_image_request_init(&request);
+    request.original = (laghu_buffer){png.data, png.length};
+    request.filters = LAGHU_IMAGE_REWRITE_IMAGES;
+    request.allow_lossy = true;
+    request.accept_avif = true;
+    assert(laghu_image_optimize(&backend, &request, &result));
+    assert(result.used_candidate &&
+           result.output_format == LAGHU_IMAGE_FORMAT_AVIF);
+    laghu_image_result_release(&result);
+  }
 
   result = test_optimize(&backend, &png, LAGHU_IMAGE_PNG_TO_JPEG, true, false,
                          0U, 0U);

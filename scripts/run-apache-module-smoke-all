@@ -255,6 +255,7 @@ load_first_mpm() {
   if [ -x "${service}" ] && command -v vips >/dev/null 2>&1; then
     printf 'Laghu WorkerQueue "%s/jobs.queue"\n' "${work}"
     printf '<Location "/image.png">\nLaghu RewriteLevel core\n</Location>\n'
+    printf '<Location "/quality-image.png">\nLaghu Preset aggressive\n</Location>\n'
     printf '<Location "/image-page.html">\nLaghu RewriteLevel core\n</Location>\n'
     printf 'AddType image/png .png\n'
   fi
@@ -945,6 +946,24 @@ if [ "${service_pid}" != "" ]; then
   }
   grep -i '^X-Laghu: image-hit' "${work}/image-warm.headers"
   test "$(wc -c <"${work}/image-warm.png")" -lt "${original_image_size}"
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --show-error --header 'Accept: image/avif' \
+      --dump-header "${work}/image-avif.headers" \
+      http://127.0.0.1:18081/quality-image.png >"${work}/image-avif.avif"
+    if grep -i '^X-Laghu: image-hit' "${work}/image-avif.headers" >/dev/null &&
+        grep -i '^Content-Type: image/avif' "${work}/image-avif.headers" >/dev/null &&
+        grep -i '^Vary: Accept' "${work}/image-avif.headers" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ] || {
+    echo "Apache did not serve a warm AVIF image variant." >&2
+    exit 1
+  }
+  vipsheader "${work}/image-avif.avif" >/dev/null
   curl --fail --silent --show-error http://127.0.0.1:18081/image-page.html \
     >"${work}/image-page-targets.html"
   curl --fail --silent --show-error http://127.0.0.1:18081/image.png \

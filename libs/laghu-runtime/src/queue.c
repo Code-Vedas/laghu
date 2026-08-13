@@ -442,6 +442,7 @@ static void laghu_queue_job_encode(unsigned char *slot,
   }
   slot[LAGHU_WIRE_QUEUE_SLOT_ALLOW_LOSSY_OFFSET] = job->allow_lossy ? 1U : 0U;
   slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_WEBP_OFFSET] = job->accept_webp ? 1U : 0U;
+  slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_AVIF_OFFSET] = job->accept_avif ? 1U : 0U;
   laghu_wire_u32_write(slot + LAGHU_WIRE_QUEUE_SLOT_ANALYSIS_TIMEOUT_MS_OFFSET,
                        job->analysis_timeout_ms);
 }
@@ -538,6 +539,7 @@ static void laghu_queue_job_decode(const unsigned char *slot,
   }
   job->allow_lossy = slot[LAGHU_WIRE_QUEUE_SLOT_ALLOW_LOSSY_OFFSET] != 0U;
   job->accept_webp = slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_WEBP_OFFSET] != 0U;
+  job->accept_avif = slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_AVIF_OFFSET] != 0U;
   job->analysis_timeout_ms = laghu_wire_u32_read(
       slot + LAGHU_WIRE_QUEUE_SLOT_ANALYSIS_TIMEOUT_MS_OFFSET);
   if (payload_length != 0U)
@@ -579,7 +581,7 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue,
                               LAGHU_WIRE_QUEUE_SLOT_SPRITE_COUNT_OFFSET) <=
               LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
           laghu_queue_slot_strings_valid(slot) &&
-          laghu_wire_zeroes(slot + 4538U, 6U)) {
+          laghu_wire_zeroes(slot + 4539U, 5U)) {
         laghu_queue_job_decode(slot, job, payload, (size_t)payload_length);
         if (!laghu_queue_job_valid(job, state->slot_payload_size))
           memset(job, 0, sizeof(*job));

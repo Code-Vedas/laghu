@@ -75,7 +75,8 @@ typedef enum {
   LAGHU_IMAGE_FORMAT_JPEG,
   LAGHU_IMAGE_FORMAT_PNG,
   LAGHU_IMAGE_FORMAT_GIF,
-  LAGHU_IMAGE_FORMAT_WEBP
+  LAGHU_IMAGE_FORMAT_WEBP,
+  LAGHU_IMAGE_FORMAT_AVIF
 } laghu_image_format;
 
 typedef uint32_t laghu_image_capability_mask;
@@ -89,10 +90,12 @@ enum {
   LAGHU_IMAGE_CAP_GIF_SAVE = UINT32_C(1) << 5,
   LAGHU_IMAGE_CAP_WEBP_LOAD = UINT32_C(1) << 6,
   LAGHU_IMAGE_CAP_WEBP_SAVE = UINT32_C(1) << 7,
-  LAGHU_IMAGE_CAP_ANIMATION = UINT32_C(1) << 8
+  LAGHU_IMAGE_CAP_ANIMATION = UINT32_C(1) << 8,
+  LAGHU_IMAGE_CAP_AVIF_LOAD = UINT32_C(1) << 9,
+  LAGHU_IMAGE_CAP_AVIF_SAVE = UINT32_C(1) << 10
 };
 
-#define LAGHU_IMAGE_CAP_ALL ((UINT32_C(1) << 9) - UINT32_C(1))
+#define LAGHU_IMAGE_CAP_ALL ((UINT32_C(1) << 11) - UINT32_C(1))
 
 typedef struct {
   bool available;
@@ -105,6 +108,7 @@ typedef struct {
   laghu_image_filter_mask filters;
   bool allow_lossy;
   bool accept_webp;
+  bool accept_avif;
   unsigned int quality;
   unsigned int target_width;
   unsigned int target_height;

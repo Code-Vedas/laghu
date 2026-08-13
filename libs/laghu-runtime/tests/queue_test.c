@@ -71,6 +71,7 @@ int main(void) {
   assert(snapshot.worker_heartbeat == 123457U);
 
   job = laghu_test_job(payload, sizeof(payload) - 1U);
+  job.accept_avif = true;
   assert(laghu_runtime_queue_try_publish(&queue, &job));
   assert(laghu_runtime_queue_try_publish(&queue, &job));
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
@@ -78,7 +79,7 @@ int main(void) {
   assert(snapshot.occupied == 2U);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT &&
-         taken.payload.length == sizeof(payload) - 1U &&
+         taken.payload.length == sizeof(payload) - 1U && taken.accept_avif &&
          memcmp(output, payload, taken.payload.length) == 0);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   memset(&job, 0, sizeof(job));

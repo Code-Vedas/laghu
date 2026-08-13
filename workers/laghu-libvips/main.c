@@ -351,6 +351,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     request.filters = job->filters;
     request.allow_lossy = job->allow_lossy;
     request.accept_webp = job->accept_webp;
+    request.accept_avif = job->accept_avif;
     request.quality = job->quality;
     request.target_width = job->target_width[target];
     request.target_height = job->target_height[target];
@@ -421,6 +422,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job,
     request.filters = job->filters | LAGHU_IMAGE_RESIZE_ATTRIBUTE;
     request.allow_lossy = job->allow_lossy;
     request.accept_webp = job->accept_webp;
+    request.accept_avif = job->accept_avif;
     request.quality = job->quality;
     if (laghu_image_preview_data_uri(&backend, &request,
                                      LAGHU_IMAGE_PREVIEW_DIMENSION, &preview)) {
@@ -495,7 +497,7 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path,
           (laghu_buffer){(const unsigned char *)"standalone-policy", 17U},
           job.policy_key) ||
       !laghu_runtime_index_key(request_path, validator, job.policy_key, true,
-                               job.index_key)) {
+                               true, job.index_key)) {
     laghu_runtime_queue_close(&queue);
     free(input);
     return 1;
@@ -507,6 +509,7 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path,
   job.quality = 82U;
   job.allow_lossy = true;
   job.accept_webp = false;
+  job.accept_avif = false;
   job.payload = (laghu_buffer){input, input_length};
   submitted = laghu_runtime_queue_try_publish(&queue, &job);
   laghu_runtime_queue_close(&queue);

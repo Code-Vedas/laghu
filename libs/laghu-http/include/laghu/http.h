@@ -362,6 +362,7 @@ typedef struct {
   unsigned int viewport_width;
   unsigned int dpr_hundredths;
   bool accept_webp;
+  bool accept_avif;
   bool prepared;
   bool asset_allowed;
   bool cache_publishable;

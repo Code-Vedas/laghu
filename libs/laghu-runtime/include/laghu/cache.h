@@ -99,6 +99,7 @@ struct laghu_cache_backend {
 };
 bool laghu_runtime_index_key(const char *request_path, const char *validator,
                              const char *policy_key, bool accept_webp,
+                             bool accept_avif,
                              char output[LAGHU_RUNTIME_KEY_SIZE]);
 bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key,
                                  const char *variant_key, const char *validator,

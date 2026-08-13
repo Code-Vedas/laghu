@@ -404,7 +404,8 @@ static bool laghu_http_method_is(const laghu_http_request *request,
   return laghu_http_view_equal(request->method, method);
 }
 
-static bool laghu_http_accepts_webp(const laghu_http_request *request) {
+static bool laghu_http_accepts_image(const laghu_http_request *request,
+                                     const char *expected) {
   size_t header_index;
   for (header_index = 0U; header_index < request->header_count;
        ++header_index) {
@@ -431,10 +432,9 @@ static bool laghu_http_accepts_webp(const laghu_http_request *request) {
              value.data[type_end] != ' ' && value.data[type_end] != '\t') {
         ++type_end;
       }
-      if (type_end - start == sizeof("image/webp") - 1U &&
+      if (type_end - start == strlen(expected) &&
           laghu_http_view_equal(
-              (laghu_buffer){value.data + start, type_end - start},
-              "image/webp")) {
+              (laghu_buffer){value.data + start, type_end - start}, expected)) {
         size_t parameter = type_end;
         while (parameter < end) {
           size_t quality;
@@ -1044,7 +1044,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   }
   transaction->image_filters = laghu_http_image_filters(&transaction->policy);
   transaction->html_plan = laghu_http_html_plan(&transaction->policy);
-  transaction->accept_webp = laghu_http_accepts_webp(request);
+  transaction->accept_webp = laghu_http_accepts_image(request, "image/webp");
+  transaction->accept_avif = laghu_http_accepts_image(request, "image/avif");
   {
     char asset_source[LAGHU_RUNTIME_PATH_SIZE];
     transaction->asset_allowed =
@@ -1099,7 +1100,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
   } else if (laghu_http_content_type_is(transaction->content_type, "image/")) {
     if (!laghu_runtime_index_key(
             transaction->path, transaction->validator, transaction->policy_key,
-            transaction->accept_webp, transaction->cache_key)) {
+            transaction->accept_webp, transaction->accept_avif,
+            transaction->cache_key)) {
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) &&
              false;
     }
@@ -1182,7 +1184,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction,
               laghu_mime_type_allowed(transaction->policy.cache_mime_types,
                                       transaction->content_type))) {
     if (!laghu_runtime_index_key(transaction->path, transaction->validator,
-                                 transaction->policy_key, false,
+                                 transaction->policy_key, false, false,
                                  transaction->cache_key)) {
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) &&
              false;

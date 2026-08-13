@@ -216,9 +216,9 @@ static void test_image_markup_and_headers(laghu_rum_engine *rum,
                                       sizeof("runtime payload") - 1U},
                        policy_payload));
   assert(strcmp(policy_payload, policy_key) == 0);
-  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true,
+  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true, false,
                                  index_key));
-  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, false,
+  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, false, false,
                                  no_webp_index_key));
   laghu_csp_policy_init(&deny_data_csp, "https://example.test");
   assert(laghu_csp_policy_add(&deny_data_csp, "img-src 'none'",

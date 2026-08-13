@@ -374,6 +374,7 @@ ${HTTP2_DIRECTIVE}
     }
 
     location = /quality-image.png {
+      laghu preset aggressive;
       laghu image_quality 75;
       default_type image/png;
       alias ${SMOKE_DIR}/html/image.png;
@@ -966,6 +967,30 @@ if [ "${image_smoke}" -eq 1 ]; then
   test "$(wc -c <"${SMOKE_DIR}/image-warm-body")" -lt \
     "$(wc -c <"${SMOKE_DIR}/html/image.png")"
   vipsheader "${SMOKE_DIR}/image-warm-body" >/dev/null
+
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --show-error \
+      --header 'Accept: image/avif' \
+      --output "${SMOKE_DIR}/image-avif-body" \
+      --dump-header "${SMOKE_DIR}/image-avif-headers" \
+      "http://127.0.0.1:${PORT}/quality-image.png"
+    if tr -d '\r' <"${SMOKE_DIR}/image-avif-headers" | \
+        grep -i -x 'X-Laghu: image-hit' >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  if [ "${attempt}" -eq 100 ]; then
+    echo "Laghu optimizer did not publish AVIF image variant." >&2
+    exit 1
+  fi
+  tr -d '\r' <"${SMOKE_DIR}/image-avif-headers" | \
+    grep -i -x 'Content-Type: image/avif' >/dev/null
+  tr -d '\r' <"${SMOKE_DIR}/image-avif-headers" | \
+    grep -i -x 'Vary: Accept' >/dev/null
+  vipsheader "${SMOKE_DIR}/image-avif-body" >/dev/null
 
   curl --fail --silent --show-error \
     --output "${SMOKE_DIR}/image-page-discovery" \

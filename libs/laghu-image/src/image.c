@@ -21,7 +21,7 @@
 #include "probe_fixtures.h"
 #endif
 
-#define LAGHU_IMAGE_BUILD_ID "laghu-libvips-0.1.0-image-v4"
+#define LAGHU_IMAGE_BUILD_ID "laghu-libvips-0.1.0-image-v5"
 #define LAGHU_IMAGE_ENCODER_OPTIONS                                 \
   "jpeg-optimize=1;png-compression=9;png-filter=all;webp-effort=4;" \
   "metadata-policy=v1;autorot=1;resize=lanczos3"
@@ -69,6 +69,11 @@ laghu_image_format laghu_image_detect_format(laghu_buffer input) {
       memcmp(bytes + 8U, "WEBP", 4U) == 0) {
     return LAGHU_IMAGE_FORMAT_WEBP;
   }
+  if (input.length >= 12U && memcmp(bytes + 4U, "ftyp", 4U) == 0 &&
+      (memcmp(bytes + 8U, "avif", 4U) == 0 ||
+       memcmp(bytes + 8U, "avis", 4U) == 0)) {
+    return LAGHU_IMAGE_FORMAT_AVIF;
+  }
   return LAGHU_IMAGE_FORMAT_UNKNOWN;
 }
 
@@ -82,6 +87,8 @@ const char *laghu_image_format_name(laghu_image_format format) {
       return "gif";
     case LAGHU_IMAGE_FORMAT_WEBP:
       return "webp";
+    case LAGHU_IMAGE_FORMAT_AVIF:
+      return "avif";
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
       return "unknown";
@@ -98,6 +105,8 @@ const char *laghu_image_content_type(laghu_image_format format) {
       return "image/gif";
     case LAGHU_IMAGE_FORMAT_WEBP:
       return "image/webp";
+    case LAGHU_IMAGE_FORMAT_AVIF:
+      return "image/avif";
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
       return "application/octet-stream";
@@ -176,14 +185,14 @@ bool laghu_image_variant_key(const laghu_image_backend *backend,
   }
   length = snprintf(
       canonical, sizeof(canonical),
-      "laghu-image-v4\n%s\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
-      "016llx\n%d\n%d",
+      "laghu-image-v5\n%s\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
+      "016llx\n%d\n%d\n%d",
       source_hash, policy_key, LAGHU_IMAGE_BUILD_ID,
       LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
       (unsigned long long)(request->filters & LAGHU_IMAGE_FILTER_ALL),
       request->quality, request->target_width, request->target_height,
       (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0,
-      request->accept_webp ? 1 : 0);
+      request->accept_webp ? 1 : 0, request->accept_avif ? 1 : 0);
   if (length <= 0 || (size_t)length >= sizeof(canonical)) {
     output[0] = '\0';
     return false;
@@ -280,6 +289,30 @@ static void laghu_vips_probe_codec(laghu_image_format format,
   vips_error_clear();
 }
 
+static bool laghu_vips_probe_avif(void) {
+  VipsImage *source = NULL;
+  VipsImage *decoded = NULL;
+  void *encoded = NULL;
+  size_t encoded_length = 0U;
+  bool available = false;
+  if (!laghu_vips_has_operation("heifsave_buffer") ||
+      !laghu_vips_has_operation("heifload_buffer") ||
+      vips_black(&source, 2, 2, "bands", 3, NULL) != 0 ||
+      vips_image_write_to_buffer(source, ".avif", &encoded, &encoded_length,
+                                 NULL) != 0 ||
+      (decoded = vips_image_new_from_buffer(encoded, encoded_length, "",
+                                            NULL)) == NULL) {
+    vips_error_clear();
+    goto done;
+  }
+  available = true;
+done:
+  if (decoded != NULL) g_object_unref(decoded);
+  if (source != NULL) g_object_unref(source);
+  g_free(encoded);
+  return available;
+}
+
 static bool laghu_vips_probe_animation(void) {
   VipsImage *gif = NULL;
   VipsImage *webp = NULL;
@@ -336,6 +369,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
   bool gif_save;
   bool webp_load;
   bool webp_save;
+  bool avif;
 
   if (backend == NULL) {
     return false;
@@ -358,6 +392,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
   laghu_vips_probe_codec(LAGHU_IMAGE_FORMAT_WEBP, "webpload_buffer",
                          "webpsave_buffer", laghu_probe_webp,
                          sizeof(laghu_probe_webp) - 1U, &webp_load, &webp_save);
+  avif = laghu_vips_probe_avif();
 
   if (jpeg_load) {
     backend->capabilities |= LAGHU_IMAGE_CAP_JPEG_LOAD;
@@ -382,6 +417,10 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
   }
   if (webp_save) {
     backend->capabilities |= LAGHU_IMAGE_CAP_WEBP_SAVE;
+  }
+  if (avif) {
+    backend->capabilities |=
+        LAGHU_IMAGE_CAP_AVIF_LOAD | LAGHU_IMAGE_CAP_AVIF_SAVE;
   }
   if ((backend->capabilities &
        (LAGHU_IMAGE_CAP_GIF_LOAD | LAGHU_IMAGE_CAP_WEBP_SAVE)) ==
@@ -419,6 +458,10 @@ static int laghu_image_load(laghu_image_format format, laghu_buffer input,
       status = vips_webpload_buffer(bytes, input.length, &first_page, "n", 1,
                                     "access", VIPS_ACCESS_RANDOM, NULL);
       break;
+    case LAGHU_IMAGE_FORMAT_AVIF:
+      *image = vips_image_new_from_buffer(bytes, input.length, "", "access",
+                                          VIPS_ACCESS_RANDOM, NULL);
+      return *image == NULL ? -1 : 0;
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
       return -1;
@@ -590,6 +633,10 @@ static int laghu_image_save(VipsImage *image, laghu_image_format format,
       return vips_webpsave_buffer(image, output, output_length, "Q",
                                   (int)request->quality, "lossless", lossless,
                                   "effort", 4, "keep", keep, NULL);
+    case LAGHU_IMAGE_FORMAT_AVIF:
+      return vips_image_write_to_buffer(image, ".avif", output, output_length,
+                                        "Q", (int)request->quality, "keep",
+                                        keep, NULL);
     case LAGHU_IMAGE_FORMAT_GIF:
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
@@ -882,6 +929,11 @@ bool laghu_image_optimize(const laghu_image_backend *backend,
                  LAGHU_IMAGE_STRIP_METADATA | LAGHU_IMAGE_STRIP_COLOR_PROFILE |
                  LAGHU_IMAGE_IN_PLACE_BROWSER));
       }
+      if (request->accept_avif && request->allow_lossy) {
+        LAGHU_TRY_SAVE(
+            LAGHU_IMAGE_FORMAT_AVIF, false,
+            LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
+      }
       break;
     case LAGHU_IMAGE_FORMAT_PNG:
       if ((effective & (LAGHU_IMAGE_RECOMPRESS_IMAGES |
@@ -920,6 +972,11 @@ bool laghu_image_optimize(const laghu_image_backend *backend,
                 (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_TO_WEBP_LOSSLESS |
                  LAGHU_IMAGE_STRIP_METADATA | LAGHU_IMAGE_STRIP_COLOR_PROFILE |
                  LAGHU_IMAGE_IN_PLACE_BROWSER));
+      }
+      if (request->accept_avif && request->allow_lossy) {
+        LAGHU_TRY_SAVE(
+            LAGHU_IMAGE_FORMAT_AVIF, false,
+            LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
       }
       break;
     case LAGHU_IMAGE_FORMAT_GIF:
@@ -962,6 +1019,8 @@ bool laghu_image_optimize(const laghu_image_backend *backend,
                  LAGHU_IMAGE_STRIP_COLOR_PROFILE |
                  LAGHU_IMAGE_IN_PLACE_BROWSER));
       }
+      break;
+    case LAGHU_IMAGE_FORMAT_AVIF:
       break;
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:

@@ -55,6 +55,7 @@ typedef struct {
   unsigned int sprite_height[LAGHU_RUNTIME_MAX_SPRITE_INPUTS];
   bool allow_lossy;
   bool accept_webp;
+  bool accept_avif;
   unsigned int analysis_timeout_ms;
   laghu_buffer payload;
 } laghu_runtime_job;
