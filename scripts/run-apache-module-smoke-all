@@ -964,6 +964,25 @@ if [ "${service_pid}" != "" ]; then
     exit 1
   }
   vipsheader "${work}/image-avif.avif" >/dev/null
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --show-error \
+      --header 'Sec-CH-Viewport-Width: 128' \
+      --header 'Sec-CH-DPR: 2' \
+      --dump-header "${work}/image-client-hint.headers" \
+      http://127.0.0.1:18081/image.png >"${work}/image-client-hint.png"
+    if grep -i '^X-Laghu: image-hit' "${work}/image-client-hint.headers" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ] || {
+    echo "Apache did not serve a client-hint image variant." >&2
+    exit 1
+  }
+  grep -i '^Vary: Accept, Sec-CH-DPR, Sec-CH-Viewport-Width' "${work}/image-client-hint.headers" >/dev/null
+  [ "$(vipsheader -f width "${work}/image-client-hint.png")" = 256 ]
   curl --fail --silent --show-error http://127.0.0.1:18081/image-page.html \
     >"${work}/image-page-targets.html"
   curl --fail --silent --show-error http://127.0.0.1:18081/image.png \

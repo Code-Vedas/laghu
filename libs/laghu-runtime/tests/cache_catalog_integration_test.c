@@ -252,8 +252,10 @@ int main(void) {
 
   assert(laghu_test_workspace_create(&workspace));
   assert(laghu_sha256_hex((laghu_buffer){payload, sizeof(payload) - 1U}, policy_key));
-  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true, false, index_key));
-  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, false, false, no_webp_index_key));
+  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true, false, 0U, 0U, index_key));
+  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, false, false, 0U, 0U, no_webp_index_key));
+  assert(strcmp(index_key, no_webp_index_key) != 0);
+  assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true, false, 640U, 480U, no_webp_index_key));
   assert(strcmp(index_key, no_webp_index_key) != 0);
   test_cache_backend_uri(&workspace);
   test_cache_backend_governance(&workspace, payload, sizeof(payload) - 1U, index_key, no_webp_index_key, policy_key);

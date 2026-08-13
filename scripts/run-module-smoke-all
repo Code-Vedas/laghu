@@ -992,6 +992,26 @@ if [ "${image_smoke}" -eq 1 ]; then
     grep -i -x 'Vary: Accept' >/dev/null
   vipsheader "${SMOKE_DIR}/image-avif-body" >/dev/null
 
+  attempt=0
+  while [ "${attempt}" -lt 100 ]; do
+    curl --fail --silent --show-error \
+      --header 'Sec-CH-Viewport-Width: 128' \
+      --header 'Sec-CH-DPR: 2' \
+      --output "${SMOKE_DIR}/image-client-hint-body" \
+      --dump-header "${SMOKE_DIR}/image-client-hint-headers" \
+      "http://127.0.0.1:${PORT}/image.png"
+    if tr -d '\r' <"${SMOKE_DIR}/image-client-hint-headers" | \
+        grep -i -x 'X-Laghu: image-hit' >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 100 ] || { echo 'Laghu did not serve a client-hint image variant.' >&2; exit 1; }
+  tr -d '\r' <"${SMOKE_DIR}/image-client-hint-headers" | \
+    grep -i -x 'Vary: Accept, Sec-CH-DPR, Sec-CH-Viewport-Width' >/dev/null
+  [ "$(vipsheader -f width "${SMOKE_DIR}/image-client-hint-body")" = 256 ]
+
   curl --fail --silent --show-error \
     --output "${SMOKE_DIR}/image-page-discovery" \
     "http://127.0.0.1:${PORT}/image-page.html"

@@ -355,6 +355,11 @@ typedef struct {
   uint64_t resize_filter[LAGHU_RUNTIME_MAX_TARGETS];
   unsigned int viewport_width;
   unsigned int dpr_hundredths;
+  bool sec_ch_viewport_width;
+  bool sec_ch_dpr;
+  bool legacy_viewport_width;
+  bool legacy_dpr;
+  bool client_hint_variant;
   bool accept_webp;
   bool accept_avif;
   bool prepared;

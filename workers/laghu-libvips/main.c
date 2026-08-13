@@ -427,7 +427,7 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path, 
   format = laghu_image_detect_format((laghu_buffer){input, input_length});
   if (format == LAGHU_IMAGE_FORMAT_UNKNOWN || strlen(request_path) >= sizeof(job.request_path) || strlen(validator) >= sizeof(job.validator) ||
       !laghu_sha256_hex((laghu_buffer){(const unsigned char *)"standalone-policy", 17U}, job.policy_key) ||
-      !laghu_runtime_index_key(request_path, validator, job.policy_key, true, true, job.index_key)) {
+      !laghu_runtime_index_key(request_path, validator, job.policy_key, true, true, 0U, 0U, job.index_key)) {
     laghu_runtime_queue_close(&queue);
     free(input);
     return 1;

@@ -166,7 +166,7 @@
 - [ ] Mobile, tablet, and desktop viewport-width variants.
 - [x] 1x and 2x pixel-density variants.
 - [ ] Lower-quality `Save-Data` variants.
-- [ ] Client-hint-aware selection using `Sec-CH-DPR` and `Sec-CH-Viewport-Width`.
+- [x] Client-hint-aware selection using `Sec-CH-DPR` and `Sec-CH-Viewport-Width`.
 - [ ] SVG optimization and optional simple raster-to-vector conversion.
 - [x] LQIP and blur-placeholder generation.
 - [x] Automatic width and height injection.

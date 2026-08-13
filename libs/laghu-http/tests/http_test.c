@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "laghu/cache.h"
+#include "laghu/catalog.h"
 #include "laghu/javascript.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
@@ -681,6 +682,69 @@ static void test_validator_hints_and_worker_liveness(void) {
   (void)remove(test_queue_path);
 }
 
+static void test_secure_client_hint_image_variant(void) {
+  const laghu_http_header request_headers[] = {{VIEW("Sec-CH-Viewport-Width"), VIEW("100")}, {VIEW("Sec-CH-DPR"), VIEW("2")}};
+  const laghu_http_header response_headers[] = {{VIEW("Content-Type"), VIEW("image/png")}, {VIEW("ETag"), VIEW("\"origin-v1\"")}};
+  static const unsigned char variant[] = "client-hint-variant";
+  laghu_runtime_queue queue;
+  laghu_http_environment environment = test_environment(test_cache_path, &queue);
+  laghu_http_request request = test_request(request_headers, 2U, VIEW("/client-hint.png"));
+  laghu_http_response response = test_response(response_headers, 2U, 1024U);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result result;
+  laghu_catalog_record catalog = {0};
+  laghu_runtime_cache_entry entry;
+  laghu_http_header vary;
+  char first_key[LAGHU_RUNTIME_KEY_SIZE];
+  (void)remove(test_queue_path);
+  laghu_runtime_queue_init(&queue);
+  CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 2U, LAGHU_IMAGE_MAX_INPUT_BYTES));
+  CHECK(laghu_runtime_queue_set_backend(&queue, LAGHU_IMAGE_CAP_ALL, "test-backend"));
+  CHECK(laghu_runtime_queue_heartbeat(&queue, environment.now));
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+  CHECK(transaction.sec_ch_viewport_width && transaction.sec_ch_dpr);
+  CHECK(transaction.viewport_width == 100U && transaction.dpr_hundredths == 200U);
+  catalog.version = LAGHU_CATALOG_VERSION;
+  strcpy(catalog.normalized_url, "/client-hint.png");
+  strcpy(catalog.source_hash, transaction.policy_key);
+  strcpy(catalog.policy_key, transaction.policy_key);
+  catalog.capability_mask = LAGHU_IMAGE_CAP_ALL;
+  catalog.natural_width = 1000U;
+  catalog.natural_height = 500U;
+  catalog.updated_at = environment.now;
+  catalog.last_accessed_at = environment.now;
+  CHECK(laghu_catalog_publish_url(environment.cache_path, &catalog));
+  laghu_http_transaction_result_release(&result);
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+  CHECK(result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE);
+  CHECK(transaction.client_hint_variant);
+  CHECK(transaction.target_count == 1U && transaction.target_width[0] == 200U && transaction.target_height[0] == 100U);
+  memcpy(first_key, transaction.cache_key, sizeof(first_key));
+  CHECK(laghu_sha256_hex((laghu_buffer){variant, sizeof(variant) - 1U}, entry.variant_key));
+  CHECK(laghu_runtime_cache_publish(environment.cache_path, transaction.cache_key, entry.variant_key, transaction.validator, "image/png",
+                                    "test-backend", (laghu_buffer){variant, sizeof(variant) - 1U}, &entry));
+  laghu_http_transaction_result_release(&result);
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+  CHECK(result.action == LAGHU_HTTP_ACTION_SERVE_CACHED && result.decision == LAGHU_DECISION_IMAGE_HIT);
+  CHECK(find_operation_header(&result, "Vary", &vary) != NULL);
+  CHECK(vary.value.length == sizeof("Accept, Sec-CH-DPR, Sec-CH-Viewport-Width") - 1U &&
+        memcmp(vary.value.data, "Accept, Sec-CH-DPR, Sec-CH-Viewport-Width", vary.value.length) == 0);
+  laghu_http_transaction_result_release(&result);
+  {
+    const laghu_http_header wider_headers[] = {{VIEW("Sec-CH-Viewport-Width"), VIEW("200")}, {VIEW("Sec-CH-DPR"), VIEW("2")}};
+    request = test_request(wider_headers, 2U, VIEW("/client-hint.png"));
+    laghu_http_transaction_init(&transaction);
+    CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+    CHECK(transaction.client_hint_variant && transaction.target_width[0] == 400U && strcmp(first_key, transaction.cache_key) != 0);
+    laghu_http_transaction_result_release(&result);
+  }
+  laghu_runtime_queue_close(&queue);
+  (void)remove(test_queue_path);
+}
+
 static void test_mime_driven_opaque_resource_cache(void) {
   static const unsigned char pdf[] = "%PDF-opaque";
   const laghu_http_header headers[] = {{VIEW("Content-Type"), VIEW("application/pdf")}};
@@ -1296,6 +1360,7 @@ int main(void) {
   test_html_cache_representation_precedes_encoding();
   test_html_preconnect_headers();
   test_validator_hints_and_worker_liveness();
+  test_secure_client_hint_image_variant();
   test_mime_driven_opaque_resource_cache();
   test_request_policy_enforcement();
   test_query_preview_finalize_returns_original();

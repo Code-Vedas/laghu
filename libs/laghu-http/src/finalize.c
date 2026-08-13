@@ -877,7 +877,7 @@ static bool laghu_http_finalize_resource(laghu_http_transaction *transaction, la
   laghu_runtime_cache_entry entry;
   char resource_index[LAGHU_RUNTIME_KEY_SIZE];
   if (!laghu_sha256_hex(body, payload_hash) ||
-      !laghu_runtime_index_key(transaction->path, "", transaction->policy_key, false, false, resource_index) ||
+      !laghu_runtime_index_key(transaction->path, "", transaction->policy_key, false, false, 0U, 0U, resource_index) ||
       !laghu_runtime_cache_publish(transaction->environment.cache_path, transaction->cache_key, payload_hash, transaction->validator,
                                    transaction->content_type, "opaque", body, &entry) ||
       !laghu_runtime_cache_publish(transaction->environment.cache_path, resource_index, payload_hash, "", transaction->content_type, "opaque", body,
