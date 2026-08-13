@@ -122,15 +122,23 @@ bool laghu_precompressed_publish(const char *cache_path, laghu_buffer body, cons
   return true;
 }
 
+static const char *laghu_precompressed_find(const char *start, const char *end, char needle) {
+  while (start < end) {
+    if (*start == needle) return start;
+    ++start;
+  }
+  return NULL;
+}
+
 static bool laghu_precompressed_q_zero(const char *start, const char *end) {
   const char *cursor = start;
   if (cursor < end && *cursor == ';') ++cursor;
   while (cursor < end) {
-    const char *parameter_end = memchr(cursor, ';', (size_t)(end - cursor));
+    const char *parameter_end = laghu_precompressed_find(cursor, end, ';');
     const char *equals;
     if (parameter_end == NULL) parameter_end = end;
     while (cursor < parameter_end && isspace((unsigned char)*cursor)) ++cursor;
-    equals = memchr(cursor, '=', (size_t)(parameter_end - cursor));
+    equals = laghu_precompressed_find(cursor, parameter_end, '=');
     if (equals != NULL && equals - cursor == 1 && tolower((unsigned char)cursor[0]) == 'q') {
       const char *number = equals + 1U;
       while (number < parameter_end && isspace((unsigned char)*number)) ++number;
@@ -164,7 +172,7 @@ static bool laghu_precompressed_accepts(const char *value, const char *coding) {
     const char *parameter;
     bool match;
     while (cursor < token_end && isspace((unsigned char)*cursor)) ++cursor;
-    parameter = memchr(cursor, ';', (size_t)(token_end - cursor));
+    parameter = laghu_precompressed_find(cursor, token_end, ';');
     if (parameter == NULL) parameter = token_end;
     while (parameter > cursor && isspace((unsigned char)parameter[-1])) --parameter;
     match = laghu_precompressed_token_equal(cursor, (size_t)(parameter - cursor), coding) ||

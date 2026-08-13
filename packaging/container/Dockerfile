@@ -49,6 +49,7 @@ RUN curl --fail --location --retry 3 \
       --with-http_stub_status_module \
       --with-http_gzip_static_module \
       --with-pcre-jit \
+      --with-cc-opt='-D_GNU_SOURCE' \
       --add-dynamic-module=/src/modules/ngx_http_laghu_module && \
     make -j"$(nproc)" && \
     make install DESTDIR=/out && \

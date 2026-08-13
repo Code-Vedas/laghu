@@ -7,3 +7,5 @@
 build
 docs/_site
 tmp
+performance
+workers/laghu-js-optimize/target

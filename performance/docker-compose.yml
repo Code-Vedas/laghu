@@ -1,0 +1,35 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+services:
+  plain:
+    image: nginx:1.30.4-alpine
+    container_name: laghu-bench-plain
+    ports:
+      - "127.0.0.1:18090:8080"
+    volumes:
+      - ./nginx/plain.conf:/etc/nginx/nginx.conf:ro
+      - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
+  pagespeed:
+    image: pagespeed/nginx-pagespeed@sha256:591567603e63e1dc1641fc02f4322b6770cda3cf3e8bc40bf21cd6bba68668d5
+    container_name: laghu-bench-pagespeed
+    ports:
+      - "127.0.0.1:18091:8080"
+    volumes:
+      - ./nginx/pagespeed.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
+  laghu:
+    build:
+      context: ..
+      dockerfile: packaging/container/Dockerfile
+      args:
+        NGINX_VERSION: "1.30.4"
+    image: laghu-bench-current:local
+    container_name: laghu-bench-laghu
+    ports:
+      - "127.0.0.1:18092:8080"
+    volumes:
+      - ./nginx/laghu.conf:/etc/nginx/nginx.conf:ro
+      - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
