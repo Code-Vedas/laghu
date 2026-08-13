@@ -52,7 +52,8 @@ static const char laghu_chrome_analyze_script[] =
     "height:Math.round(r.height)}}),"
     "critical_css:css};const output=document.createElement('pre');"
     "output.id='laghu-analysis';output.textContent=btoa(unescape("
-    "encodeURIComponent(JSON.stringify(report))));document.body.replaceChildren("
+    "encodeURIComponent(JSON.stringify(report))));document.body."
+    "replaceChildren("
     "output)})()</script>";
 
 static void laghu_chrome_analyze_signal(int number) {
@@ -289,9 +290,9 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file,
       fprintf(stderr,
               "laghu-chrome-analyze: chrome did not emit an analysis report "
               "(bytes=%zu marker=%s)\n",
-              used, strstr((const char *)raw, "laghu-analysis") == NULL
-                        ? "absent"
-                        : "present");
+              used,
+              strstr((const char *)raw, "laghu-analysis") == NULL ? "absent"
+                                                                  : "present");
       return false;
     }
     begin += sizeof("<pre id=\"laghu-analysis\">") - 1U;

@@ -42,6 +42,9 @@ cp "${REPO_ROOT}/libs/laghu-runtime/src/runtime_posix.c" \
   "${build_dir}/laghu_runtime.c"
 
 cd "${build_dir}"
+# Homebrew's Brotli headers are not necessarily in the compiler default path.
+BROTLI_CFLAGS=$(pkg-config --cflags libbrotlienc 2>/dev/null || true)
+# shellcheck disable=SC2086
 "${APXS}" -c \
   -Wc,-std=c11 \
   -Wc,-DLAGHU_HAVE_VIPS=0 \
@@ -53,6 +56,8 @@ cd "${build_dir}"
   -I"${REPO_ROOT}/libs/laghu-http/src" \
   -I"${REPO_ROOT}/libs/laghu-runtime/include" \
   -I"${REPO_ROOT}/libs/laghu-runtime/src" \
+  ${BROTLI_CFLAGS} \
+  -lz -lbrotlienc \
   mod_laghu.c "$@" \
   laghu_runtime.c
 

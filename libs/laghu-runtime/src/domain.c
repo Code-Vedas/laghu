@@ -17,8 +17,8 @@ typedef struct {
   size_t capacity;
 } laghu_domain_builder;
 
-static bool laghu_domain_append(laghu_domain_builder *builder,
-                                const void *data, size_t length) {
+static bool laghu_domain_append(laghu_domain_builder *builder, const void *data,
+                                size_t length) {
   size_t required;
   unsigned char *grown;
   if (length > SIZE_MAX - builder->length - 1U) return false;
@@ -84,7 +84,8 @@ static bool laghu_domain_append_srcset(laghu_domain_builder *builder,
       return false;
     emitted = start + candidate.url.length;
   }
-  return laghu_domain_append(builder, value.data + emitted, value.length - emitted);
+  return laghu_domain_append(builder, value.data + emitted,
+                             value.length - emitted);
 }
 
 static bool laghu_domain_append_style(laghu_domain_builder *builder,
@@ -94,7 +95,8 @@ static bool laghu_domain_append_style(laghu_domain_builder *builder,
   laghu_domain_rewrite_result rewritten;
   bool appended;
   if (!laghu_domain_rewrite_css(value, policy, &rewritten)) return false;
-  if (!rewritten.rewritten) return laghu_domain_append(builder, value.data, value.length);
+  if (!rewritten.rewritten)
+    return laghu_domain_append(builder, value.data, value.length);
   appended = laghu_domain_append(builder, rewritten.data, rewritten.length);
   laghu_domain_rewrite_result_release(&rewritten);
   if (appended) *changed = true;
@@ -105,11 +107,12 @@ static bool laghu_domain_html_tag(laghu_domain_builder *builder,
                                   const laghu_html_tag *tag,
                                   const laghu_domain_policy *policy,
                                   bool *changed) {
-  static const char *const attributes[] = {"src", "href", "poster", "data",
+  static const char *const attributes[] = {"src",    "href",   "poster", "data",
                                            "action", "srcset", "style"};
   laghu_html_attribute found[sizeof(attributes) / sizeof(attributes[0])];
   size_t count = 0U, index, cursor = 0U;
-  for (index = 0U; index < sizeof(attributes) / sizeof(attributes[0]); ++index) {
+  for (index = 0U; index < sizeof(attributes) / sizeof(attributes[0]);
+       ++index) {
     laghu_html_attribute attribute;
     if (laghu_html_tag_attribute(tag, attributes[index], &attribute) &&
         attribute.has_value)
@@ -127,8 +130,9 @@ static bool laghu_domain_html_tag(laghu_domain_builder *builder,
   }
   for (index = 0U; index < count; ++index) {
     size_t start = (size_t)(found[index].value.data - tag->source.data);
-    if (start < cursor || !laghu_domain_append(builder, tag->source.data + cursor,
-                                                start - cursor))
+    if (start < cursor ||
+        !laghu_domain_append(builder, tag->source.data + cursor,
+                             start - cursor))
       return false;
     if ((laghu_domain_attribute_is(&found[index], "srcset") &&
          !laghu_domain_append_srcset(builder, found[index].value, policy,
@@ -159,12 +163,14 @@ bool laghu_domain_rewrite_html(laghu_buffer input,
     return false;
   memset(result, 0, sizeof(*result));
   while (laghu_html_next_tag(input, &cursor, &tag)) {
-    if (!laghu_domain_append(&builder, input.data + emitted, tag.start - emitted) ||
+    if (!laghu_domain_append(&builder, input.data + emitted,
+                             tag.start - emitted) ||
         !laghu_domain_html_tag(&builder, &tag, policy, &changed))
       goto failed;
     emitted = tag.end;
   }
-  if (!laghu_domain_append(&builder, input.data + emitted, input.length - emitted))
+  if (!laghu_domain_append(&builder, input.data + emitted,
+                           input.length - emitted))
     goto failed;
   if (changed) {
     result->data = builder.data;
@@ -184,8 +190,12 @@ bool laghu_domain_rewrite_css(laghu_buffer input,
                               laghu_domain_rewrite_result *result) {
   laghu_domain_builder builder = {0};
   size_t cursor = 0U, emitted = 0U;
-  enum { LAGHU_CSS_NORMAL, LAGHU_CSS_COMMENT, LAGHU_CSS_SINGLE,
-         LAGHU_CSS_DOUBLE } state = LAGHU_CSS_NORMAL;
+  enum {
+    LAGHU_CSS_NORMAL,
+    LAGHU_CSS_COMMENT,
+    LAGHU_CSS_SINGLE,
+    LAGHU_CSS_DOUBLE
+  } state = LAGHU_CSS_NORMAL;
   bool changed = false;
   if (result == NULL || !laghu_domain_policy_validate(policy) ||
       (input.data == NULL && input.length != 0U))
@@ -232,14 +242,13 @@ bool laghu_domain_rewrite_css(laghu_buffer input,
       ++cursor;
       continue;
     }
-    if (cursor + 4U > input.length ||
-        tolower(input.data[cursor]) != 'u' ||
+    if (cursor + 4U > input.length || tolower(input.data[cursor]) != 'u' ||
         tolower(input.data[cursor + 1U]) != 'r' ||
-        tolower(input.data[cursor + 2U]) != 'l' || input.data[cursor + 3U] !=
-            '(' ||
-        (cursor != 0U && (isalnum(input.data[cursor - 1U]) ||
-                          input.data[cursor - 1U] == '-' ||
-                          input.data[cursor - 1U] == '_'))) {
+        tolower(input.data[cursor + 2U]) != 'l' ||
+        input.data[cursor + 3U] != '(' ||
+        (cursor != 0U &&
+         (isalnum(input.data[cursor - 1U]) || input.data[cursor - 1U] == '-' ||
+          input.data[cursor - 1U] == '_'))) {
       ++cursor;
       continue;
     }
@@ -253,27 +262,28 @@ bool laghu_domain_rewrite_css(laghu_buffer input,
     value_end = value_start;
     while (value_end < input.length &&
            (quote != 0U ? input.data[value_end] != quote
-                       : input.data[value_end] != ')')) {
+                        : input.data[value_end] != ')')) {
       if (input.data[value_end] == '\\') break;
       ++value_end;
     }
     if (value_end == input.length || input.data[value_end] == '\\' ||
         (quote != 0U && (value_end + 1U == input.length ||
-                          input.data[value_end + 1U] != ')'))) {
+                         input.data[value_end + 1U] != ')'))) {
       ++cursor;
       continue;
     }
     if (!laghu_domain_append(&builder, input.data + emitted,
                              value_start - emitted) ||
         !laghu_domain_append_url(
-            &builder, (laghu_buffer){input.data + value_start,
-                                     value_end - value_start},
+            &builder,
+            (laghu_buffer){input.data + value_start, value_end - value_start},
             policy, &changed))
       goto failed;
     cursor = quote == 0U ? value_end + 1U : value_end + 2U;
     emitted = value_end;
   }
-  if (!laghu_domain_append(&builder, input.data + emitted, input.length - emitted))
+  if (!laghu_domain_append(&builder, input.data + emitted,
+                           input.length - emitted))
     goto failed;
   if (changed) {
     result->data = builder.data;

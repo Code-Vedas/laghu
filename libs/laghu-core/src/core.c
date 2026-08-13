@@ -342,8 +342,7 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       parent_respect_x_forwarded_proto = parent->respect_x_forwarded_proto;
     if (parent->query_filter_overrides != LAGHU_MODE_UNSET)
       parent_query_filter_overrides = parent->query_filter_overrides;
-    if (parent->rollout != LAGHU_MODE_UNSET)
-      parent_rollout = parent->rollout;
+    if (parent->rollout != LAGHU_MODE_UNSET) parent_rollout = parent->rollout;
     if (parent->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET)
       parent_rollout_percentage = parent->rollout_percentage;
     if (parent->rollout_preset != LAGHU_PRESET_UNSET)
@@ -488,9 +487,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent,
       child != NULL && child->query_filter_overrides != LAGHU_MODE_UNSET
           ? child->query_filter_overrides
           : parent_query_filter_overrides;
-  result->rollout =
-      child != NULL && child->rollout != LAGHU_MODE_UNSET ? child->rollout
-                                                         : parent_rollout;
+  result->rollout = child != NULL && child->rollout != LAGHU_MODE_UNSET
+                        ? child->rollout
+                        : parent_rollout;
   result->rollout_percentage =
       child != NULL &&
               child->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET
@@ -961,12 +960,14 @@ bool laghu_vary_supported(const char *vary) {
     end = strchr(cursor, ',');
     length = end == NULL ? strlen(cursor) : (size_t)(end - cursor);
     while (length > 0U && isspace((unsigned char)cursor[length - 1U])) --length;
-    if (length != 6U || tolower((unsigned char)cursor[0]) != 'a' ||
-        tolower((unsigned char)cursor[1]) != 'c' ||
-        tolower((unsigned char)cursor[2]) != 'c' ||
-        tolower((unsigned char)cursor[3]) != 'e' ||
-        tolower((unsigned char)cursor[4]) != 'p' ||
-        tolower((unsigned char)cursor[5]) != 't')
+    if (!((length == 6U && tolower((unsigned char)cursor[0]) == 'a' &&
+           tolower((unsigned char)cursor[1]) == 'c' &&
+           tolower((unsigned char)cursor[2]) == 'c' &&
+           tolower((unsigned char)cursor[3]) == 'e' &&
+           tolower((unsigned char)cursor[4]) == 'p' &&
+           tolower((unsigned char)cursor[5]) == 't') ||
+          (length == 15U &&
+           strncasecmp(cursor, "Accept-Encoding", length) == 0)))
       return false;
     if (end == NULL) break;
     cursor = end + 1;
@@ -981,9 +982,9 @@ static int laghu_hex_value(char value) {
   return -1;
 }
 
-static bool laghu_decode_query_parameter_value(const char *value,
-                                              size_t value_length,
-                                              char output[LAGHU_QUERY_OVERRIDE_SIZE]) {
+static bool laghu_decode_query_parameter_value(
+    const char *value, size_t value_length,
+    char output[LAGHU_QUERY_OVERRIDE_SIZE]) {
   size_t used = 0U;
   size_t index;
   if (value == NULL) {
@@ -1008,7 +1009,8 @@ static bool laghu_decode_query_parameter_value(const char *value,
   return true;
 }
 
-bool laghu_apply_query_control(const char *query, laghu_query_control *control) {
+bool laghu_apply_query_control(const char *query,
+                               laghu_query_control *control) {
   const char *cursor;
   bool seen_control = false;
   if (control == NULL) {
@@ -1026,16 +1028,15 @@ bool laghu_apply_query_control(const char *query, laghu_query_control *control) 
     if (length >= 6U && strncmp(cursor, "laghu=", 6U) == 0) {
       if (seen_control) return false;
       if (!laghu_decode_query_parameter_value(cursor + 6U, length - 6U,
-                                             decoded) ||
-          (strcmp(decoded, "off") != 0 &&
-           strcmp(decoded, "explain") != 0 &&
+                                              decoded) ||
+          (strcmp(decoded, "off") != 0 && strcmp(decoded, "explain") != 0 &&
            strcmp(decoded, "preview") != 0))
         return false;
       seen_control = true;
       *control =
-          (strcmp(decoded, "off") == 0 ? LAGHU_QUERY_CONTROL_OFF
+          (strcmp(decoded, "off") == 0       ? LAGHU_QUERY_CONTROL_OFF
            : strcmp(decoded, "explain") == 0 ? LAGHU_QUERY_CONTROL_EXPLAIN
-                                            : LAGHU_QUERY_CONTROL_PREVIEW);
+                                             : LAGHU_QUERY_CONTROL_PREVIEW);
     }
     if (end == NULL) break;
     cursor = end + 1U;
@@ -1064,7 +1065,8 @@ bool laghu_apply_query_filter_overrides(const laghu_config *config,
     if (length >= 13U && strncmp(cursor, "laghuFilters=", 13U) == 0) {
       if (found) return false;
       found = true;
-      if (!laghu_decode_query_parameter_value(cursor + 13U, length - 13U, decoded))
+      if (!laghu_decode_query_parameter_value(cursor + 13U, length - 13U,
+                                              decoded))
         return false;
       used = strlen(decoded);
     }
@@ -1364,14 +1366,13 @@ bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
 }
 
 static void laghu_resolve_config_policy_error(char *error, size_t error_size,
-                                             const char *message) {
-  if (error != NULL && error_size != 0U) (void)snprintf(error, error_size, "%s",
-                                                        message);
+                                              const char *message) {
+  if (error != NULL && error_size != 0U)
+    (void)snprintf(error, error_size, "%s", message);
 }
 
 bool laghu_resolve_config_policy_with_error(const laghu_config *config,
-                                            laghu_policy *policy,
-                                            char *error,
+                                            laghu_policy *policy, char *error,
                                             size_t error_size) {
   bool has_preset;
   bool has_rewrite_level;
@@ -1384,12 +1385,12 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
 
   if (config == NULL || policy == NULL) {
     laghu_resolve_config_policy_error(error, error_size,
-                                     "missing configuration");
+                                      "missing configuration");
     return false;
   }
   if (!laghu_domain_policy_validate(&config->domain_policy)) {
     laghu_resolve_config_policy_error(error, error_size,
-                                     "invalid domain policy");
+                                      "invalid domain policy");
     return false;
   }
   if (((config->enabled_filters | config->disabled_filters |
@@ -1423,13 +1424,13 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
       (config->variants_per_source != LAGHU_VARIANTS_PER_SOURCE_UNSET &&
        (config->variants_per_source < LAGHU_VARIANTS_PER_SOURCE_MIN ||
         config->variants_per_source > LAGHU_VARIANTS_PER_SOURCE_MAX))) {
-    laghu_resolve_config_policy_error(error, error_size,
-                                      "transform tuning values are out of range");
+    laghu_resolve_config_policy_error(
+        error, error_size, "transform tuning values are out of range");
     return false;
   }
   if (!laghu_domain_policy_validate(&config->domain_policy)) {
     laghu_resolve_config_policy_error(error, error_size,
-                                     "invalid domain policy");
+                                      "invalid domain policy");
     return false;
   }
 
@@ -1447,8 +1448,7 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
     }
     if (has_rollout_preset) {
       laghu_resolve_config_policy_error(
-          error, error_size,
-          "rollout preset requires rollout to be enabled");
+          error, error_size, "rollout preset requires rollout to be enabled");
       return false;
     }
     if (has_rollout_rewrite_level) {
@@ -1460,8 +1460,8 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
   }
   if (config->rollout == LAGHU_MODE_ON &&
       config->rollout_percentage == LAGHU_ROLLOUT_PERCENTAGE_UNSET) {
-    laghu_resolve_config_policy_error(
-        error, error_size, "rollout percentage required");
+    laghu_resolve_config_policy_error(error, error_size,
+                                      "rollout percentage required");
     return false;
   }
   if (config->rollout == LAGHU_MODE_ON &&
@@ -1473,8 +1473,7 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
   }
   if (has_preset == has_rewrite_level) {
     laghu_resolve_config_policy_error(
-        error, error_size,
-        "set exactly one of preset or rewrite-level");
+        error, error_size, "set exactly one of preset or rewrite-level");
     return false;
   }
 
@@ -1484,8 +1483,7 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
   if (resolved && config->rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
       config->enabled_filters != 0U) {
     laghu_resolve_config_policy_error(
-        error, error_size,
-        "passthrough policy does not allow enabled filters");
+        error, error_size, "passthrough policy does not allow enabled filters");
     return false;
   }
   if (resolved) {
@@ -1520,7 +1518,7 @@ bool laghu_resolve_config_policy_with_error(const laghu_config *config,
   if (resolved && config->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
     if (config->image_quality > 100U) {
       laghu_resolve_config_policy_error(error, error_size,
-                                       "image quality exceeds 100");
+                                        "image quality exceeds 100");
       return false;
     }
     if (policy->allow_lossy) {

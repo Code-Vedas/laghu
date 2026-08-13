@@ -96,7 +96,8 @@ static bool laghu_log_common_render(laghu_log_builder *builder,
       !laghu_log_append(builder, ",\"component\":") ||
       !laghu_log_string(builder, common->component, 32U, NULL) ||
       !laghu_log_append(builder, ",\"event\":") ||
-      !laghu_log_string(builder, event, 16U, NULL)) return false;
+      !laghu_log_string(builder, event, 16U, NULL))
+    return false;
   if (common->trace_id != NULL && common->trace_id[0] != '\0') {
     if (!laghu_log_append(builder, ",\"trace_id\":") ||
         !laghu_log_string(builder, common->trace_id, 32U, NULL))

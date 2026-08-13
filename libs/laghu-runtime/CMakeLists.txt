@@ -6,6 +6,9 @@
 laghu_manifest_sources(runtime LAGHU_RUNTIME_SOURCES)
 add_library(laghu_runtime STATIC src/runtime_posix.c ${LAGHU_RUNTIME_SOURCES})
 add_library(Laghu::Runtime ALIAS laghu_runtime)
+find_package(ZLIB REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(BROTLIENC REQUIRED IMPORTED_TARGET libbrotlienc)
 
 target_include_directories(laghu_runtime
   PUBLIC
@@ -13,7 +16,8 @@ target_include_directories(laghu_runtime
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(laghu_runtime PUBLIC c_std_11)
-target_link_libraries(laghu_runtime PUBLIC Laghu::Core Laghu::Image Laghu::Markup ${CMAKE_DL_LIBS})
+target_link_libraries(laghu_runtime PUBLIC Laghu::Core Laghu::Image Laghu::Markup
+                      ZLIB::ZLIB PkgConfig::BROTLIENC ${CMAKE_DL_LIBS})
 set_target_properties(laghu_runtime PROPERTIES C_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -58,7 +62,7 @@ if(LAGHU_BUILD_TESTS)
   add_library(laghu_runtime_test_fixture STATIC ${fixture_source})
   target_include_directories(laghu_runtime_test_fixture PUBLIC tests)
   target_link_libraries(laghu_runtime_test_fixture PUBLIC Laghu::Runtime)
-  foreach(subsystem IN ITEMS budget service_config queue cache operational rum source_asset
+  foreach(subsystem IN ITEMS budget service_config queue cache precompressed operational rum source_asset
                             catalog html html_cache css domain javascript instrumentation profile lcp worker log)
     laghu_add_runtime_test(${subsystem} FIXTURE)
   endforeach()

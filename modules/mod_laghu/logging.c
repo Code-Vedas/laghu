@@ -34,9 +34,8 @@ void laghu_apache_log_transaction(request_rec *request,
   span_id = context->span_id[0] == '\0' ? NULL : context->span_id;
   {
     laghu_log_transaction record = {
-        .common =
-            {(time_t)apr_time_sec(apr_time_now()), "apache", "apache", trace_id,
-             span_id},
+        .common = {(time_t)apr_time_sec(apr_time_now()), "apache", "apache",
+                   trace_id, span_id},
         .method = request->method == NULL ? "unknown" : request->method,
         .path = request->uri == NULL ? "/" : request->uri,
         .status = (unsigned int)request->status,

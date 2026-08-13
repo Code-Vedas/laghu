@@ -25,9 +25,8 @@ static void ngx_http_laghu_service_error_message(
   const char *name;
   if (configuration == NULL || error == NULL) return;
   descriptor = laghu_service_setting_describe(error->setting);
-  name = descriptor == NULL || descriptor->name == NULL
-             ? "setting"
-             : descriptor->name;
+  name = descriptor == NULL || descriptor->name == NULL ? "setting"
+                                                        : descriptor->name;
   if (error->message[0] == '\0')
     ngx_conf_log_error(NGX_LOG_EMERG, configuration, 0,
                        "invalid laghu service setting '%s'", name);
@@ -133,7 +132,7 @@ char *ngx_http_laghu_merge_loc_conf(ngx_conf_t *configuration, void *parent,
            "policy";
   laghu_config_merge(&merged, &parent_conf->core, &child_conf->core);
   if (!laghu_resolve_config_policy_with_error(&merged, &policy, policy_error,
-                                            sizeof(policy_error))) {
+                                              sizeof(policy_error))) {
     ngx_http_laghu_policy_error_message(configuration, policy_error);
     return NGX_CONF_ERROR;
   }

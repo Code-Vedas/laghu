@@ -137,11 +137,11 @@ int laghu_apache_admin_endpoint(request_rec *request,
         return HTTP_SERVICE_UNAVAILABLE;
       cache_ready = true;
     } else {
-      cache_ready = laghu_cache_backend_health_path(config->service.image_cache,
-                                                   &stats);
+      cache_ready =
+          laghu_cache_backend_health_path(config->service.image_cache, &stats);
     }
     if (!laghu_operational_registry_snapshot(&laghu_apache_operational,
-                                            &snapshot) ||
+                                             &snapshot) ||
         !laghu_operational_readiness_evaluate(
             &snapshot, (uint64_t)apr_time_sec(apr_time_now()), true,
             cache_ready, config->service.readiness_strict, &readiness) ||

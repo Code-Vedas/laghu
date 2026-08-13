@@ -25,6 +25,8 @@
 #include "laghu/worker.h"
 
 #define LAGHU_SERVICE_TIMEOUT_SECONDS 30U
+#define LAGHU_CACHE_REGISTER_INITIAL_DELAY_MILLISECONDS 5U
+#define LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS 250U
 
 static bool laghu_libvips_stop_requested(void) { return false; }
 
@@ -50,6 +52,23 @@ static unsigned int laghu_libvips_timeout(void) {
 #else
   return LAGHU_SERVICE_TIMEOUT_SECONDS;
 #endif
+}
+
+static bool laghu_libvips_register_cache(const char *cache_path) {
+  unsigned int elapsed = 0U;
+  unsigned int delay = LAGHU_CACHE_REGISTER_INITIAL_DELAY_MILLISECONDS;
+  unsigned int deadline = laghu_libvips_timeout() * 1000U;
+  while (!laghu_libvips_stop_requested() && elapsed < deadline) {
+    if (laghu_cache_backend_register_path(cache_path, NULL)) return true;
+    laghu_libvips_pause(delay);
+    elapsed += delay;
+    if (delay < LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS) {
+      delay <<= 1U;
+      if (delay > LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS)
+        delay = LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS;
+    }
+  }
+  return false;
 }
 
 static bool laghu_libvips_cache_publish(
@@ -102,10 +121,11 @@ static void laghu_libvips_warn_missing_capabilities(
 static void laghu_libvips_log_lifecycle(const char *state,
                                         const char *failure) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_lifecycle record = {
-      .common = {(time_t)time(NULL), "worker", "libvips"},
-      .state = state,
-      .failure = failure};
+  laghu_log_lifecycle record = {.common = {.timestamp = (time_t)time(NULL),
+                                           .surface = "worker",
+                                           .component = "libvips"},
+                                .state = state,
+                                .failure = failure};
   if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
     fprintf(stderr, "%s\n", line);
 }
@@ -114,7 +134,9 @@ static void laghu_libvips_log_job(const laghu_runtime_job *job, int status,
                                   uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
   laghu_log_job record = {
-      .common = {(time_t)time(NULL), "worker", "libvips"},
+      .common = {.timestamp = (time_t)time(NULL),
+                 .surface = "worker",
+                 .component = "libvips"},
       .job_kind = job->kind == LAGHU_RUNTIME_JOB_SPRITE ? "sprite" : "image",
       .outcome = status == 0   ? "success"
                  : status == 4 ? "preserved"
@@ -532,7 +554,7 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
     laghu_libvips_log_lifecycle("failed", "queue");
     return 1;
   }
-  if (!laghu_cache_backend_register_path(cache_path, NULL)) {
+  if (!laghu_libvips_register_cache(cache_path)) {
     laghu_libvips_log_lifecycle("failed", "cache");
     laghu_runtime_queue_close(&queue);
     return 1;
@@ -575,7 +597,8 @@ static int laghu_libvips_serve(const char *queue_path, const char *cache_path,
         break;
       }
     } else if (once) {
-      status = 3;
+      /* Empty queue is successful one-shot maintenance, not worker failure. */
+      status = 0;
       break;
     } else {
       laghu_libvips_pause(50U);

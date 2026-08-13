@@ -3,16 +3,15 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <stdio.h>
-#include <string.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "laghu/http.h"
 
 static bool laghu_http_administrative_query_parse_path_target(
-    laghu_buffer query, char *output, size_t output_capacity,
-    bool required);
+    laghu_buffer query, char *output, size_t output_capacity, bool required);
 
 static unsigned char laghu_http_administrative_ascii_lower(
     unsigned char value) {
@@ -29,8 +28,8 @@ static bool laghu_http_administrative_is_digit(unsigned char value) {
 }
 
 static bool laghu_http_administrative_target_split_query(laghu_buffer target,
-                                                       laghu_buffer *path,
-                                                       laghu_buffer *query) {
+                                                         laghu_buffer *path,
+                                                         laghu_buffer *query) {
   size_t index;
   size_t query_start = target.length;
   if (!laghu_http_administrative_view_valid(target) || path == NULL ||
@@ -54,8 +53,8 @@ static bool laghu_http_administrative_target_split_query(laghu_buffer target,
 }
 
 static bool laghu_http_administrative_query_param_value(
-    laghu_buffer query, const char *name, bool required,
-    char *output, size_t output_capacity) {
+    laghu_buffer query, const char *name, bool required, char *output,
+    size_t output_capacity) {
   size_t name_length = strlen(name);
   size_t index = 0U;
   size_t end = 0U;
@@ -76,16 +75,14 @@ static bool laghu_http_administrative_query_param_value(
     while (equal < end && query.data[equal] != '=') {
       ++equal;
     }
-    if (equal > index &&
-        (size_t)(equal - index) == name_length &&
+    if (equal > index && (size_t)(equal - index) == name_length &&
         memcmp(query.data + index, name, name_length) == 0) {
       if (equal == end) {
         if (required) return false;
         return true;
       }
       if ((size_t)(end - (equal + 1U)) >= output_capacity) return false;
-      (void)memcpy(output, query.data + equal + 1U,
-                   end - (equal + 1U));
+      (void)memcpy(output, query.data + equal + 1U, end - (equal + 1U));
       output[end - (equal + 1U)] = '\0';
       return true;
     }
@@ -95,7 +92,7 @@ static bool laghu_http_administrative_query_param_value(
 }
 
 static bool laghu_http_administrative_query_parse_limit(laghu_buffer query,
-                                                       unsigned int *value) {
+                                                        unsigned int *value) {
   char text[12];
   size_t index;
   size_t digits = 0U;
@@ -105,7 +102,7 @@ static bool laghu_http_administrative_query_parse_limit(laghu_buffer query,
   }
   text[0] = '\0';
   if (!laghu_http_administrative_query_param_value(query, "limit", false, text,
-                                                  sizeof(text))) {
+                                                   sizeof(text))) {
     return false;
   }
   if (text[0] == '\0') {
@@ -128,8 +125,9 @@ static bool laghu_http_administrative_query_parse_limit(laghu_buffer query,
   return true;
 }
 
-static bool laghu_http_administrative_append(
-    char *output, size_t capacity, size_t *length, const char *format, ...) {
+static bool laghu_http_administrative_append(char *output, size_t capacity,
+                                             size_t *length, const char *format,
+                                             ...) {
   va_list args;
   int written;
   if (output == NULL || length == NULL || capacity == 0U || format == NULL) {
@@ -171,40 +169,40 @@ static bool laghu_http_administrative_render_history_fragment(
     return false;
   }
   for (index = 0U; index < model->count; ++index) {
-    const laghu_http_administrative_history_record *record = &model->records[index];
-    uint64_t saved =
-        record->selected_bytes > record->original_bytes
-            ? 0U
-            : record->original_bytes - record->selected_bytes;
+    const laghu_http_administrative_history_record *record =
+        &model->records[index];
+    uint64_t saved = record->selected_bytes > record->original_bytes
+                         ? 0U
+                         : record->original_bytes - record->selected_bytes;
     unsigned int saved_ppm;
     if (record->original_bytes == 0U) {
       saved_ppm = 0U;
     } else {
       saved_ppm = (unsigned int)((saved * 10000ULL) / record->original_bytes);
     }
-    written = snprintf(row, sizeof(row),
-                       "<tr><td>%u</td><td>%s</td><td>%s</td>"
-                       "<td>%s</td><td>%s</td><td>%s</td>"
-                       "<td>%llu</td><td>%llu</td><td>%llu</td>"
-                       "<td>%llu (%u.%02u%%)</td></tr>",
-                       record->index, record->surface, record->process,
-                       record->active ? "yes" : "no",
-                       record->healthy ? "yes" : "no",
-                       record->required ? "yes" : "no",
-                       (unsigned long long)record->requests,
-                       (unsigned long long)record->original_bytes,
-                       (unsigned long long)record->selected_bytes,
-                       (unsigned long long)saved, saved_ppm / 100U,
-                       saved_ppm % 100U);
+    written = snprintf(
+        row, sizeof(row),
+        "<tr><td>%u</td><td>%s</td><td>%s</td>"
+        "<td>%s</td><td>%s</td><td>%s</td>"
+        "<td>%llu</td><td>%llu</td><td>%llu</td>"
+        "<td>%llu (%u.%02u%%)</td></tr>",
+        record->index, record->surface, record->process,
+        record->active ? "yes" : "no", record->healthy ? "yes" : "no",
+        record->required ? "yes" : "no", (unsigned long long)record->requests,
+        (unsigned long long)record->original_bytes,
+        (unsigned long long)record->selected_bytes, (unsigned long long)saved,
+        saved_ppm / 100U, saved_ppm % 100U);
     if (written < 0 || (size_t)written >= sizeof(row)) {
       return false;
     }
-    if (!laghu_http_administrative_append(output, capacity, length, "%s", row)) {
+    if (!laghu_http_administrative_append(output, capacity, length, "%s",
+                                          row)) {
       return false;
     }
   }
-  return laghu_http_administrative_append(output, capacity, length, "</tbody></table>"
-                                                                "</section>");
+  return laghu_http_administrative_append(output, capacity, length,
+                                          "</tbody></table>"
+                                          "</section>");
 }
 
 static bool laghu_http_administrative_render_explain_fragment(
@@ -212,18 +210,17 @@ static bool laghu_http_administrative_render_explain_fragment(
     size_t capacity, size_t *length) {
   char comparison[2048];
   const char *comparison_block = "";
-  if (model == NULL || output == NULL || length == NULL || *length >= capacity) {
+  if (model == NULL || output == NULL || length == NULL ||
+      *length >= capacity) {
     return false;
   }
   if (model->has_before || model->has_after || model->has_filter) {
     const char *before_target = model->has_before ? model->before : "Not set";
-    const char *before_hash = model->before_hash[0] != '\0'
-                                  ? model->before_hash
-                                  : "Unavailable";
+    const char *before_hash =
+        model->before_hash[0] != '\0' ? model->before_hash : "Unavailable";
     const char *after_target = model->has_after ? model->after : "Not set";
-    const char *after_hash = model->after_hash[0] != '\0'
-                                ? model->after_hash
-                                : "Unavailable";
+    const char *after_hash =
+        model->after_hash[0] != '\0' ? model->after_hash : "Unavailable";
     const char *comparison_status;
     bool hashes_match = model->has_before && model->has_after &&
                         model->before_hash[0] != '\0' &&
@@ -232,7 +229,8 @@ static bool laghu_http_administrative_render_explain_fragment(
     if (!model->has_before || !model->has_after) {
       comparison_status = "Set both before and after values to compare hashes.";
     } else if (hashes_match) {
-      comparison_status = "Before and after produce the same normalized source key.";
+      comparison_status =
+          "Before and after produce the same normalized source key.";
     } else {
       comparison_status = "Before and after differ by normalized source key.";
     }
@@ -266,10 +264,11 @@ static bool laghu_http_administrative_render_explain_fragment(
   }
   if (comparison_block[0] != '\0' &&
       !laghu_http_administrative_append(output, capacity, length, "%s",
-                                       comparison_block)) {
+                                        comparison_block)) {
     return false;
   }
-  return laghu_http_administrative_append(output, capacity, length, "</section>");
+  return laghu_http_administrative_append(output, capacity, length,
+                                          "</section>");
 }
 
 static bool laghu_http_administrative_query_parse_path(
@@ -287,29 +286,30 @@ static bool laghu_http_administrative_query_parse_path_target(
   if (output == NULL || output_capacity == 0U) return false;
   output[0] = '\0';
   if (!laghu_http_administrative_query_param_value(query, "path", false, output,
-                                                  output_capacity)) {
+                                                   output_capacity)) {
     return false;
   }
   if (output[0] == '\0') {
-    if (!laghu_http_administrative_query_param_value(query, "url", false, output,
-                                                    output_capacity)) {
+    if (!laghu_http_administrative_query_param_value(query, "url", false,
+                                                     output, output_capacity)) {
       return false;
     }
   }
   return required ? output[0] != '\0' : true;
 }
 
-static bool laghu_http_administrative_query_parse_text(
-    laghu_buffer query, const char *name, char *output,
-    size_t output_capacity) {
+static bool laghu_http_administrative_query_parse_text(laghu_buffer query,
+                                                       const char *name,
+                                                       char *output,
+                                                       size_t output_capacity) {
   if (name == NULL || output == NULL || output_capacity == 0U) return false;
   output[0] = '\0';
   return laghu_http_administrative_query_param_value(query, name, false, output,
                                                      output_capacity);
 }
 
-static bool laghu_http_administrative_query_parse_format(
-    laghu_buffer query, bool *json) {
+static bool laghu_http_administrative_query_parse_format(laghu_buffer query,
+                                                         bool *json) {
   char format[16];
   if (json == NULL) {
     return false;
@@ -317,7 +317,7 @@ static bool laghu_http_administrative_query_parse_format(
   *json = false;
   format[0] = '\0';
   if (!laghu_http_administrative_query_param_value(query, "format", false,
-                                                  format, sizeof(format))) {
+                                                   format, sizeof(format))) {
     return false;
   }
   if (format[0] != '\0' && strcmp(format, "json") != 0) {
@@ -333,9 +333,8 @@ static bool laghu_http_administrative_query_parse_console_view(
   if (view == NULL) return false;
   selected[0] = '\0';
   *view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_OVERVIEW;
-  if (!laghu_http_administrative_query_param_value(query, "view", false,
-                                                  selected,
-                                                  sizeof(selected))) {
+  if (!laghu_http_administrative_query_param_value(
+          query, "view", false, selected, sizeof(selected))) {
     return false;
   }
   if (selected[0] == '\0') {
@@ -356,8 +355,9 @@ static bool laghu_http_administrative_query_parse_console_view(
   return false;
 }
 
-static bool laghu_http_administrative_normalize_legacy_path(
-    laghu_buffer path, char *output, size_t capacity) {
+static bool laghu_http_administrative_normalize_legacy_path(laghu_buffer path,
+                                                            char *output,
+                                                            size_t capacity) {
   if (!laghu_http_administrative_view_valid(path) || output == NULL ||
       capacity < 2U || path.length == 0U || path.length >= capacity) {
     return false;
@@ -437,7 +437,6 @@ static bool laghu_http_administrative_target_mentions_purge(
   return false;
 }
 
-
 void laghu_http_administrative_options_init(
     laghu_http_administrative_options *options) {
   if (options != NULL) {
@@ -479,7 +478,7 @@ bool laghu_http_administrative_plan_build(
   plan->history_query.limit = LAGHU_OPERATIONAL_HISTORY_SIZE;
   method_purge = laghu_http_administrative_method_is(method, "PURGE");
   if (!laghu_http_administrative_normalize_legacy_path(path, mapped_target,
-                                                     sizeof(mapped_target))) {
+                                                       sizeof(mapped_target))) {
     return true;
   }
   path = (laghu_buffer){(const unsigned char *)mapped_target,
@@ -571,13 +570,13 @@ bool laghu_http_administrative_plan_build(
         break;
       }
       if (!laghu_http_administrative_query_parse_format(query,
-                                                       &plan->output_json)) {
+                                                        &plan->output_json)) {
         plan->status = 400U;
         break;
       }
       if (!laghu_http_administrative_query_parse_path_target(
-              query, plan->console_query.path,
-              sizeof(plan->console_query.path), false) ||
+              query, plan->console_query.path, sizeof(plan->console_query.path),
+              false) ||
           !laghu_http_administrative_query_parse_text(
               query, "before", plan->console_query.before,
               sizeof(plan->console_query.before)) ||
@@ -592,8 +591,7 @@ bool laghu_http_administrative_plan_build(
       }
       if (plan->console_query.path[0] == '\0') {
         (void)snprintf(plan->console_query.path,
-                       sizeof(plan->console_query.path),
-                       "%s", "/");
+                       sizeof(plan->console_query.path), "%s", "/");
       }
       if (console_history_alias) {
         plan->console_view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_HISTORY;
@@ -601,15 +599,14 @@ bool laghu_http_administrative_plan_build(
         plan->console_view = LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_EXPLAIN;
       }
       if (canonicalize_alias) {
-        (void)snprintf(plan->normalized_path,
-                       sizeof(plan->normalized_path), "%s",
-                       "/.laghu/console");
+        (void)snprintf(plan->normalized_path, sizeof(plan->normalized_path),
+                       "%s", "/.laghu/console");
       }
       if (plan->console_view ==
           LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_EXPLAIN) {
         plan->action = LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN;
         if (!laghu_http_administrative_query_parse_path(query,
-                                                       &plan->explain_query) ||
+                                                        &plan->explain_query) ||
             !laghu_http_administrative_query_parse_text(
                 query, "before", plan->explain_query.before,
                 sizeof(plan->explain_query.before)) ||
@@ -625,19 +622,18 @@ bool laghu_http_administrative_plan_build(
       } else if (plan->console_view ==
                  LAGHU_HTTP_ADMINISTRATIVE_CONSOLE_VIEW_HISTORY) {
         plan->action = LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY;
-        if (!laghu_http_administrative_query_parse_limit(query, &history_limit)) {
+        if (!laghu_http_administrative_query_parse_limit(query,
+                                                         &history_limit)) {
           plan->status = 400U;
           break;
         }
-        if (history_limit == 0U)
-          history_limit = LAGHU_OPERATIONAL_HISTORY_SIZE;
+        if (history_limit == 0U) history_limit = LAGHU_OPERATIONAL_HISTORY_SIZE;
         if (history_limit > LAGHU_OPERATIONAL_HISTORY_SIZE)
           history_limit = LAGHU_OPERATIONAL_HISTORY_SIZE;
         plan->history_query.limit = history_limit;
       }
       if (!options->statistics_enabled ||
-          (!laghu_http_administrative_method_is(method, "GET") &&
-           !plan->head))
+          (!laghu_http_administrative_method_is(method, "GET") && !plan->head))
         plan->status = 405U;
       break;
     case LAGHU_HTTP_ADMINISTRATIVE_ROUTE_PURGE:
@@ -652,8 +648,7 @@ bool laghu_http_administrative_plan_build(
         plan->status = 400U;
         break;
       }
-      if (!explicit_purge_route &&
-          plan->purge_by_query) {
+      if (!explicit_purge_route && plan->purge_by_query) {
         char requested_target[LAGHU_RUNTIME_PATH_SIZE];
         requested_target[0] = '\0';
         if (!laghu_http_administrative_query_parse_path_target(
@@ -817,14 +812,15 @@ bool laghu_http_administrative_build_console_model(
     const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
     const laghu_http_administrative_console_query *query,
     laghu_http_administrative_console_model *model) {
-  if (stats == NULL || ready == NULL || model == NULL || query == NULL) return false;
+  if (stats == NULL || ready == NULL || model == NULL || query == NULL)
+    return false;
   memset(model, 0, sizeof(*model));
   (void)snprintf(model->runtime, sizeof(model->runtime), "%s",
                  ready->runtime_ready ? "ready" : "degraded");
-  (void)snprintf(model->cache, sizeof(model->cache),
-                 "%s", ready->cache_ready ? "ready" : "unavailable");
-  (void)snprintf(model->workers, sizeof(model->workers),
-                 "%s", ready->workers_ready ? "ready" : "unavailable");
+  (void)snprintf(model->cache, sizeof(model->cache), "%s",
+                 ready->cache_ready ? "ready" : "unavailable");
+  (void)snprintf(model->workers, sizeof(model->workers), "%s",
+                 ready->workers_ready ? "ready" : "unavailable");
   model->hits = stats->hits;
   model->misses = stats->misses;
   model->bytes = stats->bytes;
@@ -834,8 +830,7 @@ bool laghu_http_administrative_build_console_model(
                  query->before);
   (void)snprintf(model->compare_after, sizeof(model->compare_after), "%s",
                  query->after);
-  (void)snprintf(model->filter, sizeof(model->filter), "%s",
-                 query->filter);
+  (void)snprintf(model->filter, sizeof(model->filter), "%s", query->filter);
   return true;
 }
 
@@ -862,7 +857,8 @@ bool laghu_http_administrative_render_console_model(
           "</style>"
           "<h1>Laghu console</h1>"
           "<p>Runtime: %s · Cache: %s · Workers: %s</p>"
-          "<dl><dt>Cache hits</dt><dd>%llu</dd><dt>Cache misses</dt><dd>%llu</dd>"
+          "<dl><dt>Cache hits</dt><dd>%llu</dd><dt>Cache "
+          "misses</dt><dd>%llu</dd>"
           "<dt>Bytes observed</dt><dd>%llu</dd></dl>"
           "<section><h2>Views</h2><div class=\"grid\">"
           "<a href=\"/.laghu/stats\">Stats</a>"
@@ -886,7 +882,8 @@ bool laghu_http_administrative_render_console_model(
           "<label>Primary path <input name=\"path\" value=\"%s\"/></label>"
           "<label>Before path <input name=\"before\" value=\"%s\"/></label>"
           "<label>After path <input name=\"after\" value=\"%s\"/></label>"
-          "<label>Filter override <input name=\"laghuFilters\" value=\"%s\"/></label>"
+          "<label>Filter override <input name=\"laghuFilters\" "
+          "value=\"%s\"/></label>"
           "<label>Response format <select name=\"format\"><option value=\"\">"
           "html</option><option value=\"json\">json</option></select></label>"
           "<button type=\"submit\">Compare paths</button>"
@@ -900,22 +897,26 @@ bool laghu_http_administrative_render_console_model(
           "html</option><option value=\"json\">json</option></select></label>"
           "<button type=\"submit\">Load history</button></form></section>"
           "<section><h2>Cache purge</h2>"
-          "<form id=\"laghu-purge-form\" method=\"GET\" action=\"/.laghu/purge\">"
+          "<form id=\"laghu-purge-form\" method=\"GET\" "
+          "action=\"/.laghu/purge\">"
           "<label>Purge path <input id=\"laghu-purge-target\" name=\"path\""
           " value=\"/\"/></label>"
           "<button type=\"submit\">Purge target</button>"
           "</form></section>"
           "<section><h2>Filter controls</h2>"
           "<ul>"
-          "<li>Disable all optimization for one request: <code>?laghu=off</code></li>"
-          "<li>Keep/disable single filters: <code>?laghuFilters=+image_resize,-javascript_compress</code></li>"
-          "<li>Disable only one path: set the above on the target path in the console explain form.</li>"
+          "<li>Disable all optimization for one request: "
+          "<code>?laghu=off</code></li>"
+          "<li>Keep/disable single filters: "
+          "<code>?laghuFilters=+image_resize,-javascript_compress</code></li>"
+          "<li>Disable only one path: set the above on the target path in the "
+          "console explain form.</li>"
           "</ul></section>",
           model->runtime, model->cache, model->workers,
-          (unsigned long long)model->hits,
-          (unsigned long long)model->misses, (unsigned long long)model->bytes,
-          model->explain_path, model->filter, model->explain_path,
-          model->compare_before, model->compare_after, model->filter)) {
+          (unsigned long long)model->hits, (unsigned long long)model->misses,
+          (unsigned long long)model->bytes, model->explain_path, model->filter,
+          model->explain_path, model->compare_before, model->compare_after,
+          model->filter)) {
     return false;
   }
   response->status = 200U;
@@ -925,8 +926,7 @@ bool laghu_http_administrative_render_console_model(
 }
 
 bool laghu_http_administrative_build_console_page_model(
-    const laghu_http_administrative_plan *plan,
-    const laghu_cache_stats *stats,
+    const laghu_http_administrative_plan *plan, const laghu_cache_stats *stats,
     const laghu_operational_readiness *ready,
     const laghu_operational_snapshot *snapshot,
     laghu_http_administrative_console_page_model *model) {
@@ -977,21 +977,21 @@ bool laghu_http_administrative_render_console_page(
   memset(response, 0, sizeof(*response));
   if (plan->action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE &&
       plan->output_json) {
-    written =
-        snprintf(output, capacity,
-                 "{\"schema\":\"laghu-console-v1\","
-                 "\"runtime\":\"%s\",\"cache\":\"%s\","
-                 "\"workers\":\"%s\",\"hits\":%llu,\"misses\":%llu,"
-                 "\"bytes\":%llu,\"ready\":%s}",
-                 model->console.runtime, model->console.cache,
-                 model->console.workers, (unsigned long long)model->console.hits,
-                 (unsigned long long)model->console.misses,
-                 (unsigned long long)model->console.bytes,
-                 (strcmp(model->console.runtime, "ready") == 0 &&
-                  strcmp(model->console.cache, "ready") == 0 &&
-                  strcmp(model->console.workers, "ready") == 0)
-                     ? "true"
-                     : "false");
+    written = snprintf(output, capacity,
+                       "{\"schema\":\"laghu-console-v1\","
+                       "\"runtime\":\"%s\",\"cache\":\"%s\","
+                       "\"workers\":\"%s\",\"hits\":%llu,\"misses\":%llu,"
+                       "\"bytes\":%llu,\"ready\":%s}",
+                       model->console.runtime, model->console.cache,
+                       model->console.workers,
+                       (unsigned long long)model->console.hits,
+                       (unsigned long long)model->console.misses,
+                       (unsigned long long)model->console.bytes,
+                       (strcmp(model->console.runtime, "ready") == 0 &&
+                        strcmp(model->console.cache, "ready") == 0 &&
+                        strcmp(model->console.workers, "ready") == 0)
+                           ? "true"
+                           : "false");
     if (written < 0 || (size_t)written >= capacity) return false;
     response->status = 200U;
     response->content = LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON;
@@ -1001,8 +1001,8 @@ bool laghu_http_administrative_render_console_page(
   if (plan->action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_HISTORY &&
       plan->output_json) {
     if (!model->has_history) return false;
-    return laghu_http_administrative_render_history(&model->history, true, output,
-                                                    capacity, response);
+    return laghu_http_administrative_render_history(&model->history, true,
+                                                    output, capacity, response);
   }
   if (plan->action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN &&
       plan->output_json) {
@@ -1011,7 +1011,7 @@ bool laghu_http_administrative_render_console_page(
                                                     capacity, response);
   }
   if (!laghu_http_administrative_render_console_model(&model->console, output,
-                                                     capacity, response)) {
+                                                      capacity, response)) {
     return false;
   }
   if (response->content != LAGHU_HTTP_ADMINISTRATIVE_CONTENT_HTML) {
@@ -1028,16 +1028,16 @@ bool laghu_http_administrative_render_console_page(
     if (!model->has_history) {
       return false;
     }
-    if (!laghu_http_administrative_render_history_fragment(&model->history, output,
-                                                          capacity, &length)) {
+    if (!laghu_http_administrative_render_history_fragment(
+            &model->history, output, capacity, &length)) {
       return false;
     }
   } else if (plan->action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
     if (!model->has_explain) {
       return false;
     }
-    if (!laghu_http_administrative_render_explain_fragment(&model->explain, output,
-                                                          capacity, &length)) {
+    if (!laghu_http_administrative_render_explain_fragment(
+            &model->explain, output, capacity, &length)) {
       return false;
     }
   } else {
@@ -1106,13 +1106,13 @@ bool laghu_http_administrative_build_history_model(
   unsigned int index;
   unsigned int count;
   if (snapshot == NULL || query == NULL || model == NULL ||
-      snapshot->version != LAGHU_OPERATIONAL_VERSION ||
-      query->limit == 0U) {
+      snapshot->version != LAGHU_OPERATIONAL_VERSION || query->limit == 0U) {
     return false;
   }
   memset(model, 0, sizeof(*model));
   model->limit = query->limit;
-  count = snapshot->slot_count < query->limit ? snapshot->slot_count : query->limit;
+  count =
+      snapshot->slot_count < query->limit ? snapshot->slot_count : query->limit;
   for (index = 0U; index < count; ++index) {
     const laghu_operational_slot_snapshot *slot = &snapshot->slots[index];
     laghu_http_administrative_history_record *record = &model->records[index];
@@ -1166,7 +1166,8 @@ bool laghu_http_administrative_render_history(
     if (written < 0 || (size_t)written >= capacity) return false;
     length = (size_t)written;
     for (index = 0U; index < model->count; ++index) {
-      const laghu_http_administrative_history_record *record = &model->records[index];
+      const laghu_http_administrative_history_record *record =
+          &model->records[index];
       uint64_t saved = record->selected_bytes > record->original_bytes
                            ? 0ULL
                            : record->original_bytes - record->selected_bytes;
@@ -1182,15 +1183,14 @@ bool laghu_http_administrative_render_history(
           "\"requests\":%llu,\"original_bytes\":%llu,"
           "\"selected_bytes\":%llu,\"saved_bytes\":%llu,"
           "\"saved_ratio\":%u.%02u}",
-          index == 0U ? "" : ",",
-          record->index, record->surface, record->process,
-          record->active ? "true" : "false",
+          index == 0U ? "" : ",", record->index, record->surface,
+          record->process, record->active ? "true" : "false",
           record->healthy ? "true" : "false",
           record->required ? "true" : "false",
           (unsigned long long)record->requests,
           (unsigned long long)record->original_bytes,
-          (unsigned long long)record->selected_bytes,
-          (unsigned long long)saved, saved_ppm / 100U, saved_ppm % 100U);
+          (unsigned long long)record->selected_bytes, (unsigned long long)saved,
+          saved_ppm / 100U, saved_ppm % 100U);
       if (json_written < 0 || (size_t)json_written >= sizeof(row)) return false;
       if (length + (size_t)json_written + 2U > capacity) return false;
       (void)memcpy(output + length, row, (size_t)json_written);
@@ -1205,40 +1205,42 @@ bool laghu_http_administrative_render_history(
     response->length = length;
     return true;
   }
-  written = snprintf(
-      output, capacity,
-      "<!doctype html><meta charset=utf-8><title>Laghu history</title>"
-      "<h1>Laghu history</h1><p>Displaying up to %u slot records.</p>"
-      "<table><thead><tr><th>Slot</th><th>Surface</th><th>Process</th>"
-      "<th>Active</th><th>Healthy</th><th>Required</th>"
-      "<th>Requests</th><th>Original bytes</th><th>Selected bytes</th>"
-      "<th>Saved bytes</th><th>Saved %%</th>"
-      "</tr></thead><tbody>",
-      model->limit);
+  written =
+      snprintf(output, capacity,
+               "<!doctype html><meta charset=utf-8><title>Laghu history</title>"
+               "<h1>Laghu history</h1><p>Displaying up to %u slot records.</p>"
+               "<table><thead><tr><th>Slot</th><th>Surface</th><th>Process</th>"
+               "<th>Active</th><th>Healthy</th><th>Required</th>"
+               "<th>Requests</th><th>Original bytes</th><th>Selected bytes</th>"
+               "<th>Saved bytes</th><th>Saved %%</th>"
+               "</tr></thead><tbody>",
+               model->limit);
   if (written < 0 || (size_t)written >= capacity) return false;
   length = (size_t)written;
   for (index = 0U; index < model->count; ++index) {
-    const laghu_http_administrative_history_record *record = &model->records[index];
+    const laghu_http_administrative_history_record *record =
+        &model->records[index];
     {
       uint64_t saved = record->selected_bytes > record->original_bytes
-                          ? 0U
-                          : record->original_bytes - record->selected_bytes;
+                           ? 0U
+                           : record->original_bytes - record->selected_bytes;
       unsigned int saved_ppm;
       if (record->original_bytes == 0U)
         saved_ppm = 0U;
       else
         saved_ppm = (unsigned int)((saved * 10000ULL) / record->original_bytes);
       written = snprintf(
-        row, sizeof(row),
-        "<tr><td>%u</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
-        "<td>%s</td><td>%llu</td><td>%llu</td><td>%llu</td><td>%llu (%u.%02u%%)"
-        "</td></tr>",
-        record->index, record->surface, record->process,
-        record->active ? "yes" : "no", record->healthy ? "yes" : "no",
-        record->required ? "yes" : "no", (unsigned long long)record->requests,
-        (unsigned long long)record->original_bytes,
-        (unsigned long long)record->selected_bytes, (unsigned long long)saved,
-        saved_ppm / 100U, saved_ppm % 100U);
+          row, sizeof(row),
+          "<tr><td>%u</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+          "<td>%s</td><td>%llu</td><td>%llu</td><td>%llu</td><td>%llu "
+          "(%u.%02u%%)"
+          "</td></tr>",
+          record->index, record->surface, record->process,
+          record->active ? "yes" : "no", record->healthy ? "yes" : "no",
+          record->required ? "yes" : "no", (unsigned long long)record->requests,
+          (unsigned long long)record->original_bytes,
+          (unsigned long long)record->selected_bytes, (unsigned long long)saved,
+          saved_ppm / 100U, saved_ppm % 100U);
     }
     if (written < 0 || (size_t)written >= sizeof(row)) return false;
     if (length + (size_t)written + 16U > capacity) return false;
@@ -1288,17 +1290,19 @@ bool laghu_http_administrative_build_explain_model(
       !laghu_cache_source_hash(model->before, model->before_hash)) {
     model->before_hash[0] = '\0';
   }
-  if (model->has_after && !laghu_cache_source_hash(model->after, model->after_hash)) {
+  if (model->has_after &&
+      !laghu_cache_source_hash(model->after, model->after_hash)) {
     model->after_hash[0] = '\0';
   }
-  (void)snprintf(model->status, sizeof(model->status),
-                 "%s", model->runtime_ready ? "runtime-ready"
-                           : model->cache_ready ? "cache-ready"
-                                              : "not-ready");
+  (void)snprintf(model->status, sizeof(model->status), "%s",
+                 model->runtime_ready ? "runtime-ready"
+                 : model->cache_ready ? "cache-ready"
+                                      : "not-ready");
   (void)snprintf(
       model->recommendation, sizeof(model->recommendation),
       "Per-URL explainability is limited without dedicated request event "
-      "storage. Enable request-level logging for full evidence on future requests.");
+      "storage. Enable request-level logging for full evidence on future "
+      "requests.");
   return true;
 }
 
@@ -1312,21 +1316,21 @@ bool laghu_http_administrative_render_explain(
     return false;
   }
   if (model->json) {
-    written = snprintf(
-        output, capacity,
-        "{\"schema\":\"laghu-explain-v1\","
-        "\"target\":\"%s\","
-        "\"status\":\"%s\","
-        "\"source_hash\":\"%s\","
-        "\"readiness\":{\"runtime\":\"%s\",\"cache\":\"%s\","
-        "\"workers\":\"%s\"},"
-        "\"hit_ratio_ppm\":%llu,"
-        "\"recommendation\":\"%s\"}",
-        model->target, model->status, model->source_hash,
-        model->runtime_ready ? "ready" : "unavailable",
-        model->cache_ready ? "ready" : "unavailable",
-        model->workers_ready ? "ready" : "unavailable",
-        (unsigned long long)model->hits_ratio_ppm, model->recommendation);
+    written = snprintf(output, capacity,
+                       "{\"schema\":\"laghu-explain-v1\","
+                       "\"target\":\"%s\","
+                       "\"status\":\"%s\","
+                       "\"source_hash\":\"%s\","
+                       "\"readiness\":{\"runtime\":\"%s\",\"cache\":\"%s\","
+                       "\"workers\":\"%s\"},"
+                       "\"hit_ratio_ppm\":%llu,"
+                       "\"recommendation\":\"%s\"}",
+                       model->target, model->status, model->source_hash,
+                       model->runtime_ready ? "ready" : "unavailable",
+                       model->cache_ready ? "ready" : "unavailable",
+                       model->workers_ready ? "ready" : "unavailable",
+                       (unsigned long long)model->hits_ratio_ppm,
+                       model->recommendation);
     if (written < 0 || (size_t)written >= capacity) return false;
     response->status = 200U;
     response->content = LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON;
@@ -1335,11 +1339,11 @@ bool laghu_http_administrative_render_explain(
   }
   if (model->has_before || model->has_after || model->has_filter) {
     const char *before_target = model->has_before ? model->before : "Not set";
-    const char *before_hash = model->before_hash[0] != '\0' ? model->before_hash
-                                                          : "Unavailable";
+    const char *before_hash =
+        model->before_hash[0] != '\0' ? model->before_hash : "Unavailable";
     const char *after_target = model->has_after ? model->after : "Not set";
-    const char *after_hash = model->after_hash[0] != '\0' ? model->after_hash
-                                                        : "Unavailable";
+    const char *after_hash =
+        model->after_hash[0] != '\0' ? model->after_hash : "Unavailable";
     const char *comparison_status;
     bool hashes_match = model->has_before && model->has_after &&
                         model->before_hash[0] != '\0' &&
@@ -1348,7 +1352,8 @@ bool laghu_http_administrative_render_explain(
     if (!model->has_before || !model->has_after) {
       comparison_status = "Set both before and after values to compare hashes.";
     } else if (hashes_match) {
-      comparison_status = "Before and after produce the same normalized source key.";
+      comparison_status =
+          "Before and after produce the same normalized source key.";
     } else {
       comparison_status = "Before and after differ by normalized source key.";
     }
@@ -1365,20 +1370,20 @@ bool laghu_http_administrative_render_explain(
     }
     comparison_block = comparison;
   }
-  written = snprintf(
-      output, capacity,
-      "<!doctype html><meta charset=utf-8><title>Laghu explain</title>"
-      "<h1>Laghu explain</h1><p>Target: %s</p>"
-      "<p>Status: %s</p><p>Target hash: %s</p>"
-      "<p>Runtime: %s · Cache: %s · Workers: %s</p>"
-      "<p>Cache hit ratio ppm: %llu</p>"
-      "<p>Recommendation: %s</p>%s",
-      model->target, model->status, model->source_hash,
-      model->runtime_ready ? "ready" : "unavailable",
-      model->cache_ready ? "ready" : "unavailable",
-      model->workers_ready ? "ready" : "unavailable",
-      (unsigned long long)model->hits_ratio_ppm, model->recommendation,
-      comparison_block);
+  written =
+      snprintf(output, capacity,
+               "<!doctype html><meta charset=utf-8><title>Laghu explain</title>"
+               "<h1>Laghu explain</h1><p>Target: %s</p>"
+               "<p>Status: %s</p><p>Target hash: %s</p>"
+               "<p>Runtime: %s · Cache: %s · Workers: %s</p>"
+               "<p>Cache hit ratio ppm: %llu</p>"
+               "<p>Recommendation: %s</p>%s",
+               model->target, model->status, model->source_hash,
+               model->runtime_ready ? "ready" : "unavailable",
+               model->cache_ready ? "ready" : "unavailable",
+               model->workers_ready ? "ready" : "unavailable",
+               (unsigned long long)model->hits_ratio_ppm, model->recommendation,
+               comparison_block);
   if (written < 0 || (size_t)written >= capacity) return false;
   response->status = 200U;
   response->content = LAGHU_HTTP_ADMINISTRATIVE_CONTENT_HTML;
@@ -1394,7 +1399,8 @@ bool laghu_http_administrative_render_console(
   laghu_http_administrative_console_model model;
   int written;
   if (!stats || !ready || !query || !response) return false;
-  if (!laghu_http_administrative_build_console_model(stats, ready, query, &model)) {
+  if (!laghu_http_administrative_build_console_model(stats, ready, query,
+                                                     &model)) {
     return false;
   }
   if (as_json) {
@@ -1417,7 +1423,7 @@ bool laghu_http_administrative_render_console(
     return true;
   }
   if (!laghu_http_administrative_render_console_model(&model, output, capacity,
-                                                     response))
+                                                      response))
     return false;
   return true;
 }

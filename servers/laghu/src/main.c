@@ -60,11 +60,16 @@ static void usage(FILE *stream) {
       "  --purge-token-file PATH --purge-allow CIDR\n"
       "  --cache-flush-file PATH --statistics on|off\n"
       "Commands:\n"
-      "  laghu status URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
-      "  laghu doctor URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
-      "  laghu purge URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
-      "  laghu explain URL --token-file PATH [--timeout SECONDS] [--ca-file PATH] [--json]\n"
-      "  laghu bench URL [--requests N] [--timeout SECONDS] [--ca-file PATH] [--json]\n"
+      "  laghu status URL --token-file PATH [--timeout SECONDS] [--ca-file "
+      "PATH] [--json]\n"
+      "  laghu doctor URL --token-file PATH [--timeout SECONDS] [--ca-file "
+      "PATH] [--json]\n"
+      "  laghu purge URL --token-file PATH [--timeout SECONDS] [--ca-file "
+      "PATH] [--json]\n"
+      "  laghu explain URL --token-file PATH [--timeout SECONDS] [--ca-file "
+      "PATH] [--json]\n"
+      "  laghu bench URL [--requests N] [--timeout SECONDS] [--ca-file PATH] "
+      "[--json]\n"
       "  laghu migrate [FILE]\n",
       stream);
 }

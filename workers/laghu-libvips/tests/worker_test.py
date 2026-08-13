@@ -5,6 +5,7 @@
 
 import os
 import json
+import fcntl
 from pathlib import Path
 import re
 import shutil
@@ -65,6 +66,26 @@ def create_images(vips, root):
     return images
 
 
+def assert_cache_startup_retries(optimizer, queue, cache):
+    run([str(optimizer), "--once", str(queue), str(cache)])
+    metadata = cache.parent / f"{cache.name}.laghu-metadata"
+    with metadata.open("r+b") as locked:
+        fcntl.lockf(locked, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        process = subprocess.Popen(
+            [str(optimizer), "--serve", str(queue), str(cache)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        time.sleep(0.1)
+        assert process.poll() is None, "worker exited while cache lock was transient"
+        fcntl.lockf(locked, fcntl.LOCK_UN)
+    time.sleep(0.4)
+    process.terminate()
+    _, stderr = process.communicate(timeout=2)
+    assert '"state":"running"' in stderr, stderr
+
+
 def main():
     if len(sys.argv) != 4:
         raise SystemExit("usage: worker_test.py OPTIMIZER VIPS CACHE_FIXTURE")
@@ -83,6 +104,7 @@ def main():
         cache = root / "cache"
         images = create_images(vips, root)
         run([str(optimizer), "--init", str(queue), str(cache)])
+        assert_cache_startup_retries(optimizer, queue, cache)
 
         published = {}
         for extension, image in images.items():

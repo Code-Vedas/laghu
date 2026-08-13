@@ -16,6 +16,7 @@
 #include "laghu/http.h"
 #include "laghu/javascript.h"
 #include "laghu/operational.h"
+#include "laghu/precompressed.h"
 #include "laghu/queue.h"
 #include "laghu/service_config.h"
 #include "laghu/source.h"
@@ -109,8 +110,8 @@ void ngx_http_laghu_exit_process(ngx_cycle_t *cycle);
 bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
-bool ngx_http_laghu_administration_candidate(
-    ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
+bool ngx_http_laghu_administration_candidate(ngx_http_request_t *request,
+                                             ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_image_queue(
     ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf);

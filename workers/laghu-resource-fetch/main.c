@@ -58,7 +58,7 @@ static volatile sig_atomic_t laghu_fetch_stop;
 static void laghu_fetch_log_lifecycle(const char *state, const char *failure) {
   char line[LAGHU_LOG_LINE_SIZE];
   laghu_log_lifecycle record = {
-      .common = {(time_t)time(NULL), "worker", "resource-fetch"},
+      .common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL},
       .state = state,
       .failure = failure};
   if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
@@ -69,7 +69,7 @@ static void laghu_fetch_log_job(const laghu_runtime_job *job, bool success,
                                 uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
   laghu_log_job record = {
-      .common = {(time_t)time(NULL), "worker", "resource-fetch"},
+      .common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL},
       .job_kind = "font_css",
       .outcome = success ? "success" : "failed",
       .input_bytes = job->payload.length,

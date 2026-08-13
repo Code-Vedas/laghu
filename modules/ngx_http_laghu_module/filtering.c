@@ -3,11 +3,10 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <inttypes.h>
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-
-#include <inttypes.h>
 
 #include "laghu/html_cache.h"
 #include "ngx_http_laghu_internal.h"
@@ -49,9 +48,8 @@ static bool ngx_http_laghu_html_cache_hit(const ngx_http_request_t *request) {
   return false;
 }
 
-static void laghu_http_laghu_generate_trace_ids(const ngx_http_request_t *request,
-                                               char trace_id[33U],
-                                               char span_id[17U]) {
+static void laghu_http_laghu_generate_trace_ids(
+    const ngx_http_request_t *request, char trace_id[33U], char span_id[17U]) {
   uint64_t trace_high = UINT64_C(1469598103934665603);
   uint64_t trace_low = UINT64_C(1099511628211);
   trace_high ^= (uint64_t)ngx_time();
@@ -65,8 +63,7 @@ static void laghu_http_laghu_generate_trace_ids(const ngx_http_request_t *reques
   if (trace_high == 0U && trace_low == 0U) trace_high = UINT64_C(1);
   (void)snprintf(trace_id, 33U, "%016" PRIx64 "%016" PRIx64, trace_high,
                  trace_low);
-  (void)snprintf(span_id, 17U, "%016" PRIx64,
-                 trace_high ^ trace_low);
+  (void)snprintf(span_id, 17U, "%016" PRIx64, trace_high ^ trace_low);
 }
 
 static bool ngx_http_laghu_html_cache_control_prohibits(laghu_buffer value) {
@@ -121,7 +118,10 @@ static bool ngx_http_laghu_html_cache_response_safe(
                          10U) == 0) ||
         (header->name.length == 4U &&
          ngx_strncasecmp((u_char *)header->name.data, (u_char *)"Vary", 4U) ==
-             0) ||
+             0 &&
+         !(header->value.length == 15U &&
+           ngx_strncasecmp((u_char *)header->value.data,
+                           (u_char *)"Accept-Encoding", 15U) == 0)) ||
         (header->name.length == 16U &&
          ngx_strncasecmp((u_char *)header->name.data,
                          (u_char *)"Content-Encoding", 16U) == 0))
@@ -144,19 +144,21 @@ static bool ngx_http_laghu_html_cache_response_safe(
 
 static void ngx_http_laghu_publish_html_cache(
     ngx_http_laghu_request_ctx_t *context, ngx_http_laghu_loc_conf_t *conf,
-    laghu_buffer selected) {
+    const laghu_http_transaction_result *result) {
+  laghu_buffer selected;
+  if (result == NULL || result->dependencies_pending) return;
+  selected = result->cache_selected.data == NULL ? result->selected
+                                                 : result->cache_selected;
   if (context == NULL || conf == NULL ||
       conf->core.html_cache_origin[0] == '\0' ||
       conf->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
-      (selected.data == context->capture &&
-       selected.length == context->capture_length) ||
       !ngx_http_laghu_html_cache_response_safe(context))
     return;
   (void)laghu_html_cache_publish(
       conf->service.image_cache, conf->core.html_cache_origin,
       (const char *)context->request.normalized_path.data,
-      (const char *)context->response.source_validator.data,
-      selected, (uint64_t)ngx_time(), NULL);
+      (const char *)context->response.source_validator.data, selected,
+      (uint64_t)ngx_time(), NULL);
 }
 
 ngx_int_t ngx_http_laghu_transaction_header_filter(
@@ -175,8 +177,8 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
           0) {
     return ngx_http_laghu_next_header_filter(request);
   }
-  administration_candidate = conf != NULL &&
-                            ngx_http_laghu_administration_candidate(request, conf);
+  administration_candidate =
+      conf != NULL && ngx_http_laghu_administration_candidate(request, conf);
   if (administration_candidate) {
     return ngx_http_laghu_next_header_filter(request);
   }
@@ -189,7 +191,7 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(
   }
   context->log_started_ms = ngx_current_msec;
   laghu_http_laghu_generate_trace_ids(request, context->trace_id,
-                                     context->span_id);
+                                      context->span_id);
   prepared = laghu_http_transaction_prepare(
       &context->transaction, &context->request, &context->response,
       &context->environment, &result);
@@ -339,7 +341,7 @@ ngx_int_t ngx_http_laghu_transaction_body_filter(ngx_http_request_t *request,
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
-    ngx_http_laghu_publish_html_cache(context, conf, result.selected);
+    ngx_http_laghu_publish_html_cache(context, conf, &result);
     laghu_operational_registry_budget(
         &ngx_http_laghu_operational, &context->transaction.budget,
         context->transaction.environment.config.transform_deadline_ms);

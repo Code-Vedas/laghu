@@ -3,8 +3,8 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <stdio.h>
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -22,8 +22,8 @@ static void proxy_access_generate_trace_ids(proxy_access_log *access) {
   if (trace_high == 0U && trace_low == 0U) trace_high = UINT64_C(1);
   (void)snprintf(access->trace_id, sizeof(access->trace_id),
                  "%016" PRIx64 "%016" PRIx64, trace_high, trace_low);
-  (void)snprintf(access->span_id, sizeof(access->span_id),
-                 "%016" PRIx64, trace_high ^ trace_low);
+  (void)snprintf(access->span_id, sizeof(access->span_id), "%016" PRIx64,
+                 trace_high ^ trace_low);
 }
 
 static void proxy_log_line(proxy_queue *queue, const char *line) {
@@ -93,10 +93,9 @@ void proxy_access_write(proxy_queue *queue, const proxy_access_log *access) {
                                        LAGHU_OPERATIONAL_FAILURE_TRANSPORT);
   {
     laghu_log_transaction record = {
-        .common =
-            {(time_t)time(NULL), "standalone", "standalone",
-             access->trace_id[0] == '\0' ? NULL : access->trace_id,
-             access->span_id[0] == '\0' ? NULL : access->span_id},
+        .common = {(time_t)time(NULL), "standalone", "standalone",
+                   access->trace_id[0] == '\0' ? NULL : access->trace_id,
+                   access->span_id[0] == '\0' ? NULL : access->span_id},
         .method = access->method[0] ? access->method : "unknown",
         .path = access->path[0] ? access->path : "/",
         .status = access->status,

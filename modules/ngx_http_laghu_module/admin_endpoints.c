@@ -111,8 +111,8 @@ static bool ngx_http_laghu_admin_authorized(
   return false;
 }
 
-bool ngx_http_laghu_administration_candidate(
-    ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf) {
+bool ngx_http_laghu_administration_candidate(ngx_http_request_t *request,
+                                             ngx_http_laghu_loc_conf_t *conf) {
   laghu_http_administrative_options options;
   laghu_http_administrative_plan plan;
   laghu_buffer method = {NULL, 0U};
@@ -121,8 +121,8 @@ bool ngx_http_laghu_administration_candidate(
     return false;
   }
   if ((request->method_name.len == 5U &&
-       ngx_strncasecmp((u_char *)request->method_name.data, (u_char *)"PURGE", 5U) ==
-           0) ||
+       ngx_strncasecmp((u_char *)request->method_name.data, (u_char *)"PURGE",
+                       5U) == 0) ||
       (request->unparsed_uri.len >= 12U &&
        request->unparsed_uri.len >= strlen("laghu=purge") &&
        ngx_strnstr(request->unparsed_uri.data, (char *)"laghu=purge",
@@ -216,11 +216,11 @@ ngx_int_t ngx_http_laghu_admin_endpoint(ngx_http_request_t *request,
         return NGX_HTTP_SERVICE_UNAVAILABLE;
       cache_ready = true;
     } else {
-      cache_ready = laghu_cache_backend_health_path(conf->service.image_cache,
-                                                   &stats);
+      cache_ready =
+          laghu_cache_backend_health_path(conf->service.image_cache, &stats);
     }
     if (!laghu_operational_registry_snapshot(&ngx_http_laghu_operational,
-                                            &snapshot) ||
+                                             &snapshot) ||
         !laghu_operational_readiness_evaluate(
             &snapshot, (uint64_t)ngx_time(), true, cache_ready,
             conf->service.readiness_strict, &readiness) ||

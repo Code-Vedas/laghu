@@ -56,8 +56,8 @@
 #include "mod_laghu_internal.h"
 
 static void laghu_apache_generate_trace_ids(const request_rec *request,
-                                           char trace_id[33U],
-                                           char span_id[17U]) {
+                                            char trace_id[33U],
+                                            char span_id[17U]) {
   uint64_t trace_high = UINT64_C(1469598103934665603);
   uint64_t trace_low = UINT64_C(1099511628211);
   if (request == NULL || trace_id == NULL || span_id == NULL) return;
@@ -69,8 +69,7 @@ static void laghu_apache_generate_trace_ids(const request_rec *request,
   if (trace_high == 0U && trace_low == 0U) trace_high = UINT64_C(1);
   (void)snprintf(trace_id, 33U, "%016" PRIx64 "%016" PRIx64, trace_high,
                  trace_low);
-  (void)snprintf(span_id, 17U, "%016" PRIx64,
-                 trace_high ^ trace_low);
+  (void)snprintf(span_id, 17U, "%016" PRIx64, trace_high ^ trace_low);
 }
 
 static bool laghu_apache_html_cache_token_equal(const unsigned char *value,
@@ -108,6 +107,32 @@ static bool laghu_apache_html_cache_control_prohibits(laghu_buffer value) {
   return false;
 }
 
+static bool laghu_apache_html_cache_vary_is_encoding(laghu_buffer value) {
+  size_t cursor = 0U;
+  bool found = false;
+  while (cursor < value.length) {
+    size_t end = cursor;
+    size_t token_start;
+    size_t token_end;
+    while (end < value.length && value.data[end] != ',') ++end;
+    token_start = cursor;
+    while (token_start < end &&
+           (value.data[token_start] == ' ' || value.data[token_start] == '\t'))
+      ++token_start;
+    token_end = end;
+    while (token_end > token_start && (value.data[token_end - 1U] == ' ' ||
+                                       value.data[token_end - 1U] == '\t'))
+      --token_end;
+    if (!laghu_apache_html_cache_token_equal(value.data + token_start,
+                                             token_end - token_start,
+                                             "Accept-Encoding"))
+      return false;
+    found = true;
+    cursor = end + 1U;
+  }
+  return found;
+}
+
 static bool laghu_apache_html_cache_response_safe(
     const laghu_apache_context *context) {
   size_t index;
@@ -132,7 +157,8 @@ static bool laghu_apache_html_cache_response_safe(
          ap_cstr_casecmpn((const char *)header->name.data, "Set-Cookie", 10U) ==
              0) ||
         (header->name.length == 4U &&
-         ap_cstr_casecmpn((const char *)header->name.data, "Vary", 4U) == 0) ||
+         ap_cstr_casecmpn((const char *)header->name.data, "Vary", 4U) == 0 &&
+         !laghu_apache_html_cache_vary_is_encoding(header->value)) ||
         (header->name.length == 16U &&
          ap_cstr_casecmpn((const char *)header->name.data, "Content-Encoding",
                           16U) == 0))
@@ -153,10 +179,12 @@ static bool laghu_apache_html_cache_response_safe(
   return html;
 }
 
-static void laghu_apache_publish_html_cache(laghu_apache_context *context,
-                                            laghu_buffer selected) {
+static void laghu_apache_publish_html_cache(
+    laghu_apache_context *context,
+    const laghu_http_transaction_result *result) {
   const laghu_apache_config *config;
-  if (context == NULL || (config = context->config) == NULL ||
+  if (context == NULL || result == NULL || result->dependencies_pending ||
+      (config = context->config) == NULL ||
       config->core.html_cache_origin[0] == '\0' ||
       config->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
       !laghu_apache_html_cache_response_safe(context))
@@ -165,7 +193,9 @@ static void laghu_apache_publish_html_cache(laghu_apache_context *context,
       config->service.image_cache, config->core.html_cache_origin,
       (const char *)context->request.normalized_path.data,
       (const char *)context->response.source_validator.data,
-      selected, (uint64_t)apr_time_sec(apr_time_now()), NULL);
+      result->cache_selected.data == NULL ? result->selected
+                                          : result->cache_selected,
+      (uint64_t)apr_time_sec(apr_time_now()), NULL);
 }
 
 bool laghu_apache_peer_matches(request_rec *request,
@@ -390,6 +420,10 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
   laghu_apache_context *context = filter->ctx;
   apr_bucket *bucket;
   bool eos = false;
+  if (apr_table_get(request->notes, "laghu-html-cache-served") != NULL) {
+    ap_remove_output_filter(filter);
+    return ap_pass_brigade(filter->next, brigade);
+  }
   if (context == NULL) {
     laghu_apache_config *server_config =
         ap_get_module_config(request->server->module_config, &laghu_module);
@@ -404,7 +438,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
     }
     context->log_started = apr_time_now();
     laghu_apache_generate_trace_ids(request, context->trace_id,
-                                   context->span_id);
+                                    context->span_id);
     context->config = laghu_apache_merge_config(request->pool, server_config,
                                                 directory_config);
     if (context->config == NULL || !laghu_apache_normalize(request, context)) {
@@ -518,7 +552,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
     (void)laghu_http_transaction_finalize(
         &context->transaction,
         (laghu_buffer){context->capture, context->capture_length}, &result);
-    laghu_apache_publish_html_cache(context, result.selected);
+    laghu_apache_publish_html_cache(context, &result);
     laghu_operational_registry_budget(
         &laghu_apache_operational, &context->transaction.budget,
         context->transaction.environment.config.transform_deadline_ms);

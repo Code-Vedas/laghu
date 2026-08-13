@@ -130,7 +130,8 @@ typedef struct {
 typedef struct {
   unsigned int count;
   unsigned int limit;
-  laghu_http_administrative_history_record records[LAGHU_OPERATIONAL_HISTORY_SIZE];
+  laghu_http_administrative_history_record
+      records[LAGHU_OPERATIONAL_HISTORY_SIZE];
 } laghu_http_administrative_history_model;
 
 typedef struct {
@@ -311,12 +312,16 @@ typedef struct {
   laghu_buffer original;
   laghu_buffer selected;
   unsigned char *owned_body;
+  /* Identity representation preserved when selected is content-encoded. */
+  laghu_buffer cache_selected;
+  unsigned char *cache_owned_body;
   size_t capture_limit;
   laghu_http_header_operation
       header_operations[LAGHU_HTTP_MAX_HEADER_OPERATIONS];
   size_t header_operation_count;
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
   char cache_key[LAGHU_RUNTIME_KEY_SIZE];
+  bool dependencies_pending;
   bool job_published;
   bool not_modified;
   bool javascript_defer_recommended;
@@ -383,16 +388,14 @@ bool laghu_http_administrative_render_console(
     const laghu_http_administrative_console_query *query,
     laghu_http_administrative_response *response);
 bool laghu_http_administrative_build_console_page_model(
-    const laghu_http_administrative_plan *plan,
-    const laghu_cache_stats *stats,
+    const laghu_http_administrative_plan *plan, const laghu_cache_stats *stats,
     const laghu_operational_readiness *ready,
     const laghu_operational_snapshot *snapshot,
     laghu_http_administrative_console_page_model *model);
 bool laghu_http_administrative_render_console_page(
     const laghu_http_administrative_plan *plan,
     const laghu_http_administrative_console_page_model *model, char *output,
-    size_t capacity,
-    laghu_http_administrative_response *response);
+    size_t capacity, laghu_http_administrative_response *response);
 bool laghu_http_administrative_build_console_model(
     const laghu_cache_stats *stats, const laghu_operational_readiness *ready,
     const laghu_http_administrative_console_query *query,
@@ -419,8 +422,7 @@ bool laghu_http_administrative_build_history_model(
 bool laghu_http_administrative_build_explain_model(
     const laghu_http_administrative_explain_query *query,
     const laghu_operational_readiness *ready, const laghu_cache_stats *stats,
-    bool as_json,
-    laghu_http_administrative_explain_model *model);
+    bool as_json, laghu_http_administrative_explain_model *model);
 void laghu_http_beacon_options_init(laghu_http_beacon_options *options);
 bool laghu_http_beacon_plan_build(laghu_http_beacon_plan *plan,
                                   laghu_buffer method, laghu_buffer target,

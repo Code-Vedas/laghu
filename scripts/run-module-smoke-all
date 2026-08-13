@@ -104,7 +104,7 @@ printf '%s\n' '<html><head><script src="/barrier.js"></script></head><body><styl
   >"${SMOKE_DIR}/html/no-cross-page.html"
 printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
   >"${SMOKE_DIR}/html/missing-head-page.html"
-printf '%s\n' "<html><body><!-- remove --><p class=\"safe\" title=\"two words\">one   two</p><audio src=\"http://127.0.0.1:${PORT}/asset.mp3?q=1#hero\"></audio><script type=\"text/javascript\"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>" \
+printf '%s\n' "<html><body><!-- remove --><p class=\"safe\" title=\"two words\">one   two</p><p>compressible compressible compressible compressible compressible compressible compressible compressible compressible compressible</p><audio src=\"http://127.0.0.1:${PORT}/asset.mp3?q=1#hero\"></audio><script type=\"text/javascript\"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>" \
   >"${SMOKE_DIR}/html/minify-page.html"
 printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"><link rel="preconnect" href="https://reserved.example.test"></head><body><script src="https://cdn.example.test/app.js?token=secret#part"></script></body></html>' \
   >"${SMOKE_DIR}/html/hints-page.html"
@@ -349,6 +349,8 @@ ${HTTP2_DIRECTIVE}
 
     location = /minify-page.html {
       laghu rewrite_level bandwidth;
+      laghu html_cache_origin https://h3-cache.example.test;
+      laghu html_cache_ttl 60;
       default_type text/html;
       try_files /minify-page.html =404;
     }
@@ -939,23 +941,22 @@ if [ "${image_smoke}" -eq 1 ]; then
 
   attempt=0
   while [ "${attempt}" -lt 100 ]; do
-    if find "${SMOKE_DIR}/cache" -name 'index-*.meta' -print -quit | \
-        grep . >/dev/null; then
+    curl --fail --silent --show-error \
+      --header 'Accept: image/webp' \
+      --output "${SMOKE_DIR}/image-warm-body" \
+      --dump-header "${SMOKE_DIR}/image-warm-headers" \
+      "http://127.0.0.1:${PORT}/image.png"
+    if tr -d '\r' <"${SMOKE_DIR}/image-warm-headers" | \
+        grep -i -x 'X-Laghu: image-hit' >/dev/null; then
       break
     fi
     attempt=$((attempt + 1))
     sleep 0.1
   done
   if [ "${attempt}" -eq 100 ]; then
-    echo "Laghu optimizer did not publish an image variant." >&2
+    echo "Laghu optimizer did not publish target image variant." >&2
     exit 1
   fi
-
-  curl --fail --silent --show-error \
-    --header 'Accept: image/webp' \
-    --output "${SMOKE_DIR}/image-warm-body" \
-    --dump-header "${SMOKE_DIR}/image-warm-headers" \
-    "http://127.0.0.1:${PORT}/image.png"
   tr -d '\r' <"${SMOKE_DIR}/image-warm-headers" | \
     grep -i -x 'X-Laghu: image-hit' >/dev/null
   tr -d '\r' <"${SMOKE_DIR}/image-warm-headers" | \
@@ -1391,6 +1392,23 @@ if grep '<!-- remove -->' "${SMOKE_DIR}/minify-page-warm" >/dev/null; then
 fi
 grep -i '^ETag: "laghu-html-' \
   "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
+curl --fail --silent -H 'Accept-Encoding: br' \
+  --dump-header "${SMOKE_DIR}/minify-page-br.headers" \
+  --output "${SMOKE_DIR}/minify-page-br" \
+  "http://127.0.0.1:${PORT}/minify-page.html"
+test -s "${SMOKE_DIR}/minify-page-br"
+grep -i '^Content-Encoding: br' "${SMOKE_DIR}/minify-page-br.headers" >/dev/null
+grep -i '^Vary: Accept-Encoding' "${SMOKE_DIR}/minify-page-br.headers" >/dev/null
+grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/minify-page-br.headers" >/dev/null
+
+curl --fail --silent -H 'Accept-Encoding: gzip' \
+  --dump-header "${SMOKE_DIR}/minify-page-gzip.headers" \
+  --output "${SMOKE_DIR}/minify-page-gzip" \
+  "http://127.0.0.1:${PORT}/minify-page.html"
+test -s "${SMOKE_DIR}/minify-page-gzip"
+grep -i '^Content-Encoding: gzip' "${SMOKE_DIR}/minify-page-gzip.headers" >/dev/null
+grep -i '^Vary: Accept-Encoding' "${SMOKE_DIR}/minify-page-gzip.headers" >/dev/null
+grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/minify-page-gzip.headers" >/dev/null
 
 curl --fail --silent --dump-header "${SMOKE_DIR}/minify-page-preview.headers" \
   --output "${SMOKE_DIR}/minify-page-preview" \

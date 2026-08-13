@@ -12,8 +12,8 @@
 #endif
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "laghu/types.h"
 

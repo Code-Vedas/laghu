@@ -18,6 +18,7 @@
 #include "laghu/instrumentation.h"
 #include "laghu/javascript.h"
 #include "laghu/lcp.h"
+#include "laghu/precompressed.h"
 #include "laghu/profile.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
@@ -36,6 +37,66 @@ static bool laghu_http_select_owned(laghu_http_transaction_result *result,
   }
   memcpy(result->owned_body, data, length);
   result->selected = (laghu_buffer){result->owned_body, length};
+  return true;
+}
+
+static bool laghu_http_apply_precompressed(
+    laghu_http_transaction *transaction,
+    laghu_http_transaction_result *result) {
+  const laghu_http_header *accept_encoding;
+  laghu_runtime_cache_entry entry;
+  laghu_precompressed_coding coding;
+  unsigned char *body;
+  char accept_encoding_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
+  char etag[LAGHU_RUNTIME_KEY_SIZE + 24U];
+  if (transaction == NULL || result == NULL || result->selected.data == NULL ||
+      result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
+      !laghu_precompressed_text_type(transaction->content_type))
+    return true;
+  (void)laghu_precompressed_publish(transaction->environment.cache_path,
+                                    result->selected, transaction->content_type,
+                                    transaction->validator);
+  accept_encoding = laghu_http_find_header(transaction->request->headers,
+                                           transaction->request->header_count,
+                                           "Accept-Encoding");
+  if (accept_encoding != NULL) {
+    if (accept_encoding->value.length > LAGHU_HTTP_MAX_HEADER_VALUE)
+      return false;
+    memcpy(accept_encoding_value, accept_encoding->value.data,
+           accept_encoding->value.length);
+    accept_encoding_value[accept_encoding->value.length] = '\0';
+  }
+  if (!laghu_precompressed_select(
+          transaction->environment.cache_path, result->selected,
+          accept_encoding == NULL ? NULL : accept_encoding_value, &entry,
+          &coding))
+    return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET,
+                                           "Vary", "Accept-Encoding");
+  body = malloc(entry.length);
+  if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
+    free(body);
+    return false;
+  }
+  (void)snprintf(etag, sizeof(etag), "\"laghu-%s-%s\"",
+                 laghu_precompressed_coding_name(coding), entry.payload_hash);
+  if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary",
+                                       "Accept-Encoding") ||
+      !laghu_http_add_header_operation(
+          result, LAGHU_HTTP_HEADER_SET, "Content-Encoding",
+          laghu_precompressed_coding_name(coding)) ||
+      !laghu_http_add_length(result, entry.length) ||
+      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag",
+                                       etag) ||
+      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE,
+                                       "Content-MD5", NULL) ||
+      !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE,
+                                       "Digest", NULL)) {
+    free(body);
+    return false;
+  }
+  free(result->owned_body);
+  result->owned_body = body;
+  result->selected = (laghu_buffer){body, entry.length};
   return true;
 }
 
@@ -81,11 +142,12 @@ static bool laghu_http_add_query_preview_report(
   delta_bytes = (long long)selected_length - (long long)original_length;
   changed = selected_length < original_length;
   filters[0] = '\0';
-  if ((transaction->policy.filter_families &
-       LAGHU_FILTER_IMAGE_LOSSLESS) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LOSSLESS) !=
+      0U) {
     (void)snprintf(filters, sizeof(filters), "%s", "image_lossless");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_METADATA) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_METADATA) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_metadata") >= sizeof(filters)) {
         return false;
@@ -94,7 +156,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "image_metadata");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_DIMENSIONS) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_DIMENSIONS) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_dimensions") >= sizeof(filters)) {
         return false;
@@ -112,7 +175,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "image_modern");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_RESPONSIVE) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_RESPONSIVE) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_responsive") >= sizeof(filters)) {
         return false;
@@ -121,7 +185,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "image_responsive");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LAZYLOAD) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMAGE_LAZYLOAD) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",image_lazyload") >= sizeof(filters)) {
         return false;
@@ -148,7 +213,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "css_minify");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_MINIFY) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",javascript_minify") >= sizeof(filters)) {
         return false;
@@ -157,7 +223,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "javascript_minify");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_HINTS) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_HINTS) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",resource_hints") >= sizeof(filters)) {
         return false;
@@ -166,7 +233,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "resource_hints");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_CACHE_EXTENSION) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_CACHE_EXTENSION) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",cache_extension") >= sizeof(filters)) {
         return false;
@@ -175,7 +243,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "cache_extension");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_COMBINE) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_COMBINE) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",resource_combine") >= sizeof(filters)) {
         return false;
@@ -184,7 +253,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "resource_combine");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",resource_inline") >= sizeof(filters)) {
         return false;
@@ -202,7 +272,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "critical_css");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_JAVASCRIPT_DEFER) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",javascript_defer") >= sizeof(filters)) {
         return false;
@@ -211,7 +282,8 @@ static bool laghu_http_add_query_preview_report(
     }
     (void)strcat(filters, "javascript_defer");
   }
-  if ((transaction->policy.filter_families & LAGHU_FILTER_IMMUTABLE_CACHE) != 0U) {
+  if ((transaction->policy.filter_families & LAGHU_FILTER_IMMUTABLE_CACHE) !=
+      0U) {
     if (filters[0] != '\0') {
       if (strlen(filters) + sizeof(",immutable_cache") >= sizeof(filters)) {
         return false;
@@ -231,25 +303,25 @@ static bool laghu_http_add_query_preview_report(
   }
   if ((transaction->policy.preset >= LAGHU_PRESET_SAFE &&
        transaction->policy.preset <= LAGHU_PRESET_STATIC)) {
-    (void)snprintf(preset, sizeof(preset), "%s", laghu_preset_name(transaction->policy.preset));
+    (void)snprintf(preset, sizeof(preset), "%s",
+                   laghu_preset_name(transaction->policy.preset));
   } else {
     (void)snprintf(preset, sizeof(preset), "custom");
   }
   if (transaction->policy.rewrite_level >= LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
       transaction->policy.rewrite_level <= LAGHU_REWRITE_LEVEL_EXPERIMENTAL) {
-    (void)snprintf(rewrite_level, sizeof(rewrite_level),
-                   "%s", laghu_rewrite_level_name(transaction->policy.rewrite_level));
+    (void)snprintf(rewrite_level, sizeof(rewrite_level), "%s",
+                   laghu_rewrite_level_name(transaction->policy.rewrite_level));
   } else {
     (void)snprintf(rewrite_level, sizeof(rewrite_level), "unset");
   }
-  count =
-      snprintf(value, sizeof(value),
-               "changed=%s;original-bytes=%zu;selected-bytes=%zu;"
-               "delta-bytes=%+lld;cache-ready=%s;policy=%s;rewrite=%s;filters=%s",
-               changed ? "true" : "false", original_length, selected_length,
-               delta_bytes, transaction->cache_publishable ? "true" : "false",
-               preset, rewrite_level,
-               filters[0] == '\0' ? "none" : filters);
+  count = snprintf(
+      value, sizeof(value),
+      "changed=%s;original-bytes=%zu;selected-bytes=%zu;"
+      "delta-bytes=%+lld;cache-ready=%s;policy=%s;rewrite=%s;filters=%s",
+      changed ? "true" : "false", original_length, selected_length, delta_bytes,
+      transaction->cache_publishable ? "true" : "false", preset, rewrite_level,
+      filters[0] == '\0' ? "none" : filters);
   if (count <= 0 || (size_t)count >= sizeof(value)) {
     return false;
   }
@@ -454,6 +526,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
     return false;
   }
   base_rewritten = rewritten.rewritten;
+  if (rewritten.dependencies_pending) result->dependencies_pending = true;
   memcpy(base_dependency, rewritten.dependency_key, sizeof(base_dependency));
   memcpy(dependency, base_dependency, sizeof(dependency));
   if (rewritten.rewritten) {
@@ -476,6 +549,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
       return false;
     }
     if (font.dependencies_pending) {
+      result->dependencies_pending = true;
       laghu_runtime_html_result_release(&font);
       laghu_runtime_html_result_release(&rewritten);
       return true;
@@ -721,6 +795,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction,
   }
   if (hinted.invalid || hinted.dependencies_pending || finalized.invalid ||
       finalized.dependencies_pending) {
+    result->dependencies_pending =
+        hinted.dependencies_pending || finalized.dependencies_pending;
     base_rewritten = false;
   } else {
     char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 4U];
@@ -1215,6 +1291,18 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction,
     }
     laghu_http_retain_preview_headers(result);
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_QUERY_PREVIEW);
+  }
+  if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML) {
+    result->cache_selected = result->selected;
+    result->cache_owned_body = result->owned_body;
+    result->owned_body = NULL;
+  }
+  if (!laghu_http_apply_precompressed(transaction, result)) {
+    laghu_http_transaction_result_release(result);
+    result->original = captured_body;
+    result->selected = captured_body;
+    result->action = transaction->action;
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
   return laghu_http_add_status(result, LAGHU_DECISION_PASS);
 }

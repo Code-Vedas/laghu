@@ -9,6 +9,8 @@
 #include "laghu/http.h"
 
 bool laghu_http_view_valid(laghu_buffer value);
+const laghu_http_header *laghu_http_find_header(
+    const laghu_http_header *headers, size_t count, const char *name);
 bool laghu_http_header_name_equal(laghu_buffer name, const char *expected);
 void laghu_http_result_init(laghu_http_transaction_result *result);
 bool laghu_http_add_header_operation(laghu_http_transaction_result *result,

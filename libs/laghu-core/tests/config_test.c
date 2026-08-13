@@ -43,39 +43,35 @@ int main(void) {
                                     LAGHU_CONFIG_SETTING_TRANSFORM_DEADLINE_MS,
                                     "50", error, sizeof(error)));
 
-  assert(laghu_config_setting_apply(&config,
-                                    LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
-                                    "https://origin.example", error,
-                                    sizeof(error)));
+  assert(laghu_config_setting_apply(
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "https://origin.example",
+      error, sizeof(error)));
   assert(laghu_config_setting_apply(&config,
                                     LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "30",
                                     error, sizeof(error)));
-  assert(laghu_config_setting_apply(
-      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "300", error,
-      sizeof(error)));
+  assert(laghu_config_setting_apply(&config,
+                                    LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL,
+                                    "300", error, sizeof(error)));
   assert(config.html_cache_ttl == 30U);
   assert(config.html_cache_stale_ttl == 300U);
   assert(!laghu_config_setting_apply(
-      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
-      "https://other.example", error, sizeof(error)));
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "https://other.example",
+      error, sizeof(error)));
   laghu_config_init(&config);
-  assert(!laghu_config_setting_apply(&config,
-                                     LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
-                                     "http://origin.example", error,
-                                     sizeof(error)));
-  assert(!laghu_config_setting_apply(&config,
-                                     LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
-                                     "https://origin.example/path", error,
-                                     sizeof(error)));
-  assert(!laghu_config_setting_apply(&config,
-                                     LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "0",
-                                     error, sizeof(error)));
   assert(!laghu_config_setting_apply(
-      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "3601", error,
-      sizeof(error)));
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "http://origin.example",
+      error, sizeof(error)));
   assert(!laghu_config_setting_apply(
-      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "86401", error,
-      sizeof(error)));
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN,
+      "https://origin.example/path", error, sizeof(error)));
+  assert(!laghu_config_setting_apply(
+      &config, LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "0", error, sizeof(error)));
+  assert(!laghu_config_setting_apply(&config,
+                                     LAGHU_CONFIG_SETTING_HTML_CACHE_TTL,
+                                     "3601", error, sizeof(error)));
+  assert(!laghu_config_setting_apply(&config,
+                                     LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL,
+                                     "86401", error, sizeof(error)));
 
   laghu_config_init(&config);
   assert(laghu_config_setting_apply(&config,
@@ -90,9 +86,8 @@ int main(void) {
                                     "https://cdn.example", error,
                                     sizeof(error)));
   assert(laghu_config_setting_apply_pair(
-      &config, LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN,
-      "https://cdn.example", "https://origin.example", error,
-      sizeof(error)));
+      &config, LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN, "https://cdn.example",
+      "https://origin.example", error, sizeof(error)));
   assert(laghu_config_setting_apply_pair(
       &config, LAGHU_CONFIG_SETTING_SHARD_DOMAIN, "https://cdn.example",
       "https://one.example,https://two.example", error, sizeof(error)));

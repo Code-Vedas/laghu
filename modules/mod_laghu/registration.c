@@ -11,9 +11,8 @@ static const char *laghu_apache_service_setting_name(
     laghu_service_setting setting) {
   const laghu_service_setting_descriptor *descriptor =
       laghu_service_setting_describe(setting);
-  return descriptor == NULL || descriptor->name == NULL
-             ? "setting"
-             : descriptor->name;
+  return descriptor == NULL || descriptor->name == NULL ? "setting"
+                                                        : descriptor->name;
 }
 
 static void laghu_apache_service_error_message(
@@ -25,11 +24,10 @@ static void laghu_apache_service_error_message(
                  "Laghu %s setting '%s' is invalid", context,
                  laghu_apache_service_setting_name(diagnostic->setting));
   else
-    ap_log_error(
-        APLOG_MARK, APLOG_ERR, 0, server,
-        "Laghu %s setting '%s' is invalid: %s", context,
-        laghu_apache_service_setting_name(diagnostic->setting),
-        diagnostic->message);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, server,
+                 "Laghu %s setting '%s' is invalid: %s", context,
+                 laghu_apache_service_setting_name(diagnostic->setting),
+                 diagnostic->message);
 }
 
 static bool laghu_apache_validate_directory_config(
@@ -158,7 +156,7 @@ int laghu_apache_post_config(apr_pool_t *configuration_pool,
         (void)snprintf(config->service.source_policy.native_root,
                        sizeof(config->service.source_policy.native_root), "%s",
                        core_server->ap_document_root);
-  if (config == NULL ||
+      if (config == NULL ||
           !laghu_service_config_finalize(
               &config->service,
               &(laghu_service_finalize_options){
@@ -236,12 +234,17 @@ int laghu_apache_post_config(apr_pool_t *configuration_pool,
 }
 
 static void laghu_apache_register(apr_pool_t *pool) {
+  static const char *const before_proxy[] = {"mod_proxy.c", NULL};
   (void)pool;
   ap_register_output_filter(LAGHU_APACHE_FILTER,
                             laghu_apache_transaction_filter, NULL,
                             AP_FTYPE_RESOURCE);
   ap_hook_insert_filter(laghu_apache_insert_filter, NULL, NULL,
                         APR_HOOK_MIDDLE);
+  /* Cache hits must run before mod_proxy claims the request.  This handler
+   * declines every non-hit, leaving ordinary Apache routing unchanged. */
+  ap_hook_handler(laghu_apache_html_cache_entry_handler, NULL, before_proxy,
+                  APR_HOOK_FIRST);
   ap_hook_handler(laghu_apache_variant_handler, NULL, NULL, APR_HOOK_MIDDLE);
   ap_hook_child_init(laghu_apache_child_init, NULL, NULL, APR_HOOK_MIDDLE);
   ap_hook_check_config(laghu_apache_check_config, NULL, NULL, APR_HOOK_MIDDLE);

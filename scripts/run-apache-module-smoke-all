@@ -111,8 +111,9 @@ printf '%s\n' '<html><head><script src="/barrier.js"></script></head><body><styl
   >"${work}/htdocs/no-cross-page.html"
 printf '%s\n' '<html><body><link rel="stylesheet" href="/inline.css"><p class="inline">missing head</p></body></html>' \
   >"${work}/htdocs/missing-head-page.html"
-printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><audio src="/asset.mp3?q=1#hero"></audio><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
+printf '%s\n' '<html><body><!-- remove --><p class="safe" title="two words">one   two</p><p>compressible compressible compressible compressible compressible compressible compressible compressible compressible compressible</p><p>compression payload compression payload compression payload compression payload compression payload compression payload compression payload compression payload compression payload compression payload compression payload compression payload</p><audio src="/asset.mp3?q=1#hero"></audio><script type="text/javascript"> x  y </script><pre> a  b </pre><!-- @license keep --></body></html>' \
   >"${work}/htdocs/minify-page.html"
+cp "${work}/htdocs/minify-page.html" "${work}/htdocs/compression-page.html"
 cp "${work}/htdocs/minify-page.html" "${work}/htdocs/h3-minify-page.html"
 printf '%s\n' '<!doctype html><html><head><meta http-equiv="Content-Language" content="en-CA"><link rel="preconnect" href="https://reserved.example.test"></head><body><script src="https://cdn.example.test/app.js?token=secret#part"></script></body></html>' \
   >"${work}/htdocs/hints-page.html"
@@ -210,7 +211,7 @@ load_first_mpm() {
   printf '<Location "/import-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
-  printf '<LocationMatch "^/(minify-page|h3-minify-page)\\.html$">\nLaghu RewriteLevel bandwidth\n</LocationMatch>\n'
+  printf '<LocationMatch "^/(minify-page|compression-page|h3-minify-page)\\.html$">\nLaghu RewriteLevel bandwidth\n</LocationMatch>\n'
   printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\nHeader always add Link "<https://origin.example.test>; rel=preload"\n</Location>\n'
   printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
@@ -483,6 +484,41 @@ curl --fail --silent -X PURGE \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/site.css | grep 'accepted' >/dev/null
 
+curl --fail --silent --dump-header "${work}/compression-cold.headers" \
+  http://127.0.0.1:18081/compression-page.html >"${work}/compression-cold"
+grep -i '^X-Laghu-Cache: miss' "${work}/compression-cold.headers" >/dev/null
+compression_attempt=0
+while [ "${compression_attempt}" -lt 100 ]; do
+  curl --fail --silent --compressed --dump-header "${work}/compression-warm.headers" \
+    http://127.0.0.1:18081/compression-page.html >"${work}/compression-warm"
+  if grep -i '^X-Laghu-Cache: hit' "${work}/compression-warm.headers" >/dev/null; then
+    break
+  fi
+  compression_attempt=$((compression_attempt + 1))
+  sleep 0.1
+done
+[ "${compression_attempt}" -lt 100 ]
+grep -i '^Content-Encoding: br' "${work}/compression-warm.headers" >/dev/null
+grep -i '^Vary: Accept-Encoding' "${work}/compression-warm.headers" >/dev/null
+if grep -i '^X-Laghu: bypass-encoded' "${work}/compression-warm.headers" >/dev/null; then
+  echo "Apache Brotli cache hit fell through to encoded-origin bypass." >&2
+  exit 1
+fi
+curl --fail --silent -H 'Accept-Encoding: gzip' \
+  --dump-header "${work}/compression-gzip.headers" \
+  http://127.0.0.1:18081/compression-page.html >"${work}/compression-gzip"
+grep -i '^X-Laghu-Cache: hit' "${work}/compression-gzip.headers" >/dev/null
+grep -i '^Content-Encoding: gzip' "${work}/compression-gzip.headers" >/dev/null
+grep -i '^Vary: Accept-Encoding' "${work}/compression-gzip.headers" >/dev/null
+if grep -i '^X-Laghu: bypass-encoded' "${work}/compression-gzip.headers" >/dev/null; then
+  echo "Apache gzip cache hit fell through to encoded-origin bypass." >&2
+  exit 1
+fi
+if grep '<!-- remove -->' "${work}/compression-warm" >/dev/null; then
+  echo "Apache compressed cache retained an eligible HTML comment." >&2
+  exit 1
+fi
+
 if [ -x "${javascript_service}" ]; then
   curl --fail --silent http://127.0.0.1:18081/app.js >"${work}/javascript-cold"
   cmp "${work}/htdocs/app.js" "${work}/javascript-cold"
@@ -707,6 +743,11 @@ if grep '<!-- remove -->' "${work}/minify-page-warm" >/dev/null; then
   exit 1
 fi
 grep -i '^ETag: "laghu-html-' "${work}/minify-page-warm.headers" >/dev/null
+curl --fail --silent --compressed --dump-header "${work}/minify-page-br.headers" \
+  http://127.0.0.1:18081/minify-page.html >"${work}/minify-page-br"
+cmp "${work}/minify-page-warm" "${work}/minify-page-br"
+grep -i '^Content-Encoding: br' "${work}/minify-page-br.headers" >/dev/null
+grep -i '^Vary: Accept-Encoding' "${work}/minify-page-br.headers" >/dev/null
 
 curl --fail --silent --dump-header "${work}/minify-page-preview.headers" \
   http://127.0.0.1:18081/minify-page.html?laghu=preview >"${work}/minify-page-preview"

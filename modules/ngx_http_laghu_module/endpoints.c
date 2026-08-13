@@ -51,8 +51,11 @@ static void ngx_http_laghu_enqueue_html_refresh(
 static ngx_int_t ngx_http_laghu_html_cache_handler(
     ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf) {
   laghu_html_cache_record record;
+  laghu_runtime_cache_entry encoded;
+  laghu_precompressed_coding coding;
   ngx_str_t path;
   unsigned char *body;
+  char accept_encoding[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   u_char *content_type;
   ngx_buf_t *buffer;
   ngx_chain_t output;
@@ -111,6 +114,32 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
       !laghu_runtime_cache_read(&record.entry, body, record.entry.length)) {
     return NGX_DECLINED;
   }
+  accept_encoding[0] = '\0';
+  if (request->headers_in.accept_encoding != NULL) {
+    if (request->headers_in.accept_encoding->value.len >
+        LAGHU_HTTP_MAX_HEADER_VALUE)
+      return NGX_DECLINED;
+    ngx_memcpy(accept_encoding, request->headers_in.accept_encoding->value.data,
+               request->headers_in.accept_encoding->value.len);
+    accept_encoding[request->headers_in.accept_encoding->value.len] = '\0';
+  }
+  if (laghu_precompressed_select(
+          conf->service.image_cache, (laghu_buffer){body, record.entry.length},
+          request->headers_in.accept_encoding == NULL ? NULL : accept_encoding,
+          &encoded, &coding)) {
+    unsigned char *compressed = ngx_pnalloc(request->pool, encoded.length);
+    if (compressed != NULL &&
+        laghu_runtime_cache_read(&encoded, compressed, encoded.length)) {
+      body = compressed;
+      record.entry = encoded;
+      header = ngx_list_push(&request->headers_out.headers);
+      if (header == NULL) return NGX_DECLINED;
+      header->hash = 1U;
+      ngx_str_set(&header->key, "Content-Encoding");
+      header->value.data = (u_char *)laghu_precompressed_coding_name(coding);
+      header->value.len = ngx_strlen(header->value.data);
+    }
+  }
   ngx_memcpy(content_type, record.entry.content_type, content_type_length);
   content_type[content_type_length] = '\0';
   request->headers_out.status = NGX_HTTP_OK;
@@ -122,6 +151,11 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(
   header->hash = 1U;
   ngx_str_set(&header->key, "X-Laghu-Cache");
   ngx_str_set(&header->value, "hit");
+  header = ngx_list_push(&request->headers_out.headers);
+  if (header == NULL) return NGX_DECLINED;
+  header->hash = 1U;
+  ngx_str_set(&header->key, "Vary");
+  ngx_str_set(&header->value, "Accept-Encoding");
   buffer->pos = body;
   buffer->last = body + record.entry.length;
   buffer->memory = 1U;
@@ -147,7 +181,8 @@ ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
   if (request == NULL || request->uri.len == 0U || conf == NULL) {
     return NGX_DECLINED;
   }
-  administration_candidate = ngx_http_laghu_administration_candidate(request, conf);
+  administration_candidate =
+      ngx_http_laghu_administration_candidate(request, conf);
   laghu_admin_prefix =
       request->uri.len >= sizeof("/.laghu/") - 1U &&
       ngx_strncmp(request->uri.data, "/.laghu/", sizeof("/.laghu/") - 1U) == 0;
@@ -158,15 +193,15 @@ ngx_int_t ngx_http_laghu_variant_handler(ngx_http_request_t *request) {
                 ngx_strncmp(request->uri.data, "/.laghu/image/",
                             sizeof("/.laghu/image/") - 1U) == 0;
   laghu_asset = laghu_asset ||
-               (request->uri.len >= sizeof("/.laghu/css/") - 1U &&
-                ngx_strncmp(request->uri.data, "/.laghu/css/",
-                            sizeof("/.laghu/css/") - 1U) == 0) ||
-               (request->uri.len >= sizeof("/.laghu/js/") - 1U &&
-                ngx_strncmp(request->uri.data, "/.laghu/js/",
-                            sizeof("/.laghu/js/") - 1U) == 0) ||
-               (request->uri.len >= sizeof("/.laghu/media/") - 1U &&
-                ngx_strncmp(request->uri.data, "/.laghu/media/",
-                            sizeof("/.laghu/media/") - 1U) == 0);
+                (request->uri.len >= sizeof("/.laghu/css/") - 1U &&
+                 ngx_strncmp(request->uri.data, "/.laghu/css/",
+                             sizeof("/.laghu/css/") - 1U) == 0) ||
+                (request->uri.len >= sizeof("/.laghu/js/") - 1U &&
+                 ngx_strncmp(request->uri.data, "/.laghu/js/",
+                             sizeof("/.laghu/js/") - 1U) == 0) ||
+                (request->uri.len >= sizeof("/.laghu/media/") - 1U &&
+                 ngx_strncmp(request->uri.data, "/.laghu/media/",
+                             sizeof("/.laghu/media/") - 1U) == 0);
   status = ngx_http_laghu_html_cache_handler(request, conf);
 
   if (status != NGX_DECLINED) return status;

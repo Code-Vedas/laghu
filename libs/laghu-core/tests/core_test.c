@@ -327,8 +327,9 @@ static void test_request_policy_controls(void) {
   assert(laghu_vary_supported(NULL));
   assert(laghu_vary_supported("Accept"));
   assert(laghu_vary_supported(" accept , ACCEPT "));
+  assert(laghu_vary_supported("Accept-Encoding"));
+  assert(laghu_vary_supported("Accept, Accept-Encoding"));
   assert(!laghu_vary_supported("*"));
-  assert(!laghu_vary_supported("Accept-Encoding"));
   assert(!laghu_vary_supported("Accept, Cookie"));
 
   config.query_filter_overrides = LAGHU_MODE_ON;
@@ -370,8 +371,8 @@ static void test_query_control_parser(void) {
   assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&laghu=off",
                                    &control));
   assert(control == LAGHU_QUERY_CONTROL_OFF);
-  assert(laghu_apply_query_control("x=1&laghuFilters=%2Bhtml_minify",
-                                   &control));
+  assert(
+      laghu_apply_query_control("x=1&laghuFilters=%2Bhtml_minify", &control));
   assert(laghu_apply_query_control("laghuFilters=%2Bhtml_minify&", &control));
   assert(!laghu_apply_query_control("laghu=", &control));
   assert(laghu_apply_query_control("?", &control));
@@ -663,27 +664,27 @@ static void test_config_policy_validation_error(void) {
   laghu_policy policy;
   char error[160U];
   assert(!laghu_resolve_config_policy_with_error(NULL, &policy, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error, "missing configuration") == 0);
   assert(!laghu_resolve_config_policy_with_error(&config, NULL, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error, "missing configuration") == 0);
   config.rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
   config.preset = LAGHU_PRESET_SAFE;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error, "set exactly one of preset or rewrite-level") == 0);
   config.preset = LAGHU_PRESET_UNSET;
   config.rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error, "set exactly one of preset or rewrite-level") == 0);
   config.rewrite_level = LAGHU_REWRITE_LEVEL_PASSTHROUGH;
   config.enabled_filters = LAGHU_FILTER_HTML_MINIFY;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
-  assert(strcmp(error,
-                "passthrough policy does not allow enabled filters") == 0);
+                                                 sizeof(error)));
+  assert(strcmp(error, "passthrough policy does not allow enabled filters") ==
+         0);
 }
 
 static void test_rollout_policy_validation(void) {
@@ -693,38 +694,40 @@ static void test_rollout_policy_validation(void) {
   config.rollout = LAGHU_MODE_OFF;
   config.rollout_percentage = 10U;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
-  assert(strcmp(error, "rollout percentage requires rollout to be enabled") == 0);
+                                                 sizeof(error)));
+  assert(strcmp(error, "rollout percentage requires rollout to be enabled") ==
+         0);
   config.rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   config.rollout_preset = LAGHU_PRESET_SAFE;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error, "rollout preset requires rollout to be enabled") == 0);
   config.rollout_preset = LAGHU_PRESET_UNSET;
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error,
                 "rollout rewrite-level requires rollout to be enabled") == 0);
   config.rollout = LAGHU_MODE_ON;
   config.rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
+                                                 sizeof(error)));
   assert(strcmp(error, "rollout percentage required") == 0);
   config.rollout_percentage = 100U;
   assert(!laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                                sizeof(error)));
-  assert(strcmp(
-      error, "set exactly one of rollout preset or rollout rewrite-level") == 0);
+                                                 sizeof(error)));
+  assert(strcmp(error,
+                "set exactly one of rollout preset or rollout rewrite-level") ==
+         0);
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_CORE;
   assert(laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                               sizeof(error)));
+                                                sizeof(error)));
   config.rollout = LAGHU_MODE_OFF;
   config.rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   config.rollout_rewrite_level = LAGHU_REWRITE_LEVEL_UNSET;
   assert(laghu_resolve_config_policy_with_error(&config, &policy, error,
-                                               sizeof(error)));
+                                                sizeof(error)));
 }
 
 static void test_api_path_policy(void) {

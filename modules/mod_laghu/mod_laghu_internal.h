@@ -39,6 +39,7 @@
 #include "laghu/instrumentation.h"
 #include "laghu/javascript.h"
 #include "laghu/operational.h"
+#include "laghu/precompressed.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
 #include "laghu/service_config.h"
@@ -154,6 +155,7 @@ bool laghu_apache_apply_result(request_rec *request,
 apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter,
                                              apr_bucket_brigade *brigade);
 void laghu_apache_insert_filter(request_rec *request);
+int laghu_apache_html_cache_entry_handler(request_rec *request);
 int laghu_apache_variant_handler(request_rec *request);
 int laghu_apache_admin_endpoint(request_rec *request,
                                 laghu_apache_config *config);

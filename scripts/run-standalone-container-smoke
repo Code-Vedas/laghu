@@ -463,7 +463,11 @@ def run_origin_mode(mode: str, executable: Path) -> None:
     root = Path(tempfile.mkdtemp(prefix=f"laghu-origin-{mode}-"))
     root.mkdir(parents=True, exist_ok=True)
     (root / "index.html").write_text(
-        "<!doctype html><html><body><!-- remove -->" "hello" 
+        "<!doctype html><html><body><!-- remove -->" "hello "
+        "compressible compressible compressible compressible compressible "
+        "compressible compressible compressible compressible compressible "
+        "compressible compressible compressible compressible compressible "
+        "compressible compressible compressible compressible compressible "
         "<script src='/app.js'></script></body></html>",
         encoding="utf-8",
     )
@@ -579,6 +583,22 @@ def run_origin_mode(mode: str, executable: Path) -> None:
 
             if not has_laghu_header(warm_headers):
                 raise AssertionError(f"standalone {mode} origin missing laghu header")
+
+            for coding in ("br", "gzip"):
+                encoded_ret, encoded_status, encoded_headers, encoded_body = run_curl_request(
+                    f"http://127.0.0.1:{proxy_port}/index.html",
+                    headers={"Accept-Encoding": coding},
+                )
+                if encoded_ret != 0 or encoded_status != 200:
+                    raise AssertionError(f"standalone {mode} {coding} response failed")
+                if encoded_headers.get("x-laghu-cache", "").lower() != "hit":
+                    raise AssertionError(f"standalone {mode} {coding} was not a cache hit")
+                if encoded_headers.get("content-encoding") != coding:
+                    raise AssertionError(f"standalone {mode} did not select cached {coding}")
+                if "accept-encoding" not in encoded_headers.get("vary", "").lower():
+                    raise AssertionError(f"standalone {mode} {coding} response missing Vary")
+                if not encoded_body:
+                    raise AssertionError(f"standalone {mode} {coding} encoded body empty")
 
             curl_has_http3 = curl_supports_http3()
             if curl_has_http3:

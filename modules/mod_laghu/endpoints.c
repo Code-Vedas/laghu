@@ -5,8 +5,8 @@
 
 #include "mod_laghu_internal.h"
 
-static bool laghu_apache_administration_candidate(
-    request_rec *request, laghu_apache_config *config) {
+static bool laghu_apache_administration_candidate(request_rec *request,
+                                                  laghu_apache_config *config) {
   laghu_http_administrative_options options;
   laghu_http_administrative_plan plan;
   laghu_buffer method = {NULL, 0U};
@@ -62,6 +62,9 @@ static void laghu_apache_enqueue_html_refresh(
 static int laghu_apache_html_cache_handler(request_rec *request,
                                            laghu_apache_config *config) {
   laghu_html_cache_record record;
+  laghu_runtime_cache_entry encoded;
+  laghu_precompressed_coding coding;
+  const char *content_encoding = NULL;
   unsigned char *body;
   if (request == NULL || config == NULL || config->core.mode != LAGHU_MODE_ON ||
       request->method_number != M_GET || request->unparsed_uri == NULL ||
@@ -88,15 +91,50 @@ static int laghu_apache_html_cache_handler(request_rec *request,
       !laghu_runtime_cache_read(&record.entry, body, record.entry.length)) {
     return DECLINED;
   }
+  if (laghu_precompressed_select(
+          config->service.image_cache,
+          (laghu_buffer){body, record.entry.length},
+          apr_table_get(request->headers_in, "Accept-Encoding"), &encoded,
+          &coding)) {
+    unsigned char *compressed = apr_palloc(request->pool, encoded.length);
+    if (compressed != NULL &&
+        laghu_runtime_cache_read(&encoded, compressed, encoded.length)) {
+      body = compressed;
+      record.entry = encoded;
+      content_encoding = laghu_precompressed_coding_name(coding);
+    }
+  }
   request->status = HTTP_OK;
   ap_set_content_type(request, record.entry.content_type);
   ap_set_content_length(request, (apr_off_t)record.entry.length);
+  apr_table_setn(request->notes, "laghu-html-cache-served", "1");
+  if (content_encoding != NULL) {
+    request->content_encoding = content_encoding;
+    apr_table_setn(request->headers_out, "Content-Encoding", content_encoding);
+    apr_table_setn(request->err_headers_out, "Content-Encoding",
+                   content_encoding);
+  }
   apr_table_setn(request->headers_out, "x-laghu-cache", "hit");
+  apr_table_setn(request->headers_out, "Vary", "Accept-Encoding");
   if (request->header_only) return OK;
   return ap_rwrite(body, (int)record.entry.length, request) ==
                  (int)record.entry.length
              ? OK
              : HTTP_INTERNAL_SERVER_ERROR;
+}
+
+int laghu_apache_html_cache_entry_handler(request_rec *request) {
+  laghu_apache_config *server_config;
+  laghu_apache_config *directory_config;
+  laghu_apache_config *config;
+  if (request->uri == NULL) return DECLINED;
+  server_config =
+      ap_get_module_config(request->server->module_config, &laghu_module);
+  directory_config =
+      ap_get_module_config(request->per_dir_config, &laghu_module);
+  config =
+      laghu_apache_merge_config(request->pool, server_config, directory_config);
+  return laghu_apache_html_cache_handler(request, config);
 }
 
 int laghu_apache_variant_handler(request_rec *request) {
@@ -111,11 +149,8 @@ int laghu_apache_variant_handler(request_rec *request) {
       ap_get_module_config(request->per_dir_config, &laghu_module);
   config =
       laghu_apache_merge_config(request->pool, server_config, directory_config);
-  administration_candidate = laghu_apache_administration_candidate(request, config);
-  {
-    int cache_status = laghu_apache_html_cache_handler(request, config);
-    if (cache_status != DECLINED) return cache_status;
-  }
+  administration_candidate =
+      laghu_apache_administration_candidate(request, config);
   if (strncmp(request->uri, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
       !administration_candidate) {
     return DECLINED;

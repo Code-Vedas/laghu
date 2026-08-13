@@ -13,6 +13,15 @@ LAGHU_IMAGE_DIR="$ngx_addon_dir/../../libs/laghu-image"
 LAGHU_HTTP_DIR="$ngx_addon_dir/../../libs/laghu-http"
 LAGHU_RUNTIME_PLATFORM="$LAGHU_RUNTIME_DIR/src/runtime_posix.c"
 LAGHU_MODULE_CFLAGS="-DLAGHU_HAVE_VIPS=0"
+LAGHU_MODULE_LIBS="-lz -lbrotlienc"
+
+if command -v pkg-config >/dev/null 2>&1; then
+    LAGHU_BROTLI_INCLUDE=$(pkg-config --variable=includedir libbrotlienc 2>/dev/null || true)
+    LAGHU_BROTLI_LIBS=$(pkg-config --libs libbrotlienc 2>/dev/null || true)
+    if test -n "$LAGHU_BROTLI_LIBS"; then
+        LAGHU_MODULE_LIBS="-lz $LAGHU_BROTLI_LIBS"
+    fi
+fi
 
 LAGHU_MODULE_SRCS="$LAGHU_RUNTIME_PLATFORM"
 for laghu_source in $(awk -F'|' '$1 ~ /^(base|markup|core|image|runtime|http|nginx)$/ { gsub(/\r/, "", $3); print $3 }' "$ngx_addon_dir/../../cmake/laghu-sources.list"); do
@@ -22,14 +31,15 @@ done
 if test -n "$ngx_module_link"; then
     ngx_module_type=HTTP_AUX_FILTER
     ngx_module_name=ngx_http_laghu_module
-    ngx_module_incs="$LAGHU_BASE_DIR/include $LAGHU_MARKUP_DIR/include $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
+    ngx_module_incs="$LAGHU_BASE_DIR/include $LAGHU_MARKUP_DIR/include $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include $LAGHU_BROTLI_INCLUDE"
     ngx_module_srcs="$LAGHU_MODULE_SRCS"
     ngx_module_cflags="$LAGHU_MODULE_CFLAGS"
+    ngx_module_libs="$ngx_module_libs $LAGHU_MODULE_LIBS"
 
     . auto/module
 else
     HTTP_AUX_FILTER_MODULES="$HTTP_AUX_FILTER_MODULES ngx_http_laghu_module"
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS $LAGHU_MODULE_SRCS"
     CFLAGS="$CFLAGS $LAGHU_MODULE_CFLAGS"
-    CORE_INCS="$CORE_INCS $LAGHU_BASE_DIR/include $LAGHU_MARKUP_DIR/include $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include"
+    CORE_INCS="$CORE_INCS $LAGHU_BASE_DIR/include $LAGHU_MARKUP_DIR/include $LAGHU_CORE_DIR/include $LAGHU_HTTP_DIR/include $LAGHU_RUNTIME_DIR/include $LAGHU_IMAGE_DIR/include $LAGHU_BROTLI_INCLUDE"
 fi

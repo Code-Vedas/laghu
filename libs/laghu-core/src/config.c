@@ -21,8 +21,7 @@ static const laghu_config_name laghu_config_names[] = {
     {LAGHU_CONFIG_SETTING_ROLLOUT, "rollout", "Rollout"},
     {LAGHU_CONFIG_SETTING_ROLLOUT_PERCENTAGE, "rollout_percentage",
      "RolloutPercentage"},
-    {LAGHU_CONFIG_SETTING_ROLLOUT_PRESET, "rollout_preset",
-     "RolloutPreset"},
+    {LAGHU_CONFIG_SETTING_ROLLOUT_PRESET, "rollout_preset", "RolloutPreset"},
     {LAGHU_CONFIG_SETTING_ROLLOUT_REWRITE_LEVEL, "rollout_rewrite_level",
      "RolloutRewriteLevel"},
     {LAGHU_CONFIG_SETTING_ENABLE_FILTER, "enable_filter", "EnableFilter"},
@@ -197,7 +196,7 @@ bool laghu_config_setting_apply(laghu_config *config,
           (config->rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH &&
            config->enabled_filters != 0U))
         return laghu_config_fail(error, error_size,
-          "invalid or conflicting rewrite level");
+                                 "invalid or conflicting rewrite level");
       return true;
     case LAGHU_CONFIG_SETTING_ROLLOUT:
       if (config->rollout != LAGHU_MODE_UNSET ||
@@ -222,8 +221,8 @@ bool laghu_config_setting_apply(laghu_config *config,
       if (config->rollout_rewrite_level != LAGHU_REWRITE_LEVEL_UNSET ||
           config->rollout_preset != LAGHU_PRESET_UNSET ||
           !laghu_parse_rewrite_level(value, &config->rollout_rewrite_level))
-        return laghu_config_fail(error, error_size,
-                                 "invalid or conflicting rollout rewrite level");
+        return laghu_config_fail(
+            error, error_size, "invalid or conflicting rollout rewrite level");
       return true;
     case LAGHU_CONFIG_SETTING_ENABLE_FILTER:
     case LAGHU_CONFIG_SETTING_DISABLE_FILTER:

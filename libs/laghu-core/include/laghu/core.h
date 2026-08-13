@@ -279,10 +279,9 @@ const char *laghu_rewrite_level_name(laghu_rewrite_level rewrite_level);
 bool laghu_resolve_rewrite_level(laghu_rewrite_level rewrite_level,
                                  laghu_policy *policy);
 bool laghu_resolve_config_policy(const laghu_config *config,
-                                laghu_policy *policy);
+                                 laghu_policy *policy);
 bool laghu_resolve_config_policy_with_error(const laghu_config *config,
-                                            laghu_policy *policy,
-                                            char *error,
+                                            laghu_policy *policy, char *error,
                                             size_t error_size);
 bool laghu_parse_filter(const char *value, uint32_t *filter);
 const char *laghu_filter_name(uint32_t filter);

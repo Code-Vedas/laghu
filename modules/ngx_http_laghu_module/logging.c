@@ -47,8 +47,7 @@ void ngx_http_laghu_log_transaction(ngx_http_request_t *request,
   span_id = context->span_id[0] == '\0' ? NULL : context->span_id;
   {
     laghu_log_transaction record = {
-        .common =
-            {(time_t)ngx_time(), "nginx", "nginx", trace_id, span_id},
+        .common = {(time_t)ngx_time(), "nginx", "nginx", trace_id, span_id},
         .method = method_length == 0U ? "unknown" : method,
         .path = path_length == 0U ? "/" : path,
         .status = request->headers_out.status,

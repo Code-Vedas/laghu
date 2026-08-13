@@ -36,7 +36,7 @@ static volatile sig_atomic_t laghu_asset_stop;
 static void laghu_asset_log_lifecycle(const char *state, const char *failure) {
   char line[LAGHU_LOG_LINE_SIZE];
   laghu_log_lifecycle record = {
-      .common = {(time_t)time(NULL), "worker", "asset-upload"},
+      .common = {(time_t)time(NULL), "worker", "asset-upload", NULL, NULL},
       .state = state,
       .failure = failure};
   if (laghu_log_render_lifecycle(&record, line, sizeof(line)))
@@ -46,7 +46,7 @@ static void laghu_asset_log_lifecycle(const char *state, const char *failure) {
 static void laghu_asset_log_job(int status, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
   laghu_log_job record = {
-      .common = {(time_t)time(NULL), "worker", "asset-upload"},
+      .common = {(time_t)time(NULL), "worker", "asset-upload", NULL, NULL},
       .job_kind = "asset_upload",
       .outcome = status == 0 ? "success" : "failed",
       .input_bytes = 0U,
