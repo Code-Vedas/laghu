@@ -499,7 +499,7 @@ static const char *laghu_surface_name(uint64_t value) {
 }
 
 static const char *laghu_process_name(uint64_t value) {
-  static const char *names[] = {"adapter", "libvips", "javascript", "resource_fetch", "asset_upload"};
+  static const char *names[] = {"adapter", "libvips", "javascript", "resource_fetch", "asset_upload", "otel_export"};
   return value < LAGHU_OPERATIONAL_PROCESS_COUNT ? names[value] : "invalid";
 }
 

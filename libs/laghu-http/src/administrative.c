@@ -665,6 +665,8 @@ static const char *laghu_http_administrative_process_name(uint64_t process) {
       return "resource-fetch";
     case LAGHU_OPERATIONAL_PROCESS_ASSET_UPLOAD:
       return "asset-upload";
+    case LAGHU_OPERATIONAL_PROCESS_OTEL_EXPORT:
+      return "otel-export";
     default:
       return "unknown";
   }

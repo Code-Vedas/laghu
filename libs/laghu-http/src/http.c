@@ -666,6 +666,22 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
   transaction->request = request;
   transaction->response = response;
   transaction->environment = *environment;
+  {
+    const laghu_http_header *traceparent = laghu_http_find_header(request->headers, request->header_count, "traceparent");
+    const laghu_http_header *tracestate = laghu_http_find_header(request->headers, request->header_count, "tracestate");
+    char parent[56U] = "";
+    char state[LAGHU_TRACE_STATE_SIZE] = "";
+    if (traceparent != NULL && traceparent->value.length < sizeof(parent)) {
+      memcpy(parent, traceparent->value.data, traceparent->value.length);
+      if (tracestate != NULL && tracestate->value.length < sizeof(state)) memcpy(state, tracestate->value.data, tracestate->value.length);
+    }
+    if (!laghu_trace_context_parse(parent, state, &transaction->trace))
+      (void)laghu_trace_context_root(environment->otel_sampling_rate, &transaction->trace);
+    if (environment->otel_sampling_rate == 0U) {
+      transaction->trace.sampled = false;
+      memcpy(transaction->trace.flags, "00", 3U);
+    }
+  }
   (void)laghu_http_apply_rollout(&transaction->environment.config, request);
   const laghu_config *config = &transaction->environment.config;
   laghu_transform_budget_init(&transaction->budget, config->transform_memory_limit, config->transform_deadline_ms, config->variants_per_source);

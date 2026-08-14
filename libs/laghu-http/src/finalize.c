@@ -27,6 +27,28 @@
 
 #define LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML (1024U * 1024U)
 
+static void laghu_http_publish_trace(const laghu_http_transaction *transaction, const char *name, const char *outcome) {
+  char payload[1024U];
+  size_t length;
+  laghu_runtime_job job;
+  laghu_trace_context span;
+  uint64_t now;
+  unsigned int index;
+  static const char *children[] = {"laghu.cache", "laghu.response"};
+  if (transaction == NULL || transaction->environment.otel_trace_queue == NULL || !transaction->trace.sampled) return;
+  now = transaction->environment.now * UINT64_C(1000000000);
+  span = transaction->trace;
+  for (index = 0U; index < 3U; ++index) {
+    if (index != 0U) (void)laghu_trace_context_child(&transaction->trace, &span);
+    if (!laghu_trace_otlp_json(&span, index == 0U ? name : children[index - 1U], now, now, outcome, payload, sizeof(payload), &length)) continue;
+    memset(&job, 0, sizeof(job));
+    job.kind = LAGHU_RUNTIME_JOB_TRACE_EXPORT;
+    job.trace = span;
+    job.payload = (laghu_buffer){(const unsigned char *)payload, length};
+    (void)laghu_runtime_queue_try_publish(transaction->environment.otel_trace_queue, &job);
+  }
+}
+
 static bool laghu_http_select_owned(laghu_http_transaction_result *result, const unsigned char *data, size_t length) {
   if (length == 0U) {
     return false;
@@ -866,6 +888,7 @@ static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *tra
   if (!laghu_http_snapshot_template_key(snapshot, job.validator)) return;
   memcpy(job.content_type, "text/html", sizeof("text/html"));
   job.analysis_timeout_ms = transaction->environment.chrome_analysis_timeout_ms;
+  (void)laghu_trace_context_child(&transaction->trace, &job.trace);
   job.payload = snapshot;
   (void)laghu_runtime_queue_try_publish(transaction->environment.chrome_analysis_queue, &job);
 }
@@ -889,6 +912,7 @@ static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu
   job.allow_lossy = transaction->policy.allow_lossy;
   job.accept_webp = transaction->accept_webp;
   job.accept_avif = transaction->accept_avif;
+  (void)laghu_trace_context_child(&transaction->trace, &job.trace);
   job.payload = body;
   result->job_published = laghu_runtime_queue_try_publish(transaction->environment.queue, &job);
   memcpy(result->cache_key, transaction->cache_key, sizeof(result->cache_key));
@@ -898,15 +922,15 @@ static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu
 static bool laghu_http_finalize_javascript(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_javascript_result javascript;
   laghu_runtime_javascript_result module;
-  if (!laghu_runtime_rewrite_javascript(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
+  if (!laghu_runtime_rewrite_javascript_traced(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
                                         transaction->policy_key, transaction->environment.javascript_target, false,
-                                        transaction->policy.include_js_source_maps, &javascript))
+                                        transaction->policy.include_js_source_maps, &transaction->trace, &javascript))
     return true;
   result->job_published = javascript.published;
   memset(&module, 0, sizeof(module));
-  if (laghu_runtime_rewrite_javascript(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
+  if (laghu_runtime_rewrite_javascript_traced(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
                                        transaction->policy_key, transaction->environment.javascript_target, true,
-                                       transaction->policy.include_js_source_maps, &module))
+                                       transaction->policy.include_js_source_maps, &transaction->trace, &module))
     result->job_published |= module.published;
   laghu_runtime_javascript_result_release(&module);
   if (!javascript.rewritten) {
@@ -1068,5 +1092,6 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction, laghu_
     result->action = transaction->action;
     return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
   }
+  laghu_http_publish_trace(transaction, "laghu.request", result->job_published ? "queued" : "ok");
   return laghu_http_add_status(result, LAGHU_DECISION_PASS);
 }

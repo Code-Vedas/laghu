@@ -58,6 +58,10 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu FontProviderConfig PATH` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `Laghu JavaScriptQueue PATH` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
 | `Laghu ChromeAnalysisQueue PATH` | inherited | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
+| `Laghu OTelEndpoint HTTPS_URL` | inherited | HTTPS collector URL | unset | Enables OTLP/HTTP JSON export only with `OTelTraceQueue`; authorization is read only from `LAGHU_OTEL_AUTHORIZATION`. |
+| `Laghu OTelTraceQueue PATH` | inherited | bounded path | unset | Dedicated bounded async trace queue, consumed by `laghu-otel-export`. |
+| `Laghu OTelSamplingRate 0..100` | inherited | percentage | `0` | Sampling is disabled by default; queue saturation drops spans without affecting responses. |
+| `Laghu OTelCaFile PATH` | inherited | PEM trust bundle | system trust | Optional collector trust bundle. |
 | `Laghu ChromeAnalysisOutput PATH` | inherited | bounded directory | unset | Imports bounded one-shot Chrome LCP candidates from this directory; requires `ChromeAnalysisQueue`. |
 | `Laghu LayoutReservationConfig PATH` | inherited | bounded rule file | unset | Loads exact-ID `box ID WIDTH HEIGHT` and `font ID ADJUST_MILLI` CLS reservations. Rules apply only to learned CLS regressions and CSP-permitted style attributes. |
 | `Laghu ChromeAnalysisTimeout MS` | inherited | `100..10000` | `1500` | Bounds one analysis job; requires `ChromeAnalysisQueue`. |

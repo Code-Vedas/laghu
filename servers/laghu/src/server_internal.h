@@ -95,11 +95,13 @@ typedef struct proxy_queue {
   laghu_runtime_queue font_fetch_queue;
   laghu_runtime_queue javascript_queue;
   laghu_runtime_queue chrome_analysis_queue;
+  laghu_runtime_queue otel_trace_queue;
   bool runtime_queue_ready;
   bool html_refresh_queue_ready;
   bool font_fetch_queue_ready;
   bool javascript_queue_ready;
   bool chrome_analysis_queue_ready;
+  bool otel_trace_queue_ready;
   char html_refresh_keys[LAGHU_PROXY_HTML_REFRESH_DEDUP][LAGHU_RUNTIME_KEY_SIZE];
   uint64_t html_refresh_until[LAGHU_PROXY_HTML_REFRESH_DEDUP];
   pthread_mutex_t lock;
@@ -209,6 +211,7 @@ laghu_runtime_queue *proxy_html_refresh_queue(proxy_worker *worker);
 laghu_runtime_queue *proxy_font_fetch_queue(proxy_worker *worker);
 laghu_runtime_queue *proxy_javascript_queue(proxy_worker *worker);
 laghu_runtime_queue *proxy_chrome_analysis_queue(proxy_worker *worker);
+laghu_runtime_queue *proxy_otel_trace_queue(proxy_worker *worker);
 bool proxy_cache_probe(const char *cache_path);
 void *proxy_worker_main(void *argument);
 

@@ -67,6 +67,7 @@ int main(void) {
 
   job = laghu_test_job(payload, sizeof(payload) - 1U);
   job.accept_avif = true;
+  assert(laghu_trace_context_parse("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", NULL, &job.trace));
   assert(laghu_runtime_queue_try_publish(&queue, &job));
   assert(laghu_runtime_queue_try_publish(&queue, &job));
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
@@ -74,7 +75,7 @@ int main(void) {
   assert(snapshot.occupied == 2U);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT && taken.payload.length == sizeof(payload) - 1U && taken.accept_avif &&
-         memcmp(output, payload, taken.payload.length) == 0);
+         memcmp(output, payload, taken.payload.length) == 0 && strcmp(taken.trace.trace_id, job.trace.trace_id) == 0 && taken.trace.sampled);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_SPRITE;

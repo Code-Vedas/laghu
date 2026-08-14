@@ -210,6 +210,8 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_co
   context->environment.font_providers = conf->service.font_providers;
   context->environment.javascript_queue = ngx_http_laghu_javascript_queue(conf);
   context->environment.chrome_analysis_queue = ngx_http_laghu_chrome_analysis_queue(conf);
+  context->environment.otel_trace_queue = ngx_http_laghu_otel_trace_queue(conf);
+  context->environment.otel_sampling_rate = conf->service.otel_sampling_rate;
   context->environment.chrome_analysis_timeout_ms = conf->service.chrome_analysis_timeout_ms;
   context->environment.javascript_target = conf->service.javascript_target;
   context->environment.javascript_observations = conf->service.javascript_observations;

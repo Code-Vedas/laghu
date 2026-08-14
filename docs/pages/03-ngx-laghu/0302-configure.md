@@ -60,6 +60,10 @@ Laghu transaction records use the configured NGINX error_log sink. Each native e
 | `laghu chrome_analysis_queue PATH;` | inherited | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
 | `laghu chrome_analysis_output PATH;` | inherited | bounded directory | unset | Opts into bounded lifecycle import of one-shot Chrome reports from this directory; requires `chrome_analysis_queue`. |
 | `laghu layout_reservation_config PATH;` | inherited | bounded rule file | unset | Loads exact-ID `box ID WIDTH HEIGHT` and `font ID ADJUST_MILLI` CLS reservations. Rules apply only to learned CLS regressions and CSP-permitted style attributes. |
+| `laghu otel_endpoint HTTPS_URL;` | inherited | HTTPS collector URL | unset | Enables OTLP/HTTP JSON export only with `otel_trace_queue`; authorization is read only from `LAGHU_OTEL_AUTHORIZATION`. |
+| `laghu otel_trace_queue PATH;` | inherited | bounded path | unset | Dedicated bounded async trace queue, consumed by `laghu-otel-export`. |
+| `laghu otel_sampling_rate 0..100;` | inherited | percentage | `0` | Sampling is disabled by default; queue saturation drops spans without affecting responses. |
+| `laghu otel_ca_file PATH;` | inherited | PEM trust bundle | system trust | Optional collector trust bundle. |
 | `laghu chrome_analysis_timeout MS;` | inherited | `100..10000` | `1500` | Bounds one analysis job; requires `chrome_analysis_queue`. |
 | `laghu javascript_target QUERY;` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering without polyfills. |
 | `laghu javascript_observation_config PATH;` | inherited | valid observation file | unset | Adds exact third-party script candidates. |

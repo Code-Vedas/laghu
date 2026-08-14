@@ -44,6 +44,8 @@ static void usage(FILE *stream) {
       "  --javascript-defer-suggestions on|off\n"
       "  --javascript-defer-config PATH\n"
       "  --layout-reservation-config PATH\n"
+      "  --otel-endpoint HTTPS_URL --otel-trace-queue PATH\n"
+      "  --otel-sampling-rate 0..100 --otel-ca-file PATH\n"
       "  --include-js-source-maps\n"
       "  --rum-store URI [--rum-store-required]\n"
       "  --rum-store-local-snapshot PATH\n"

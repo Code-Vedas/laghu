@@ -107,9 +107,10 @@ static bool laghu_javascript_key(laghu_buffer source, const char *path, const ch
          laghu_sha256_hex((laghu_buffer){(const unsigned char *)canonical, (size_t)length}, output);
 }
 
-bool laghu_runtime_rewrite_javascript(laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source, const char *normalized_path,
-                                      const char *policy_key, const char *target, bool module, bool include_source_map,
-                                      laghu_runtime_javascript_result *result) {
+bool laghu_runtime_rewrite_javascript_traced(laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source,
+                                             const char *normalized_path, const char *policy_key, const char *target, bool module,
+                                             bool include_source_map, const laghu_trace_context *trace,
+                                             laghu_runtime_javascript_result *result) {
   laghu_runtime_cache_entry entry;
   laghu_runtime_job job;
   char normalized_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
@@ -134,6 +135,7 @@ bool laghu_runtime_rewrite_javascript(laghu_runtime_queue *queue, const char *ca
   }
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_JAVASCRIPT;
+  if (trace != NULL) (void)laghu_trace_context_child(trace, &job.trace);
   job.filters = (module ? UINT64_C(1) : UINT64_C(0)) | (include_source_map ? UINT64_C(2) : UINT64_C(0));
   job.payload = source;
   if (!laghu_copy(job.index_key, sizeof(job.index_key), key) || !laghu_copy(job.request_path, sizeof(job.request_path), normalized_path) ||
@@ -144,6 +146,13 @@ bool laghu_runtime_rewrite_javascript(laghu_runtime_queue *queue, const char *ca
     return false;
   result->published = laghu_runtime_queue_try_publish(queue, &job);
   return true;
+}
+
+bool laghu_runtime_rewrite_javascript(laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source, const char *normalized_path,
+                                      const char *policy_key, const char *target, bool module, bool include_source_map,
+                                      laghu_runtime_javascript_result *result) {
+  return laghu_runtime_rewrite_javascript_traced(queue, cache_path, source, normalized_path, policy_key, target, module, include_source_map,
+                                                 NULL, result);
 }
 
 void laghu_runtime_javascript_result_release(laghu_runtime_javascript_result *result) {

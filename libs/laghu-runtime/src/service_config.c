@@ -75,6 +75,17 @@ static const laghu_service_descriptor_entry laghu_service_descriptors[] = {
     {{LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, "layout_reservation_config", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"layoutreservationconfig", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_OTEL_ENDPOINT, "otel_endpoint", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"otelendpoint", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE, "otel_trace_queue", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"oteltracequeue", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE, "otel_sampling_rate", LAGHU_SERVICE_VALUE_UNSIGNED, LAGHU_SERVICE_INHERIT_SCALAR, 0U, 100U, false},
+     {"otelsamplingrate", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_OTEL_CA_FILE, "otel_ca_file", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"otelcafile", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, "asset_offload_config", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"assetoffloadconfig", NULL, NULL}},
@@ -489,6 +500,19 @@ bool laghu_service_config_apply(laghu_service_config *config, laghu_service_sett
       config->layout_reservations = NULL;
       config->owned_layout_reservations = NULL;
       break;
+    case LAGHU_SERVICE_SETTING_OTEL_ENDPOINT:
+      if (strncmp(value, "https://", 8U) != 0 || strchr(value, '?') != NULL || !laghu_service_copy(config->otel_endpoint, sizeof(config->otel_endpoint), value))
+        goto format;
+      break;
+    case LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE:
+      if (!laghu_service_copy(config->otel_trace_queue, sizeof(config->otel_trace_queue), value)) goto format;
+      break;
+    case LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE:
+      if (!laghu_service_unsigned(value, descriptor->minimum, descriptor->maximum, &config->otel_sampling_rate)) goto range;
+      break;
+    case LAGHU_SERVICE_SETTING_OTEL_CA_FILE:
+      if (!laghu_service_copy(config->otel_ca_file, sizeof(config->otel_ca_file), value)) goto format;
+      break;
     case LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG:
       if (!laghu_service_copy(config->asset_offload_config, sizeof(config->asset_offload_config), value)) goto format;
       laghu_service_config_clear_asset_offload(config);
@@ -662,6 +686,10 @@ bool laghu_service_config_merge(laghu_service_config *merged, const laghu_servic
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_JAVASCRIPT_OBSERVATION_CONFIG, javascript_observation_config);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG, javascript_defer_config);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, layout_reservation_config);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_OTEL_ENDPOINT, otel_endpoint);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE, otel_trace_queue);
+  LAGHU_SERVICE_MERGE_FIELD(LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE, otel_sampling_rate);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_OTEL_CA_FILE, otel_ca_file);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, asset_offload_config);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_ASSET_UPLOAD_QUEUE, asset_upload_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_RUM_STORE, rum_store);
@@ -834,6 +862,12 @@ bool laghu_service_config_validate(laghu_service_config *config, const laghu_ser
   if (config->chrome_analysis_output[0] != '\0' && config->chrome_analysis_queue[0] == '\0')
     return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT,
                               "chrome analysis output requires chrome analysis queue");
+  if ((config->otel_endpoint[0] == '\0') != (config->otel_trace_queue[0] == '\0'))
+    return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY, LAGHU_SERVICE_SETTING_OTEL_ENDPOINT,
+                              "otel endpoint and trace queue require each other");
+  if (config->otel_sampling_rate != 0U && config->otel_endpoint[0] == '\0')
+    return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY, LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE,
+                              "otel sampling requires endpoint and trace queue");
   if ((config->font_provider_config[0] != '\0' && config->font_providers == NULL) ||
       (config->javascript_observation_config[0] != '\0' && config->javascript_observations == NULL) ||
       (config->javascript_defer_config[0] != '\0' && config->javascript_defer == NULL) ||

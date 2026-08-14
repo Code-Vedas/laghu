@@ -53,6 +53,10 @@ laghu_runtime_queue *ngx_http_laghu_chrome_analysis_queue(ngx_http_laghu_loc_con
   return conf != NULL && conf->chrome_analysis_runtime_queue_attached ? &conf->chrome_analysis_runtime_queue : NULL;
 }
 
+laghu_runtime_queue *ngx_http_laghu_otel_trace_queue(ngx_http_laghu_loc_conf_t *conf) {
+  return conf != NULL && conf->otel_trace_runtime_queue_attached ? &conf->otel_trace_runtime_queue : NULL;
+}
+
 bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf) { return ngx_http_laghu_font_queue(conf) != NULL; }
 
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf) { return ngx_http_laghu_javascript_queue(conf) != NULL; }

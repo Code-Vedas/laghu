@@ -150,7 +150,7 @@
 - [x] Make Core Web Vitals first-class optimization targets.
 - [x] Avoid loopback image re-fetch by optimizing the response body already observed by the server adapter.
 - [x] Bound and expose memory use, cache growth, and optimizer failure reasons.
-- [ ] Replace text-only operational surfaces with metrics, structured logs, and traces.
+- [x] Replace text-only operational surfaces with metrics, structured logs, and traces.
 - [x] Keep configuration understandable through presets, validation, and explainability despite the complete filter surface.
 - [x] Use Early Hints and modern resource hints instead of HTTP/2 push.
 
@@ -204,7 +204,7 @@
 ### 4.5 Observability and Operations
 - [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
 - [x] Emit the versioned `laghu-log-v1` schema across standalone, NGINX, Apache, and workers.
-- [ ] Emit OpenTelemetry traces across the optimization path.
+- [x] Emit OpenTelemetry traces across the optimization path.
 - [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
 - [x] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.

@@ -112,7 +112,8 @@ static void laghu_libvips_log_lifecycle(const char *state, const char *failure) 
 
 static void laghu_libvips_log_job(const laghu_runtime_job *job, int status, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_job record = {.common = {.timestamp = (time_t)time(NULL), .surface = "worker", .component = "libvips"},
+  laghu_log_job record = {.common = {.timestamp = (time_t)time(NULL), .surface = "worker", .component = "libvips",
+                                    .trace_id = job->trace.trace_id, .span_id = job->trace.span_id},
                           .job_kind = job->kind == LAGHU_RUNTIME_JOB_SPRITE ? "sprite" : "image",
                           .outcome = status == 0   ? "success"
                                      : status == 4 ? "preserved"

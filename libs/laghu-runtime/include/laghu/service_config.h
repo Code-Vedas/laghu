@@ -50,6 +50,10 @@ typedef enum {
   LAGHU_SERVICE_SETTING_JAVASCRIPT_OBSERVATION_CONFIG,
   LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG,
   LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG,
+  LAGHU_SERVICE_SETTING_OTEL_ENDPOINT,
+  LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE,
+  LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE,
+  LAGHU_SERVICE_SETTING_OTEL_CA_FILE,
   LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG,
   LAGHU_SERVICE_SETTING_ASSET_UPLOAD_QUEUE,
   LAGHU_SERVICE_SETTING_RUM_STORE,
@@ -152,6 +156,9 @@ typedef struct {
   char javascript_observation_config[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_defer_config[LAGHU_RUNTIME_PATH_SIZE];
   char layout_reservation_config[LAGHU_RUNTIME_PATH_SIZE];
+  char otel_endpoint[LAGHU_RUNTIME_PATH_SIZE];
+  char otel_trace_queue[LAGHU_RUNTIME_PATH_SIZE];
+  char otel_ca_file[LAGHU_RUNTIME_PATH_SIZE];
   char asset_offload_config[LAGHU_RUNTIME_PATH_SIZE];
   char asset_upload_queue[LAGHU_RUNTIME_PATH_SIZE];
   char rum_store[LAGHU_RUNTIME_PATH_SIZE];
@@ -172,6 +179,7 @@ typedef struct {
   size_t purge_allow_count;
   size_t trusted_proxy_count;
   unsigned int rum_timeout_ms;
+  unsigned int otel_sampling_rate;
   unsigned int chrome_analysis_timeout_ms;
   unsigned int rum_ttl;
   unsigned int rum_retry_limit;

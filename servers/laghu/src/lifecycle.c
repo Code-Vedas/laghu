@@ -133,6 +133,8 @@ void proxy_maintain_queue_attachments(proxy_queue *queue) {
     (void)proxy_attach_queue(queue, &queue->javascript_queue, &queue->javascript_queue_ready, service->javascript_queue);
   if (service->chrome_analysis_queue[0] != '\0')
     (void)proxy_attach_queue(queue, &queue->chrome_analysis_queue, &queue->chrome_analysis_queue_ready, service->chrome_analysis_queue);
+  if (service->otel_trace_queue[0] != '\0')
+    (void)proxy_attach_queue(queue, &queue->otel_trace_queue, &queue->otel_trace_queue_ready, service->otel_trace_queue);
 }
 
 static void proxy_signal_handler(int signal_number) {
@@ -205,6 +207,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   laghu_runtime_queue_init(&queue.font_fetch_queue);
   laghu_runtime_queue_init(&queue.javascript_queue);
   laghu_runtime_queue_init(&queue.chrome_analysis_queue);
+  laghu_runtime_queue_init(&queue.otel_trace_queue);
   queue.options = options;
   queue.capacity = options->connection_queue;
   queue.items = calloc(queue.capacity, sizeof(*queue.items));
@@ -259,7 +262,8 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
       (options->service.html_refresh_queue[0] != '\0' && !proxy_queue_path_valid(options->service.html_refresh_queue)) ||
       (options->service.font_providers != NULL && !proxy_queue_path_valid(options->service.font_fetch_queue)) ||
       (options->service.javascript_queue[0] != '\0' && !proxy_queue_path_valid(options->service.javascript_queue)) ||
-      (options->service.chrome_analysis_queue[0] != '\0' && !proxy_queue_path_valid(options->service.chrome_analysis_queue))) {
+      (options->service.chrome_analysis_queue[0] != '\0' && !proxy_queue_path_valid(options->service.chrome_analysis_queue)) ||
+      (options->service.otel_trace_queue[0] != '\0' && !proxy_queue_path_valid(options->service.otel_trace_queue))) {
     proxy_log_startup_failure(&queue, "queue_unavailable");
     goto cleanup;
   }
@@ -351,6 +355,7 @@ cleanup:
   laghu_runtime_queue_close(&queue.font_fetch_queue);
   laghu_runtime_queue_close(&queue.javascript_queue);
   laghu_runtime_queue_close(&queue.chrome_analysis_queue);
+  laghu_runtime_queue_close(&queue.otel_trace_queue);
   laghu_operational_registry_close(&queue.operational);
   laghu_rum_engine_destroy(queue.rum);
   if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);

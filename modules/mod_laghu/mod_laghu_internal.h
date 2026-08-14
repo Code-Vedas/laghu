@@ -124,6 +124,7 @@ laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_javascript_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_html_refresh_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_chrome_analysis_queue(laghu_apache_config *config);
+laghu_runtime_queue *laghu_apache_otel_trace_queue(laghu_apache_config *config);
 bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config, const laghu_runtime_job *job, uint64_t now);
 void *laghu_apache_create_config(apr_pool_t *pool, char *path);
 void *laghu_apache_create_server_config(apr_pool_t *pool, server_rec *server);

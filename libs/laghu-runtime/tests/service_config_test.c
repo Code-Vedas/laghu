@@ -57,6 +57,10 @@ static void test_descriptor_matrix(void) {
                {LAGHU_SERVICE_SETTING_JAVASCRIPT_OBSERVATION_CONFIG, "/tmp/observe"},
                {LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG, "/tmp/defer"},
                {LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, "/tmp/layout"},
+               {LAGHU_SERVICE_SETTING_OTEL_ENDPOINT, "https://collector.example/v1/traces"},
+               {LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE, "/tmp/otel.queue"},
+               {LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE, "10"},
+               {LAGHU_SERVICE_SETTING_OTEL_CA_FILE, "/tmp/otel-ca.pem"},
                {LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, "/tmp/assets"},
                {LAGHU_SERVICE_SETTING_ASSET_UPLOAD_QUEUE, "/tmp/assets.queue"},
                {LAGHU_SERVICE_SETTING_RUM_STORE, "local:"},
@@ -109,6 +113,9 @@ static void test_apply_and_merge(void) {
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "/tmp/parent-chrome.queue", &diagnostic));
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT, "/tmp/parent-chrome-output", &diagnostic));
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, "/tmp/parent-layout", &diagnostic));
+  assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_OTEL_ENDPOINT, "https://collector.example/v1/traces", &diagnostic));
+  assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE, "/tmp/parent-otel.queue", &diagnostic));
+  assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE, "5", &diagnostic));
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_LOAD_FROM_FILE, "mapped", &diagnostic));
   assert(laghu_service_config_apply_pair(&parent, LAGHU_SERVICE_SETTING_FILE_SOURCE_MAP, "https://assets.example/", TEST_SOURCE_ROOT, &diagnostic));
   assert(laghu_service_config_apply(&child, LAGHU_SERVICE_SETTING_FILE_CACHE_SIZE, "4m", &diagnostic));
@@ -122,6 +129,7 @@ static void test_apply_and_merge(void) {
   assert(strcmp(merged.chrome_analysis_queue, "/tmp/parent-chrome.queue") == 0);
   assert(strcmp(merged.chrome_analysis_output, "/tmp/parent-chrome-output") == 0);
   assert(strcmp(merged.layout_reservation_config, "/tmp/parent-layout") == 0);
+  assert(strcmp(merged.otel_trace_queue, "/tmp/parent-otel.queue") == 0 && merged.otel_sampling_rate == 5U);
   assert(merged.source_policy.mapping_count == 1U);
   assert(laghu_service_config_apply(&child, LAGHU_SERVICE_SETTING_METRICS, "off", &diagnostic));
   assert(laghu_service_config_merge(&merged, &parent, &child, &diagnostic));

@@ -22,11 +22,13 @@ struct laghu_apache_queue_binding {
   laghu_runtime_queue javascript_queue;
   laghu_runtime_queue html_refresh_queue;
   laghu_runtime_queue chrome_analysis_queue;
+  laghu_runtime_queue otel_trace_queue;
   char image_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char font_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char html_refresh_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char chrome_analysis_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+  char otel_trace_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char chrome_analysis_output[LAGHU_RUNTIME_PATH_SIZE];
   unsigned int rum_ttl;
   bool font_enabled;
@@ -35,6 +37,7 @@ struct laghu_apache_queue_binding {
   volatile apr_uint32_t javascript_attached;
   volatile apr_uint32_t html_refresh_attached;
   volatile apr_uint32_t chrome_analysis_attached;
+  volatile apr_uint32_t otel_trace_attached;
   volatile apr_uint32_t image_capabilities;
   volatile apr_uint32_t html_refresh_dedup_lock;
   uint64_t html_refresh_until[LAGHU_APACHE_HTML_REFRESH_DEDUP];
@@ -63,6 +66,7 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const la
         strcmp(existing->javascript_queue_path, service->javascript_queue) == 0 &&
         strcmp(existing->html_refresh_queue_path, service->html_refresh_queue) == 0 &&
         strcmp(existing->chrome_analysis_queue_path, service->chrome_analysis_queue) == 0 &&
+        strcmp(existing->otel_trace_queue_path, service->otel_trace_queue) == 0 &&
         strcmp(existing->chrome_analysis_output, service->chrome_analysis_output) == 0 &&
         existing->rum_ttl == service->rum_ttl &&
         (!existing->font_enabled || strcmp(existing->font_queue_path, service->font_fetch_queue) == 0))
@@ -78,6 +82,7 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const la
   (void)snprintf(binding->javascript_queue_path, sizeof(binding->javascript_queue_path), "%s", service->javascript_queue);
   (void)snprintf(binding->html_refresh_queue_path, sizeof(binding->html_refresh_queue_path), "%s", service->html_refresh_queue);
   (void)snprintf(binding->chrome_analysis_queue_path, sizeof(binding->chrome_analysis_queue_path), "%s", service->chrome_analysis_queue);
+  (void)snprintf(binding->otel_trace_queue_path, sizeof(binding->otel_trace_queue_path), "%s", service->otel_trace_queue);
   (void)snprintf(binding->chrome_analysis_output, sizeof(binding->chrome_analysis_output), "%s", service->chrome_analysis_output);
   binding->rum_ttl = service->rum_ttl;
   laghu_runtime_queue_init(&binding->image_queue);
@@ -85,6 +90,7 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const la
   laghu_runtime_queue_init(&binding->javascript_queue);
   laghu_runtime_queue_init(&binding->html_refresh_queue);
   laghu_runtime_queue_init(&binding->chrome_analysis_queue);
+  laghu_runtime_queue_init(&binding->otel_trace_queue);
   return true;
 }
 
@@ -99,6 +105,7 @@ laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(const laghu_
         strcmp(binding->javascript_queue_path, service->javascript_queue) == 0 &&
         strcmp(binding->html_refresh_queue_path, service->html_refresh_queue) == 0 &&
         strcmp(binding->chrome_analysis_queue_path, service->chrome_analysis_queue) == 0 &&
+        strcmp(binding->otel_trace_queue_path, service->otel_trace_queue) == 0 &&
         strcmp(binding->chrome_analysis_output, service->chrome_analysis_output) == 0 &&
         binding->rum_ttl == service->rum_ttl &&
         (!font_enabled || strcmp(binding->font_queue_path, service->font_fetch_queue) == 0))
@@ -124,6 +131,7 @@ static laghu_runtime_queue *laghu_apache_attached_queue(laghu_apache_queue_bindi
   if (kind == 2U && apr_atomic_read32(&binding->javascript_attached) != 0U) return (laghu_runtime_queue *)&binding->javascript_queue;
   if (kind == 3U && apr_atomic_read32(&binding->html_refresh_attached) != 0U) return (laghu_runtime_queue *)&binding->html_refresh_queue;
   if (kind == 4U && apr_atomic_read32(&binding->chrome_analysis_attached) != 0U) return (laghu_runtime_queue *)&binding->chrome_analysis_queue;
+  if (kind == 5U && apr_atomic_read32(&binding->otel_trace_attached) != 0U) return (laghu_runtime_queue *)&binding->otel_trace_queue;
   return NULL;
 }
 
@@ -158,6 +166,10 @@ laghu_runtime_queue *laghu_apache_html_refresh_queue(laghu_apache_config *config
 
 laghu_runtime_queue *laghu_apache_chrome_analysis_queue(laghu_apache_config *config) {
   return laghu_apache_attached_queue(laghu_apache_binding_for(config), 4U);
+}
+
+laghu_runtime_queue *laghu_apache_otel_trace_queue(laghu_apache_config *config) {
+  return laghu_apache_attached_queue(laghu_apache_binding_for(config), 5U);
 }
 
 bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config, const laghu_runtime_job *job, uint64_t now) {
@@ -221,6 +233,9 @@ static bool laghu_apache_attach_all_queues(void) {
     if (binding->chrome_analysis_queue_path[0] != '\0' &&
         !laghu_apache_attach_queue(&binding->chrome_analysis_queue, &binding->chrome_analysis_attached, binding->chrome_analysis_queue_path))
       complete = false;
+    if (binding->otel_trace_queue_path[0] != '\0' &&
+        !laghu_apache_attach_queue(&binding->otel_trace_queue, &binding->otel_trace_attached, binding->otel_trace_queue_path))
+      complete = false;
   }
   return complete;
 }
@@ -248,11 +263,13 @@ static void laghu_apache_close_all_queues(void) {
     if (apr_atomic_read32(&binding->javascript_attached) != 0U) laghu_runtime_queue_close(&binding->javascript_queue);
     if (apr_atomic_read32(&binding->html_refresh_attached) != 0U) laghu_runtime_queue_close(&binding->html_refresh_queue);
     if (apr_atomic_read32(&binding->chrome_analysis_attached) != 0U) laghu_runtime_queue_close(&binding->chrome_analysis_queue);
+    if (apr_atomic_read32(&binding->otel_trace_attached) != 0U) laghu_runtime_queue_close(&binding->otel_trace_queue);
     apr_atomic_set32(&binding->image_attached, 0U);
     apr_atomic_set32(&binding->font_attached, 0U);
     apr_atomic_set32(&binding->javascript_attached, 0U);
     apr_atomic_set32(&binding->html_refresh_attached, 0U);
     apr_atomic_set32(&binding->chrome_analysis_attached, 0U);
+    apr_atomic_set32(&binding->otel_trace_attached, 0U);
   }
 }
 

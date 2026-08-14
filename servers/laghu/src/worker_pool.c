@@ -77,6 +77,10 @@ laghu_runtime_queue *proxy_chrome_analysis_queue(proxy_worker *worker) {
   return proxy_worker_queue_if_ready(worker, &worker->queue->chrome_analysis_queue, &worker->queue->chrome_analysis_queue_ready);
 }
 
+laghu_runtime_queue *proxy_otel_trace_queue(proxy_worker *worker) {
+  return proxy_worker_queue_if_ready(worker, &worker->queue->otel_trace_queue, &worker->queue->otel_trace_queue_ready);
+}
+
 void *proxy_worker_main(void *argument) {
   proxy_worker *worker = argument;
   proxy_connection connection;

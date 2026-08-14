@@ -22,6 +22,7 @@
 #include "laghu/queue.h"
 #include "laghu/rum.h"
 #include "laghu/types.h"
+#include "laghu/trace.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -272,6 +273,8 @@ typedef struct {
   laghu_runtime_queue *javascript_queue;
   /* Already-attached optional queue; HTTP finalization only try-publishes. */
   laghu_runtime_queue *chrome_analysis_queue;
+  laghu_runtime_queue *otel_trace_queue;
+  unsigned int otel_sampling_rate;
   unsigned int chrome_analysis_timeout_ms;
   const char *javascript_target;
   const laghu_font_provider_set *font_providers;
@@ -373,6 +376,7 @@ typedef struct {
   bool asset_allowed;
   bool cache_publishable;
   bool query_preview;
+  laghu_trace_context trace;
   laghu_transform_budget budget;
 } laghu_http_transaction;
 

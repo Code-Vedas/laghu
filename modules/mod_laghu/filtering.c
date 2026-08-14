@@ -250,6 +250,8 @@ bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context)
   if (context->environment.font_fetch_queue != NULL) context->environment.font_providers = context->config->service.font_providers;
   context->environment.javascript_queue = laghu_apache_javascript_queue(context->config);
   context->environment.chrome_analysis_queue = laghu_apache_chrome_analysis_queue(context->config);
+  context->environment.otel_trace_queue = laghu_apache_otel_trace_queue(context->config);
+  context->environment.otel_sampling_rate = context->config->service.otel_sampling_rate;
   context->environment.chrome_analysis_timeout_ms = context->config->service.chrome_analysis_timeout_ms;
   context->environment.javascript_target = context->config->service.javascript_target;
   context->environment.javascript_observations = context->config->service.javascript_observations;
@@ -348,6 +350,10 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
       return ap_pass_brigade(filter->next, brigade);
     }
     ok = laghu_http_transaction_prepare(&context->transaction, &context->request, &context->response, &context->environment, &prepared);
+    if (context->transaction.trace.trace_id[0] != '\0') {
+      memcpy(context->trace_id, context->transaction.trace.trace_id, sizeof(context->trace_id));
+      memcpy(context->span_id, context->transaction.trace.span_id, sizeof(context->span_id));
+    }
     if (!laghu_apache_apply_result(request, &prepared)) {
       laghu_http_transaction_result_release(&prepared);
       ap_remove_output_filter(filter);

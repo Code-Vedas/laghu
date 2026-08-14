@@ -63,6 +63,9 @@ bool laghu_javascript_target_normalize(const char *target, char output[LAGHU_JAV
 bool laghu_runtime_rewrite_javascript(laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source, const char *normalized_path,
                                       const char *policy_key, const char *target, bool module, bool include_source_map,
                                       laghu_runtime_javascript_result *result);
+bool laghu_runtime_rewrite_javascript_traced(laghu_runtime_queue *queue, const char *cache_path, laghu_buffer source,
+                                             const char *normalized_path, const char *policy_key, const char *target, bool module,
+                                             bool include_source_map, const laghu_trace_context *trace, laghu_runtime_javascript_result *result);
 bool laghu_runtime_rewrite_javascript_html(laghu_runtime_queue *queue, const char *cache_path, laghu_buffer html, const char *page_path,
                                            const char *policy_key, const char *target, const laghu_csp_policy *csp, uint64_t now,
                                            unsigned int ttl_seconds, laghu_rum_engine *rum, const char *template_key, const char *page_origin,

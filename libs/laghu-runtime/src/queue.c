@@ -68,13 +68,23 @@ static bool laghu_queue_browser_analysis_valid(const laghu_runtime_job *job) {
          strcmp(job->content_type, "text/html") == 0;
 }
 
+static bool laghu_queue_trace_valid(const laghu_runtime_job *job) {
+  if (job->kind != LAGHU_RUNTIME_JOB_TRACE_EXPORT) return job->trace.trace_id[0] == '\0' ||
+      (laghu_trace_context_traceparent(&job->trace, (char[56U]){0}));
+  return job->payload.length > 0U && job->payload.length <= 65536U && job->trace.sampled &&
+         laghu_trace_context_traceparent(&job->trace, (char[56U]){0});
+}
+
 static bool laghu_queue_job_valid(const laghu_runtime_job *job, size_t payload_limit) {
-  return job != NULL && job->kind <= LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS && job->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
+  if (job != NULL && job->kind == LAGHU_RUNTIME_JOB_TRACE_EXPORT)
+    return job->payload.length > 0U && job->payload.length <= payload_limit && laghu_queue_trace_valid(job) &&
+           (job->payload.data != NULL || job->payload.length == 0U);
+  return job != NULL && job->kind <= LAGHU_RUNTIME_JOB_TRACE_EXPORT && job->target_count <= LAGHU_RUNTIME_MAX_TARGETS &&
          job->sprite_count <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS && laghu_queue_hash_valid(job->index_key) && laghu_queue_hash_valid(job->policy_key) &&
          laghu_wire_string_valid((const unsigned char *)job->request_path, sizeof(job->request_path)) &&
          laghu_wire_string_valid((const unsigned char *)job->validator, sizeof(job->validator)) &&
          laghu_wire_string_valid((const unsigned char *)job->content_type, sizeof(job->content_type)) && laghu_queue_sprite_valid(job) &&
-         laghu_queue_font_valid(job) && laghu_queue_javascript_valid(job) && laghu_queue_browser_analysis_valid(job) &&
+         laghu_queue_font_valid(job) && laghu_queue_javascript_valid(job) && laghu_queue_browser_analysis_valid(job) && laghu_queue_trace_valid(job) &&
          job->payload.length <= payload_limit && (job->payload.data != NULL || job->payload.length == 0U);
 }
 
@@ -112,7 +122,11 @@ static bool laghu_queue_slot_strings_valid(const unsigned char *slot) {
          laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_POLICY_KEY_OFFSET, LAGHU_RUNTIME_KEY_SIZE) &&
          laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_PROVIDER_ID_OFFSET, LAGHU_FONT_PROVIDER_ID_SIZE) &&
          laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_PROVIDER_DIGEST_OFFSET, LAGHU_RUNTIME_KEY_SIZE) &&
-         laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_JAVASCRIPT_TARGET_OFFSET, LAGHU_JAVASCRIPT_TARGET_SIZE);
+         laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_JAVASCRIPT_TARGET_OFFSET, LAGHU_JAVASCRIPT_TARGET_SIZE) &&
+         laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_ID_OFFSET, LAGHU_TRACE_ID_SIZE) &&
+         laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_PARENT_SPAN_ID_OFFSET, LAGHU_TRACE_SPAN_ID_SIZE) &&
+         laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_SPAN_ID_OFFSET, LAGHU_TRACE_SPAN_ID_SIZE) &&
+         laghu_wire_string_valid(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_FLAGS_OFFSET, LAGHU_TRACE_FLAGS_SIZE);
 }
 
 static void laghu_queue_state_release(laghu_runtime_queue *queue) {
@@ -309,6 +323,11 @@ static void laghu_queue_job_encode(unsigned char *slot, const laghu_runtime_job 
   slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_WEBP_OFFSET] = job->accept_webp ? 1U : 0U;
   slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_AVIF_OFFSET] = job->accept_avif ? 1U : 0U;
   laghu_wire_u32_write(slot + LAGHU_WIRE_QUEUE_SLOT_ANALYSIS_TIMEOUT_MS_OFFSET, job->analysis_timeout_ms);
+  (void)laghu_queue_copy(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_ID_OFFSET, LAGHU_TRACE_ID_SIZE, job->trace.trace_id);
+  (void)laghu_queue_copy(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_PARENT_SPAN_ID_OFFSET, LAGHU_TRACE_SPAN_ID_SIZE, job->trace.parent_span_id);
+  (void)laghu_queue_copy(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_SPAN_ID_OFFSET, LAGHU_TRACE_SPAN_ID_SIZE, job->trace.span_id);
+  (void)laghu_queue_copy(slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_FLAGS_OFFSET, LAGHU_TRACE_FLAGS_SIZE, job->trace.flags);
+  slot[LAGHU_WIRE_QUEUE_SLOT_TRACE_SAMPLED_OFFSET] = job->trace.sampled ? 1U : 0U;
 }
 
 bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue, const laghu_runtime_job *job) {
@@ -368,6 +387,11 @@ static void laghu_queue_job_decode(const unsigned char *slot, laghu_runtime_job 
   job->accept_webp = slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_WEBP_OFFSET] != 0U;
   job->accept_avif = slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_AVIF_OFFSET] != 0U;
   job->analysis_timeout_ms = laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_ANALYSIS_TIMEOUT_MS_OFFSET);
+  memcpy(job->trace.trace_id, slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_ID_OFFSET, sizeof(job->trace.trace_id));
+  memcpy(job->trace.parent_span_id, slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_PARENT_SPAN_ID_OFFSET, sizeof(job->trace.parent_span_id));
+  memcpy(job->trace.span_id, slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_SPAN_ID_OFFSET, sizeof(job->trace.span_id));
+  memcpy(job->trace.flags, slot + LAGHU_WIRE_QUEUE_SLOT_TRACE_FLAGS_OFFSET, sizeof(job->trace.flags));
+  job->trace.sampled = slot[LAGHU_WIRE_QUEUE_SLOT_TRACE_SAMPLED_OFFSET] != 0U;
   if (payload_length != 0U) memcpy(payload, laghu_queue_payload((unsigned char *)slot), payload_length);
   job->payload = (laghu_buffer){payload, payload_length};
 }
@@ -388,10 +412,10 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue, laghu_runtime_job 
     if (laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_STATE_OFFSET) == LAGHU_WIRE_QUEUE_SLOT_READY) {
       payload_length = laghu_wire_u64_read(slot + LAGHU_WIRE_QUEUE_SLOT_PAYLOAD_LENGTH_OFFSET);
       if (payload_length <= payload_capacity && payload_length <= state->slot_payload_size &&
-          laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_KIND_OFFSET) <= LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS &&
+          laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_KIND_OFFSET) <= LAGHU_RUNTIME_JOB_TRACE_EXPORT &&
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_TARGET_COUNT_OFFSET) <= LAGHU_RUNTIME_MAX_TARGETS &&
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_SPRITE_COUNT_OFFSET) <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
-          laghu_queue_slot_strings_valid(slot) && laghu_wire_zeroes(slot + 4539U, 5U)) {
+          laghu_queue_slot_strings_valid(slot) && laghu_wire_zeroes(slot + 4615U, 9U)) {
         laghu_queue_job_decode(slot, job, payload, (size_t)payload_length);
         if (!laghu_queue_job_valid(job, state->slot_payload_size))
           memset(job, 0, sizeof(*job));

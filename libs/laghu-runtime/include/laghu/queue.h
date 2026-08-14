@@ -12,6 +12,7 @@
 
 #include "laghu/core.h"
 #include "laghu/image.h"
+#include "laghu/trace.h"
 #include "laghu/types.h"
 
 #ifdef __cplusplus
@@ -27,7 +28,8 @@ typedef enum {
   LAGHU_RUNTIME_JOB_HTML_REFRESH = 4,
   /* Browser work is deliberately a separate, opt-in queue.  Request workers
    * only publish a bounded HTML snapshot and never wait for its result. */
-  LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS = 5
+  LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS = 5,
+  LAGHU_RUNTIME_JOB_TRACE_EXPORT = 6
 } laghu_runtime_job_kind;
 
 typedef struct {
@@ -56,6 +58,7 @@ typedef struct {
   bool accept_webp;
   bool accept_avif;
   unsigned int analysis_timeout_ms;
+  laghu_trace_context trace;
   laghu_buffer payload;
 } laghu_runtime_job;
 typedef struct {

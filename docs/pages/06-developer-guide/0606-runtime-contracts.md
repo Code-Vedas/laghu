@@ -10,6 +10,10 @@ permalink: /developer-guide/runtime-contracts/
 ## Queue Contracts
 
 Each queue is bounded, checksummed, capability-bearing, heartbeat-validated, and versioned independently.
+
+Queue format v10 adds W3C trace context. Upgrade workers and adapters together, then recreate every queue file; an older mapping is rejected rather than being decoded with shifted fields.
+
+`laghu-otel-export` consumes the dedicated trace queue. Set `LAGHU_OTEL_CACHE_PATH` to the configured image-cache path so its fixed-label worker metrics, queue health, failures, and duration histogram appear at the existing Prometheus endpoint. `LAGHU_OTEL_AUTHORIZATION` is optional and is sent only to the collector; neither value enters logs, metrics, or trace payloads.
 Publishers use try-only submission and workers reject mismatched protocol, configuration digest, input bounds, or job kind.
 Never add an unbounded field or a request-thread wait to a queue contract.
 

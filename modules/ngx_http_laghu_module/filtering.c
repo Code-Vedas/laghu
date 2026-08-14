@@ -153,6 +153,10 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
   context->log_started_ms = ngx_current_msec;
   laghu_http_laghu_generate_trace_ids(request, context->trace_id, context->span_id);
   prepared = laghu_http_transaction_prepare(&context->transaction, &context->request, &context->response, &context->environment, &result);
+  if (context->transaction.trace.trace_id[0] != '\0') {
+    memcpy(context->trace_id, context->transaction.trace.trace_id, sizeof(context->trace_id));
+    memcpy(context->span_id, context->transaction.trace.span_id, sizeof(context->span_id));
+  }
   if (ngx_http_laghu_apply_result(request, &result) != NGX_OK) {
     laghu_http_transaction_result_release(&result);
     return ngx_http_laghu_next_header_filter(request);

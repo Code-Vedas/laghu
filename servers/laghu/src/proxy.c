@@ -311,6 +311,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         .font_providers = options->service.font_providers,
         .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
         .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+        .otel_trace_queue = options->service.otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+        .otel_sampling_rate = options->service.otel_sampling_rate,
         .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
         .javascript_target = options->service.javascript_target,
         .javascript_observations = options->service.javascript_observations,
@@ -390,6 +392,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
           .font_providers = options->service.font_providers,
           .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
           .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+          .otel_trace_queue = options->service.otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+          .otel_sampling_rate = options->service.otel_sampling_rate,
           .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
           .javascript_target = options->service.javascript_target,
           .javascript_observations = options->service.javascript_observations,
@@ -530,6 +534,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       .font_providers = options->service.font_providers,
       .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
       .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+      .otel_trace_queue = options->service.otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+      .otel_sampling_rate = options->service.otel_sampling_rate,
       .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
       .javascript_target = options->service.javascript_target,
       .javascript_observations = options->service.javascript_observations,
@@ -630,6 +636,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     if (!proxy_send_result(client, &response, &finalized, (laghu_buffer){origin_body, origin_body_length})) access.failure = "client_disconnect";
   }
 done:
+  if (transaction.version == LAGHU_HTTP_ABI_VERSION && transaction.trace.trace_id[0] != '\0') {
+    (void)snprintf(access.trace_id, sizeof(access.trace_id), "%s", transaction.trace.trace_id);
+    (void)snprintf(access.span_id, sizeof(access.span_id), "%s", transaction.trace.span_id);
+  }
   if (access.status == 0U)
     access.status = (finalized.not_modified || prepared.not_modified) ? 304U : (response.status != 0U ? response.status : 200U);
   if (finalized.version == LAGHU_HTTP_ABI_VERSION) {

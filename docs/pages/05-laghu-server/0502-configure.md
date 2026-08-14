@@ -55,6 +55,10 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--javascript-queue PATH` | bounded path | unset | Enables the SWC queue. |
 | `--chrome-analysis-queue PATH` | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
 | `--chrome-analysis-output PATH` | bounded directory | unset | Enables bounded one-shot Chrome report import in the standalone lifecycle; requires `--chrome-analysis-queue`. |
+| `--otel-endpoint HTTPS_URL` | HTTPS collector URL | unset | Enables OTLP/HTTP JSON export only with `--otel-trace-queue`; authorization is read only from `LAGHU_OTEL_AUTHORIZATION`. |
+| `--otel-trace-queue PATH` | bounded path | unset | Dedicated bounded async trace queue, consumed by `laghu-otel-export`. |
+| `--otel-sampling-rate 0..100` | percentage | `0` | Sampling is disabled by default; queue saturation drops spans without affecting responses. |
+| `--otel-ca-file PATH` | PEM trust bundle | system trust | Optional collector trust bundle. |
 | `--layout-reservation-config PATH` | bounded rule file | unset | Loads exact-ID `box ID WIDTH HEIGHT` and `font ID ADJUST_MILLI` CLS reservations. Rules apply only to learned CLS regressions and CSP-permitted style attributes. |
 | `--chrome-analysis-timeout MS` | `100..10000` | `1500` | Bounds one analysis job; requires `--chrome-analysis-queue`. |
 | `--asset-offload-config PATH` | valid asset policy file | unset | Enables verified immutable CDN rewriting. |

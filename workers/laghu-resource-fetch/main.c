@@ -62,7 +62,7 @@ static void laghu_fetch_log_lifecycle(const char *state, const char *failure) {
 
 static void laghu_fetch_log_job(const laghu_runtime_job *job, bool success, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_job record = {.common = {(time_t)time(NULL), "worker", "resource-fetch", NULL, NULL},
+  laghu_log_job record = {.common = {(time_t)time(NULL), "worker", "resource-fetch", job->trace.trace_id, job->trace.span_id},
                           .job_kind = "font_css",
                           .outcome = success ? "success" : "failed",
                           .input_bytes = job->payload.length,

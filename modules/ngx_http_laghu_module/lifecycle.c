@@ -58,6 +58,9 @@ static bool ngx_http_laghu_attach_config_queues(ngx_http_laghu_loc_conf_t *conf)
       !ngx_http_laghu_attach_queue(&conf->chrome_analysis_runtime_queue, &conf->chrome_analysis_runtime_queue_attached,
                                    conf->service.chrome_analysis_queue))
     complete = false;
+  if (conf->service.otel_trace_queue[0] != '\0' &&
+      !ngx_http_laghu_attach_queue(&conf->otel_trace_runtime_queue, &conf->otel_trace_runtime_queue_attached, conf->service.otel_trace_queue))
+    complete = false;
   ngx_http_laghu_refresh_runtime_queue_snapshot(conf);
   return complete;
 }
@@ -93,11 +96,13 @@ static void ngx_http_laghu_close_config_queues(ngx_http_laghu_loc_conf_t *conf) 
   if (conf->javascript_runtime_queue_attached) laghu_runtime_queue_close(&conf->javascript_runtime_queue);
   if (conf->html_refresh_runtime_queue_attached) laghu_runtime_queue_close(&conf->html_refresh_runtime_queue);
   if (conf->chrome_analysis_runtime_queue_attached) laghu_runtime_queue_close(&conf->chrome_analysis_runtime_queue);
+  if (conf->otel_trace_runtime_queue_attached) laghu_runtime_queue_close(&conf->otel_trace_runtime_queue);
   conf->runtime_queue_attached = false;
   conf->font_fetch_runtime_queue_attached = false;
   conf->javascript_runtime_queue_attached = false;
   conf->html_refresh_runtime_queue_attached = false;
   conf->chrome_analysis_runtime_queue_attached = false;
+  conf->otel_trace_runtime_queue_attached = false;
   conf->runtime_queue_capabilities = 0U;
   conf->runtime_queue_snapshot_ready = false;
 }
