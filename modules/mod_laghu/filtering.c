@@ -360,6 +360,7 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
       return ap_pass_brigade(filter->next, brigade);
     }
     if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
+      apr_finfo_t info;
       prepared.not_modified = laghu_http_request_matches_result_etag(&context->request, &prepared);
       if (prepared.not_modified) {
         request->status = HTTP_NOT_MODIFIED;
@@ -371,9 +372,23 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
         APR_BRIGADE_INSERT_TAIL(brigade, apr_bucket_eos_create(request->connection->bucket_alloc));
         return ap_pass_brigade(filter->next, brigade);
       }
-      context->selected_body = apr_pmemdup(request->pool, prepared.selected.data, prepared.selected.length);
       context->selected_length = prepared.selected.length;
-      if (context->selected_body == NULL) {
+      if (!prepared.cached_file ||
+          apr_file_open(&context->cached_file, prepared.cached_entry.variant_path, APR_READ | APR_BINARY, APR_OS_DEFAULT,
+                        request->pool) != APR_SUCCESS ||
+          apr_file_info_get(&info, APR_FINFO_SIZE, context->cached_file) != APR_SUCCESS || info.size != (apr_off_t)prepared.selected.length) {
+        context->cached_file = NULL;
+        prepared.owned_body = malloc(prepared.selected.length);
+        if (prepared.owned_body == NULL || !laghu_runtime_cache_read(&prepared.cached_entry, prepared.owned_body, prepared.selected.length)) {
+          free(prepared.owned_body);
+          prepared.owned_body = NULL;
+          laghu_http_transaction_result_release(&prepared);
+          ap_remove_output_filter(filter);
+          return ap_pass_brigade(filter->next, brigade);
+        }
+        context->selected_body = apr_pmemdup(request->pool, prepared.owned_body, prepared.selected.length);
+      }
+      if (context->cached_file == NULL && context->selected_body == NULL) {
         laghu_http_transaction_result_release(&prepared);
         ap_remove_output_filter(filter);
         return ap_pass_brigade(filter->next, brigade);
@@ -406,8 +421,13 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
     if (replacement == NULL) {
       return ap_pass_brigade(filter->next, brigade);
     }
-    APR_BRIGADE_INSERT_TAIL(replacement, apr_bucket_pool_create((const char *)context->selected_body, context->selected_length, request->pool,
-                                                                request->connection->bucket_alloc));
+    if (context->cached_file != NULL) {
+      APR_BRIGADE_INSERT_TAIL(replacement, apr_bucket_file_create(context->cached_file, 0, context->selected_length, request->pool,
+                                                                   request->connection->bucket_alloc));
+    } else {
+      APR_BRIGADE_INSERT_TAIL(replacement, apr_bucket_pool_create((const char *)context->selected_body, context->selected_length, request->pool,
+                                                                  request->connection->bucket_alloc));
+    }
     APR_BRIGADE_INSERT_TAIL(replacement, apr_bucket_eos_create(request->connection->bucket_alloc));
     context->cache_sent = true;
     apr_brigade_cleanup(brigade);

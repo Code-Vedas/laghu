@@ -186,10 +186,16 @@ static bool laghu_precompressed_accepts(const char *value, const char *coding) {
 bool laghu_precompressed_select(const char *cache_path, laghu_buffer body, const char *accept_encoding, laghu_runtime_cache_entry *entry,
                                 laghu_precompressed_coding *coding) {
   char payload_hash[LAGHU_RUNTIME_KEY_SIZE];
+  if (body.data == NULL || !laghu_sha256_hex(body, payload_hash)) return false;
+  return laghu_precompressed_select_hash(cache_path, payload_hash, accept_encoding, entry, coding);
+}
+
+bool laghu_precompressed_select_hash(const char *cache_path, const char *payload_hash, const char *accept_encoding,
+                                     laghu_runtime_cache_entry *entry, laghu_precompressed_coding *coding) {
   char key[LAGHU_RUNTIME_KEY_SIZE];
   static const laghu_precompressed_coding preferences[] = {LAGHU_PRECOMPRESSED_BROTLI, LAGHU_PRECOMPRESSED_GZIP};
   size_t index;
-  if (entry == NULL || coding == NULL || body.data == NULL || !laghu_sha256_hex(body, payload_hash)) return false;
+  if (entry == NULL || coding == NULL || payload_hash == NULL) return false;
   for (index = 0U; index < sizeof(preferences) / sizeof(preferences[0]); ++index) {
     const char *name = laghu_precompressed_coding_name(preferences[index]);
     if (laghu_precompressed_accepts(accept_encoding, name) && laghu_precompressed_key(payload_hash, preferences[index], key) &&

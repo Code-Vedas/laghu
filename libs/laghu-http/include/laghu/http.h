@@ -309,6 +309,9 @@ typedef struct {
   laghu_buffer original;
   laghu_buffer selected;
   unsigned char *owned_body;
+  /* Immutable cache artifact adapters may send without copying payload bytes. */
+  laghu_runtime_cache_entry cached_entry;
+  bool cached_file;
   /* Identity representation preserved when selected is content-encoded. */
   laghu_buffer cache_selected;
   unsigned char *cache_owned_body;

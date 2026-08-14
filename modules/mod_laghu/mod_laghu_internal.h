@@ -85,6 +85,7 @@ typedef struct {
   size_t capture_capacity;
   unsigned char *selected_body;
   size_t selected_length;
+  apr_file_t *cached_file;
   laghu_http_action action;
   laghu_image_filter_mask filters;
   bool accept_webp;

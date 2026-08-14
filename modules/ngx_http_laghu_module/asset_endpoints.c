@@ -10,6 +10,11 @@
 #include "laghu/types.h"
 #include "ngx_http_laghu_internal.h"
 
+static void ngx_http_laghu_asset_close_file(void *data) {
+  ngx_file_t *file = data;
+  if (file != NULL && file->fd != NGX_INVALID_FILE) ngx_close_file(file->fd);
+}
+
 ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf) {
   static const char prefix[] = "/.laghu/image/";
   static const char css_prefix[] = "/.laghu/css/";
@@ -17,9 +22,10 @@ ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request, ngx_http_la
   static const char media_prefix[] = "/.laghu/media/";
   laghu_runtime_cache_entry entry;
   ngx_buf_t *buffer;
+  ngx_file_t *file;
+  ngx_pool_cleanup_t *cleanup;
   ngx_chain_t output;
   ngx_table_elt_t *header;
-  unsigned char *body;
   char key[LAGHU_RUNTIME_KEY_SIZE];
   bool css_asset = false;
   bool javascript_asset = false;
@@ -67,13 +73,11 @@ ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request, ngx_http_la
       laghu_http_transaction_result_release(&result);
       return NGX_HTTP_NOT_FOUND;
     }
-    body = ngx_pnalloc(request->pool, result.selected.length);
-    if (body == NULL || ngx_http_laghu_apply_result(request, &result) != NGX_OK) {
+    if (!result.cached_file || ngx_http_laghu_apply_result(request, &result) != NGX_OK) {
       laghu_http_transaction_result_release(&result);
       return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
-    ngx_memcpy(body, result.selected.data, result.selected.length);
-    entry.length = result.selected.length;
+    entry = result.cached_entry;
     entry.content_type[0] = '\0';
     for (operation_index = 0U; operation_index < result.header_operation_count; ++operation_index) {
       if (strcmp(result.header_operations[operation_index].name, "Content-Type") == 0 && result.header_operations[operation_index].value != NULL) {
@@ -104,10 +108,22 @@ ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request, ngx_http_la
   header->value.data[LAGHU_SHA256_HEX_LENGTH + 2U] = '\0';
   if (ngx_http_send_header(request) == NGX_ERROR || request->method == NGX_HTTP_HEAD) return NGX_OK;
   buffer = ngx_calloc_buf(request->pool);
-  if (buffer == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
-  buffer->pos = body;
-  buffer->last = body + entry.length;
-  buffer->memory = 1U;
+  cleanup = ngx_pool_cleanup_add(request->pool, sizeof(*file));
+  if (buffer == NULL || cleanup == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  file = cleanup->data;
+  ngx_memzero(file, sizeof(*file));
+  file->fd = NGX_INVALID_FILE;
+  file->log = request->connection->log;
+  file->name.len = strlen(entry.variant_path);
+  file->name.data = ngx_pnalloc(request->pool, file->name.len + 1U);
+  if (file->name.data == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  ngx_memcpy(file->name.data, entry.variant_path, file->name.len + 1U);
+  file->fd = ngx_open_file(file->name.data, NGX_FILE_RDONLY, NGX_FILE_OPEN, 0U);
+  if (file->fd == NGX_INVALID_FILE) return NGX_HTTP_NOT_FOUND;
+  cleanup->handler = ngx_http_laghu_asset_close_file;
+  buffer->file = file;
+  buffer->file_last = entry.length;
+  buffer->in_file = 1U;
   buffer->last_buf = 1U;
   output.buf = buffer;
   output.next = NULL;

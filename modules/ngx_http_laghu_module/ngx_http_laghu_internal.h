@@ -73,6 +73,7 @@ typedef struct {
   size_t capture_capacity;
   ngx_chain_t *cached_output;
   unsigned char *cached_body;
+  ngx_file_t *cached_file;
   bool accept_webp;
   bool capture_enabled;
   bool cache_hit;

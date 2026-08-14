@@ -11,7 +11,8 @@ int laghu_apache_asset_endpoint(request_rec *request, laghu_apache_config *confi
   static const char javascript_prefix[] = "/.laghu/js/";
   static const char media_prefix[] = "/.laghu/media/";
   laghu_runtime_cache_entry entry;
-  unsigned char *body;
+  apr_file_t *file;
+  apr_size_t sent;
   const char *key;
   bool css_asset;
   bool javascript_asset;
@@ -62,12 +63,11 @@ int laghu_apache_asset_endpoint(request_rec *request, laghu_apache_config *confi
       laghu_http_transaction_result_release(&result);
       return HTTP_NOT_FOUND;
     }
-    body = apr_pmemdup(request->pool, result.selected.data, result.selected.length);
-    if (body == NULL || !laghu_apache_apply_result(request, &result)) {
+    if (!result.cached_file || !laghu_apache_apply_result(request, &result)) {
       laghu_http_transaction_result_release(&result);
       return HTTP_INTERNAL_SERVER_ERROR;
     }
-    entry.length = result.selected.length;
+    entry = result.cached_entry;
     entry.content_type[0] = '\0';
     for (index = 0U; index < result.header_operation_count; ++index) {
       operation = &result.header_operations[index];
@@ -81,7 +81,9 @@ int laghu_apache_asset_endpoint(request_rec *request, laghu_apache_config *confi
   ap_set_content_length(request, (apr_off_t)entry.length);
   apr_table_setn(request->headers_out, "Cache-Control", "public, max-age=31536000, immutable");
   apr_table_set(request->headers_out, "ETag", apr_psprintf(request->pool, "\"%s\"", key));
-  if (!request->header_only && ap_rwrite(body, (int)entry.length, request) < 0) {
+  if (request->header_only) return OK;
+  if (apr_file_open(&file, entry.variant_path, APR_READ | APR_BINARY, APR_OS_DEFAULT, request->pool) != APR_SUCCESS ||
+      ap_send_fd(file, request, 0, entry.length, &sent) != APR_SUCCESS || sent != entry.length) {
     return HTTP_INTERNAL_SERVER_ERROR;
   }
   return OK;

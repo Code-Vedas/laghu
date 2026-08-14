@@ -312,7 +312,7 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(result.action == LAGHU_HTTP_ACTION_SERVE_CACHED);
   CHECK(result.decision == LAGHU_DECISION_IMAGE_HIT);
   CHECK(result.selected.length == sizeof(variant) - 1U);
-  CHECK(memcmp(result.selected.data, variant, sizeof(variant) - 1U) == 0);
+  CHECK(result.cached_file && strcmp(result.cached_entry.variant_path, entry.variant_path) == 0);
   CHECK(result.header_operation_count == 9U);
   CHECK(strcmp(result.header_operations[0].name, "Content-Type") == 0);
   CHECK(strcmp(result.header_operations[1].name, "Content-Length") == 0);
@@ -373,7 +373,7 @@ static void test_image_cold_warm_and_queue(void) {
      * owns full integrity verification and removal. */
     CHECK(result.decision == LAGHU_DECISION_IMAGE_HIT);
     CHECK(result.action == LAGHU_HTTP_ACTION_SERVE_CACHED);
-    CHECK(result.selected.length == sizeof(variant) - 1U && memcmp(result.selected.data, "wrong", result.selected.length) == 0);
+    CHECK(result.cached_file && result.selected.length == sizeof(variant) - 1U);
     laghu_http_transaction_result_release(&result);
   }
   laghu_runtime_queue_close(&queue);

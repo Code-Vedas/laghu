@@ -578,13 +578,9 @@ static bool laghu_http_set_origin(laghu_http_transaction *transaction, const lag
 }
 
 static bool laghu_http_copy_cached_result(laghu_http_transaction_result *result, const laghu_runtime_cache_entry *entry) {
-  result->owned_body = malloc(entry->length);
-  if (result->owned_body == NULL || !laghu_runtime_cache_read(entry, result->owned_body, entry->length)) {
-    free(result->owned_body);
-    result->owned_body = NULL;
-    return false;
-  }
-  result->selected = (laghu_buffer){result->owned_body, entry->length};
+  result->cached_entry = *entry;
+  result->cached_file = true;
+  result->selected = (laghu_buffer){NULL, entry->length};
   result->action = LAGHU_HTTP_ACTION_SERVE_CACHED;
   return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Content-Type", entry->content_type);
 }
@@ -625,24 +621,18 @@ static bool laghu_http_apply_precompressed_cached(const laghu_http_transaction *
   const laghu_http_header *accept_encoding;
   laghu_runtime_cache_entry entry;
   laghu_precompressed_coding coding;
-  unsigned char *body;
   char accept_encoding_value[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   char etag[LAGHU_RUNTIME_KEY_SIZE + 24U];
-  if (transaction == NULL || result == NULL || result->selected.data == NULL || result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
+  if (transaction == NULL || result == NULL || !result->cached_file || result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
       !laghu_precompressed_text_type(transaction->content_type))
     return true;
   accept_encoding = laghu_http_find_header(transaction->request->headers, transaction->request->header_count, "Accept-Encoding");
   if (accept_encoding != NULL && (accept_encoding->value.length > LAGHU_HTTP_MAX_HEADER_VALUE ||
                                   !laghu_http_copy_view(accept_encoding->value, accept_encoding_value, sizeof(accept_encoding_value))))
     return false;
-  if (!laghu_precompressed_select(transaction->environment.cache_path, result->selected, accept_encoding == NULL ? NULL : accept_encoding_value,
-                                  &entry, &coding)) {
+  if (!laghu_precompressed_select_hash(transaction->environment.cache_path, result->cached_entry.payload_hash,
+                                       accept_encoding == NULL ? NULL : accept_encoding_value, &entry, &coding)) {
     return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", "Accept, Accept-Encoding");
-  }
-  body = malloc(entry.length);
-  if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
-    free(body);
-    return false;
   }
   (void)snprintf(etag, sizeof(etag), "\"laghu-%s-%s\"", laghu_precompressed_coding_name(coding), entry.payload_hash);
   if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", "Accept, Accept-Encoding") ||
@@ -650,12 +640,10 @@ static bool laghu_http_apply_precompressed_cached(const laghu_http_transaction *
       !laghu_http_add_length(result, entry.length) || !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag", etag) ||
       !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Content-MD5", NULL) ||
       !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Digest", NULL)) {
-    free(body);
     return false;
   }
-  free(result->owned_body);
-  result->owned_body = body;
-  result->selected = (laghu_buffer){body, entry.length};
+  result->cached_entry = entry;
+  result->selected.length = entry.length;
   return true;
 }
 

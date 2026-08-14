@@ -18,6 +18,11 @@ time_t ngx_http_laghu_last_queue_warning;
 
 static void ngx_http_laghu_free_cached_body(void *data) { free(data); }
 
+static void ngx_http_laghu_close_cached_file(void *data) {
+  ngx_file_t *file = data;
+  if (file != NULL && file->fd != NGX_INVALID_FILE) ngx_close_file(file->fd);
+}
+
 static bool ngx_http_laghu_html_cache_token_equal(const unsigned char *value, size_t length, const char *expected) {
   return ngx_strlen(expected) == length && ngx_strncasecmp((u_char *)value, (u_char *)expected, length) == 0;
 }
@@ -171,6 +176,7 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
   if (result.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
     ngx_buf_t *buffer;
     ngx_pool_cleanup_t *cleanup;
+    ngx_file_info_t info;
     result.not_modified = laghu_http_request_matches_result_etag(&context->request, &result);
     if (result.not_modified) {
       request->headers_out.status = NGX_HTTP_NOT_MODIFIED;
@@ -181,19 +187,41 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
     }
     context->cached_output = ngx_alloc_chain_link(request->pool);
     buffer = ngx_calloc_buf(request->pool);
-    cleanup = ngx_pool_cleanup_add(request->pool, 0U);
-    if (result.owned_body == NULL || result.selected.data != result.owned_body || context->cached_output == NULL || buffer == NULL ||
-        cleanup == NULL) {
+    cleanup = ngx_pool_cleanup_add(request->pool, sizeof(*context->cached_file));
+    if (!result.cached_file || context->cached_output == NULL || buffer == NULL || cleanup == NULL) {
       laghu_http_transaction_result_release(&result);
       return ngx_http_laghu_next_header_filter(request);
     }
-    context->cached_body = result.owned_body;
-    result.owned_body = NULL;
-    cleanup->handler = ngx_http_laghu_free_cached_body;
-    cleanup->data = context->cached_body;
-    buffer->pos = context->cached_body;
-    buffer->last = context->cached_body + result.selected.length;
-    buffer->memory = 1U;
+    context->cached_file = cleanup->data;
+    ngx_memzero(context->cached_file, sizeof(*context->cached_file));
+    context->cached_file->fd = NGX_INVALID_FILE;
+    context->cached_file->log = request->connection->log;
+    context->cached_file->name.len = strlen(result.cached_entry.variant_path);
+    context->cached_file->name.data = ngx_pnalloc(request->pool, context->cached_file->name.len + 1U);
+    if (context->cached_file->name.data != NULL) {
+      ngx_memcpy(context->cached_file->name.data, result.cached_entry.variant_path, context->cached_file->name.len + 1U);
+      context->cached_file->fd = ngx_open_file(context->cached_file->name.data, NGX_FILE_RDONLY, NGX_FILE_OPEN, 0U);
+    }
+    if (context->cached_file->fd != NGX_INVALID_FILE && ngx_fd_info(context->cached_file->fd, &info) != NGX_FILE_ERROR &&
+        ngx_file_size(&info) == (off_t)result.selected.length) {
+      cleanup->handler = ngx_http_laghu_close_cached_file;
+      buffer->file = context->cached_file;
+      buffer->file_last = result.selected.length;
+      buffer->in_file = 1U;
+    } else {
+      if (context->cached_file->fd != NGX_INVALID_FILE) ngx_close_file(context->cached_file->fd);
+      context->cached_body = malloc(result.selected.length);
+      if (context->cached_body == NULL || !laghu_runtime_cache_read(&result.cached_entry, context->cached_body, result.selected.length)) {
+        free(context->cached_body);
+        laghu_http_transaction_result_release(&result);
+        return ngx_http_laghu_next_header_filter(request);
+      }
+      cleanup->handler = ngx_http_laghu_free_cached_body;
+      cleanup->data = context->cached_body;
+      buffer->pos = context->cached_body;
+      buffer->last = context->cached_body + result.selected.length;
+      buffer->memory = 1U;
+    }
     buffer->last_buf = request == request->main;
     buffer->last_in_chain = 1U;
     context->cached_output->buf = buffer;
