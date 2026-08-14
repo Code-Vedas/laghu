@@ -276,6 +276,8 @@
 - [ ] Enforce the never-larger guarantee.
 - [ ] Assert that excluded paths and responses remain untouched.
 - [ ] Assert expected CLS-critical dimensions and attributes.
+- [ ] nginx/plain | nginx/pagespeed | nginx/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
+- [ ] apache/plain | apache/pagespeed | apache/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
 
 ### 5.4 Resource, Quality, and CWV Instrumentation
 - [ ] Capture cAdvisor/cgroup CPU, RSS, and CPU per optimized byte.
