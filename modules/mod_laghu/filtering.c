@@ -245,6 +245,7 @@ bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context)
   context->environment.cache_path = context->config->service.image_cache;
   context->environment.rum = laghu_apache_rum;
   context->environment.queue = laghu_apache_image_queue(context->config);
+  context->environment.queue_capabilities = laghu_apache_image_queue_capabilities(context->config);
   context->environment.font_fetch_queue = laghu_apache_font_queue(context->config);
   if (context->environment.font_fetch_queue != NULL) context->environment.font_providers = context->config->service.font_providers;
   context->environment.javascript_queue = laghu_apache_javascript_queue(context->config);

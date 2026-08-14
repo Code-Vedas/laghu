@@ -59,6 +59,7 @@ static void test_cache_backend_governance(const laghu_test_workspace *workspace,
   assert(laghu_cache_backend_publish(backend, index_key, policy_key, "etag", "text/plain", "test", (laghu_buffer){payload, payload_length},
                                      &backend_entry));
   assert(laghu_cache_backend_lookup(backend, index_key, "etag", &backend_entry));
+  assert(laghu_cache_backend_lookup_readonly(backend, index_key, "etag", &backend_entry));
   {
     unsigned char cached[64];
     assert(laghu_cache_backend_read(backend, &backend_entry, cached, sizeof(cached)));
@@ -127,6 +128,36 @@ static void test_cache_backend_governance(const laghu_test_workspace *workspace,
   ++limits.inode_limit;
   assert(!laghu_cache_backend_open_path(backend, backend_path, &limits));
   free(backend);
+}
+
+static void test_cache_maintenance_integrity(const laghu_test_workspace *workspace, const unsigned char *payload, size_t payload_length,
+                                             const char *index_key, const char *policy_key) {
+  laghu_cache_backend backend;
+  laghu_cache_limits limits;
+  laghu_cache_stats stats;
+  laghu_runtime_cache_entry entry;
+  char cache_path[LAGHU_RUNTIME_PATH_SIZE];
+  char placeholder[LAGHU_RUNTIME_PATH_SIZE];
+  FILE *file;
+  unsigned char corrupted = (unsigned char)(payload[0] ^ 0xffU);
+
+  laghu_cache_limits_init(&limits);
+  limits.metadata_size = 16384U;
+  limits.clean_interval = 1U;
+  assert(laghu_test_workspace_path(workspace, "maintenance-cache", cache_path, sizeof(cache_path)));
+  assert(laghu_test_workspace_path(workspace, "maintenance-cache/.keep", placeholder, sizeof(placeholder)));
+  assert(laghu_test_workspace_write(workspace, "maintenance-cache/.keep", NULL, 0U));
+  assert(remove(placeholder) == 0);
+  assert(laghu_cache_backend_open_path(&backend, cache_path, &limits));
+  assert(laghu_cache_backend_publish(&backend, index_key, policy_key, "etag", "text/plain", "test",
+                                     (laghu_buffer){payload, payload_length}, &entry));
+  file = fopen(entry.variant_path, "r+b");
+  assert(file != NULL && fwrite(&corrupted, 1U, 1U, file) == 1U && fclose(file) == 0);
+  assert(laghu_cache_backend_maintain(&backend, 100U));
+  assert(!laghu_cache_backend_lookup(&backend, index_key, "etag", &entry));
+  assert(laghu_cache_backend_health(&backend, &stats));
+  assert(stats.corrupt_removals == 1U && stats.bytes == 0U && stats.files == 0U);
+  laghu_cache_backend_close(&backend);
 }
 
 static void test_catalog_learning(const char *temporary, const char *index_key, const char *policy_key) {
@@ -222,6 +253,7 @@ static void test_file_cache_artifacts(const char *temporary, const unsigned char
   assert(!laghu_runtime_cache_lookup(temporary, index_key, NULL, &entry));
   assert(laghu_runtime_cache_lookup(temporary, index_key, "etag", &entry));
   assert(laghu_runtime_cache_lookup_variant(temporary, policy_key, &entry));
+  assert(laghu_runtime_file_cache_verify(&entry));
   assert(laghu_runtime_cache_read(&entry, cached, sizeof(cached)));
   assert(memcmp(cached, payload, payload_length) == 0);
   assert(!laghu_runtime_cache_lookup(temporary, index_key, "changed", &entry));
@@ -233,7 +265,9 @@ static void test_file_cache_artifacts(const char *temporary, const unsigned char
     assert(fclose(file) == 0);
   }
   assert(laghu_runtime_cache_lookup(temporary, index_key, "etag", &entry));
-  assert(!laghu_runtime_cache_read(&entry, cached, sizeof(cached)));
+  assert(laghu_runtime_cache_read(&entry, cached, sizeof(cached)));
+  assert(memcmp(cached, payload, payload_length) != 0);
+  assert(!laghu_runtime_file_cache_verify(&entry));
   {
     FILE *file = fopen(entry.variant_path, "wb");
     assert(file != NULL);
@@ -259,6 +293,7 @@ int main(void) {
   assert(strcmp(index_key, no_webp_index_key) != 0);
   test_cache_backend_uri(&workspace);
   test_cache_backend_governance(&workspace, payload, sizeof(payload) - 1U, index_key, no_webp_index_key, policy_key);
+  test_cache_maintenance_integrity(&workspace, payload, sizeof(payload) - 1U, index_key, policy_key);
   test_catalog_learning(workspace.path, index_key, policy_key);
   test_file_cache_artifacts(workspace.path, payload, sizeof(payload) - 1U, index_key, policy_key);
   assert(laghu_test_workspace_remove(&workspace));

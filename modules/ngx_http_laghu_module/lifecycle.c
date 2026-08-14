@@ -29,6 +29,19 @@ static bool ngx_http_laghu_attach_queue(laghu_runtime_queue *queue, bool *attach
   return true;
 }
 
+static void ngx_http_laghu_refresh_runtime_queue_snapshot(ngx_http_laghu_loc_conf_t *conf) {
+  laghu_runtime_queue_snapshot snapshot;
+  uint64_t now = (uint64_t)ngx_time();
+  conf->runtime_queue_capabilities = 0U;
+  conf->runtime_queue_snapshot_ready = false;
+  if (!conf->runtime_queue_attached || !laghu_runtime_queue_snapshot_get(&conf->runtime_queue, &snapshot)) return;
+  if (snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U || snapshot.worker_heartbeat > now ||
+      now - snapshot.worker_heartbeat > 45U)
+    return;
+  conf->runtime_queue_capabilities = snapshot.capabilities;
+  conf->runtime_queue_snapshot_ready = true;
+}
+
 static bool ngx_http_laghu_attach_config_queues(ngx_http_laghu_loc_conf_t *conf) {
   bool complete = true;
   if (conf == NULL || !conf->queue_registered) return true;
@@ -45,6 +58,7 @@ static bool ngx_http_laghu_attach_config_queues(ngx_http_laghu_loc_conf_t *conf)
       !ngx_http_laghu_attach_queue(&conf->chrome_analysis_runtime_queue, &conf->chrome_analysis_runtime_queue_attached,
                                    conf->service.chrome_analysis_queue))
     complete = false;
+  ngx_http_laghu_refresh_runtime_queue_snapshot(conf);
   return complete;
 }
 
@@ -63,7 +77,10 @@ static bool ngx_http_laghu_attach_all_queues(ngx_cycle_t *cycle) {
 
 static void ngx_http_laghu_retry_queues(ngx_event_t *event) {
   ngx_cycle_t *cycle = event->data;
-  if (cycle != NULL && !ngx_http_laghu_attach_all_queues(cycle)) ngx_add_timer(event, 1000U);
+  if (cycle != NULL) {
+    (void)ngx_http_laghu_attach_all_queues(cycle);
+    ngx_add_timer(event, 1000U);
+  }
 }
 
 static void ngx_http_laghu_close_config_queues(ngx_http_laghu_loc_conf_t *conf) {
@@ -78,6 +95,8 @@ static void ngx_http_laghu_close_config_queues(ngx_http_laghu_loc_conf_t *conf) 
   conf->javascript_runtime_queue_attached = false;
   conf->html_refresh_runtime_queue_attached = false;
   conf->chrome_analysis_runtime_queue_attached = false;
+  conf->runtime_queue_capabilities = 0U;
+  conf->runtime_queue_snapshot_ready = false;
 }
 
 static void ngx_http_laghu_close_all_queues(ngx_cycle_t *cycle) {
@@ -103,7 +122,8 @@ ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
   ngx_http_laghu_queue_retry_event.handler = ngx_http_laghu_retry_queues;
   ngx_http_laghu_queue_retry_event.data = cycle;
   ngx_http_laghu_queue_retry_event.log = cycle->log;
-  if (!ngx_http_laghu_attach_all_queues(cycle)) ngx_add_timer(&ngx_http_laghu_queue_retry_event, 1000U);
+  (void)ngx_http_laghu_attach_all_queues(cycle);
+  ngx_add_timer(&ngx_http_laghu_queue_retry_event, 1000U);
   laghu_operational_registry_init(&ngx_http_laghu_operational);
   (void)laghu_operational_registry_open(
       &ngx_http_laghu_operational,

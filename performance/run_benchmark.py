@@ -15,13 +15,19 @@ import platform
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
 
 
 TARGETS = {"plain": "http://127.0.0.1:18090", "pagespeed": "http://127.0.0.1:18091", "laghu": "http://127.0.0.1:18092"}
+MEMORY_COMPARISON_TARGETS = ("pagespeed", "laghu")
+NORMALIZED_IMAGE_HEADERS = {"Accept": "image/webp,image/*;q=0.8"}
+NORMALIZED_IMAGE_CODEC = "image/webp"
+NORMALIZED_IMAGE_QUALITY = 82
+NORMALIZED_IMAGE_SOURCE = "/image-480.jpg"
 PATHS = {
     "html": "/index.html",
     "css": "/css-100k.css",
@@ -47,13 +53,18 @@ def get(url: str, headers: dict[str, str] | None = None, include_body: bool = Fa
         return result
 
 
-def capability_image_url(target: str, base_url: str, headers: dict[str, str]) -> str:
+def capability_image_url(target: str, base_url: str, headers: dict[str, str], source_path: str | None = None,
+                         page_path: str = "/index.html") -> str:
     for _ in range(3):
-        page = get(base_url + "/index.html", headers, include_body=True)
-        match = re.search(rb"<img\s+src=([^\s>]+)", page.pop("body"), re.IGNORECASE)
-        if match is None:
+        page = get(base_url + page_path, headers, include_body=True)
+        matches = re.findall(rb"<img\s+src=([^\s>]+)", page.pop("body"), re.IGNORECASE)
+        if not matches:
             raise RuntimeError(f"{target} benchmark page has no image.")
-        path = match.group(1).decode("ascii")
+        paths = [match.decode("ascii") for match in matches]
+        filename = source_path.rsplit("/", 1)[-1] if source_path is not None else None
+        path = next((candidate for candidate in paths if filename is None or filename in candidate), None)
+        if path is None:
+            raise RuntimeError(f"{target} benchmark page has no emitted URL for {source_path}.")
         if target != "pagespeed" or ".pagespeed." in path:
             return urljoin(base_url + "/", path)
         time.sleep(1)
@@ -61,16 +72,22 @@ def capability_image_url(target: str, base_url: str, headers: dict[str, str]) ->
 
 
 def warm_capability_image(target: str, url: str, headers: dict[str, str]) -> None:
-    """Wait for Laghu's async image worker before measuring browser delivery."""
-    if target != "laghu":
-        return
+    """Wait for async image rewrites before measuring browser delivery."""
     for _ in range(100):
-        response = get(url, headers)
+        try:
+            response = get(url, headers)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                time.sleep(0.1)
+                continue
+            raise
+        if target != "laghu":
+            return
         normalized = {name.lower(): value for name, value in response["headers"].items()}
         if normalized.get("x-laghu") == "image-hit" and normalized.get("x-laghu-transform") == "optimized":
             return
         time.sleep(0.1)
-    raise RuntimeError("Laghu did not publish a negotiated image variant before capability measurement.")
+    raise RuntimeError(f"{target} did not publish its negotiated image variant before capability measurement.")
 
 
 def parse_bytes(value: str) -> float:
@@ -99,13 +116,18 @@ def container_sample(target: str) -> dict[str, float] | None:
         return None
 
 
-def load_k6(output: Path, target: str, url: str, requests: int, concurrency: int, profile: bool = False, scenario: str = "warm") -> dict[str, Any]:
-    summary_path = output / f"k6-{target}-{scenario}-{url.rsplit('/', 1)[-1]}.json"
+def load_k6(output: Path, target: str, url: str, requests: int, concurrency: int, headers: dict[str, str] | None = None,
+            profile: bool = False, scenario: str = "warm") -> dict[str, Any]:
+    parts = urlsplit(url)
+    request_path = parts.path + (f"?{parts.query}" if parts.query else "")
+    summary_path = output / f"k6-{target}-{scenario}-{parts.path.rsplit('/', 1)[-1]}.json"
     script_path = Path(__file__).with_name("k6.js").resolve()
     command = [
-            "docker", "run", "--rm", "--user", "0", "--network", "host", "-v", f"{script_path}:/scripts/k6.js:ro", "-v", f"{output.resolve()}:/output",
-            "grafana/k6:0.57.0", "run", "--summary-export", f"/output/{summary_path.name}", "-e", f"BASE_URL={url.rsplit('/', 1)[0]}",
-            "-e", f"REQUEST_PATH=/{url.rsplit('/', 1)[-1]}", "-e", f"ITERATIONS={requests}", "-e", f"VUS={concurrency}", "/scripts/k6.js",
+        "docker", "run", "--rm", "--user", "0", "--network", "host", "-v", f"{script_path}:/scripts/k6.js:ro",
+        "-v", f"{output.resolve()}:/output", "grafana/k6:0.57.0", "run", "--summary-export", f"/output/{summary_path.name}",
+        "-e", f"BASE_URL={parts.scheme}://{parts.netloc}", "-e", f"REQUEST_PATH={request_path}",
+        "-e", f"ACCEPT={(headers or {}).get('Accept', '*/*')}", "-e", f"ITERATIONS={requests}", "-e", f"VUS={concurrency}",
+        "/scripts/k6.js",
     ]
     samples: list[dict[str, float]] = []
     if profile:
@@ -122,7 +144,7 @@ def load_k6(output: Path, target: str, url: str, requests: int, concurrency: int
     summary = json.loads(summary_path.read_text(encoding="utf-8"))["metrics"]
     duration = summary["http_req_duration"]
     checks = summary["checks"]
-    sample = get(url)
+    sample = get(url, headers)
     result = {
         "requests": requests,
         "concurrency": concurrency,
@@ -157,9 +179,9 @@ def measure_image_quality(output: Path) -> list[dict[str, Any]]:
     build_image("laghu-bench-quality:local", "Dockerfile.quality")
     measurements = []
     for target in TARGETS:
-        candidate = output / f"quality-{target}.image"
+        candidate = output / f"normalized-{target}.image"
         completed = subprocess.run(
-            ["docker", "run", "--rm", "-v", f"{output.resolve()}:/output:ro", "laghu-bench-quality:local", "/output/quality-reference.png", f"/output/{candidate.name}"],
+            ["docker", "run", "--rm", "-v", f"{output.resolve()}:/output:ro", "laghu-bench-quality:local", "/output/quality-reference.image", f"/output/{candidate.name}"],
             check=True,
             capture_output=True,
             text=True,
@@ -167,6 +189,39 @@ def measure_image_quality(output: Path) -> list[dict[str, Any]]:
         measurement = json.loads(completed.stdout)
         measurements.append({"target": target, "request_headers": {"Accept": "image/webp"}, **measurement})
     return measurements
+
+
+def normalized_image_contract(output: Path, target: str, base_url: str, corpus: Path) -> tuple[str, dict[str, Any]]:
+    url = capability_image_url(target, base_url, NORMALIZED_IMAGE_HEADERS, NORMALIZED_IMAGE_SOURCE, "/normalized-image.html")
+    warm_capability_image(target, url, NORMALIZED_IMAGE_HEADERS)
+    response = get(url, NORMALIZED_IMAGE_HEADERS, include_body=True)
+    content_type = response["headers"].get("Content-Type", "").split(";", 1)[0].lower()
+    candidate = output / f"normalized-{target}.image"
+    candidate.write_bytes(response.pop("body"))
+    if target == "plain":
+        (output / "quality-reference.image").write_bytes((corpus / NORMALIZED_IMAGE_SOURCE.lstrip("/")).read_bytes())
+    return url, {
+        "source_path": urlsplit(url).path,
+        "codec": content_type,
+        "bytes": response["bytes"],
+        "configured_quality": NORMALIZED_IMAGE_QUALITY,
+    }
+
+
+def validate_normalized_image_contract(output: Path, contract: dict[str, Any]) -> None:
+    measurements = measure_image_quality(output)
+    measured = {item["target"]: item for item in measurements}
+    for target in MEMORY_COMPARISON_TARGETS:
+        target_contract = contract["targets"][target]
+        quality = measured[target]
+        target_contract.update({
+            key: quality[key]
+            for key in ("ssim", "mse", "reference_dimensions", "candidate_dimensions", "resized_for_metric")
+        })
+        if target_contract["codec"] != NORMALIZED_IMAGE_CODEC or \
+           target_contract["configured_quality"] != NORMALIZED_IMAGE_QUALITY or quality["resized_for_metric"]:
+            raise RuntimeError(f"{target} did not meet the normalized image contract.")
+    contract["comparable"] = True
 
 
 def measure_cwv(output: Path) -> list[dict[str, Any]]:
@@ -216,6 +271,21 @@ def main() -> None:
             "laghu": {"nginx": "1.30.4", "image": "laghu-bench-current:local"},
         },
     }
+    normalized_urls: dict[str, str] = {}
+    normalized_contract: dict[str, Any] = {
+        "source": NORMALIZED_IMAGE_SOURCE,
+        "request_headers": NORMALIZED_IMAGE_HEADERS,
+        "codec": NORMALIZED_IMAGE_CODEC,
+        "configured_quality": NORMALIZED_IMAGE_QUALITY,
+        "targets": {},
+        "comparable": False,
+    }
+    for target, base_url in TARGETS.items():
+        url, observed = normalized_image_contract(args.output, target, base_url, args.corpus)
+        normalized_urls[target] = url
+        normalized_contract["targets"][target] = observed
+    validate_normalized_image_contract(args.output, normalized_contract)
+    results["normalized_image_contract"] = normalized_contract
     for target, base_url in TARGETS.items():
         for content_type, path in PATHS.items():
             cold = get(base_url + path)
@@ -225,21 +295,20 @@ def main() -> None:
         sustained = load_k6(
             args.output,
             target,
-            base_url + PATHS["large_jpeg"],
+            normalized_urls[target],
             args.sustained_requests,
             args.sustained_concurrency,
+            NORMALIZED_IMAGE_HEADERS,
             profile=True,
-            scenario="sustained",
+            scenario="sustained-normalized-image",
         )
-        results["cells"].append({"target": target, "content_type": "large_jpeg", "scenario": "sustained", **sustained})
+        results["cells"].append({"target": target, "content_type": "normalized_image", "scenario": "sustained", **sustained})
         for name, headers in {"webp": {"Accept": "image/webp,image/*;q=0.8"}, "avif": {"Accept": "image/avif,image/*;q=0.8"}, "dpr2": {"Accept": "image/webp,image/*;q=0.8", "Sec-CH-DPR": "2", "Sec-CH-Viewport-Width": "128"}}.items():
             image_url = capability_image_url(target, base_url, headers)
             warm_capability_image(target, image_url, headers)
             response = get(image_url, headers, include_body=name == "webp")
             if name == "webp":
-                (args.output / f"quality-{target}.image").write_bytes(response.pop("body"))
-                if target == "plain":
-                    (args.output / "quality-reference.png").write_bytes((args.corpus / "image-480.png").read_bytes())
+                response.pop("body")
             results["cells"].append({"target": target, "content_type": "image", "scenario": f"capability-{name}", "source_path": urlparse(image_url).path, **response})
     results["resource_snapshot"] = container_stats()
     results["feature_interactions"] = [
@@ -247,7 +316,17 @@ def main() -> None:
         for cell in results["cells"]
         if cell["scenario"].startswith("capability-")
     ]
-    results["image_quality"] = measure_image_quality(args.output)
+    results["image_quality"] = [
+        {
+            "target": target,
+            **{
+                key: value
+                for key, value in normalized_contract["targets"][target].items()
+                if key in {"codec", "bytes", "configured_quality", "ssim", "mse", "reference_dimensions", "candidate_dimensions", "resized_for_metric"}
+            },
+        }
+        for target in TARGETS
+    ]
     results["cwv"] = measure_cwv(args.output)
     (args.output / "results.json").write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     rows = "\n".join(

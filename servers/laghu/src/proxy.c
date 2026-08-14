@@ -24,6 +24,16 @@ void proxy_queue_lock(proxy_queue *queue) { pthread_mutex_lock(&queue->lock); }
 
 void proxy_queue_unlock(proxy_queue *queue) { pthread_mutex_unlock(&queue->lock); }
 
+static uint32_t proxy_runtime_queue_capabilities(proxy_worker *worker) {
+  laghu_runtime_queue_snapshot snapshot;
+  laghu_runtime_queue *queue = proxy_runtime_queue(worker);
+  uint64_t now = (uint64_t)time(NULL);
+  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot) || snapshot.capabilities == 0U ||
+      snapshot.worker_heartbeat == 0U || snapshot.worker_heartbeat > now || now - snapshot.worker_heartbeat > 45U)
+    return 0U;
+  return snapshot.capabilities;
+}
+
 void proxy_worker_origin(proxy_worker *worker, laghu_socket origin) {
   proxy_queue_lock(worker->queue);
   worker->active_origin = origin;
@@ -282,6 +292,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         .asset_offload = options->service.asset_offload,
         .rum = worker->queue->rum,
         .queue = proxy_runtime_queue(worker),
+        .queue_capabilities = proxy_runtime_queue_capabilities(worker),
         .font_fetch_queue = options->service.font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
         .font_providers = options->service.font_providers,
         .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
@@ -359,6 +370,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
           .asset_offload = options->service.asset_offload,
           .rum = worker->queue->rum,
           .queue = proxy_runtime_queue(worker),
+          .queue_capabilities = proxy_runtime_queue_capabilities(worker),
           .font_fetch_queue = options->service.font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
           .font_providers = options->service.font_providers,
           .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
@@ -497,6 +509,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       .asset_offload = options->service.asset_offload,
       .rum = worker->queue->rum,
       .queue = proxy_runtime_queue(worker),
+      .queue_capabilities = proxy_runtime_queue_capabilities(worker),
       .font_fetch_queue = options->service.font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
       .font_providers = options->service.font_providers,
       .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,

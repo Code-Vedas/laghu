@@ -42,6 +42,8 @@ typedef struct {
   bool javascript_runtime_queue_attached;
   bool html_refresh_runtime_queue_attached;
   bool chrome_analysis_runtime_queue_attached;
+  uint32_t runtime_queue_capabilities;
+  bool runtime_queue_snapshot_ready;
   bool queue_registered;
   ngx_atomic_t html_refresh_dedup_lock;
   ngx_atomic_t html_refresh_until[LAGHU_NGINX_HTML_REFRESH_DEDUP];
@@ -107,6 +109,7 @@ bool ngx_http_laghu_font_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_javascript_queue_refresh(ngx_http_laghu_loc_conf_t *conf);
 bool ngx_http_laghu_administration_candidate(ngx_http_request_t *request, ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_image_queue(ngx_http_laghu_loc_conf_t *conf);
+uint32_t ngx_http_laghu_image_queue_capabilities(const ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_javascript_queue(ngx_http_laghu_loc_conf_t *conf);
 laghu_runtime_queue *ngx_http_laghu_html_refresh_queue(ngx_http_laghu_loc_conf_t *conf);

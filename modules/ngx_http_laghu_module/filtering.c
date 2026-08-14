@@ -4,6 +4,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <inttypes.h>
+#include <stdlib.h>
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
@@ -14,6 +15,8 @@
 ngx_http_output_header_filter_pt ngx_http_laghu_next_header_filter;
 ngx_http_output_body_filter_pt ngx_http_laghu_next_body_filter;
 time_t ngx_http_laghu_last_queue_warning;
+
+static void ngx_http_laghu_free_cached_body(void *data) { free(data); }
 
 static bool ngx_http_laghu_html_cache_token_equal(const unsigned char *value, size_t length, const char *expected) {
   return ngx_strlen(expected) == length && ngx_strncasecmp((u_char *)value, (u_char *)expected, length) == 0;
@@ -167,6 +170,7 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
   }
   if (result.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {
     ngx_buf_t *buffer;
+    ngx_pool_cleanup_t *cleanup;
     result.not_modified = laghu_http_request_matches_result_etag(&context->request, &result);
     if (result.not_modified) {
       request->headers_out.status = NGX_HTTP_NOT_MODIFIED;
@@ -175,14 +179,18 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
       laghu_http_transaction_result_release(&result);
       return ngx_http_laghu_next_header_filter(request);
     }
-    context->cached_body = ngx_pnalloc(request->pool, result.selected.length);
     context->cached_output = ngx_alloc_chain_link(request->pool);
     buffer = ngx_calloc_buf(request->pool);
-    if (context->cached_body == NULL || context->cached_output == NULL || buffer == NULL) {
+    cleanup = ngx_pool_cleanup_add(request->pool, 0U);
+    if (result.owned_body == NULL || result.selected.data != result.owned_body || context->cached_output == NULL || buffer == NULL ||
+        cleanup == NULL) {
       laghu_http_transaction_result_release(&result);
       return ngx_http_laghu_next_header_filter(request);
     }
-    ngx_memcpy(context->cached_body, result.selected.data, result.selected.length);
+    context->cached_body = result.owned_body;
+    result.owned_body = NULL;
+    cleanup->handler = ngx_http_laghu_free_cached_body;
+    cleanup->data = context->cached_body;
     buffer->pos = context->cached_body;
     buffer->last = context->cached_body + result.selected.length;
     buffer->memory = 1U;

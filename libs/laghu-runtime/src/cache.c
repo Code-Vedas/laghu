@@ -272,6 +272,14 @@ static bool laghu_cache_file_lookup(laghu_cache_backend *backend, const char *in
   return found;
 }
 
+static bool laghu_cache_file_lookup_readonly(laghu_cache_backend *backend, const char *index_key, const char *validator,
+                                             laghu_runtime_cache_entry *entry) {
+  laghu_file_cache_state *state = backend->implementation;
+  laghu_cache_index_slot *slot = laghu_cache_slot(state, index_key, false);
+  bool visible = slot == NULL || slot->generation >= laghu_cache_source_generation(state, slot->source_hash);
+  return visible && laghu_runtime_file_cache_lookup(backend->path, index_key, validator, entry);
+}
+
 static bool laghu_cache_file_lookup_variant(laghu_cache_backend *backend, const char *variant_key, laghu_runtime_cache_entry *entry) {
   laghu_file_cache_state *state = backend->implementation;
   laghu_cache_index_slot *slot = laghu_cache_slot(state, variant_key, false);
@@ -433,8 +441,21 @@ static bool laghu_cache_file_maintain(laghu_cache_backend *backend, uint64_t now
         memset(slot, 0, sizeof(*slot));
         slot->state = LAGHU_CACHE_SLOT_DELETED;
       }
-    } else if (state->slots[index].state == LAGHU_CACHE_SLOT_READY)
-      candidates[count++] = &state->slots[index];
+    } else if (state->slots[index].state == LAGHU_CACHE_SLOT_READY) {
+      laghu_cache_index_slot *slot = &state->slots[index];
+      laghu_runtime_cache_entry entry;
+      if (!laghu_runtime_file_cache_lookup_variant(backend->path, slot->variant_key, &entry) ||
+          !laghu_runtime_file_cache_verify(&entry)) {
+        if (laghu_cache_delete_slot(backend, slot)) {
+          state->header->bytes = state->header->bytes >= slot->length ? state->header->bytes - slot->length : 0U;
+          state->header->files = state->header->files >= slot->file_count ? state->header->files - slot->file_count : 0U;
+        }
+        ++state->header->corrupt_removals;
+        memset(slot, 0, sizeof(*slot));
+        slot->state = LAGHU_CACHE_SLOT_DELETED;
+      } else
+        candidates[count++] = slot;
+    }
   qsort(candidates, count, sizeof(*candidates), laghu_cache_slot_compare);
   for (index = 0U; index < count && (state->header->bytes > target_bytes || state->header->files > target_files); ++index) {
     laghu_cache_index_slot *slot = candidates[index];
@@ -497,8 +518,9 @@ static void laghu_cache_file_close(laghu_cache_backend *backend) {
 }
 
 static const laghu_cache_backend_contract laghu_cache_file_contract = {
-    laghu_cache_file_lookup, laghu_cache_file_lookup_variant, laghu_cache_file_read,   laghu_cache_file_publish, laghu_cache_file_touch,
-    laghu_cache_file_remove, laghu_cache_file_maintain,       laghu_cache_file_health, laghu_cache_file_close};
+    laghu_cache_file_lookup, laghu_cache_file_lookup_readonly, laghu_cache_file_lookup_variant, laghu_cache_file_read,
+    laghu_cache_file_publish, laghu_cache_file_touch,          laghu_cache_file_remove,         laghu_cache_file_maintain,
+    laghu_cache_file_health, laghu_cache_file_close};
 
 static int laghu_hex(unsigned char value) {
   if (value >= '0' && value <= '9') return (int)(value - '0');
@@ -909,6 +931,13 @@ bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key, c
                          : laghu_runtime_file_cache_lookup(cache_path, index_key, validator, entry);
 }
 
+bool laghu_runtime_cache_lookup_readonly(const char *cache_path, const char *index_key, const char *validator,
+                                        laghu_runtime_cache_entry *entry) {
+  laghu_cache_backend *backend = laghu_cache_backend_registered(cache_path);
+  return backend != NULL ? laghu_cache_backend_lookup_readonly(backend, index_key, validator, entry)
+                         : laghu_runtime_file_cache_lookup(cache_path, index_key, validator, entry);
+}
+
 bool laghu_runtime_cache_lookup_variant(const char *cache_path, const char *variant_key, laghu_runtime_cache_entry *entry) {
   laghu_cache_backend *backend = laghu_cache_backend_registered(cache_path);
   return backend != NULL ? laghu_cache_backend_lookup_variant(backend, variant_key, entry)
@@ -937,6 +966,12 @@ void laghu_cache_backend_close(laghu_cache_backend *backend) {
 bool laghu_cache_backend_lookup(laghu_cache_backend *backend, const char *index_key, const char *validator, laghu_runtime_cache_entry *entry) {
   return backend != NULL && backend->contract != NULL && backend->contract->lookup != NULL &&
          backend->contract->lookup(backend, index_key, validator, entry);
+}
+
+bool laghu_cache_backend_lookup_readonly(laghu_cache_backend *backend, const char *index_key, const char *validator,
+                                        laghu_runtime_cache_entry *entry) {
+  return backend != NULL && backend->contract != NULL && backend->contract->lookup_readonly != NULL &&
+         backend->contract->lookup_readonly(backend, index_key, validator, entry);
 }
 
 bool laghu_cache_backend_lookup_variant(laghu_cache_backend *backend, const char *variant_key, laghu_runtime_cache_entry *entry) {

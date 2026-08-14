@@ -155,11 +155,33 @@ bool laghu_runtime_file_cache_lookup(const char *cache_path, const char *index_k
   return laghu_artifact_lookup(cache_path, index_key, validator, false, entry);
 }
 
-bool laghu_runtime_file_cache_read(const laghu_runtime_cache_entry *entry, unsigned char *output, size_t output_capacity) {
+bool laghu_runtime_file_cache_verify(const laghu_runtime_cache_entry *entry) {
+  unsigned char buffer[32768U];
+  laghu_sha256_context context;
   char payload_hash[LAGHU_RUNTIME_KEY_SIZE];
-  if (entry == NULL || output == NULL || entry->length == 0U || entry->length > output_capacity ||
-      !laghu_runtime_file_read_exact(entry->variant_path, output, entry->length) ||
-      !laghu_sha256_hex((laghu_buffer){output, entry->length}, payload_hash))
-    return false;
+  FILE *file;
+  size_t remaining;
+  if (entry == NULL || entry->length == 0U || !laghu_artifact_hash_valid(entry->payload_hash)) return false;
+  file = fopen(entry->variant_path, "rb");
+  if (file == NULL) return false;
+  laghu_sha256_init(&context);
+  remaining = entry->length;
+  while (remaining != 0U) {
+    size_t expected = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+    size_t count = fread(buffer, 1U, expected, file);
+    if (count != expected) {
+      (void)fclose(file);
+      return false;
+    }
+    laghu_sha256_update(&context, buffer, count);
+    remaining -= count;
+  }
+  if (fgetc(file) != EOF || ferror(file) || fclose(file) != 0) return false;
+  laghu_sha256_final_hex(&context, payload_hash);
   return strcmp(payload_hash, entry->payload_hash) == 0;
+}
+
+bool laghu_runtime_file_cache_read(const laghu_runtime_cache_entry *entry, unsigned char *output, size_t output_capacity) {
+  return entry != NULL && output != NULL && entry->length != 0U && entry->length <= output_capacity &&
+         laghu_runtime_file_read_exact(entry->variant_path, output, entry->length);
 }

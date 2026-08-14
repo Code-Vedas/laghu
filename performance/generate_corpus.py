@@ -84,6 +84,9 @@ def main() -> None:
         "<!doctype html><html><head><link rel=stylesheet href=/css-10k.css></head><body><h1>Laghu benchmark</h1>"
         "<!-- removable --><img src=/image-480.png width=480 height=320><script src=/js-10k.js></script></body></html>", encoding="utf-8"
     )
+    (root / "normalized-image.html").write_text(
+        "<!doctype html><img src=/image-480.jpg width=480 height=360>", encoding="utf-8"
+    )
     dimensions = (100, 480, 768, 1440, 3840, 8000)
     formats = (".png", ".jpg", ".webp", ".avif")
     unavailable_formats: set[str] = set()

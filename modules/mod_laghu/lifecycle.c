@@ -33,6 +33,7 @@ struct laghu_apache_queue_binding {
   volatile apr_uint32_t javascript_attached;
   volatile apr_uint32_t html_refresh_attached;
   volatile apr_uint32_t chrome_analysis_attached;
+  volatile apr_uint32_t image_capabilities;
   volatile apr_uint32_t html_refresh_dedup_lock;
   uint64_t html_refresh_until[LAGHU_APACHE_HTML_REFRESH_DEDUP];
   char html_refresh_keys[LAGHU_APACHE_HTML_REFRESH_DEDUP][LAGHU_RUNTIME_KEY_SIZE];
@@ -112,6 +113,10 @@ laghu_runtime_queue *laghu_apache_image_queue(laghu_apache_config *config) {
   return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 0U);
 }
 
+uint32_t laghu_apache_image_queue_capabilities(const laghu_apache_config *config) {
+  return config == NULL || config->queue_binding == NULL ? 0U : apr_atomic_read32(&config->queue_binding->image_capabilities);
+}
+
 laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config) {
   return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 1U);
 }
@@ -170,7 +175,16 @@ static bool laghu_apache_attach_all_queues(void) {
   bool complete = true;
   for (index = 0U; index < laghu_apache_queue_binding_count; ++index) {
     laghu_apache_queue_binding *binding = &laghu_apache_queue_bindings[index];
-    if (!laghu_apache_attach_queue(&binding->image_queue, &binding->image_attached, binding->image_queue_path)) complete = false;
+    laghu_runtime_queue_snapshot snapshot;
+    apr_atomic_set32(&binding->image_capabilities, 0U);
+    if (!laghu_apache_attach_queue(&binding->image_queue, &binding->image_attached, binding->image_queue_path))
+      complete = false;
+    else if (laghu_runtime_queue_snapshot_get(&binding->image_queue, &snapshot)) {
+      uint64_t now = (uint64_t)apr_time_sec(apr_time_now());
+      if (snapshot.capabilities != 0U && snapshot.worker_heartbeat != 0U && snapshot.worker_heartbeat <= now &&
+          now - snapshot.worker_heartbeat <= 45U)
+        apr_atomic_set32(&binding->image_capabilities, snapshot.capabilities);
+    }
     if (binding->font_enabled && !laghu_apache_attach_queue(&binding->font_queue, &binding->font_attached, binding->font_queue_path))
       complete = false;
     if (!laghu_apache_attach_queue(&binding->javascript_queue, &binding->javascript_attached, binding->javascript_queue_path)) complete = false;

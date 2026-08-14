@@ -402,23 +402,7 @@ static bool laghu_http_contract_valid(const laghu_http_request *request, const l
 }
 
 static uint32_t laghu_http_refresh_backend(laghu_http_environment *environment) {
-  laghu_runtime_queue *queue;
-  laghu_runtime_queue_snapshot snapshot;
-  if (environment == NULL || environment->queue == NULL) {
-    return 0U;
-  }
-  queue = environment->queue;
-  /* Queue attachment maps persisted state and is lifecycle work.  A request
-   * may only consume an already-mapped snapshot; an unavailable worker is a
-   * normal fail-open condition. */
-  if (!laghu_runtime_queue_snapshot_get(queue, &snapshot)) {
-    return 0U;
-  }
-  if (snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U || environment->now == 0U || snapshot.worker_heartbeat > environment->now ||
-      environment->now - snapshot.worker_heartbeat > 45U) {
-    return 0U;
-  }
-  return snapshot.capabilities;
+  return environment != NULL && environment->queue != NULL ? environment->queue_capabilities : 0U;
 }
 
 static unsigned int laghu_http_parse_uint_header(const laghu_http_request *request, const char *name, unsigned int maximum) {
@@ -926,10 +910,9 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
                                  transaction->client_hint_variant ? transaction->target_height[0] : 0U, transaction->cache_key)) {
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
     }
-    (void)laghu_cache_backend_associate_path(environment->cache_path, transaction->cache_key, transaction->path);
     memcpy(result->cache_key, transaction->cache_key, sizeof(result->cache_key));
     if (transaction->validator[0] != '\0' &&
-        laghu_runtime_cache_lookup(environment->cache_path, transaction->cache_key, transaction->validator, &cache_entry) &&
+        laghu_runtime_cache_lookup_readonly(environment->cache_path, transaction->cache_key, transaction->validator, &cache_entry) &&
         cache_entry.length != 0U && cache_entry.length <= LAGHU_IMAGE_MAX_INPUT_BYTES) {
       if (laghu_http_copy_cached_result(result, &cache_entry) && laghu_http_finish_cached_headers(transaction, result, &cache_entry) &&
           laghu_http_apply_precompressed_cached(transaction, result) && laghu_http_add_status(result, LAGHU_DECISION_IMAGE_HIT)) {
@@ -942,6 +925,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
         laghu_http_transaction_result_release(result);
       }
     }
+    (void)laghu_cache_backend_associate_path(environment->cache_path, transaction->cache_key, transaction->path);
     if (transaction->image_filters == 0U || environment->queue == NULL ||
         !laghu_http_backend_supports(transaction->content_type, transaction->image_filters, transaction->capability_mask,
                                      transaction->policy.allow_lossy)) {

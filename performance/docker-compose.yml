@@ -18,6 +18,7 @@ services:
     ports:
       - "127.0.0.1:18091:8080"
     volumes:
+      - ./nginx/pagespeed-nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/pagespeed.conf:/etc/nginx/conf.d/default.conf:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
   laghu:

@@ -205,6 +205,7 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_co
   context->environment.cache_path = conf->service.image_cache;
   context->environment.rum = ngx_http_laghu_rum;
   context->environment.queue = ngx_http_laghu_image_queue(conf);
+  context->environment.queue_capabilities = ngx_http_laghu_image_queue_capabilities(conf);
   context->environment.font_fetch_queue = ngx_http_laghu_font_queue(conf);
   context->environment.font_providers = conf->service.font_providers;
   context->environment.javascript_queue = ngx_http_laghu_javascript_queue(conf);

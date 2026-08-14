@@ -118,6 +118,7 @@ void laghu_apache_queue_registry_reset(void);
 bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const laghu_apache_config *child, const laghu_service_config *service);
 laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(const laghu_service_config *service);
 laghu_runtime_queue *laghu_apache_image_queue(laghu_apache_config *config);
+uint32_t laghu_apache_image_queue_capabilities(const laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_javascript_queue(laghu_apache_config *config);
 laghu_runtime_queue *laghu_apache_html_refresh_queue(laghu_apache_config *config);

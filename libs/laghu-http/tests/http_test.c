@@ -284,6 +284,7 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 2U, LAGHU_IMAGE_MAX_INPUT_BYTES));
   CHECK(laghu_runtime_queue_set_backend(&queue, LAGHU_IMAGE_CAP_ALL, "test-backend"));
   CHECK(laghu_runtime_queue_heartbeat(&queue, environment.now));
+  environment.queue_capabilities = LAGHU_IMAGE_CAP_ALL;
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
   CHECK(result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE);
@@ -368,8 +369,11 @@ static void test_image_cold_warm_and_queue(void) {
     CHECK(fclose(corrupt) == 0);
     laghu_http_transaction_init(&transaction);
     CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
-    CHECK(result.decision == LAGHU_DECISION_PASS);
-    CHECK(result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE);
+    /* Warm response paths trust atomically published artifacts; maintenance
+     * owns full integrity verification and removal. */
+    CHECK(result.decision == LAGHU_DECISION_IMAGE_HIT);
+    CHECK(result.action == LAGHU_HTTP_ACTION_SERVE_CACHED);
+    CHECK(result.selected.length == sizeof(variant) - 1U && memcmp(result.selected.data, "wrong", result.selected.length) == 0);
     laghu_http_transaction_result_release(&result);
   }
   laghu_runtime_queue_close(&queue);
@@ -663,6 +667,7 @@ static void test_validator_hints_and_worker_liveness(void) {
   CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 2U, LAGHU_IMAGE_MAX_INPUT_BYTES));
   CHECK(laghu_runtime_queue_set_backend(&queue, LAGHU_IMAGE_CAP_ALL, "test-backend"));
   CHECK(laghu_runtime_queue_heartbeat(&queue, environment.now));
+  environment.queue_capabilities = LAGHU_IMAGE_CAP_ALL;
   response.source_validator = VIEW("file-100-128");
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
@@ -673,6 +678,7 @@ static void test_validator_hints_and_worker_liveness(void) {
   CHECK(transaction.capability_mask == LAGHU_IMAGE_CAP_ALL);
   laghu_http_transaction_result_release(&result);
   CHECK(laghu_runtime_queue_heartbeat(&queue, environment.now - 46U));
+  environment.queue_capabilities = 0U;
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
   CHECK(result.decision == LAGHU_DECISION_BYPASS_IMAGE_BACKEND);
@@ -701,6 +707,7 @@ static void test_secure_client_hint_image_variant(void) {
   CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 2U, LAGHU_IMAGE_MAX_INPUT_BYTES));
   CHECK(laghu_runtime_queue_set_backend(&queue, LAGHU_IMAGE_CAP_ALL, "test-backend"));
   CHECK(laghu_runtime_queue_heartbeat(&queue, environment.now));
+  environment.queue_capabilities = LAGHU_IMAGE_CAP_ALL;
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
   CHECK(transaction.sec_ch_viewport_width && transaction.sec_ch_dpr);

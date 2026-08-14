@@ -265,6 +265,8 @@ typedef struct {
   const char *cache_path;
   laghu_rum_engine *rum;
   laghu_runtime_queue *queue;
+  /* Worker capability state refreshed by the adapter lifecycle, never by a request. */
+  uint32_t queue_capabilities;
   laghu_runtime_queue *font_fetch_queue;
   laghu_runtime_queue *javascript_queue;
   /* Already-attached optional queue; HTTP finalization only try-publishes. */
