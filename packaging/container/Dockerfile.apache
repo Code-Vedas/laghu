@@ -36,7 +36,7 @@ LABEL org.opencontainers.image.title="mod-laghu" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y apache2 libvips42 tini util-linux \
+    && apt-get install --no-install-recommends -y apache2 libheif-plugin-aomenc libvips42 tini util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system laghu \
     && useradd --system --gid laghu --home-dir /nonexistent --shell /usr/sbin/nologin laghu \
@@ -59,7 +59,7 @@ COPY packaging/apache/laghu.load /etc/apache2/mods-available/laghu.load
 COPY packaging/apache/laghu.conf /etc/apache2/mods-available/laghu.conf
 COPY packaging/container/entrypoint.apache /usr/bin/mod-laghu-entrypoint
 
-RUN a2enmod laghu \
+RUN a2enmod headers laghu \
     && chmod 0755 /usr/bin/mod-laghu-entrypoint \
     && apache2ctl configtest
 

@@ -17,17 +17,21 @@ chrome_analysis_output=${LAGHU_CHROME_ANALYSIS_OUTPUT:-/var/cache/laghu/chrome-a
 chrome_analysis_browser=${LAGHU_CHROME_ANALYSIS_BROWSER:-chromium}
 
 runuser -u laghu -- laghu-libvips --init "${queue}" "${cache}"
+chmod 0660 "${queue}"
 runuser -u laghu -- laghu-libvips --serve "${queue}" "${cache}" &
 service_pid=$!
 runuser -u laghu -- laghu-resource-fetch --init "${font_queue}" "${cache}" "${font_config}"
+chmod 0660 "${font_queue}"
 runuser -u laghu -- laghu-resource-fetch --serve "${font_queue}" "${cache}" "${font_config}" &
 font_fetch_pid=$!
 runuser -u laghu -- laghu-js-optimize --init /run/laghu/javascript.queue "${cache}"
+chmod 0660 /run/laghu/javascript.queue
 runuser -u laghu -- laghu-js-optimize --serve /run/laghu/javascript.queue "${cache}" &
 javascript_pid=$!
 html_refresh_pid=""
 if [ -n "${html_cache_origin}" ]; then
   runuser -u laghu -- laghu-html-refresh --init "${html_refresh_queue}" "${cache}" "${html_cache_origin}"
+  chmod 0660 "${html_refresh_queue}"
   runuser -u laghu -- laghu-html-refresh --serve "${html_refresh_queue}" "${cache}" "${html_cache_origin}" &
   html_refresh_pid=$!
 fi
@@ -45,6 +49,7 @@ if [ -n "${chrome_analysis_queue}" ]; then
   mkdir -p "${chrome_analysis_output}"
   chown laghu:laghu "${chrome_analysis_output}"
   runuser -u laghu -- laghu-chrome-analyze --init "${chrome_analysis_queue}" "${chrome_analysis_output}" "${chrome_analysis_browser}"
+  chmod 0660 "${chrome_analysis_queue}"
   runuser -u laghu -- laghu-chrome-analyze --serve "${chrome_analysis_queue}" "${chrome_analysis_output}" "${chrome_analysis_browser}" &
   chrome_analysis_pid=$!
 fi

@@ -99,6 +99,16 @@ laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(const laghu_
   return NULL;
 }
 
+static laghu_apache_queue_binding *laghu_apache_queue_binding_find_image(const laghu_service_config *service) {
+  size_t index;
+  if (service == NULL || service->worker_queue[0] == '\0') return NULL;
+  for (index = 0U; index < laghu_apache_queue_binding_count; ++index) {
+    laghu_apache_queue_binding *binding = &laghu_apache_queue_bindings[index];
+    if (strcmp(binding->image_queue_path, service->worker_queue) == 0) return binding;
+  }
+  return NULL;
+}
+
 static laghu_runtime_queue *laghu_apache_attached_queue(laghu_apache_queue_binding *binding, unsigned int kind) {
   if (binding == NULL) return NULL;
   if (kind == 0U && apr_atomic_read32(&binding->image_attached) != 0U) return (laghu_runtime_queue *)&binding->image_queue;
@@ -109,28 +119,37 @@ static laghu_runtime_queue *laghu_apache_attached_queue(laghu_apache_queue_bindi
   return NULL;
 }
 
+/* Apache completes directory merges before post-config builds the shared queue
+ * registry, then runs post-config again.  A merged config can retain a null or
+ * stale binding even though its finalized service matches a registered queue. */
+static laghu_apache_queue_binding *laghu_apache_binding_for(const laghu_apache_config *config) {
+  if (config == NULL) return NULL;
+  return laghu_apache_queue_binding_find_image(&config->service);
+}
+
 laghu_runtime_queue *laghu_apache_image_queue(laghu_apache_config *config) {
-  return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 0U);
+  return laghu_apache_attached_queue(laghu_apache_binding_for(config), 0U);
 }
 
 uint32_t laghu_apache_image_queue_capabilities(const laghu_apache_config *config) {
-  return config == NULL || config->queue_binding == NULL ? 0U : apr_atomic_read32(&config->queue_binding->image_capabilities);
+  laghu_apache_queue_binding *binding = laghu_apache_binding_for(config);
+  return binding == NULL ? 0U : apr_atomic_read32(&binding->image_capabilities);
 }
 
 laghu_runtime_queue *laghu_apache_font_queue(laghu_apache_config *config) {
-  return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 1U);
+  return laghu_apache_attached_queue(laghu_apache_binding_for(config), 1U);
 }
 
 laghu_runtime_queue *laghu_apache_javascript_queue(laghu_apache_config *config) {
-  return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 2U);
+  return laghu_apache_attached_queue(laghu_apache_binding_for(config), 2U);
 }
 
 laghu_runtime_queue *laghu_apache_html_refresh_queue(laghu_apache_config *config) {
-  return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 3U);
+  return laghu_apache_attached_queue(laghu_apache_binding_for(config), 3U);
 }
 
 laghu_runtime_queue *laghu_apache_chrome_analysis_queue(laghu_apache_config *config) {
-  return config == NULL ? NULL : laghu_apache_attached_queue(config->queue_binding, 4U);
+  return laghu_apache_attached_queue(laghu_apache_binding_for(config), 4U);
 }
 
 bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config, const laghu_runtime_job *job, uint64_t now) {
@@ -139,7 +158,7 @@ bool laghu_apache_html_refresh_try_publish(laghu_apache_config *config, const la
   unsigned int index, candidate = 0U;
   bool published = false;
   if (config == NULL || job == NULL || job->kind != LAGHU_RUNTIME_JOB_HTML_REFRESH) return false;
-  binding = config->queue_binding;
+  binding = laghu_apache_binding_for(config);
   queue = laghu_apache_html_refresh_queue(config);
   if (binding == NULL || queue == NULL || apr_atomic_cas32(&binding->html_refresh_dedup_lock, 1U, 0U) != 0U) return false;
   for (index = 0U; index < LAGHU_APACHE_HTML_REFRESH_DEDUP; ++index) {
@@ -257,7 +276,6 @@ static apr_status_t laghu_apache_rum_cleanup(void *data) {
 void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
   laghu_apache_config *config = ap_get_module_config(server->module_config, &laghu_module);
   laghu_rum_options options;
-  bool queues_attached;
   char snapshot[LAGHU_RUNTIME_PATH_SIZE];
   char error[160U];
   int length;
@@ -265,8 +283,8 @@ void laghu_apache_child_init(apr_pool_t *pool, server_rec *server) {
   (void)apr_atomic_init(pool);
   apr_atomic_set32(&laghu_apache_queue_stopping, 0U);
   laghu_apache_queue_thread = NULL;
-  queues_attached = laghu_apache_attach_all_queues();
-  if (!queues_attached && laghu_apache_queue_binding_count != 0U &&
+  (void)laghu_apache_attach_all_queues();
+  if (laghu_apache_queue_binding_count != 0U &&
       apr_thread_create(&laghu_apache_queue_thread, NULL, laghu_apache_queue_maintenance, NULL, pool) != APR_SUCCESS) {
     laghu_apache_queue_thread = NULL;
     ap_log_error(APLOG_MARK, APLOG_WARNING, 0, server, "Laghu queue maintenance unavailable; queue work may be disabled");

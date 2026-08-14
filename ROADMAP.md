@@ -260,24 +260,24 @@
 - [ ] Cover empty responses, `no-store`, already-hashed URLs, huge query strings, malformed HTML, mixed content, and non-UTF-8 inputs.
 
 ### 5.3 k6 Load and Correctness Driver
-- [ ] Add cold-cache scenarios for first-hit optimization latency and TTFB.
-- [ ] Add warm-cache scenarios for steady-state delivery latency.
-- [ ] Sweep 1, 10, 50, 100, 500, and 1000 virtual users.
-- [ ] Add sustained ramp and soak scenarios for memory growth and cache thrash.
-- [ ] Add same-URL cache-storm scenarios that verify optimization deduplication.
-- [ ] Add capability variant-fanout scenarios and cache-growth checks.
-- [ ] Add realistic mixed page loads with HTML, images, CSS, and JavaScript.
-- [ ] Capture TTFB, p50/p90/p95/p99 response time, throughput, and error rate.
-- [ ] Capture original/optimized wire bytes and byte-savings percentage.
-- [ ] Capture cache hit/miss ratios and assert the expected cache state.
-- [ ] Capture and assert which transforms fired.
-- [ ] Validate parsed HTML and executable CSS/JavaScript behavior.
-- [ ] Validate that image variants decode and match requested formats.
-- [ ] Enforce the never-larger guarantee.
-- [ ] Assert that excluded paths and responses remain untouched.
-- [ ] Assert expected CLS-critical dimensions and attributes.
-- [ ] nginx/plain | nginx/pagespeed | nginx/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
-- [ ] apache/plain | apache/pagespeed | apache/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
+- [x] Add cold-cache scenarios for first-hit optimization latency and TTFB.
+- [x] Add warm-cache scenarios for steady-state delivery latency.
+- [x] Sweep 1, 10, 50, 100, 500, and 1000 virtual users.
+- [x] Add sustained ramp and soak scenarios for memory growth and cache thrash.
+- [x] Add same-URL cache-storm scenarios that verify optimization deduplication.
+- [x] Add capability variant-fanout scenarios and cache-growth checks.
+- [x] Add realistic mixed page loads with HTML, images, CSS, and JavaScript.
+- [x] Capture TTFB, p50/p90/p95/p99 response time, throughput, and error rate.
+- [x] Capture original/optimized wire bytes and byte-savings percentage.
+- [x] Capture cache hit/miss ratios and assert the expected cache state.
+- [x] Capture and assert which transforms fired.
+- [x] Validate parsed HTML and executable CSS/JavaScript behavior.
+- [x] Validate that image variants decode and match requested formats.
+- [x] Enforce the never-larger guarantee.
+- [x] Assert that excluded paths and responses remain untouched.
+- [x] Assert expected CLS-critical dimensions and attributes.
+- [x] nginx/plain | nginx/pagespeed | nginx/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
+- [x] apache/plain | apache/pagespeed | apache/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
 
 ### 5.4 Resource, Quality, and CWV Instrumentation
 - [ ] Capture cAdvisor/cgroup CPU, RSS, and CPU per optimized byte.

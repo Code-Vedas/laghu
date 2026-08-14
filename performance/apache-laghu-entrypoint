@@ -1,12 +1,10 @@
+#!/bin/sh
 # Copyright Codevedas Inc. 2026-present
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-.git
-build
-docs/_site
-tmp
-performance/*
-!performance/standalone-entrypoint
-workers/laghu-js-optimize/target
+set -eu
+
+a2enmod headers >/dev/null
+exec /usr/bin/mod-laghu-entrypoint

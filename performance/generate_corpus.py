@@ -24,6 +24,18 @@ def write_sized(path: Path, prefix: str, target: int) -> None:
         output.write(body[: target - output.tell()])
 
 
+def write_javascript(path: Path, target: int) -> None:
+    program = b"function laghuBenchmark(value) { return value + 1; }\n"
+    with path.open("wb") as output:
+        while output.tell() + len(program) + 2 <= target:
+            output.write(program)
+        remaining = target - output.tell()
+        if remaining >= 2:
+            output.write(b"//" + b" " * (remaining - 2))
+        else:
+            output.write(b" " * remaining)
+
+
 def run_vips(output: Path, width: int, height: int, suffix: str, transparent: bool = False) -> bool:
     svg_path = output.with_suffix(".source.svg")
     source = output.with_suffix(".v")
@@ -50,7 +62,11 @@ def run_vips(output: Path, width: int, height: int, suffix: str, transparent: bo
         encoding="utf-8",
     )
     subprocess.run(["vips", "svgload", str(svg_path), str(source)], check=True)
-    command = {".png": ["vips", "pngsave"], ".jpg": ["vips", "jpegsave"], ".webp": ["vips", "webpsave"], ".avif": ["vips", "heifsave", "--compression", "av1"]}[suffix]
+    commands = {
+        ".png": ["vips", "pngsave"], ".jpg": ["vips", "jpegsave"],
+        ".webp": ["vips", "webpsave"], ".avif": ["vips", "heifsave", "--compression", "av1"],
+    }
+    command = commands[suffix]
     completed = subprocess.run([*command, str(source), str(output)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     source.unlink()
     svg_path.unlink()
@@ -78,8 +94,16 @@ def main() -> None:
     for name, size in {"1k": 1024, "10k": 10 * 1024, "100k": 100 * 1024, "1m": 1024 * 1024, "2m": 2 * 1024 * 1024}.items():
         write_sized(root / f"css-{name}.css", ".card { color: #334455; margin: 0 0 0 0; }", size)
     for name, size in {"1k": 1024, "10k": 10 * 1024, "100k": 100 * 1024, "1m": 1024 * 1024, "2m": 2 * 1024 * 1024}.items():
-        write_sized(root / f"js-{name}.js", "function seededBenchmark(longName) { return longName + 1; }", size)
-    write_sized(root / "no-store.html", "<!doctype html><meta http-equiv=Cache-Control content=no-store><main>no store</main>", 1024)
+        write_javascript(root / f"js-{name}.js", size)
+    write_sized(
+        root / "no-store.html",
+        "<!doctype html><!-- removable --><main>no store</main>",
+        1024,
+    )
+    write_sized(root / "private.html", "<!doctype html><!-- removable --><main>private</main>", 1024)
+    write_sized(root / "cold.html", "<!doctype html><!-- removable --><main>cold</main>", 1024)
+    (root / "never-optimized").mkdir(exist_ok=True)
+    write_sized(root / "never-optimized/excluded.html", "<!doctype html><!-- removable --><main>excluded</main>", 1024)
     (root / "index.html").write_text(
         "<!doctype html><html><head><link rel=stylesheet href=/css-10k.css></head><body><h1>Laghu benchmark</h1>"
         "<!-- removable --><img src=/image-480.png width=480 height=320><script src=/js-10k.js></script></body></html>", encoding="utf-8"
@@ -99,7 +123,9 @@ def main() -> None:
         root / "image-transparent-1440.png", 1440, 1080, ".png", transparent=True
     ):
         unavailable_formats.add(".png")
-    (root / "image.svg").write_text("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\"><rect width=\"100\" height=\"100\" fill=\"#345\"/></svg>", encoding="utf-8")
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">'
+    svg += '<rect width="100" height="100" fill="#345"/></svg>'
+    (root / "image.svg").write_text(svg, encoding="utf-8")
     write_animated_gif(root / "image-animated.gif")
     manifest = {"seed": args.seed, "sha256": {}, "images": dimensions, "unavailable_formats": sorted(unavailable_formats)}
     for path in sorted(root.iterdir()):

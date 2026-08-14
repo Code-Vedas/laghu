@@ -19,16 +19,16 @@ if [ -n "${LAGHU_BENCH_CORPUS:-}" ]; then
 else
   python3 "${REPO_ROOT}/performance/generate_corpus.py" --output "${corpus}"
 fi
-docker build --tag laghu-bench-quality:local --file "${REPO_ROOT}/performance/Dockerfile.quality" "${REPO_ROOT}/performance"
-docker build --tag laghu-bench-lighthouse:local --file "${REPO_ROOT}/performance/Dockerfile.lighthouse" "${REPO_ROOT}/performance"
-LAGHU_BENCH_CORPUS="${corpus}" docker compose --project-directory "${REPO_ROOT}/performance" -f "${REPO_ROOT}/performance/docker-compose.yml" up --build --detach
-cleanup() { LAGHU_BENCH_CORPUS="${corpus}" docker compose --project-directory "${REPO_ROOT}/performance" -f "${REPO_ROOT}/performance/docker-compose.yml" down --volumes; }
+compose() {
+  LAGHU_BENCH_CORPUS="${corpus}" docker compose \
+    --project-directory "${REPO_ROOT}/performance" \
+    -f "${REPO_ROOT}/performance/docker-compose.yml" "$@"
+}
+cleanup() { compose down --volumes; }
 trap cleanup EXIT HUP INT TERM
-attempt=0
-while [ "${attempt}" -lt 60 ]; do
-  if curl --fail --silent http://127.0.0.1:18090/index.html >/dev/null && curl --fail --silent http://127.0.0.1:18091/index.html >/dev/null && curl --fail --silent http://127.0.0.1:18092/index.html >/dev/null; then break; fi
-  attempt=$((attempt + 1)); sleep 1
-done
-[ "${attempt}" -lt 60 ] || { echo 'Benchmark target readiness timed out.' >&2; exit 1; }
-python3 "${REPO_ROOT}/performance/run_benchmark.py" --output "${output}" --corpus "${corpus}"
+compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+compose up --build --detach
+set -- --output "${output}"
+if [ "${LAGHU_BENCH_FULL:-0}" = 1 ]; then set -- "$@" --full; fi
+python3 "${REPO_ROOT}/performance/run_k6_rail.py" "$@"
 printf '%s\n' "${output}"

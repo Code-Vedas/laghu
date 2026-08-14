@@ -302,15 +302,18 @@ bool laghu_apache_apply_result(request_rec *request, const laghu_http_transactio
     }
   }
   for (index = 0U; index < result->header_operation_count; ++index) {
+    bool content_type = ap_cstr_casecmp(names[index], "Content-Type") == 0;
     switch (result->header_operations[index].kind) {
       case LAGHU_HTTP_HEADER_SET:
         apr_table_set(request->headers_out, names[index], values[index]);
+        if (content_type) ap_set_content_type(request, values[index]);
         break;
       case LAGHU_HTTP_HEADER_APPEND:
         apr_table_add(request->headers_out, names[index], values[index]);
         break;
       case LAGHU_HTTP_HEADER_REMOVE:
         apr_table_unset(request->headers_out, names[index]);
+        if (content_type) ap_set_content_type(request, NULL);
         break;
     }
   }

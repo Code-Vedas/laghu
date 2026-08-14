@@ -1,0 +1,19 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y apache2 ca-certificates curl \
+    && curl --fail --location --retry 3 \
+      --output /tmp/mod-pagespeed.deb \
+      https://dl-ssl.google.com/dl/linux/direct/mod-pagespeed-stable_current_amd64.deb \
+    && dpkg --install /tmp/mod-pagespeed.deb \
+    && rm -rf /var/lib/apt/lists/* /tmp/mod-pagespeed.deb \
+    && a2enmod headers pagespeed
+
+CMD ["apache2ctl", "-D", "FOREGROUND"]

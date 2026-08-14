@@ -4,33 +4,128 @@
 # LICENSE file in the root directory of this source tree.
 
 services:
-  plain:
+  nginx-plain:
     image: nginx:1.30.4-alpine
-    container_name: laghu-bench-plain
+    container_name: laghu-bench-nginx-plain
     ports:
       - "127.0.0.1:18090:8080"
     volumes:
       - ./nginx/plain.conf:/etc/nginx/nginx.conf:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
-  pagespeed:
+  nginx-pagespeed:
     image: pagespeed/nginx-pagespeed@sha256:591567603e63e1dc1641fc02f4322b6770cda3cf3e8bc40bf21cd6bba68668d5
-    container_name: laghu-bench-pagespeed
+    container_name: laghu-bench-nginx-pagespeed
     ports:
       - "127.0.0.1:18091:8080"
     volumes:
       - ./nginx/pagespeed-nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/pagespeed.conf:/etc/nginx/conf.d/default.conf:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
-  laghu:
+  nginx-laghu:
     build:
       context: ..
       dockerfile: packaging/container/Dockerfile
       args:
         NGINX_VERSION: "1.30.4"
     image: laghu-bench-current:local
-    container_name: laghu-bench-laghu
+    container_name: laghu-bench-nginx-laghu
     ports:
       - "127.0.0.1:18092:8080"
     volumes:
       - ./nginx/laghu.conf:/etc/nginx/nginx.conf:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
+  apache-plain:
+    build:
+      context: .
+      dockerfile: Dockerfile.apache-plain
+    image: laghu-bench-apache-plain:local
+    container_name: laghu-bench-apache-plain
+    ports:
+      - "127.0.0.1:18100:80"
+    volumes:
+      - ./apache/plain.conf:/etc/apache2/sites-available/000-default.conf:ro
+      - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
+  apache-pagespeed:
+    build:
+      context: .
+      dockerfile: Dockerfile.apache-pagespeed
+    image: laghu-bench-apache-pagespeed:local
+    container_name: laghu-bench-apache-pagespeed
+    ports:
+      - "127.0.0.1:18101:80"
+    volumes:
+      - ./apache/pagespeed.conf:/etc/apache2/sites-available/000-default.conf:ro
+      - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
+  apache-laghu:
+    build:
+      context: ..
+      dockerfile: packaging/container/Dockerfile.apache
+    image: laghu-bench-apache-laghu:local
+    container_name: laghu-bench-apache-laghu
+    entrypoint: ["/usr/local/bin/laghu-benchmark-apache-entrypoint"]
+    ports:
+      - "127.0.0.1:18102:80"
+    volumes:
+      - ./apache/laghu.conf:/etc/apache2/sites-available/000-default.conf:ro
+      - ./apache-laghu-entrypoint:/usr/local/bin/laghu-benchmark-apache-entrypoint:ro
+      - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
+  standalone-nginx-plain:
+    build:
+      context: ..
+      dockerfile: performance/Dockerfile.standalone
+    image: laghu-bench-standalone:local
+    container_name: laghu-bench-standalone-nginx-plain
+    environment:
+      LAGHU_BENCH_ORIGIN: http://nginx-plain:8080
+      LAGHU_BENCH_REWRITE_LEVEL: passthrough
+    ports:
+      - "127.0.0.1:18200:8080"
+    volumes:
+      - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+    depends_on:
+      - nginx-plain
+  standalone-nginx-all:
+    build:
+      context: ..
+      dockerfile: performance/Dockerfile.standalone
+    image: laghu-bench-standalone:local
+    container_name: laghu-bench-standalone-nginx-all
+    environment:
+      LAGHU_BENCH_ORIGIN: http://nginx-plain:8080
+      LAGHU_BENCH_REWRITE_LEVEL: all
+    ports:
+      - "127.0.0.1:18201:8080"
+    volumes:
+      - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+    depends_on:
+      - nginx-plain
+  standalone-apache-plain:
+    build:
+      context: ..
+      dockerfile: performance/Dockerfile.standalone
+    image: laghu-bench-standalone:local
+    container_name: laghu-bench-standalone-apache-plain
+    environment:
+      LAGHU_BENCH_ORIGIN: http://apache-plain:80
+      LAGHU_BENCH_REWRITE_LEVEL: passthrough
+    ports:
+      - "127.0.0.1:18210:8080"
+    volumes:
+      - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+    depends_on:
+      - apache-plain
+  standalone-apache-all:
+    build:
+      context: ..
+      dockerfile: performance/Dockerfile.standalone
+    image: laghu-bench-standalone:local
+    container_name: laghu-bench-standalone-apache-all
+    environment:
+      LAGHU_BENCH_ORIGIN: http://apache-plain:80
+      LAGHU_BENCH_REWRITE_LEVEL: all
+    ports:
+      - "127.0.0.1:18211:8080"
+    volumes:
+      - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+    depends_on:
+      - apache-plain

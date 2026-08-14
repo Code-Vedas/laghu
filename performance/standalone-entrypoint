@@ -1,0 +1,35 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+: "${LAGHU_BENCH_ORIGIN:?LAGHU_BENCH_ORIGIN is required}"
+rewrite_level=${LAGHU_BENCH_REWRITE_LEVEL:-all}
+queue=/run/laghu/jobs.queue
+javascript_queue=/run/laghu/javascript.queue
+cache=/var/cache/laghu/images
+
+laghu-libvips --init "${queue}" "${cache}"
+laghu-js-optimize --init "${javascript_queue}" "${cache}"
+laghu --listen 0.0.0.0:8080 --origin "${LAGHU_BENCH_ORIGIN}" \
+  --file-cache-backend "file://${cache}" --worker-queue "${queue}" \
+  --javascript-queue "${javascript_queue}" --rewrite-level "${rewrite_level}" \
+  --allow-resources '/*' &
+server=$!
+sleep 3
+kill -0 "${server}"
+laghu-libvips --serve "${queue}" "${cache}" &
+vips_worker=$!
+laghu-js-optimize --serve "${javascript_queue}" "${cache}" &
+javascript_worker=$!
+
+cleanup() {
+  kill "${server:-}" "${vips_worker}" "${javascript_worker}" 2>/dev/null || true
+  wait "${server:-}" "${vips_worker}" "${javascript_worker}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+wait "${server}"
