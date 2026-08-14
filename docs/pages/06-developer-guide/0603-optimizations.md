@@ -24,7 +24,12 @@ A change is incomplete until those owners agree on versioning, bounds, fail-open
 
 ## Images
 
-`laghu-libvips` detects supported input by magic, uses explicit loaders, applies bounded resizing/quality/format policy, and validates output before publication.
+`laghu-libvips` detects supported input by magic, uses explicit loaders, classifies a bounded 64px decoded thumbnail, and applies fixed photo,
+screenshot, illustration, or flat-color quality caps before publication.
+`Save-Data: on` lowers that selected cap. Mobile (≤767px), tablet (768–1199px), desktop (≥1200px), format, and data-saver
+representations use separate identities. Explicit `image_quality` remains an upper bound; images never enlarge or upscale.
+Safe static SVGs are optimized in the shared HTTP path by removing comments, metadata, and Inkscape/Sodipodi editor attributes after
+rejecting scripts, event handlers, external references, entities, and unsupported constructs. Rejected SVGs pass through unchanged.
 HTML discovery does not fetch images; normal image traffic populates catalogs.
 Critical-image learning uses opaque viewport-bucket observations and can inform dimensions, responsive variants, and inlining within configured bounds.
 

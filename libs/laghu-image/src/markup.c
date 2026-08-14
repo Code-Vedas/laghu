@@ -17,6 +17,215 @@ typedef struct {
   size_t capacity;
 } laghu_markup_builder;
 
+static bool laghu_builder_append(laghu_markup_builder *builder, const void *data, size_t length);
+
+static bool laghu_svg_contains(laghu_buffer input, const char *needle) {
+  size_t index, length = strlen(needle);
+  if (length == 0U || length > input.length) return false;
+  for (index = 0U; index + length <= input.length; ++index) {
+    size_t letter;
+    for (letter = 0U; letter < length; ++letter)
+      if (tolower(input.data[index + letter]) != (unsigned char)needle[letter]) break;
+    if (letter == length) return true;
+  }
+  return false;
+}
+
+static const unsigned char *laghu_svg_find(laghu_buffer input, size_t from, const char *needle, bool folded) {
+  size_t index, length = strlen(needle);
+  if (length == 0U || from > input.length || length > input.length - from) return NULL;
+  for (index = from; index + length <= input.length; ++index) {
+    size_t letter;
+    for (letter = 0U; letter < length; ++letter) {
+      unsigned char value = input.data[index + letter];
+      if ((folded ? tolower(value) : value) != (unsigned char)needle[letter]) break;
+    }
+    if (letter == length) return input.data + index;
+  }
+  return NULL;
+}
+
+typedef struct {
+  const unsigned char *name;
+  size_t length;
+} laghu_svg_element;
+
+static bool laghu_svg_name_char(unsigned char value) { return isalnum(value) || value == ':' || value == '-' || value == '_'; }
+
+static bool laghu_svg_editor_attribute(const unsigned char *name, size_t length) {
+  static const char *const prefixes[] = {"inkscape:", "sodipodi:"};
+  size_t prefix;
+  for (prefix = 0U; prefix < sizeof(prefixes) / sizeof(prefixes[0]); ++prefix) {
+    size_t index, prefix_length = strlen(prefixes[prefix]);
+    if (length < prefix_length) continue;
+    for (index = 0U; index < prefix_length; ++index)
+      if (tolower(name[index]) != (unsigned char)prefixes[prefix][index]) break;
+    if (index == prefix_length) return true;
+  }
+  return false;
+}
+
+static bool laghu_svg_append_tag(laghu_markup_builder *builder, laghu_buffer input, size_t *index) {
+  size_t cursor = *index, end = cursor, copy = cursor;
+  unsigned char quote = 0U;
+  while (end < input.length) {
+    if (quote != 0U) {
+      if (input.data[end] == quote) quote = 0U;
+    } else if (input.data[end] == '\'' || input.data[end] == '"') {
+      quote = input.data[end];
+    } else if (input.data[end] == '>') {
+      break;
+    }
+    ++end;
+  }
+  if (end == input.length || quote != 0U) return false;
+  cursor += 1U;
+  if (cursor < end && input.data[cursor] == '/') ++cursor;
+  while (cursor < end && isspace(input.data[cursor])) ++cursor;
+  while (cursor < end && laghu_svg_name_char(input.data[cursor])) ++cursor;
+  while (cursor < end) {
+    size_t name_start, name_end, value_end;
+    while (cursor < end && isspace(input.data[cursor])) ++cursor;
+    if (cursor >= end || input.data[cursor] == '/') break;
+    name_start = cursor;
+    while (cursor < end && laghu_svg_name_char(input.data[cursor])) ++cursor;
+    name_end = cursor;
+    while (cursor < end && isspace(input.data[cursor])) ++cursor;
+    if (cursor < end && input.data[cursor] == '=') {
+      unsigned char value_quote;
+      ++cursor;
+      while (cursor < end && isspace(input.data[cursor])) ++cursor;
+      if (cursor >= end || (input.data[cursor] != '\'' && input.data[cursor] != '"')) return false;
+      value_quote = input.data[cursor++];
+      while (cursor < end && input.data[cursor] != value_quote) ++cursor;
+      if (cursor >= end) return false;
+      ++cursor;
+    }
+    value_end = cursor;
+    if (laghu_svg_editor_attribute(input.data + name_start, name_end - name_start)) {
+      size_t leading = name_start;
+      while (leading > *index && isspace(input.data[leading - 1U])) --leading;
+      if (!laghu_builder_append(builder, input.data + copy, leading - copy)) return false;
+      copy = value_end;
+    }
+  }
+  if (!laghu_builder_append(builder, input.data + copy, end + 1U - copy)) return false;
+  *index = end + 1U;
+  return true;
+}
+
+static bool laghu_svg_well_formed(laghu_buffer input) {
+  laghu_svg_element stack[64U];
+  size_t depth = 0U, index = 0U;
+  bool root = false;
+  while (index < input.length) {
+    size_t name_start, name_length, end;
+    bool closing, self_closing = false;
+    if (input.data[index] != '<') {
+      ++index;
+      continue;
+    }
+    if (index + 4U <= input.length && memcmp(input.data + index, "<!--", 4U) == 0) {
+      const unsigned char *comment_end = laghu_svg_find(input, index + 4U, "-->", false);
+      if (comment_end == NULL) return false;
+      index = (size_t)(comment_end - input.data) + 3U;
+      continue;
+    }
+    if (index + 2U >= input.length || input.data[index + 1U] == '!' || input.data[index + 1U] == '?') return false;
+    closing = input.data[index + 1U] == '/';
+    name_start = index + (closing ? 2U : 1U);
+    end = name_start;
+    while (end < input.length && laghu_svg_name_char(input.data[end])) ++end;
+    name_length = end - name_start;
+    if (name_length == 0U || end == input.length) return false;
+    {
+      unsigned char quote = 0U;
+      for (; end < input.length; ++end) {
+        unsigned char value = input.data[end];
+        if (quote != 0U) {
+          if (value == quote) quote = 0U;
+        } else if (value == '\'' || value == '"') {
+          quote = value;
+        } else if (value == '<') {
+          return false;
+        } else if (value == '>') {
+          break;
+        }
+      }
+      if (quote != 0U || end == input.length) return false;
+    }
+    if (closing) {
+      if (depth == 0U || stack[depth - 1U].length != name_length ||
+          memcmp(stack[depth - 1U].name, input.data + name_start, name_length) != 0)
+        return false;
+      --depth;
+    } else {
+      size_t cursor = end;
+      while (cursor > name_start && isspace(input.data[cursor - 1U])) --cursor;
+      self_closing = cursor > name_start && input.data[cursor - 1U] == '/';
+      if (!root) {
+        if (name_length != 3U || memcmp(input.data + name_start, "svg", 3U) != 0) return false;
+        root = true;
+      }
+      if (!self_closing) {
+        if (depth == sizeof(stack) / sizeof(stack[0])) return false;
+        stack[depth++] = (laghu_svg_element){input.data + name_start, name_length};
+      }
+    }
+    index = end + 1U;
+  }
+  return root && depth == 0U;
+}
+
+bool laghu_image_optimize_svg(laghu_buffer input, laghu_image_markup_result *result) {
+  laghu_markup_builder builder = {0};
+  size_t index = 0U;
+  bool root = false;
+  if (result == NULL || input.data == NULL || input.length == 0U || input.length > LAGHU_IMAGE_MAX_INPUT_BYTES) return false;
+  memset(result, 0, sizeof(*result));
+  if (!laghu_svg_well_formed(input)) return false;
+  if (laghu_svg_contains(input, "<script") || laghu_svg_contains(input, "<foreignobject") ||
+      laghu_svg_contains(input, "<!doctype") || laghu_svg_contains(input, "<!entity") ||
+      laghu_svg_contains(input, "javascript:") || laghu_svg_contains(input, "data:") || laghu_svg_contains(input, "url(") ||
+      laghu_svg_contains(input, " onload=") || laghu_svg_contains(input, " onclick=") ||
+      laghu_svg_contains(input, " onerror=") || laghu_svg_contains(input, " onbegin=") ||
+      laghu_svg_contains(input, "xlink:href") || laghu_svg_contains(input, "href="))
+    return false;
+  while (index < input.length) {
+    if (index + 4U <= input.length && memcmp(input.data + index, "<!--", 4U) == 0) {
+      const unsigned char *end = laghu_svg_find(input, index + 4U, "-->", false);
+      if (end == NULL) goto failed;
+      index = (size_t)(end - input.data) + 3U;
+      continue;
+    }
+    if (index + 9U <= input.length && laghu_svg_find(input, index, "<metadata", true) == input.data + index) {
+      const unsigned char *end = laghu_svg_find(input, index + 9U, "</metadata>", true);
+      if (end == NULL || (size_t)(end - input.data) >= input.length) goto failed;
+      index = (size_t)(end - input.data) + 11U;
+      continue;
+    }
+    if (input.data[index] == '<' && index + 4U <= input.length &&
+        laghu_svg_find(input, index, "<svg", true) == input.data + index)
+      root = true;
+    if (input.data[index] == '<') {
+      if (!laghu_svg_append_tag(&builder, input, &index)) goto failed;
+      continue;
+    }
+    if (!isspace(input.data[index]) || (builder.length != 0U && !isspace(builder.data[builder.length - 1U]))) {
+      if (!laghu_builder_append(&builder, input.data + index, 1U)) goto failed;
+    }
+    ++index;
+  }
+  if (!root || !laghu_svg_contains((laghu_buffer){builder.data, builder.length}, "</svg>") || builder.length >= input.length)
+    goto failed;
+  result->data = builder.data;
+  result->length = builder.length;
+  return true;
+failed:
+  free(builder.data);
+  return false;
+}
+
 static bool laghu_builder_reserve(laghu_markup_builder *builder, size_t extra) {
   size_t required;
   size_t capacity;

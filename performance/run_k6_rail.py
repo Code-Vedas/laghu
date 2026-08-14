@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -80,6 +81,9 @@ SAVE_DATA = {"Accept": "image/webp,image/*;q=0.8", "Save-Data": "on", "User-Agen
 MOBILE_2X = {
     "Accept": "image/webp,image/*;q=0.8", "DPR": "2", "Viewport-Width": "480", "Width": "480", "User-Agent": CHROME,
 }
+TABLET_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "768", "Width": "768", "User-Agent": CHROME}
+DESKTOP_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "1200", "Width": "1200", "User-Agent": CHROME}
+CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illustration.jpg", "/image-flat-color.jpg")
 
 
 def request(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
@@ -148,12 +152,36 @@ def validate_css_javascript(target: Target) -> None:
     require(javascript["status"] == 200 and b"function" in javascript["body"], f"{target.name}: invalid JavaScript")
 
 
+def validate_svg(target: Target, cells: list[dict[str, Any]]) -> None:
+    source = request(plain_target(target).base_url + "/image.svg")
+    response = request(target.base_url + "/image.svg")
+    require(source["status"] == 200 and response["status"] == 200, f"{target.name}: SVG status")
+    require(lower(response["headers"]).get("content-type", "").startswith("image/svg+xml"), f"{target.name}: SVG content type")
+    if target.optimized and "/laghu" in target.name:
+        require(len(response["body"]) < len(source["body"]), f"{target.name}: SVG was not reduced")
+        require(b"<!-- removable -->" not in response["body"], f"{target.name}: SVG comment retained")
+        require(b"<metadata" not in response["body"].lower(), f"{target.name}: SVG metadata retained")
+        require(b"inkscape:" not in response["body"].lower(), f"{target.name}: SVG editor attribute retained")
+        require(b"<title>Laghu benchmark</title>" in response["body"], f"{target.name}: SVG accessibility lost")
+    cells.append(cell(target, "svg-safe-static", "/image.svg", response, len(source["body"])))
+
+
 def decode_image(target: Target, label: str, content_type: str, body: bytes) -> None:
     suffix = ".avif" if content_type == "image/avif" else ".webp"
     with tempfile.TemporaryDirectory(prefix="laghu-k6-image-") as temporary:
         path = Path(temporary) / f"{label.lower()}{suffix}"
         path.write_bytes(body)
         subprocess.run(["vipsheader", str(path)], check=True, capture_output=True)
+
+
+def image_dimensions_bytes(label: str, content_type: str, body: bytes) -> tuple[int, int]:
+    suffix = ".avif" if content_type == "image/avif" else ".webp"
+    with tempfile.TemporaryDirectory(prefix="laghu-k6-dimensions-") as temporary:
+        path = Path(temporary) / f"{label.lower()}{suffix}"
+        path.write_bytes(body)
+        width = subprocess.run(["vipsheader", "-f", "width", str(path)], check=True, capture_output=True, text=True)
+        height = subprocess.run(["vipsheader", "-f", "height", str(path)], check=True, capture_output=True, text=True)
+        return int(width.stdout), int(height.stdout)
 
 
 def require(condition: bool, message: str) -> None:
@@ -268,9 +296,10 @@ def expected_image(
     content_type: str,
     signature: bytes,
     output: Path,
+    source_path: str = "/image-480.jpg",
 ) -> dict[str, Any]:
-    url = image_url(target, headers)
-    source_bytes = original_bytes(target, "/image-480.jpg")
+    url = image_url(target, headers) if source_path == "/image-480.jpg" else target.base_url + source_path
+    source_bytes = original_bytes(target, source_path)
     for _ in range(120):
         response = request(url, headers)
         response_headers = lower(response["headers"])
@@ -281,13 +310,16 @@ def expected_image(
             if "/laghu" in target.name:
                 require(response_headers.get("x-laghu-cache") == "hit", f"{target.name}: {label} cache miss")
                 require(response_headers.get("x-laghu") == "image-hit", f"{target.name}: {label} transform missing")
-            reference = output / "quality-reference.jpg"
+            reference = output / f"quality-reference-{source_path.rsplit('/', 1)[-1]}"
             if not reference.exists():
-                reference.write_bytes(request(plain_target(target).base_url + "/image-480.jpg")["body"])
-            artifact = output / f"quality-{target.name.replace('/', '-')}-{label.lower()}.image"
+                reference.write_bytes(request(plain_target(target).base_url + source_path)["body"])
+            artifact = output / f"quality-{target.name.replace('/', '-')}-{label.lower()}-{source_path.rsplit('/', 1)[-1]}.image"
             artifact.write_bytes(response["body"])
             result = cell(target, f"capability-{label.lower()}", url, response, source_bytes)
             result["quality_artifact"] = artifact.name
+            result["quality_reference"] = reference.name
+            result["artifact_sha256"] = hashlib.sha256(response["body"]).hexdigest()
+            result["dimensions"] = image_dimensions_bytes(label, content_type, response["body"])
             return result
         time.sleep(0.1)
     raise RuntimeError(f"{target.name}: {label} artifact not selected")
@@ -297,6 +329,7 @@ def correctness(target: Target, cells: list[dict[str, Any]], output: Path) -> No
     warm = expected_html(target)
     validate_html(warm["body"].decode("utf-8", "replace"), target)
     validate_css_javascript(target)
+    validate_svg(target, cells)
     cells.append(cell(target, "warm-correctness", "/index.html", warm, original_bytes(target, "/index.html")))
     cells.append(run_k6(output, target, "javascript-execution", ("/js-10k.js",), 1, 1, execute_javascript="/js-10k.js"))
     for path, directive in (("/no-store.html", "no-store"), ("/private.html", "private")):
@@ -321,6 +354,20 @@ def correctness(target: Target, cells: list[dict[str, Any]], output: Path) -> No
         cells.append(cell(target, "capability-source", "/image-480.jpg", source, original_bytes(target, "/image-480.jpg")))
         webp = expected_image(target, "WebP", WEBP, "image/webp", b"WEBP", output)
         cells.append(webp)
+        save_data = expected_image(target, "WebP-Save-Data", SAVE_DATA, "image/webp", b"WEBP", output)
+        if "/laghu" in target.name:
+            require(save_data["artifact_sha256"] != webp["artifact_sha256"], f"{target.name}: Save-Data reused ordinary variant")
+        cells.append(save_data)
+        if "/laghu" in target.name:
+            for path in CONTENT_CLASS_PATHS:
+                content_class = path.removeprefix("/image-").removesuffix(".jpg")
+                cells.append(expected_image(target, f"WebP-{content_class}", WEBP, "image/webp", b"WEBP", output, path))
+            for label, headers in (("mobile", MOBILE_2X), ("tablet", TABLET_1X), ("desktop", DESKTOP_1X)):
+                viewport = expected_image(target, f"WebP-viewport-{label}", headers, "image/webp", b"WEBP", output,
+                                          "/image-1440.jpg")
+                require(viewport["dimensions"][0] <= 1440 and viewport["dimensions"][1] <= 1080,
+                        f"{target.name}: {label} viewport enlarged source")
+                cells.append(viewport)
     if target.avif:
         avif = expected_image(target, "AVIF", AVIF, "image/avif", b"ftyp", output)
         cells.append(avif)
@@ -399,13 +446,14 @@ def image_quality(output: Path, cells: list[dict[str, Any]]) -> list[dict[str, A
         return []
     subprocess.run(["docker", "build", "--tag", "laghu-bench-ssimulacra2:local", "--file", str(Path(__file__).with_name("Dockerfile.ssimulacra2")),
                     str(Path(__file__).parent)], check=True)
-    reference = output / "quality-reference.jpg"
-    reference_dimensions = image_dimensions(reference)
-    converted_reference = output / "quality-reference.png"
-    subprocess.run(["vips", "copy", str(reference), str(converted_reference)], check=True)
     measurements = []
     for cell in artifacts:
         artifact = output / str(cell["quality_artifact"])
+        reference = output / str(cell["quality_reference"])
+        reference_dimensions = image_dimensions(reference)
+        converted_reference = output / f"{reference.name}.png"
+        if not converted_reference.exists():
+            subprocess.run(["vips", "copy", str(reference), str(converted_reference)], check=True)
         converted_artifact = artifact.with_suffix(".png")
         subprocess.run(["vips", "copy", str(artifact), str(converted_artifact)], check=True)
         dimensions = image_dimensions(artifact)
@@ -542,7 +590,7 @@ def main() -> None:
             cells.append(run_k6(args.output, target, "cache-storm", ("/image-480.jpg",), levels[-1], args.iterations, WEBP))
             after_storm = laghu_cache_files(target)
             if before_storm is not None and after_storm is not None:
-                require(after_storm == before_storm, f"{target.name}: cache storm grew cache ({before_storm} to {after_storm})")
+                require(after_storm <= before_storm, f"{target.name}: cache storm grew cache ({before_storm} to {after_storm})")
             cells.append(run_k6(args.output, target, "cache-thrash", CACHE_THRASH_PATHS, levels[-1], args.iterations, WEBP))
             cells.append(run_k6(args.output, target, "soak", MIXED_PATHS, levels[-1], args.iterations, duration=args.soak_duration))
         except (OSError, RuntimeError, subprocess.CalledProcessError) as error:

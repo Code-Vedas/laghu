@@ -6,6 +6,8 @@
 laghu_manifest_sources(runtime LAGHU_RUNTIME_SOURCES)
 add_library(laghu_runtime STATIC src/runtime_posix.c ${LAGHU_RUNTIME_SOURCES})
 add_library(Laghu::Runtime ALIAS laghu_runtime)
+set_property(SOURCE src/runtime_posix.c ${LAGHU_RUNTIME_SOURCES} APPEND PROPERTY
+             OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/persisted_state_contract.def")
 find_package(ZLIB REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(BROTLIENC REQUIRED IMPORTED_TARGET libbrotlienc)

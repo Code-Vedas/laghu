@@ -465,11 +465,13 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
     image_filters |= LAGHU_IMAGE_INSERT_DIMENSIONS;
   if (optimization_profile.decision == LAGHU_TEMPLATE_PROFILE_LEARNED && optimization_profile.cls_over_budget &&
       transaction->environment.layout_reservations != NULL) {
-    if (!laghu_layout_reservations_apply(body, transaction->environment.layout_reservations, &csp_policy, &layout)) return false;
+    if (!laghu_layout_reservations_apply(body, transaction->environment.layout_reservations, &csp_policy, &layout))
+      return false;
     if (layout.rewritten) rewrite_source = (laghu_buffer){layout.data, layout.length};
   }
   if (!laghu_runtime_rewrite_html(
-          transaction->environment.rum, transaction->environment.cache_path, rewrite_source, transaction->path, transaction->origin, transaction->policy_key,
+          transaction->environment.rum, transaction->environment.cache_path, rewrite_source, transaction->path, transaction->origin,
+          transaction->policy_key,
           transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl, image_filters,
           transaction->policy.allow_resource_inlining,
           (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U && transaction->policy.allow_resource_inlining,
@@ -895,6 +897,15 @@ static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *tra
 
 static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_job job;
+  if (strcmp(transaction->content_type, "image/svg+xml") == 0) {
+    laghu_image_markup_result svg;
+    if (laghu_image_optimize_svg(body, &svg)) {
+      result->selected = (laghu_buffer){svg.data, svg.length};
+      result->owned_body = svg.data;
+      return laghu_http_add_length(result, result->selected.length);
+    }
+    return true;
+  }
   memset(&job, 0, sizeof(job));
   memcpy(job.request_path, transaction->path, strlen(transaction->path) + 1U);
   memcpy(job.content_type, transaction->content_type, strlen(transaction->content_type) + 1U);
@@ -903,6 +914,8 @@ static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu
   memcpy(job.policy_key, transaction->policy_key, sizeof(job.policy_key));
   job.filters = transaction->image_filters;
   job.quality = transaction->policy.image_quality != 0U ? transaction->policy.image_quality : 100U;
+  job.save_data = transaction->save_data;
+  job.index_key_content_classified = transaction->index_key_content_classified;
   job.metadata_limit = transaction->environment.config.image_metadata_limit;
   job.metadata_ttl = transaction->environment.config.image_metadata_ttl;
   job.target_count = transaction->target_count;
@@ -922,9 +935,9 @@ static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu
 static bool laghu_http_finalize_javascript(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
   laghu_runtime_javascript_result javascript;
   laghu_runtime_javascript_result module;
-  if (!laghu_runtime_rewrite_javascript_traced(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
-                                        transaction->policy_key, transaction->environment.javascript_target, false,
-                                        transaction->policy.include_js_source_maps, &transaction->trace, &javascript))
+  if (!laghu_runtime_rewrite_javascript_traced(transaction->environment.javascript_queue, transaction->environment.cache_path, body,
+                                                transaction->path, transaction->policy_key, transaction->environment.javascript_target, false,
+                                                transaction->policy.include_js_source_maps, &transaction->trace, &javascript))
     return true;
   result->job_published = javascript.published;
   memset(&module, 0, sizeof(module));

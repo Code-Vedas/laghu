@@ -248,7 +248,9 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
   context->capture_enabled = true;
   context->html_capture = result.action == LAGHU_HTTP_ACTION_CAPTURE_HTML;
   context->css_capture = result.action == LAGHU_HTTP_ACTION_CAPTURE_CSS;
-  context->header_deferred = context->html_capture || context->css_capture || result.action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT;
+  context->header_deferred = context->html_capture || context->css_capture || result.action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT ||
+                             (result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE &&
+                              strcmp(context->transaction.content_type, "image/svg+xml") == 0);
   request->filter_need_in_memory = 1U;
   ngx_http_set_ctx(request, context, ngx_http_laghu_module);
   laghu_http_transaction_result_release(&result);

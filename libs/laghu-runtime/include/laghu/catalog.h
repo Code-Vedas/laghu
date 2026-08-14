@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_CATALOG_VERSION 2U
+#define LAGHU_CATALOG_VERSION 3U
 #define LAGHU_CATALOG_MAX_WIDTHS 8U
 #define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
 #define LAGHU_CATALOG_DEFAULT_TTL 604800U
@@ -43,6 +43,7 @@ typedef struct {
   unsigned int natural_width;
   unsigned int natural_height;
   char original_content_type[LAGHU_RUNTIME_TYPE_SIZE];
+  laghu_image_content_class content_class;
   laghu_catalog_variant variants[LAGHU_CATALOG_MAX_WIDTHS];
   unsigned int variant_count;
   uint64_t updated_at;

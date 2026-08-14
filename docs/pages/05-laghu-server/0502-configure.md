@@ -42,7 +42,7 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--respect-x-forwarded-proto on\|off` | boolean | `off` | Uses a valid forwarded scheme only from a trusted direct peer. |
 | `--query-filter-overrides on\|off` | boolean | `off` | Enables bounded `laghuFilters=+name,-name` request overrides. |
 | `--allow-api` | flag | off | Allows otherwise excluded API/GraphQL paths. |
-| `--image-quality N` | `1..100` | codec default | Overrides lossy image quality. |
+| `--image-quality N` | `1..100` | codec default | Upper bound; adaptive presets and `Save-Data: on` may select lower quality. |
 | `--image-beacon` | flag | off | Enables critical-image observations. |
 | `--critical-css-beacon` | flag | off | Enables critical-CSS learning. |
 | `--instrumentation-beacon` | flag | off | Enables RUM script injection when CSP permits. |

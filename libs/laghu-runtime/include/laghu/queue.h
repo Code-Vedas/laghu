@@ -57,6 +57,8 @@ typedef struct {
   bool allow_lossy;
   bool accept_webp;
   bool accept_avif;
+  bool save_data;
+  bool index_key_content_classified;
   unsigned int analysis_timeout_ms;
   laghu_trace_context trace;
   laghu_buffer payload;

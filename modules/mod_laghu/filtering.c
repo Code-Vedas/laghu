@@ -471,7 +471,8 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
     laghu_apache_log_defer_recommendation(request, &result);
     laghu_apache_log_transaction(request, context, &result, "none");
     if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML || context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
-        context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
+        context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT ||
+        (context->action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE && strcmp(context->transaction.content_type, "image/svg+xml") == 0)) {
       apr_bucket_brigade *replacement;
       unsigned char *selected = apr_pmemdup(request->pool, result.selected.data, result.selected.length);
       result.not_modified = laghu_http_request_matches_result_etag(&context->request, &result);
@@ -507,7 +508,8 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
     context->capture_enabled = false;
   }
   if (context->action == LAGHU_HTTP_ACTION_CAPTURE_HTML || context->action == LAGHU_HTTP_ACTION_CAPTURE_CSS ||
-      context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT) {
+      context->action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT ||
+      (context->action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE && strcmp(context->transaction.content_type, "image/svg+xml") == 0)) {
     apr_bucket_brigade *metadata = apr_brigade_create(request->pool, request->connection->bucket_alloc);
     for (bucket = APR_BRIGADE_FIRST(brigade); bucket != APR_BRIGADE_SENTINEL(brigade); bucket = APR_BUCKET_NEXT(bucket)) {
       if (APR_BUCKET_IS_METADATA(bucket) && !APR_BUCKET_IS_EOS(bucket)) {

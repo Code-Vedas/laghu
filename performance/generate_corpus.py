@@ -63,11 +63,45 @@ def run_vips(output: Path, width: int, height: int, suffix: str, transparent: bo
     )
     subprocess.run(["vips", "svgload", str(svg_path), str(source)], check=True)
     commands = {
-        ".png": ["vips", "pngsave"], ".jpg": ["vips", "jpegsave"],
+        ".png": ["vips", "pngsave"], ".jpg": ["vips", "jpegsave", "--Q", "100"],
         ".webp": ["vips", "webpsave"], ".avif": ["vips", "heifsave", "--compression", "av1"],
     }
     command = commands[suffix]
     completed = subprocess.run([*command, str(source), str(output)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    source.unlink()
+    svg_path.unlink()
+    return completed.returncode == 0
+
+
+def run_class_vips(output: Path, content_class: str) -> bool:
+    width, height = 1440, 1080
+    shapes = {
+        "photo": (
+            '<defs><linearGradient id="g"><stop stop-color="#173f62"/><stop offset=".5" stop-color="#e59645"/>'
+            '<stop offset="1" stop-color="#438c62"/></linearGradient></defs><rect width="1440" height="1080" fill="url(#g)"/>'
+            '<circle cx="960" cy="390" r="260" fill="#f4d879"/><path d="M0 900 480 360 960 860 1440 250V1080H0Z" fill="#1d3144"/>'
+        ),
+        "screenshot": (
+            '<rect width="1440" height="1080" fill="#f7f8fa"/><rect width="1440" height="90" fill="#263648"/>'
+            '<rect x="70" y="150" width="860" height="700" fill="#fff" stroke="#bac3cc"/>'
+            '<rect x="990" y="150" width="360" height="700" fill="#e7ebef"/>'
+            '<path d="M110 220H860M110 290H780M110 360H840M110 430H720M110 500H810" stroke="#1e6fa8" stroke-width="26"/>'
+        ),
+        "illustration": (
+            '<rect width="1440" height="1080" fill="#faf1dc"/><circle cx="470" cy="470" r="300" fill="#f17861"/>'
+            '<circle cx="970" cy="630" r="270" fill="#5db7b7"/><path d="M120 930 720 170 1320 930Z" fill="#51458a"/>'
+        ),
+        "flat-color": '<rect width="1440" height="1080" fill="#274b7a"/>',
+    }
+    svg_path = output.with_suffix(".source.svg")
+    source = output.with_suffix(".v")
+    svg_path.write_text(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{shapes[content_class]}</svg>',
+        encoding="utf-8",
+    )
+    subprocess.run(["vips", "svgload", str(svg_path), str(source)], check=True)
+    completed = subprocess.run(["vips", "jpegsave", "--Q", "100", str(source), str(output)], check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     source.unlink()
     svg_path.unlink()
     return completed.returncode == 0
@@ -138,15 +172,22 @@ def main() -> None:
         for suffix in formats:
             if not run_vips(root / f"image-{width}{suffix}", width, height, suffix):
                 unavailable_formats.add(suffix)
+    for content_class in ("photo", "screenshot", "illustration", "flat-color"):
+        if not run_class_vips(root / f"image-{content_class}.jpg", content_class):
+            raise RuntimeError(f"could not generate {content_class} corpus image")
     if not run_vips(
         root / "image-transparent-1440.png", 1440, 1080, ".png", transparent=True
     ):
         unavailable_formats.add(".png")
-    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">'
-    svg += '<rect width="100" height="100" fill="#345"/></svg>'
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+           'width="100" height="100" viewBox="0 0 100 100" inkscape:version="1.3">'
+           '<title>Laghu benchmark</title><!-- removable --><metadata>editor-only</metadata>'
+           '<rect width="100" height="100" fill="#345"/></svg>')
     (root / "image.svg").write_text(svg, encoding="utf-8")
     write_animated_gif(root / "image-animated.gif")
-    manifest = {"seed": args.seed, "sha256": {}, "images": dimensions, "unavailable_formats": sorted(unavailable_formats)}
+    manifest = {"seed": args.seed, "sha256": {}, "images": dimensions,
+                "image_content_classes": ["photo", "screenshot", "illustration", "flat-color"],
+                "unavailable_formats": sorted(unavailable_formats)}
     for path in sorted(root.iterdir()):
         if path.is_file():
             manifest["sha256"][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()

@@ -81,6 +81,19 @@ typedef enum {
 
 typedef uint32_t laghu_image_capability_mask;
 
+typedef enum {
+  LAGHU_IMAGE_CONTENT_PHOTO = 0,
+  LAGHU_IMAGE_CONTENT_SCREENSHOT,
+  LAGHU_IMAGE_CONTENT_ILLUSTRATION,
+  LAGHU_IMAGE_CONTENT_FLAT_COLOR
+} laghu_image_content_class;
+
+typedef enum {
+  LAGHU_IMAGE_VIEWPORT_MOBILE = 0,
+  LAGHU_IMAGE_VIEWPORT_TABLET,
+  LAGHU_IMAGE_VIEWPORT_DESKTOP
+} laghu_image_viewport_bucket;
+
 enum {
   LAGHU_IMAGE_CAP_JPEG_LOAD = UINT32_C(1) << 0,
   LAGHU_IMAGE_CAP_JPEG_SAVE = UINT32_C(1) << 1,
@@ -262,6 +275,10 @@ typedef struct {
 } laghu_css_parse_result;
 
 void laghu_image_request_init(laghu_image_request *request);
+laghu_image_viewport_bucket laghu_image_viewport_bucket_for_width(unsigned int width);
+unsigned int laghu_image_quality_cap(unsigned int configured_quality, bool save_data);
+unsigned int laghu_image_adaptive_quality(laghu_image_content_class content, unsigned int configured_quality, bool save_data);
+bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output);
 bool laghu_image_backend_probe(laghu_image_backend *backend);
 laghu_image_format laghu_image_detect_format(laghu_buffer input);
 const char *laghu_image_format_name(laghu_image_format format);
@@ -276,6 +293,9 @@ bool laghu_image_discover_html(laghu_buffer input, const char *page_path, const 
 bool laghu_image_variant_url(const char *hash, char output[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE]);
 bool laghu_image_plan_geometry(const laghu_image_geometry_input *input, laghu_image_geometry_plan *plan);
 bool laghu_image_rewrite_css(laghu_buffer input, const laghu_image_markup_options *options, laghu_image_markup_result *result);
+/* Optimizes only a bounded, static SVG subset. Unsafe or malformed input is
+ * rejected so callers can fail open with the original representation. */
+bool laghu_image_optimize_svg(laghu_buffer input, laghu_image_markup_result *result);
 bool laghu_css_discover(laghu_buffer input, const char *base_path, const char *page_origin, laghu_css_parse_result *result);
 bool laghu_css_discover_style_attributes(laghu_buffer html, const char *page_path, const char *page_origin, laghu_css_parse_result *result);
 bool laghu_css_minify_and_rewrite(laghu_buffer input, const char *base_path, const char *page_origin, const laghu_image_markup_options *options,

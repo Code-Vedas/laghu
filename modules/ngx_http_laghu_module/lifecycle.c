@@ -17,6 +17,19 @@ laghu_rum_engine *ngx_http_laghu_rum;
 laghu_operational_registry ngx_http_laghu_operational;
 static ngx_event_t ngx_http_laghu_queue_retry_event;
 
+static void ngx_http_laghu_open_operational_registry(ngx_cycle_t *cycle) {
+  ngx_http_laghu_main_conf_t *conf;
+  laghu_operational_snapshot snapshot;
+  const char *cache_path;
+  if (laghu_operational_registry_snapshot(&ngx_http_laghu_operational, &snapshot)) return;
+  conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
+  cache_path = conf != NULL && conf->operational_cache.len != 0U ? (const char *)conf->operational_cache.data : LAGHU_NGINX_LIFECYCLE_CACHE;
+  laghu_operational_registry_close(&ngx_http_laghu_operational);
+  laghu_operational_registry_init(&ngx_http_laghu_operational);
+  (void)laghu_operational_registry_open(&ngx_http_laghu_operational, cache_path, LAGHU_OPERATIONAL_SURFACE_NGINX,
+                                        LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)ngx_time());
+}
+
 static bool ngx_http_laghu_attach_queue(laghu_runtime_queue *queue, bool *attached, const char *path) {
   laghu_runtime_queue_snapshot snapshot;
   if (*attached) return laghu_runtime_queue_snapshot_get(queue, &snapshot);
@@ -85,6 +98,7 @@ static void ngx_http_laghu_retry_queues(ngx_event_t *event) {
   ngx_cycle_t *cycle = event->data;
   if (cycle != NULL) {
     (void)ngx_http_laghu_attach_all_queues(cycle);
+    ngx_http_laghu_open_operational_registry(cycle);
     ngx_add_timer(event, 1000U);
   }
 }
@@ -132,11 +146,7 @@ ngx_int_t ngx_http_laghu_init_process(ngx_cycle_t *cycle) {
   ngx_http_laghu_queue_retry_event.log = cycle->log;
   (void)ngx_http_laghu_attach_all_queues(cycle);
   ngx_add_timer(&ngx_http_laghu_queue_retry_event, 1000U);
-  laghu_operational_registry_init(&ngx_http_laghu_operational);
-  (void)laghu_operational_registry_open(
-      &ngx_http_laghu_operational,
-      conf != NULL && conf->operational_cache.len != 0U ? (const char *)conf->operational_cache.data : LAGHU_NGINX_LIFECYCLE_CACHE,
-      LAGHU_OPERATIONAL_SURFACE_NGINX, LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)ngx_time());
+  ngx_http_laghu_open_operational_registry(cycle);
   length = conf != NULL && conf->service.rum_snapshot_path[0] != '\0'
                ? snprintf(snapshot, sizeof(snapshot), "%s", conf->service.rum_snapshot_path)
                : snprintf(snapshot, sizeof(snapshot), "%s/rum.snapshot", LAGHU_NGINX_LIFECYCLE_CACHE);

@@ -31,7 +31,7 @@ Laghu transaction records use the configured NGINX error_log sink. Each native e
 | `laghu trusted_proxy CIDR;` | inherited, repeatable | IPv4/IPv6 CIDR | none | Defines direct peers trusted for forwarded scheme handling. |
 | `laghu query_filter_overrides on\|off;` | inherited | boolean | `off` | Enables bounded `laghuFilters=+name,-name` request overrides. |
 | `laghu allow_api on\|off;` | inherited | boolean | `off` | Allows otherwise excluded API/GraphQL paths. |
-| `laghu image_quality N;` | inherited | `1..100` | codec default | Overrides lossy image quality. |
+| `laghu image_quality N;` | inherited | `1..100` | codec default | Upper bound; adaptive presets and `Save-Data: on` may select lower quality. |
 | `laghu image_beacon on\|off;` | inherited | boolean | `off` | Enables critical-image observations. |
 | `laghu critical_css_beacon on\|off;` | inherited | boolean | `off` | Enables critical-CSS learning. |
 | `laghu instrumentation_beacon on\|off;` | inherited | boolean | `off` | Injects bounded RUM instrumentation when CSP permits. |

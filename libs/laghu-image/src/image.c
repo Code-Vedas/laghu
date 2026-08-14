@@ -42,6 +42,51 @@ void laghu_image_request_init(laghu_image_request *request) {
   request->max_frames = LAGHU_IMAGE_MAX_FRAMES;
 }
 
+laghu_image_viewport_bucket laghu_image_viewport_bucket_for_width(unsigned int width) {
+  if (width == 0U) return LAGHU_IMAGE_VIEWPORT_DESKTOP;
+  if (width <= 767U) return LAGHU_IMAGE_VIEWPORT_MOBILE;
+  if (width <= 1199U) return LAGHU_IMAGE_VIEWPORT_TABLET;
+  return LAGHU_IMAGE_VIEWPORT_DESKTOP;
+}
+
+unsigned int laghu_image_quality_cap(unsigned int configured_quality, bool save_data) {
+  unsigned int quality = configured_quality == 0U ? 82U : configured_quality;
+  if (save_data && quality > 12U) quality -= 12U;
+  return quality < 35U ? 35U : quality;
+}
+
+unsigned int laghu_image_adaptive_quality(laghu_image_content_class content, unsigned int configured_quality, bool save_data) {
+  static const unsigned int presets[] = {82U, 86U, 84U, 90U};
+  unsigned int quality = configured_quality == 0U ? 82U : configured_quality;
+  if (content <= LAGHU_IMAGE_CONTENT_FLAT_COLOR && presets[content] < quality) quality = presets[content];
+  return laghu_image_quality_cap(quality, save_data);
+}
+
+bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output) {
+  if (output == NULL || input.data == NULL || input.length == 0U || input.length > LAGHU_IMAGE_MAX_INPUT_BYTES) return false;
+#if LAGHU_HAVE_VIPS
+  VipsImage *thumbnail = NULL;
+  double deviation = 0.0;
+  if (vips_thumbnail_buffer((void *)(uintptr_t)input.data, input.length, &thumbnail, 64, "height", 64, "size", VIPS_SIZE_DOWN, NULL) != 0 ||
+      vips_deviate(thumbnail, &deviation, NULL) != 0) {
+    if (thumbnail != NULL) g_object_unref(thumbnail);
+    vips_error_clear();
+    return false;
+  }
+  g_object_unref(thumbnail);
+  /* The bounded thumbnail avoids source-size-dependent work. Low variance is
+   * flat-color; high variance with few source pixels is screenshot-like. */
+  if (deviation < 8.0) *output = LAGHU_IMAGE_CONTENT_FLAT_COLOR;
+  else if (input.length < 65536U && deviation > 45.0) *output = LAGHU_IMAGE_CONTENT_SCREENSHOT;
+  else if (deviation < 24.0) *output = LAGHU_IMAGE_CONTENT_ILLUSTRATION;
+  else *output = LAGHU_IMAGE_CONTENT_PHOTO;
+  return true;
+#else
+  (void)input;
+  return false;
+#endif
+}
+
 laghu_image_format laghu_image_detect_format(laghu_buffer input) {
   const unsigned char *bytes = input.data;
 

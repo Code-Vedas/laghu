@@ -372,6 +372,8 @@ typedef struct {
   bool client_hint_variant;
   bool accept_webp;
   bool accept_avif;
+  bool save_data;
+  bool index_key_content_classified;
   bool prepared;
   bool asset_allowed;
   bool cache_publishable;

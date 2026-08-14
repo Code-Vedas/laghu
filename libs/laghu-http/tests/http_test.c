@@ -697,6 +697,30 @@ static void test_validator_hints_and_worker_liveness(void) {
   (void)remove(test_queue_path);
 }
 
+static void test_safe_svg_bypasses_raster_worker_gate(void) {
+  static const unsigned char svg[] =
+      "<svg xmlns=\"http://www.w3.org/2000/svg\"><!-- removable --><metadata>editor</metadata><title>Icon</title>"
+      "<rect width=\"1\" height=\"1\"/></svg>";
+  const laghu_http_header headers[] = {{VIEW("Content-Type"), VIEW("image/svg+xml")}};
+  laghu_http_environment environment = test_environment(test_cache_path, NULL);
+  laghu_http_request request = test_request(NULL, 0U, VIEW("/icon.svg"));
+  laghu_http_response response = test_response(headers, 1U, sizeof(svg) - 1U);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result result;
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+  CHECK(result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE);
+  laghu_http_transaction_result_release(&result);
+  CHECK(laghu_http_transaction_finalize(&transaction, (laghu_buffer){svg, sizeof(svg) - 1U}, &result));
+  CHECK(result.selected.length < sizeof(svg) - 1U && strstr((const char *)result.selected.data, "<title>Icon</title>") != NULL);
+  {
+    laghu_http_header length;
+    CHECK(find_operation_header(&result, "Content-Length", &length) != NULL);
+    CHECK(length.value.length != 0U);
+  }
+  laghu_http_transaction_result_release(&result);
+}
+
 static void test_secure_client_hint_image_variant(void) {
   const laghu_http_header request_headers[] = {{VIEW("Sec-CH-Viewport-Width"), VIEW("100")}, {VIEW("Sec-CH-DPR"), VIEW("2")}};
   const laghu_http_header response_headers[] = {{VIEW("Content-Type"), VIEW("image/png")}, {VIEW("ETag"), VIEW("\"origin-v1\"")}};
@@ -1376,6 +1400,7 @@ int main(void) {
   test_html_cache_representation_precedes_encoding();
   test_html_preconnect_headers();
   test_validator_hints_and_worker_liveness();
+  test_safe_svg_bypasses_raster_worker_gate();
   test_secure_client_hint_image_variant();
   test_mime_driven_opaque_resource_cache();
   test_request_policy_enforcement();

@@ -773,6 +773,39 @@ static void test_css_parser(void) {
   }
 }
 
+static void test_adaptive_quality_policy(void) {
+  assert(laghu_image_viewport_bucket_for_width(0U) == LAGHU_IMAGE_VIEWPORT_DESKTOP);
+  assert(laghu_image_viewport_bucket_for_width(767U) == LAGHU_IMAGE_VIEWPORT_MOBILE);
+  assert(laghu_image_viewport_bucket_for_width(768U) == LAGHU_IMAGE_VIEWPORT_TABLET);
+  assert(laghu_image_viewport_bucket_for_width(1199U) == LAGHU_IMAGE_VIEWPORT_TABLET);
+  assert(laghu_image_viewport_bucket_for_width(1200U) == LAGHU_IMAGE_VIEWPORT_DESKTOP);
+  assert(laghu_image_adaptive_quality(LAGHU_IMAGE_CONTENT_PHOTO, 90U, false) == 82U);
+  assert(laghu_image_adaptive_quality(LAGHU_IMAGE_CONTENT_FLAT_COLOR, 80U, false) == 80U);
+  assert(laghu_image_adaptive_quality(LAGHU_IMAGE_CONTENT_SCREENSHOT, 100U, true) == 74U);
+}
+
+static void test_svg_optimization(void) {
+  static const unsigned char safe[] =
+      "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:inkscape=\"urn:inkscape\"><!-- editor note -->"
+      "<metadata>discard</metadata><title inkscape:label=\"editor\">Icon</title><path d=\"M0 0h1v1z\"/></svg>";
+  static const unsigned char benchmark[] =
+      "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\" "
+      "width=\"100\" height=\"100\" viewBox=\"0 0 100 100\" inkscape:version=\"1.3\"><title>Laghu benchmark</title>"
+      "<!-- removable --><metadata>editor-only</metadata><rect width=\"100\" height=\"100\" fill=\"#345\"/></svg>";
+  static const unsigned char unsafe[] = "<svg><script>alert(1)</script></svg>";
+  static const unsigned char malformed[] = "<svg><path></svg>";
+  laghu_image_markup_result result;
+  assert(laghu_image_optimize_svg((laghu_buffer){safe, sizeof(safe) - 1U}, &result));
+  assert(result.length < sizeof(safe) - 1U && strstr((const char *)result.data, "<title>Icon</title>") != NULL);
+  assert(strstr((const char *)result.data, "inkscape:") == NULL);
+  laghu_image_markup_result_release(&result);
+  assert(laghu_image_optimize_svg((laghu_buffer){benchmark, sizeof(benchmark) - 1U}, &result));
+  assert(result.length < sizeof(benchmark) - 1U && strstr((const char *)result.data, "<title>Laghu benchmark</title>") != NULL);
+  laghu_image_markup_result_release(&result);
+  assert(!laghu_image_optimize_svg((laghu_buffer){unsafe, sizeof(unsafe) - 1U}, &result));
+  assert(!laghu_image_optimize_svg((laghu_buffer){malformed, sizeof(malformed) - 1U}, &result));
+}
+
 int main(void) {
   test_format_detection();
   test_capability_filtering();
@@ -782,6 +815,8 @@ int main(void) {
   test_html_discovery();
   test_geometry_planning();
   test_css_parser();
+  test_adaptive_quality_policy();
+  test_svg_optimization();
 #if LAGHU_HAVE_VIPS
   test_byte_filters();
   test_geometry_inline_and_sprites();

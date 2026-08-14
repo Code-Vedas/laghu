@@ -31,7 +31,7 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu TrustedProxy CIDR` | inherited, repeatable | IPv4/IPv6 CIDR | none | Defines direct peers trusted for forwarded scheme handling. |
 | `Laghu QueryFilterOverrides On\|Off` | inherited | boolean | `Off` | Enables bounded `laghuFilters=+name,-name` request overrides. |
 | `Laghu AllowApi On\|Off` | inherited | boolean | `Off` | Allows otherwise excluded API/GraphQL paths. |
-| `Laghu ImageQuality N` | inherited | `1..100` | codec default | Overrides lossy image quality. |
+| `Laghu ImageQuality N` | inherited | `1..100` | codec default | Upper bound; adaptive presets and `Save-Data: on` may select lower quality. |
 | `Laghu ImageBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-image observations. |
 | `Laghu CriticalCssBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-CSS learning. |
 | `Laghu InstrumentationBeacon On\|Off` | inherited | boolean | `Off` | Injects bounded RUM instrumentation when CSP permits. |

@@ -220,6 +220,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
   char catalog_key[LAGHU_RUNTIME_KEY_SIZE];
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
   char variant_key[LAGHU_SHA256_HEX_SIZE];
+  laghu_image_content_class content_class = LAGHU_IMAGE_CONTENT_PHOTO;
   unsigned int target_count;
   unsigned int target;
   int status = 4;
@@ -299,6 +300,8 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
   catalog.capability_mask = backend.capabilities;
   catalog.updated_at = (uint64_t)time(NULL);
   catalog.last_accessed_at = catalog.updated_at;
+  (void)laghu_image_classify(job->payload, &content_class);
+  catalog.content_class = content_class;
   target_count = job->target_count == 0U ? 1U : job->target_count;
   if (target_count > LAGHU_RUNTIME_MAX_TARGETS) {
     return 1;
@@ -311,7 +314,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
     request.allow_lossy = job->allow_lossy;
     request.accept_webp = job->accept_webp;
     request.accept_avif = job->accept_avif;
-    request.quality = job->quality;
+    request.quality = laghu_image_adaptive_quality(content_class, job->quality, job->save_data);
     request.target_width = job->target_width[target];
     request.target_height = job->target_height[target];
     request.resize_filter = job->resize_filter[target];
@@ -324,12 +327,19 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
       (void)snprintf(catalog.original_content_type, sizeof(catalog.original_content_type), "%s", laghu_image_content_type(result.input_format));
     }
     if (target == 0U) {
-      memcpy(index_key, job->index_key, sizeof(index_key));
+      if (job->index_key_content_classified) {
+        memcpy(index_key, job->index_key, sizeof(index_key));
+      } else if (!laghu_runtime_index_key_content_class(job->index_key, content_class, index_key)) {
+        laghu_image_result_release(&result);
+        return 1;
+      }
     } else {
       char material[LAGHU_RUNTIME_KEY_SIZE + 32U];
+      char base_index_key[LAGHU_RUNTIME_KEY_SIZE];
       int length = snprintf(material, sizeof(material), "%s:%u:%u", job->index_key, request.target_width, request.target_height);
       if (length < 0 || (size_t)length >= sizeof(material) ||
-          !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, index_key)) {
+          !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, base_index_key) ||
+          !laghu_runtime_index_key_content_class(base_index_key, content_class, index_key)) {
         laghu_image_result_release(&result);
         return 1;
       }

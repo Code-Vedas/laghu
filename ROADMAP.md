@@ -160,12 +160,12 @@
 - [x] AVIF encoding and `Accept`-based negotiation.
 - [ ] Flag-gated JPEG XL encoding when client support warrants it.
 - [x] Modern lossy, lossless, and animated WebP encoding.
-- [ ] Perceptual quality targeting with SSIMULACRA2 or DSSIM.
-- [ ] Photo, screenshot, illustration, and flat-color classification with content-aware presets.
+- [x] Perceptual quality targeting with SSIMULACRA2 or DSSIM.
+- [x] Photo, screenshot, illustration, and flat-color classification with content-aware presets.
 - [ ] Denoise-before-encode for suitable noisy sources.
-- [ ] Mobile, tablet, and desktop viewport-width variants.
+- [x] Mobile, tablet, and desktop viewport-width variants.
 - [x] 1x and 2x pixel-density variants.
-- [ ] Lower-quality `Save-Data` variants.
+- [x] Lower-quality `Save-Data` variants.
 - [x] Client-hint-aware selection using `Sec-CH-DPR` and `Sec-CH-Viewport-Width`.
 - [ ] SVG optimization and optional simple raster-to-vector conversion.
 - [x] LQIP and blur-placeholder generation.
