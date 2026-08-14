@@ -3,6 +3,7 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -372,6 +373,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
   laghu_runtime_html_result javascript = {0};
   laghu_runtime_html_result javascript_yield = {0};
   laghu_runtime_html_result instrumentation = {0};
+  laghu_runtime_html_result layout = {0};
   laghu_domain_rewrite_result domains;
   laghu_lcp_result lcp = {0};
   laghu_template_profile optimization_profile;
@@ -383,12 +385,15 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
   char effective_links[LAGHU_HTTP_MAX_HEADER_VALUE + 1U];
   const unsigned char *selected = body.data;
   size_t selected_length = body.length;
+  laghu_buffer rewrite_source = body;
   bool base_rewritten;
   bool header_changed = false;
   char base_dependency[LAGHU_RUNTIME_KEY_SIZE];
   char dependency[LAGHU_RUNTIME_KEY_SIZE];
   char javascript_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
   char lcp_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
+  char profile_template_key[LAGHU_RUNTIME_KEY_SIZE] = "";
+  laghu_image_filter_mask image_filters;
   laghu_javascript_observation_set decision_observations;
   const laghu_javascript_observation_set *instrumentation_observations = transaction->environment.javascript_observations;
   laghu_csp_policy csp_policy;
@@ -401,11 +406,6 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
   laghu_csp_policy_init(&csp_policy, transaction->origin);
   if ((csp_value[0] != '\0' && !laghu_csp_policy_add(&csp_policy, csp_value, strlen(csp_value))) || !laghu_csp_policy_add_meta(&csp_policy, body))
     csp_policy.invalid = true;
-  if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
-    (void)laghu_runtime_instrumentation_template_key(
-        transaction->environment.rum, transaction->environment.cache_path, transaction->environment.javascript_observations, body, transaction->path,
-        transaction->origin, transaction->policy_key, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
-        transaction->environment.config.instrumentation_sample_rate, javascript_template_key);
   if (transaction->environment.javascript_defer != NULL && transaction->environment.javascript_defer->count != 0U) {
     char material[LAGHU_RUNTIME_KEY_SIZE * 2U + 8U];
     int material_length;
@@ -419,9 +419,36 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
         laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, decision_observations.digest))
       instrumentation_observations = &decision_observations;
   }
+  /* Profiles consume the same stable template identity as RUM.  Derive it
+   * even when beacon injection is off: an operator may ingest RUM elsewhere,
+   * and request processing must never read a Chrome/RUM file to decide. */
+  if (transaction->environment.config.optimization_profiles == LAGHU_MODE_ON ||
+      transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
+    (void)laghu_runtime_instrumentation_template_key(
+        transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations, body, transaction->path,
+        transaction->origin, transaction->policy_key, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+        transaction->environment.config.instrumentation_sample_rate, profile_template_key);
+  memcpy(javascript_template_key, profile_template_key, sizeof(javascript_template_key));
+  memcpy(lcp_template_key, profile_template_key, sizeof(lcp_template_key));
+  memset(&optimization_profile, 0, sizeof(optimization_profile));
+  if (transaction->environment.config.optimization_profiles == LAGHU_MODE_ON)
+    (void)laghu_template_profile_decide(transaction->environment.rum, profile_template_key, transaction->environment.now,
+                                        transaction->environment.config.image_metadata_ttl,
+                                        transaction->viewport_width != 0U && transaction->viewport_width < 768U ? 0U : 1U, &optimization_profile);
+  image_filters = transaction->image_filters;
+  /* Width and height attributes reserve an image's layout box.  This is a
+   * bounded, local remediation: only learned, healthy CLS regressions enable
+   * it; bad/stale evidence leaves the configured filter set untouched. */
+  if (optimization_profile.decision == LAGHU_TEMPLATE_PROFILE_LEARNED && optimization_profile.cls_over_budget)
+    image_filters |= LAGHU_IMAGE_INSERT_DIMENSIONS;
+  if (optimization_profile.decision == LAGHU_TEMPLATE_PROFILE_LEARNED && optimization_profile.cls_over_budget &&
+      transaction->environment.layout_reservations != NULL) {
+    if (!laghu_layout_reservations_apply(body, transaction->environment.layout_reservations, &csp_policy, &layout)) return false;
+    if (layout.rewritten) rewrite_source = (laghu_buffer){layout.data, layout.length};
+  }
   if (!laghu_runtime_rewrite_html(
-          transaction->environment.rum, transaction->environment.cache_path, body, transaction->path, transaction->origin, transaction->policy_key,
-          transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl, transaction->image_filters,
+          transaction->environment.rum, transaction->environment.cache_path, rewrite_source, transaction->path, transaction->origin, transaction->policy_key,
+          transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl, image_filters,
           transaction->policy.allow_resource_inlining,
           (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U && transaction->policy.allow_resource_inlining,
           transaction->policy.allow_structural_rewrite,
@@ -429,8 +456,18 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
           transaction->html_plan, &csp_policy, transaction->environment.config.image_beacon == LAGHU_MODE_ON,
           transaction->environment.config.image_inline_limit, transaction->environment.config.css_inline_limit,
           transaction->environment.config.css_outline_threshold, transaction->viewport_width, transaction->dpr_hundredths, &rewritten)) {
+    laghu_runtime_html_result_release(&layout);
     return false;
   }
+  if (!rewritten.rewritten && layout.rewritten) {
+    rewritten = layout;
+    memset(&layout, 0, sizeof(layout));
+    if (!laghu_sha256_hex((laghu_buffer){rewritten.data, rewritten.length}, rewritten.dependency_key)) {
+      laghu_runtime_html_result_release(&rewritten);
+      return false;
+    }
+  }
+  laghu_runtime_html_result_release(&layout);
   base_rewritten = rewritten.rewritten;
   if (rewritten.dependencies_pending) result->dependencies_pending = true;
   memcpy(base_dependency, rewritten.dependency_key, sizeof(base_dependency));
@@ -540,16 +577,6 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
     if (length > 0 && (size_t)length < sizeof(material))
       (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, dependency);
   }
-  if (transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
-    (void)laghu_runtime_instrumentation_template_key(
-        transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations, (laghu_buffer){selected, selected_length},
-        transaction->path, transaction->origin, transaction->policy_key, transaction->environment.now,
-        transaction->environment.config.image_metadata_ttl, transaction->environment.config.instrumentation_sample_rate, lcp_template_key);
-  memset(&optimization_profile, 0, sizeof(optimization_profile));
-  if (transaction->environment.config.optimization_profiles == LAGHU_MODE_ON)
-    (void)laghu_template_profile_decide(transaction->environment.rum, lcp_template_key, transaction->environment.now,
-                                        transaction->environment.config.image_metadata_ttl,
-                                        transaction->viewport_width != 0U && transaction->viewport_width < 768U ? 0U : 1U, &optimization_profile);
   if ((transaction->environment.config.optimization_profiles == LAGHU_MODE_ON && optimization_profile.apply &&
        !laghu_runtime_prioritize_learned_lcp(transaction->environment.rum, body, (laghu_buffer){selected, selected_length}, transaction->path,
                                              transaction->origin, lcp_template_key, transaction->environment.now,
@@ -714,10 +741,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
       free(baseline);
       free(current);
     }
-    if (!laghu_runtime_add_instrumentation(transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations,
-                                           (laghu_buffer){selected, selected_length}, transaction->path, transaction->origin, transaction->policy_key,
-                                           transaction->environment.now, transaction->environment.config.image_metadata_ttl,
-                                           transaction->environment.config.instrumentation_sample_rate, &csp_policy, &instrumentation)) {
+    if (!laghu_runtime_insert_instrumentation_template((laghu_buffer){selected, selected_length}, profile_template_key,
+                                                        transaction->environment.config.instrumentation_sample_rate, &csp_policy, &instrumentation)) {
       laghu_runtime_html_result_release(&hinted);
       laghu_runtime_html_result_release(&finalized);
       laghu_runtime_html_result_release(&rewritten);
@@ -804,6 +829,29 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
 /* This is deliberately post-finalization: Chrome receives precisely the body
  * that will leave the HTTP layer. Queue contention, saturation, and malformed
  * optional configuration all leave the response untouched. */
+static bool laghu_http_snapshot_template_key(laghu_buffer snapshot, char output[LAGHU_RUNTIME_KEY_SIZE]) {
+  static const char marker[] = "data-laghu-template=\"";
+  size_t index, marker_length = sizeof(marker) - 1U;
+  if (output == NULL) return false;
+  output[0] = '\0';
+  for (index = 0U; index + marker_length + LAGHU_SHA256_HEX_LENGTH < snapshot.length; ++index) {
+    size_t digit;
+    if (memcmp(snapshot.data + index, marker, marker_length) != 0 ||
+        snapshot.data[index + marker_length + LAGHU_SHA256_HEX_LENGTH] != '\"')
+      continue;
+    for (digit = 0U; digit < LAGHU_SHA256_HEX_LENGTH; ++digit)
+      if (!isxdigit(snapshot.data[index + marker_length + digit]) ||
+          isupper(snapshot.data[index + marker_length + digit]))
+        break;
+    if (digit == LAGHU_SHA256_HEX_LENGTH) {
+      memcpy(output, snapshot.data + index + marker_length, LAGHU_SHA256_HEX_LENGTH);
+      output[LAGHU_SHA256_HEX_LENGTH] = '\0';
+      return true;
+    }
+  }
+  return false;
+}
+
 static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *transaction, laghu_buffer snapshot) {
   laghu_runtime_job job;
   if (transaction->environment.chrome_analysis_queue == NULL || snapshot.length == 0U || snapshot.length > LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML)
@@ -813,7 +861,9 @@ static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *tra
   if (!laghu_sha256_hex(snapshot, job.index_key)) return;
   memcpy(job.policy_key, transaction->policy_key, sizeof(job.policy_key));
   memcpy(job.request_path, transaction->path, sizeof(job.request_path));
-  memcpy(job.validator, transaction->validator, sizeof(job.validator));
+  /* Browser reports join the template id injected into the exact served
+   * document. Re-hashing this post-rewrite snapshot would split it from RUM. */
+  if (!laghu_http_snapshot_template_key(snapshot, job.validator)) return;
   memcpy(job.content_type, "text/html", sizeof("text/html"));
   job.analysis_timeout_ms = transaction->environment.chrome_analysis_timeout_ms;
   job.payload = snapshot;

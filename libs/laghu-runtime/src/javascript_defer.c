@@ -12,6 +12,8 @@
 #include "laghu/rum.h"
 #include "laghu/types.h"
 
+static unsigned int laghu_defer_p75(const uint64_t histogram[8], uint64_t observations);
+
 static bool laghu_defer_path(const char *value) {
   size_t i;
   if (value == NULL || value[0] != '/' || value[1] == '/' || strpbrk(value, "?#\\*[]") != NULL || strstr(value, "..") != NULL) return false;
@@ -120,7 +122,8 @@ bool laghu_javascript_defer_recommended(const laghu_rum_instrumentation_record *
   if (record == NULL || record->version != LAGHU_INSTRUMENTATION_VERSION || bucket > 1U || script_index >= record->script_count) return false;
   observations = record->observations[bucket];
   candidate = record->script_observations[bucket][script_index];
-  return observations >= 100U && candidate <= UINT64_MAX / 10U && observations <= UINT64_MAX / 9U && candidate * 10U >= observations * 9U;
+  return observations >= 100U && candidate <= UINT64_MAX / 10U && observations <= UINT64_MAX / 9U && candidate * 10U >= observations * 9U &&
+         laghu_defer_p75(record->histograms[bucket][1], observations) > 1U;
 }
 
 static uint64_t laghu_defer_rate(uint64_t count, uint64_t observations) {

@@ -315,6 +315,8 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_event(&queue, "startup", "running");
     while (proxy_stop_requests == 0) {
       proxy_maintain_queue_attachments(&queue);
+      (void)laghu_runtime_import_chrome_analysis(queue.rum, options->service.chrome_analysis_output, (uint64_t)time(NULL),
+                                                 options->service.rum_ttl);
       if (proxy_listener_ready(listener)) {
         proxy_connection connection;
         memset(&connection, 0, sizeof(connection));

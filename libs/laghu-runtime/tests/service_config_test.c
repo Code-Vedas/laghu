@@ -48,6 +48,7 @@ static void test_descriptor_matrix(void) {
                {LAGHU_SERVICE_SETTING_WORKER_QUEUE, "/tmp/jobs.queue"},
                {LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE, "/tmp/html-refresh.queue"},
                {LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "/tmp/chrome.queue"},
+               {LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT, "/tmp/chrome-output"},
                {LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT, "1500"},
                {LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE, "/tmp/fonts.queue"},
                {LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG, "/tmp/fonts.conf"},
@@ -55,6 +56,7 @@ static void test_descriptor_matrix(void) {
                {LAGHU_SERVICE_SETTING_JAVASCRIPT_TARGET, "defaults and supports es6-module and not dead"},
                {LAGHU_SERVICE_SETTING_JAVASCRIPT_OBSERVATION_CONFIG, "/tmp/observe"},
                {LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG, "/tmp/defer"},
+               {LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, "/tmp/layout"},
                {LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, "/tmp/assets"},
                {LAGHU_SERVICE_SETTING_ASSET_UPLOAD_QUEUE, "/tmp/assets.queue"},
                {LAGHU_SERVICE_SETTING_RUM_STORE, "local:"},
@@ -105,6 +107,8 @@ static void test_apply_and_merge(void) {
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_METRICS, "on", &diagnostic));
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE, "/tmp/parent-html-refresh.queue", &diagnostic));
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "/tmp/parent-chrome.queue", &diagnostic));
+  assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT, "/tmp/parent-chrome-output", &diagnostic));
+  assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, "/tmp/parent-layout", &diagnostic));
   assert(laghu_service_config_apply(&parent, LAGHU_SERVICE_SETTING_LOAD_FROM_FILE, "mapped", &diagnostic));
   assert(laghu_service_config_apply_pair(&parent, LAGHU_SERVICE_SETTING_FILE_SOURCE_MAP, "https://assets.example/", TEST_SOURCE_ROOT, &diagnostic));
   assert(laghu_service_config_apply(&child, LAGHU_SERVICE_SETTING_FILE_CACHE_SIZE, "4m", &diagnostic));
@@ -116,6 +120,8 @@ static void test_apply_and_merge(void) {
   assert(merged.readiness_strict);
   assert(strcmp(merged.html_refresh_queue, "/tmp/child-html-refresh.queue") == 0);
   assert(strcmp(merged.chrome_analysis_queue, "/tmp/parent-chrome.queue") == 0);
+  assert(strcmp(merged.chrome_analysis_output, "/tmp/parent-chrome-output") == 0);
+  assert(strcmp(merged.layout_reservation_config, "/tmp/parent-layout") == 0);
   assert(merged.source_policy.mapping_count == 1U);
   assert(laghu_service_config_apply(&child, LAGHU_SERVICE_SETTING_METRICS, "off", &diagnostic));
   assert(laghu_service_config_merge(&merged, &parent, &child, &diagnostic));
@@ -189,6 +195,7 @@ static void test_cidrs_and_dependencies(void) {
   assert(diagnostic.code == LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY);
   laghu_service_config_init(&config);
   assert(laghu_service_config_apply(&config, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "/tmp/chrome.queue", &diagnostic));
+  assert(laghu_service_config_apply(&config, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT, "/tmp/chrome-output", &diagnostic));
   assert(laghu_service_config_finalize(&config, &options, &diagnostic));
   assert(config.chrome_analysis_timeout_ms == 1500U);
   laghu_service_config_init(&config);

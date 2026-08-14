@@ -51,6 +51,8 @@ int main(void) {
                    "--instrumentation-beacon",
                    "--instrumentation-sample-rate",
                    "50",
+                   "--optimization-profiles",
+                   "on",
                    "--javascript-inline-limit",
                    "4096",
                    "--javascript-outline-threshold",
@@ -217,12 +219,13 @@ int main(void) {
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.service.purge_method && options.service.purge_query && options.service.statistics && options.service.purge_allow_count == 1U);
   laghu_proxy_options_init(&options);
-  CHECK(laghu_proxy_parse_options(20, valid, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(laghu_proxy_parse_options(22, valid, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.origin_host, "127.0.0.1"));
   CHECK(!strcmp(options.origin_port, "8000"));
   CHECK(options.config.allow_api == LAGHU_MODE_ON);
   CHECK(options.config.critical_css_beacon == LAGHU_MODE_ON);
   CHECK(options.config.instrumentation_beacon == LAGHU_MODE_ON);
+  CHECK(options.config.optimization_profiles == LAGHU_MODE_ON);
   CHECK(options.config.instrumentation_sample_rate == 50U);
   CHECK(options.config.javascript_inline_limit == 4096U);
   CHECK(options.config.javascript_outline_threshold == 16384U);

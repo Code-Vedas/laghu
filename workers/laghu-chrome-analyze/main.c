@@ -267,12 +267,16 @@ static bool laghu_chrome_analyze_publish(const char *directory, const laghu_runt
   char output[LAGHU_RUNTIME_PATH_SIZE * 2U], temporary[LAGHU_RUNTIME_PATH_SIZE * 2U];
   int descriptor;
   if (directory == NULL || job == NULL || report == NULL || report_length == 0U ||
+      strlen(job->validator) != LAGHU_SHA256_HEX_LENGTH || report[report_length - 1U] != '}' ||
       snprintf(output, sizeof(output), "%s/%s.json", directory, job->index_key) >= (int)sizeof(output) ||
       snprintf(temporary, sizeof(temporary), "%s/.%s.XXXXXX", directory, job->index_key) >= (int)sizeof(temporary))
     return false;
   descriptor = mkstemp(temporary);
   if (descriptor < 0) return false;
-  if (!laghu_chrome_analyze_write_all(descriptor, report, report_length) || fsync(descriptor) != 0 || close(descriptor) != 0 ||
+  if (!laghu_chrome_analyze_write_all(descriptor, report, report_length - 1U) ||
+      !laghu_chrome_analyze_write_all(descriptor, (const unsigned char *)",\"template\":\"", sizeof(",\"template\":\"") - 1U) ||
+      !laghu_chrome_analyze_write_all(descriptor, (const unsigned char *)job->validator, strlen(job->validator)) ||
+      !laghu_chrome_analyze_write_all(descriptor, (const unsigned char *)"\"}", sizeof("\"}") - 1U) || fsync(descriptor) != 0 || close(descriptor) != 0 ||
       rename(temporary, output) != 0) {
     (void)close(descriptor);
     (void)unlink(temporary);

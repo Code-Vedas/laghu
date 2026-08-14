@@ -254,6 +254,7 @@ bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context)
   context->environment.javascript_target = context->config->service.javascript_target;
   context->environment.javascript_observations = context->config->service.javascript_observations;
   context->environment.javascript_defer = context->config->service.javascript_defer;
+  context->environment.layout_reservations = context->config->service.layout_reservations;
   context->environment.asset_offload = context->config->service.asset_offload;
   context->environment.now = (uint64_t)apr_time_sec(apr_time_now());
   return true;

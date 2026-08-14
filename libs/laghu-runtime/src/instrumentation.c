@@ -227,6 +227,37 @@ static bool laghu_rum_write(laghu_rum_engine *rum, laghu_rum_record *record) {
          laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION, record->template_key, record->updated_at, record, sizeof(*record), NULL);
 }
 
+bool laghu_runtime_insert_instrumentation_template(laghu_buffer html, const char *template_key, unsigned int sample_rate,
+                                                   const laghu_csp_policy *csp, laghu_runtime_html_result *result) {
+  const unsigned char *body;
+  unsigned char *output;
+  char tag[256U];
+  int tag_length;
+  size_t at, output_length;
+  if (result == NULL || html.data == NULL || html.length > LAGHU_RUM_MAX_HTML || sample_rate > 100U) return false;
+  memset(result, 0, sizeof(*result));
+  if (!laghu_rum_hash(template_key) || !laghu_csp_allows_external_script(csp, NULL, 0U) || sample_rate == 0U ||
+      (body = laghu_rum_find(html.data, html.length, "</body>")) == NULL)
+    return true;
+  tag_length = snprintf(tag, sizeof(tag), "<script src=\"/.laghu/beacon/instrumentation.js\" defer "
+                                        "data-laghu-template=\"%s\" data-laghu-sample=\"%u\"></script>",
+                        template_key, sample_rate);
+  if (tag_length <= 0 || (size_t)tag_length >= sizeof(tag)) return false;
+  at = (size_t)(body - html.data);
+  output_length = html.length + (size_t)tag_length;
+  output = malloc(output_length + 1U);
+  if (output == NULL) return false;
+  memcpy(output, html.data, at);
+  memcpy(output + at, tag, (size_t)tag_length);
+  memcpy(output + at + (size_t)tag_length, body, html.length - at);
+  output[output_length] = '\0';
+  result->data = output;
+  result->length = output_length;
+  result->rewritten = true;
+  memcpy(result->dependency_key, template_key, LAGHU_RUNTIME_KEY_SIZE);
+  return true;
+}
+
 bool laghu_runtime_add_instrumentation(laghu_rum_engine *rum, const char *cache_path, const laghu_javascript_observation_set *providers,
                                        laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key, uint64_t now,
                                        unsigned int ttl_seconds, unsigned int sample_rate, const laghu_csp_policy *csp,
@@ -235,8 +266,7 @@ bool laghu_runtime_add_instrumentation(laghu_rum_engine *rum, const char *cache_
   const unsigned char *body, *scan;
   char material[16384U], key[LAGHU_RUNTIME_KEY_SIZE];
   char media_digest[LAGHU_RUNTIME_KEY_SIZE];
-  size_t used, at, output_length;
-  unsigned char *output;
+  size_t used;
   const char *digest = providers == NULL ? "none" : providers->digest;
   if (result == NULL || rum == NULL || cache_path == NULL || page_path == NULL || page_origin == NULL || policy_key == NULL || html.data == NULL ||
       html.length > LAGHU_RUM_MAX_HTML || sample_rate > 100U)
@@ -323,27 +353,7 @@ bool laghu_runtime_add_instrumentation(laghu_rum_engine *rum, const char *cache_
       if (!laghu_rum_write(rum, &record)) return true;
     }
   }
-  {
-    char tag[256U];
-    int tag_length = snprintf(tag, sizeof(tag),
-                              "<script src=\"/.laghu/beacon/instrumentation.js\" defer "
-                              "data-laghu-template=\"%s\" data-laghu-sample=\"%u\"></script>",
-                              key, sample_rate);
-    if (tag_length <= 0 || (size_t)tag_length >= sizeof(tag)) return false;
-    at = (size_t)(body - html.data);
-    output_length = html.length + (size_t)tag_length;
-    output = malloc(output_length + 1U);
-    if (output == NULL) return false;
-    memcpy(output, html.data, at);
-    memcpy(output + at, tag, (size_t)tag_length);
-    memcpy(output + at + (size_t)tag_length, body, html.length - at);
-    output[output_length] = '\0';
-    result->data = output;
-    result->length = output_length;
-    result->rewritten = true;
-    (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, used}, result->dependency_key);
-  }
-  return true;
+  return laghu_runtime_insert_instrumentation_template(html, key, sample_rate, csp, result);
 }
 
 bool laghu_runtime_instrumentation_template_key(laghu_rum_engine *rum, const char *cache_path, const laghu_javascript_observation_set *providers,

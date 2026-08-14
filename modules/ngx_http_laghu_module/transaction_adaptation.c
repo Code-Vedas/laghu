@@ -214,6 +214,7 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_co
   context->environment.javascript_target = conf->service.javascript_target;
   context->environment.javascript_observations = conf->service.javascript_observations;
   context->environment.javascript_defer = conf->service.javascript_defer;
+  context->environment.layout_reservations = conf->service.layout_reservations;
   context->environment.asset_offload = conf->service.asset_offload;
   context->environment.now = (uint64_t)ngx_time();
   return true;

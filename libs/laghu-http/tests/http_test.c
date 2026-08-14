@@ -504,16 +504,22 @@ static void test_html_chrome_analysis_publication(void) {
   laghu_http_response response = test_response(headers, 1U, sizeof(html) - 1U);
   laghu_runtime_job job;
   char snapshot_key[LAGHU_RUNTIME_KEY_SIZE];
+  char template_key[LAGHU_RUNTIME_KEY_SIZE];
   static unsigned char payload[4096U];
   laghu_runtime_queue_init(&queue);
   (void)remove(test_queue_path);
   CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 1U, 1024U * 1024U));
   environment.chrome_analysis_queue = &queue;
   environment.chrome_analysis_timeout_ms = 1750U;
+  environment.config.instrumentation_beacon = LAGHU_MODE_ON;
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &prepared));
   CHECK(prepared.action == LAGHU_HTTP_ACTION_CAPTURE_HTML);
   laghu_http_transaction_result_release(&prepared);
+  CHECK(laghu_runtime_instrumentation_template_key(
+      environment.rum, environment.cache_path, environment.javascript_observations, (laghu_buffer){html, sizeof(html) - 1U},
+      "/analysis.html", "https://example.test", transaction.policy_key, environment.now, environment.config.image_metadata_ttl,
+      environment.config.instrumentation_sample_rate, template_key));
   CHECK(laghu_http_transaction_finalize(&transaction, (laghu_buffer){html, sizeof(html) - 1U}, &finalized));
   CHECK(laghu_sha256_hex(finalized.selected, snapshot_key));
   CHECK(laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload)));
@@ -522,6 +528,9 @@ static void test_html_chrome_analysis_publication(void) {
   CHECK(strcmp(job.policy_key, transaction.policy_key) == 0);
   CHECK(strcmp(job.request_path, "/analysis.html") == 0);
   CHECK(strcmp(job.content_type, "text/html") == 0);
+  CHECK(strlen(job.validator) == LAGHU_SHA256_HEX_LENGTH);
+  CHECK(strcmp(job.validator, template_key) == 0);
+  CHECK(strstr((const char *)finalized.selected.data, job.validator) != NULL);
   CHECK(job.analysis_timeout_ms == 1750U);
   CHECK(job.payload.length == finalized.selected.length && memcmp(payload, finalized.selected.data, job.payload.length) == 0);
   laghu_http_transaction_result_release(&finalized);

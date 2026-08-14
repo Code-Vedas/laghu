@@ -27,6 +27,8 @@ struct laghu_apache_queue_binding {
   char javascript_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char html_refresh_queue_path[LAGHU_RUNTIME_PATH_SIZE];
   char chrome_analysis_queue_path[LAGHU_RUNTIME_PATH_SIZE];
+  char chrome_analysis_output[LAGHU_RUNTIME_PATH_SIZE];
+  unsigned int rum_ttl;
   bool font_enabled;
   volatile apr_uint32_t image_attached;
   volatile apr_uint32_t font_attached;
@@ -61,6 +63,8 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const la
         strcmp(existing->javascript_queue_path, service->javascript_queue) == 0 &&
         strcmp(existing->html_refresh_queue_path, service->html_refresh_queue) == 0 &&
         strcmp(existing->chrome_analysis_queue_path, service->chrome_analysis_queue) == 0 &&
+        strcmp(existing->chrome_analysis_output, service->chrome_analysis_output) == 0 &&
+        existing->rum_ttl == service->rum_ttl &&
         (!existing->font_enabled || strcmp(existing->font_queue_path, service->font_fetch_queue) == 0))
       return true;
   }
@@ -74,6 +78,8 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const la
   (void)snprintf(binding->javascript_queue_path, sizeof(binding->javascript_queue_path), "%s", service->javascript_queue);
   (void)snprintf(binding->html_refresh_queue_path, sizeof(binding->html_refresh_queue_path), "%s", service->html_refresh_queue);
   (void)snprintf(binding->chrome_analysis_queue_path, sizeof(binding->chrome_analysis_queue_path), "%s", service->chrome_analysis_queue);
+  (void)snprintf(binding->chrome_analysis_output, sizeof(binding->chrome_analysis_output), "%s", service->chrome_analysis_output);
+  binding->rum_ttl = service->rum_ttl;
   laghu_runtime_queue_init(&binding->image_queue);
   laghu_runtime_queue_init(&binding->font_queue);
   laghu_runtime_queue_init(&binding->javascript_queue);
@@ -93,6 +99,8 @@ laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(const laghu_
         strcmp(binding->javascript_queue_path, service->javascript_queue) == 0 &&
         strcmp(binding->html_refresh_queue_path, service->html_refresh_queue) == 0 &&
         strcmp(binding->chrome_analysis_queue_path, service->chrome_analysis_queue) == 0 &&
+        strcmp(binding->chrome_analysis_output, service->chrome_analysis_output) == 0 &&
+        binding->rum_ttl == service->rum_ttl &&
         (!font_enabled || strcmp(binding->font_queue_path, service->font_fetch_queue) == 0))
       return binding;
   }
@@ -223,6 +231,9 @@ static void *APR_THREAD_FUNC laghu_apache_queue_maintenance(apr_thread_t *thread
   (void)data;
   while (apr_atomic_read32(&laghu_apache_queue_stopping) == 0U) {
     (void)laghu_apache_attach_all_queues();
+    for (size_t index = 0U; index < laghu_apache_queue_binding_count; ++index)
+      (void)laghu_runtime_import_chrome_analysis(laghu_apache_rum, laghu_apache_queue_bindings[index].chrome_analysis_output,
+                                                 (uint64_t)apr_time_sec(apr_time_now()), laghu_apache_queue_bindings[index].rum_ttl);
     for (tick = 0U; tick < 10U && apr_atomic_read32(&laghu_apache_queue_stopping) == 0U; ++tick) apr_sleep(100000U);
   }
   return NULL;

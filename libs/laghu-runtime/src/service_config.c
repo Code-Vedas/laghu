@@ -48,6 +48,9 @@ static const laghu_service_descriptor_entry laghu_service_descriptors[] = {
     {{LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, "chrome_analysis_queue", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"chromeanalysisqueue", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT, "chrome_analysis_output", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"chromeanalysisoutput", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT, "chrome_analysis_timeout", LAGHU_SERVICE_VALUE_UNSIGNED, LAGHU_SERVICE_INHERIT_SCALAR, 100U,
       10000U, false},
      {"chromeanalysistimeout", NULL, NULL}},
@@ -69,6 +72,9 @@ static const laghu_service_descriptor_entry laghu_service_descriptors[] = {
     {{LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG, "javascript_defer_config", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"javascriptdeferconfig", NULL, NULL}},
+    {{LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, "layout_reservation_config", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
+      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+     {"layoutreservationconfig", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, "asset_offload_config", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
      {"assetoffloadconfig", NULL, NULL}},
@@ -280,15 +286,18 @@ static void laghu_service_config_clear_loaded(laghu_service_config *config) {
   free(config->owned_font_providers);
   free(config->owned_javascript_observations);
   free(config->owned_javascript_defer);
+  free(config->owned_layout_reservations);
   free(config->owned_asset_offload);
   config->font_providers = NULL;
   config->javascript_observations = NULL;
   config->javascript_defer = NULL;
   config->asset_offload = NULL;
+  config->layout_reservations = NULL;
   config->owned_font_providers = NULL;
   config->owned_javascript_observations = NULL;
   config->owned_javascript_defer = NULL;
   config->owned_asset_offload = NULL;
+  config->owned_layout_reservations = NULL;
 }
 
 static void laghu_service_config_clear_font_providers(laghu_service_config *config) {
@@ -445,6 +454,9 @@ bool laghu_service_config_apply(laghu_service_config *config, laghu_service_sett
     case LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE:
       if (!laghu_service_copy(config->chrome_analysis_queue, sizeof(config->chrome_analysis_queue), value)) goto format;
       break;
+    case LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT:
+      if (!laghu_service_copy(config->chrome_analysis_output, sizeof(config->chrome_analysis_output), value)) goto format;
+      break;
     case LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT:
       if (!laghu_service_unsigned(value, descriptor->minimum, descriptor->maximum, &config->chrome_analysis_timeout_ms)) goto range;
       break;
@@ -470,6 +482,12 @@ bool laghu_service_config_apply(laghu_service_config *config, laghu_service_sett
     case LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG:
       if (!laghu_service_copy(config->javascript_defer_config, sizeof(config->javascript_defer_config), value)) goto format;
       laghu_service_config_clear_javascript_defer(config);
+      break;
+    case LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG:
+      if (!laghu_service_copy(config->layout_reservation_config, sizeof(config->layout_reservation_config), value)) goto format;
+      free(config->owned_layout_reservations);
+      config->layout_reservations = NULL;
+      config->owned_layout_reservations = NULL;
       break;
     case LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG:
       if (!laghu_service_copy(config->asset_offload_config, sizeof(config->asset_offload_config), value)) goto format;
@@ -635,6 +653,7 @@ bool laghu_service_config_merge(laghu_service_config *merged, const laghu_servic
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_WORKER_QUEUE, worker_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE, html_refresh_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE, chrome_analysis_queue);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT, chrome_analysis_output);
   LAGHU_SERVICE_MERGE_FIELD(LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT, chrome_analysis_timeout_ms);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE, font_fetch_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG, font_provider_config);
@@ -642,6 +661,7 @@ bool laghu_service_config_merge(laghu_service_config *merged, const laghu_servic
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_JAVASCRIPT_TARGET, javascript_target);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_JAVASCRIPT_OBSERVATION_CONFIG, javascript_observation_config);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG, javascript_defer_config);
+  LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG, layout_reservation_config);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, asset_offload_config);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_ASSET_UPLOAD_QUEUE, asset_upload_queue);
   LAGHU_SERVICE_MERGE_STRING(LAGHU_SERVICE_SETTING_RUM_STORE, rum_store);
@@ -761,6 +781,16 @@ bool laghu_service_config_prepare_resources(laghu_service_config *config, laghu_
                                 "unable to load JavaScript defer configuration");
     }
   }
+  if (config->layout_reservation_config[0] != '\0' && config->layout_reservations == NULL) {
+    config->owned_layout_reservations = calloc(1U, sizeof(*config->owned_layout_reservations));
+    config->layout_reservations = config->owned_layout_reservations;
+    if (config->layout_reservations == NULL ||
+        !laghu_layout_reservations_load(config->layout_reservation_config, config->layout_reservations, error, sizeof(error))) {
+      laghu_service_config_clear_loaded(config);
+      return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_IO, LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG,
+                                "unable to load layout reservation configuration");
+    }
+  }
   if (config->asset_offload_config[0] != '\0' && config->asset_offload == NULL) {
     config->owned_asset_offload = calloc(1U, sizeof(*config->owned_asset_offload));
     config->asset_offload = config->owned_asset_offload;
@@ -801,9 +831,13 @@ bool laghu_service_config_validate(laghu_service_config *config, const laghu_ser
   if (laghu_service_present(config, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT) && config->chrome_analysis_queue[0] == '\0')
     return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT,
                               "chrome analysis timeout requires chrome analysis queue");
+  if (config->chrome_analysis_output[0] != '\0' && config->chrome_analysis_queue[0] == '\0')
+    return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_DEPENDENCY, LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT,
+                              "chrome analysis output requires chrome analysis queue");
   if ((config->font_provider_config[0] != '\0' && config->font_providers == NULL) ||
       (config->javascript_observation_config[0] != '\0' && config->javascript_observations == NULL) ||
       (config->javascript_defer_config[0] != '\0' && config->javascript_defer == NULL) ||
+      (config->layout_reservation_config[0] != '\0' && config->layout_reservations == NULL) ||
       (config->asset_offload_config[0] != '\0' && config->asset_offload == NULL))
     return laghu_service_fail(diagnostic, LAGHU_SERVICE_DIAGNOSTIC_IO, LAGHU_SERVICE_SETTING_UNKNOWN, "service resources are not prepared");
   if ((config->font_fetch_queue[0] == '\0') != (config->font_provider_config[0] == '\0'))

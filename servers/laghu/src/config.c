@@ -301,12 +301,20 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (instrumentation_sample_rate_seen || !proxy_uint(value, 0U, 100U, &options->config.instrumentation_sample_rate))
         return proxy_error(error, error_size, "invalid --instrumentation-sample-rate");
       instrumentation_sample_rate_seen = true;
-    } else if (strcmp(name, "--javascript-defer-suggestions") == 0) {
+    } else if (strcmp(name, "--optimization-profiles") == 0 || strcmp(name, "--javascript-defer-suggestions") == 0) {
       NEED_VALUE();
-      if (javascript_defer_suggestions_seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
-        return proxy_error(error, error_size, "invalid --javascript-defer-suggestions");
-      options->config.javascript_defer_suggestions = strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
-      javascript_defer_suggestions_seen = true;
+      if (strcmp(value, "on") != 0 && strcmp(value, "off") != 0)
+        return proxy_error(error, error_size, "profile and JavaScript toggles expect on or off");
+      if (strcmp(name, "--optimization-profiles") == 0) {
+        if (options->config.optimization_profiles != LAGHU_MODE_UNSET)
+          return proxy_error(error, error_size, "duplicate --optimization-profiles");
+        options->config.optimization_profiles = strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
+      } else {
+        if (javascript_defer_suggestions_seen)
+          return proxy_error(error, error_size, "invalid --javascript-defer-suggestions");
+        options->config.javascript_defer_suggestions = strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
+        javascript_defer_suggestions_seen = true;
+      }
     } else if (strcmp(name, "--include-js-source-maps") == 0) {
       if (options->config.include_js_source_maps == LAGHU_MODE_ON) return proxy_error(error, error_size, "duplicate --include-js-source-maps");
       options->config.include_js_source_maps = LAGHU_MODE_ON;

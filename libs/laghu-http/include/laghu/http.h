@@ -17,6 +17,7 @@
 #include "laghu/html.h"
 #include "laghu/javascript.h"
 #include "laghu/lcp.h"
+#include "laghu/layout.h"
 #include "laghu/operational.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
@@ -276,6 +277,7 @@ typedef struct {
   const laghu_font_provider_set *font_providers;
   const laghu_javascript_observation_set *javascript_observations;
   const laghu_javascript_defer_set *javascript_defer;
+  const laghu_layout_reservation_set *layout_reservations;
   const laghu_asset_config *asset_offload;
   uint64_t now;
 } laghu_http_environment;

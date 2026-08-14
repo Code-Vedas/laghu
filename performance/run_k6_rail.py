@@ -429,7 +429,9 @@ def image_quality(output: Path, cells: list[dict[str, Any]]) -> list[dict[str, A
 
 def cwv(output: Path) -> list[dict[str, Any]]:
     fixtures = ("cwv-image.html", "cwv-css-js.html", "cwv-mixed.html")
-    targets = tuple(target for target in TARGETS if target.name in {"nginx/plain", "nginx/pagespeed", "nginx/laghu"})
+    targets = tuple(target for target in TARGETS if target.name in {
+        "nginx/plain", "nginx/pagespeed", "nginx/laghu", "apache/laghu", "standalone/laghu/all-optimizations/nginx",
+    })
     subprocess.run(["docker", "build", "--tag", "laghu-bench-cwv:local", "--file", str(Path(__file__).with_name("Dockerfile.lighthouse")),
                     str(Path(__file__).parent)], check=True)
     measurements = []
@@ -444,7 +446,16 @@ def cwv(output: Path) -> list[dict[str, Any]]:
                 evidence = cwv_metrics(parsed["audits"], parsed.get("inp_ms"))
             except (KeyError, ValueError) as error:
                 raise RuntimeError(f"{target.name}: {fixture}: {error}") from error
-            measurements.append({"target": target.name, "fixture": fixture, **evidence})
+            decisions = parsed.get("decisions")
+            if not isinstance(decisions, dict) or any(not isinstance(value, int) or value < 0 for value in decisions.values()):
+                raise RuntimeError(f"{target.name}: {fixture}: browser decision evidence missing")
+            measurements.append({"target": target.name, "fixture": fixture, **evidence, "browser_decisions": decisions})
+    laghu_targets = {"nginx/laghu", "apache/laghu", "standalone/laghu/all-optimizations/nginx"}
+    for fixture in fixtures:
+        decisions = [measurement["browser_decisions"] for measurement in measurements
+                     if measurement["fixture"] == fixture and measurement["target"] in laghu_targets]
+        if len(decisions) != len(laghu_targets) or any(current != decisions[0] for current in decisions[1:]):
+            raise RuntimeError(f"Laghu browser decision parity failed: {fixture}")
     return measurements
 
 

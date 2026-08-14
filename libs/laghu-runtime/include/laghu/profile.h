@@ -17,6 +17,9 @@ extern "C" {
 #endif
 
 #define LAGHU_TEMPLATE_PROFILE_MIN_SAMPLES 10U
+#define LAGHU_TEMPLATE_PROFILE_LCP_BUDGET_BUCKET 1U
+#define LAGHU_TEMPLATE_PROFILE_INP_BUDGET_BUCKET 1U
+#define LAGHU_TEMPLATE_PROFILE_CLS_BUDGET_BUCKET 1U
 
 typedef enum {
   LAGHU_TEMPLATE_PROFILE_NONE = 0,
@@ -28,6 +31,12 @@ typedef enum {
 typedef struct {
   laghu_template_profile_decision decision;
   uint64_t observations;
+  /* Budgets apply to this opaque template and viewport bucket only.  The
+   * values are derived from the bounded RUM p75 histograms, never raw URLs. */
+  bool lcp_over_budget;
+  bool inp_over_budget;
+  bool cls_over_budget;
+  /* Existing callers use apply only for learned LCP prioritization. */
   bool apply;
 } laghu_template_profile;
 

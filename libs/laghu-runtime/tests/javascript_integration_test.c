@@ -89,7 +89,12 @@ static void test_javascript_defer(const laghu_test_workspace *workspace) {
   baseline.script_count = current.script_count = 1U;
   baseline.observations[1] = 100U;
   baseline.script_observations[1][0] = 90U;
+  baseline.histograms[1][1][2] = 100U;
   assert(laghu_javascript_defer_recommended(&baseline, 1U, 0U));
+  baseline.histograms[1][1][1] = 100U;
+  baseline.histograms[1][1][2] = 0U;
+  assert(!laghu_javascript_defer_recommended(&baseline, 1U, 0U));
+  baseline.histograms[1][1][2] = 100U;
   current.observations[1] = 50U;
   baseline.errors[1] = 1U;
   current.errors[1] = 2U;

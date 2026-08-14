@@ -315,6 +315,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         .javascript_target = options->service.javascript_target,
         .javascript_observations = options->service.javascript_observations,
         .javascript_defer = options->service.javascript_defer,
+        .layout_reservations = options->service.layout_reservations,
         .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared) &&
@@ -393,6 +394,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
           .javascript_target = options->service.javascript_target,
           .javascript_observations = options->service.javascript_observations,
           .javascript_defer = options->service.javascript_defer,
+          .layout_reservations = options->service.layout_reservations,
           .now = (uint64_t)time(NULL)};
       laghu_http_transaction_init(&transaction);
       prepared_ok = laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared);
@@ -532,6 +534,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       .javascript_target = options->service.javascript_target,
       .javascript_observations = options->service.javascript_observations,
       .javascript_defer = options->service.javascript_defer,
+      .layout_reservations = options->service.layout_reservations,
       .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless =

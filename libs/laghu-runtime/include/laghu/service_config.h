@@ -14,6 +14,7 @@
 #include "laghu/cache.h"
 #include "laghu/fonts.h"
 #include "laghu/javascript.h"
+#include "laghu/layout.h"
 #include "laghu/rum.h"
 #include "laghu/source.h"
 #include "laghu/types.h"
@@ -40,6 +41,7 @@ typedef enum {
   LAGHU_SERVICE_SETTING_WORKER_QUEUE,
   LAGHU_SERVICE_SETTING_HTML_REFRESH_QUEUE,
   LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_QUEUE,
+  LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_OUTPUT,
   LAGHU_SERVICE_SETTING_CHROME_ANALYSIS_TIMEOUT,
   LAGHU_SERVICE_SETTING_FONT_FETCH_QUEUE,
   LAGHU_SERVICE_SETTING_FONT_PROVIDER_CONFIG,
@@ -47,6 +49,7 @@ typedef enum {
   LAGHU_SERVICE_SETTING_JAVASCRIPT_TARGET,
   LAGHU_SERVICE_SETTING_JAVASCRIPT_OBSERVATION_CONFIG,
   LAGHU_SERVICE_SETTING_JAVASCRIPT_DEFER_CONFIG,
+  LAGHU_SERVICE_SETTING_LAYOUT_RESERVATION_CONFIG,
   LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG,
   LAGHU_SERVICE_SETTING_ASSET_UPLOAD_QUEUE,
   LAGHU_SERVICE_SETTING_RUM_STORE,
@@ -141,12 +144,14 @@ typedef struct {
   char html_refresh_queue[LAGHU_RUNTIME_PATH_SIZE];
   /* An explicit queue opts in to asynchronous browser analysis. */
   char chrome_analysis_queue[LAGHU_RUNTIME_PATH_SIZE];
+  char chrome_analysis_output[LAGHU_RUNTIME_PATH_SIZE];
   char font_fetch_queue[LAGHU_RUNTIME_PATH_SIZE];
   char font_provider_config[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_queue[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   char javascript_observation_config[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_defer_config[LAGHU_RUNTIME_PATH_SIZE];
+  char layout_reservation_config[LAGHU_RUNTIME_PATH_SIZE];
   char asset_offload_config[LAGHU_RUNTIME_PATH_SIZE];
   char asset_upload_queue[LAGHU_RUNTIME_PATH_SIZE];
   char rum_store[LAGHU_RUNTIME_PATH_SIZE];
@@ -159,6 +164,7 @@ typedef struct {
   laghu_font_provider_set *font_providers;
   laghu_javascript_observation_set *javascript_observations;
   laghu_javascript_defer_set *javascript_defer;
+  laghu_layout_reservation_set *layout_reservations;
   laghu_asset_config *asset_offload;
   laghu_source_policy source_policy;
   laghu_service_cidr purge_allow[LAGHU_SERVICE_CONFIG_MAX_CIDRS];
@@ -182,6 +188,7 @@ typedef struct {
   laghu_font_provider_set *owned_font_providers;
   laghu_javascript_observation_set *owned_javascript_observations;
   laghu_javascript_defer_set *owned_javascript_defer;
+  laghu_layout_reservation_set *owned_layout_reservations;
   laghu_asset_config *owned_asset_offload;
 } laghu_service_config;
 

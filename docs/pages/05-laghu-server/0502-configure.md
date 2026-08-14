@@ -47,13 +47,15 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--critical-css-beacon` | flag | off | Enables critical-CSS learning. |
 | `--instrumentation-beacon` | flag | off | Enables RUM script injection when CSP permits. |
 | `--instrumentation-sample-rate N` | `0..100` | `10` | Sets browser-side percentage sampling. |
-| `--optimization-profiles on\|off` | boolean | `off` | Allows a ready, template-scoped RUM profile to apply the existing safe LCP prioritization; it never enables a new rewrite. |
+| `--optimization-profiles on\|off` | boolean | `off` | Permits ready, template-scoped RUM actions: LCP prioritization and safe CLS dimension reservation. |
 | `--javascript-defer-suggestions on\|off` | boolean | `on` | Enables bounded RUM deferral recommendations; it never applies them. |
 | `--include-js-source-maps` | flag | off | Emits immutable external SWC source maps without source content. |
 | `--font-fetch-queue PATH` | bounded path | unset | Enables the font-fetch queue; requires provider config. |
 | `--font-provider-config PATH` | valid provider file | unset | Enables providers; requires font queue. |
 | `--javascript-queue PATH` | bounded path | unset | Enables the SWC queue. |
 | `--chrome-analysis-queue PATH` | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
+| `--chrome-analysis-output PATH` | bounded directory | unset | Enables bounded one-shot Chrome report import in the standalone lifecycle; requires `--chrome-analysis-queue`. |
+| `--layout-reservation-config PATH` | bounded rule file | unset | Loads exact-ID `box ID WIDTH HEIGHT` and `font ID ADJUST_MILLI` CLS reservations. Rules apply only to learned CLS regressions and CSP-permitted style attributes. |
 | `--chrome-analysis-timeout MS` | `100..10000` | `1500` | Bounds one analysis job; requires `--chrome-analysis-queue`. |
 | `--asset-offload-config PATH` | valid asset policy file | unset | Enables verified immutable CDN rewriting. |
 | `--asset-upload-queue PATH` | policy-matching path | unset | Selects the asynchronous asset spool. |

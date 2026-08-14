@@ -18,6 +18,18 @@ static bool laghu_template_profile_unhealthy(const laghu_rum_instrumentation_rec
   return record->errors[bucket] > allowed_failures || record->rejections[bucket] > allowed_failures;
 }
 
+static unsigned int laghu_template_profile_p75(const uint64_t histogram[LAGHU_RUM_BUCKETS], uint64_t observations) {
+  uint64_t cumulative = 0U;
+  uint64_t threshold = observations - observations / 4U;
+  unsigned int index;
+  for (index = 0U; index < LAGHU_RUM_BUCKETS; ++index) {
+    if (UINT64_MAX - cumulative < histogram[index]) return LAGHU_RUM_BUCKETS - 1U;
+    cumulative += histogram[index];
+    if (cumulative >= threshold) return index;
+  }
+  return LAGHU_RUM_BUCKETS - 1U;
+}
+
 bool laghu_template_profile_decide(laghu_rum_engine *rum, const char *template_key, uint64_t now, unsigned int ttl_seconds,
                                    unsigned int viewport_bucket, laghu_template_profile *profile) {
   laghu_rum_instrumentation_record record;
@@ -38,7 +50,13 @@ bool laghu_template_profile_decide(laghu_rum_engine *rum, const char *template_k
     profile->decision = LAGHU_TEMPLATE_PROFILE_REGRESSION;
     return true;
   }
+  profile->lcp_over_budget =
+      laghu_template_profile_p75(record.histograms[viewport_bucket][0], profile->observations) > LAGHU_TEMPLATE_PROFILE_LCP_BUDGET_BUCKET;
+  profile->inp_over_budget =
+      laghu_template_profile_p75(record.histograms[viewport_bucket][1], profile->observations) > LAGHU_TEMPLATE_PROFILE_INP_BUDGET_BUCKET;
+  profile->cls_over_budget =
+      laghu_template_profile_p75(record.histograms[viewport_bucket][2], profile->observations) > LAGHU_TEMPLATE_PROFILE_CLS_BUDGET_BUCKET;
   profile->decision = LAGHU_TEMPLATE_PROFILE_LEARNED;
-  profile->apply = true;
+  profile->apply = profile->lcp_over_budget;
   return true;
 }

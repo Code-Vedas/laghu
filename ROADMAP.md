@@ -147,7 +147,7 @@
 - [x] Maintain active releases, current supported NGINX compatibility, security response, and CVE handling.
 - [x] Eliminate opaque binary-library dependencies and exact-version manual build breakage from supported installation paths.
 - [x] Keep modern image encoders and protocol behavior maintained.
-- [ ] Make Core Web Vitals first-class optimization targets.
+- [x] Make Core Web Vitals first-class optimization targets.
 - [x] Avoid loopback image re-fetch by optimizing the response body already observed by the server adapter.
 - [x] Bound and expose memory use, cache growth, and optimizer failure reasons.
 - [ ] Replace text-only operational surfaces with metrics, structured logs, and traces.
@@ -175,7 +175,7 @@
 
 ### 4.2 Core Web Vitals
 - [x] Detect, preload, prioritize, and exclude the LCP element from lazy loading.
-- [ ] Reserve layout space for images, ads, embeds, and fonts to reduce CLS.
+- [x] Reserve layout space for images, ads, embeds, and fonts to reduce CLS.
 - [x] Add appropriate font-display behavior and font preloads.
 - [x] Defer non-critical JavaScript, safely split long tasks, and delay eligible third-party scripts until interaction to improve INP.
 - [x] Add HTML micro-caching, conditional revalidation (`304`), and stale-while-revalidate to improve TTFB.

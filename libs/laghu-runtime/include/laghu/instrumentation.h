@@ -81,6 +81,10 @@ bool laghu_runtime_add_instrumentation(laghu_rum_engine *rum, const char *cache_
                                        laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key, uint64_t now,
                                        unsigned int ttl_seconds, unsigned int sample_rate, const laghu_csp_policy *csp,
                                        laghu_runtime_html_result *result);
+/* Inserts the supplied, already-created template id into the served document.
+ * This keeps post-rewrite markup associated with the pre-rewrite RUM record. */
+bool laghu_runtime_insert_instrumentation_template(laghu_buffer html, const char *template_key, unsigned int sample_rate,
+                                                   const laghu_csp_policy *csp, laghu_runtime_html_result *result);
 bool laghu_runtime_instrumentation_template_key(laghu_rum_engine *rum, const char *cache_path, const laghu_javascript_observation_set *providers,
                                                 laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key,
                                                 uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
@@ -89,6 +93,13 @@ const char *laghu_runtime_instrumentation_script(void);
 bool laghu_runtime_parse_instrumentation_beacon(laghu_buffer json, laghu_instrumentation_beacon *record);
 bool laghu_instrumentation_apply_beacon(laghu_rum_engine *rum, const char *cache_path, uint64_t now, unsigned int ttl_seconds,
                                         const laghu_instrumentation_beacon *beacon);
+/* Applies one Chrome-analysis result only to the existing LCP candidate
+ * counters.  It never creates a template, adds synthetic timing samples, or
+ * changes a response when the report is malformed/stale. */
+bool laghu_runtime_apply_chrome_analysis(laghu_rum_engine *rum, laghu_buffer json, uint64_t now, unsigned int ttl_seconds);
+/* Lifecycle-only bounded importer.  At most eight regular report files are
+ * considered per call; successfully applied reports are unlinked. */
+unsigned int laghu_runtime_import_chrome_analysis(laghu_rum_engine *rum, const char *directory, uint64_t now, unsigned int ttl_seconds);
 
 #ifdef __cplusplus
 }

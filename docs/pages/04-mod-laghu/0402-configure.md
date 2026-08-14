@@ -36,7 +36,7 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu CriticalCssBeacon On\|Off` | inherited | boolean | `Off` | Enables critical-CSS learning. |
 | `Laghu InstrumentationBeacon On\|Off` | inherited | boolean | `Off` | Injects bounded RUM instrumentation when CSP permits. |
 | `Laghu InstrumentationSampleRate N` | inherited | `0..100` | `10` | Sets browser-side percentage sampling. |
-| `Laghu OptimizationProfiles On\|Off` | inherited | boolean | `Off` | Allows a ready, template-scoped RUM profile to apply the existing safe LCP prioritization; it never enables a new rewrite. |
+| `Laghu OptimizationProfiles On\|Off` | inherited | boolean | `Off` | Permits a ready, template-scoped RUM profile to apply safe LCP/CLS policy actions; it never enables a new rewrite family. |
 | `Laghu JavaScriptDeferSuggestions On\|Off` | inherited | boolean | `On` | Enables bounded RUM deferral recommendations; it never applies them. |
 | `Laghu IncludeJsSourceMaps On\|Off` | inherited | boolean | `Off` | Emits immutable external SWC source maps without source content. |
 | `Laghu ImageInlineLimit BYTES` | inherited | `0..16384` | `2048` | Caps image inlining. |
@@ -58,6 +58,8 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | `Laghu FontProviderConfig PATH` | inherited | valid provider file | unset | Enables configured external-font providers. |
 | `Laghu JavaScriptQueue PATH` | inherited | bounded path | `/run/laghu/javascript.queue` | Selects the SWC queue. |
 | `Laghu ChromeAnalysisQueue PATH` | inherited | bounded path | unset | Enables asynchronous optional headless-Chrome analysis; requires an operator-installed Chromium executable and running `laghu-chrome-analyze`; an unset queue performs no browser work. |
+| `Laghu ChromeAnalysisOutput PATH` | inherited | bounded directory | unset | Imports bounded one-shot Chrome LCP candidates from this directory; requires `ChromeAnalysisQueue`. |
+| `Laghu LayoutReservationConfig PATH` | inherited | bounded rule file | unset | Loads exact-ID `box ID WIDTH HEIGHT` and `font ID ADJUST_MILLI` CLS reservations. Rules apply only to learned CLS regressions and CSP-permitted style attributes. |
 | `Laghu ChromeAnalysisTimeout MS` | inherited | `100..10000` | `1500` | Bounds one analysis job; requires `ChromeAnalysisQueue`. |
 | `Laghu JavaScriptTarget QUERY` | inherited | bounded Browserslist query | `defaults and supports es6-module and not dead` | Controls syntax lowering. |
 | `Laghu JavaScriptObservationConfig PATH` | inherited | valid observation file | unset | Adds exact third-party script candidates. |

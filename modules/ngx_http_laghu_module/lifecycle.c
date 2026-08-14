@@ -70,8 +70,11 @@ static bool ngx_http_laghu_attach_all_queues(ngx_cycle_t *cycle) {
   conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_laghu_module);
   if (conf == NULL || conf->queue_configs == NULL) return true;
   entries = conf->queue_configs->elts;
-  for (index = 0U; index < conf->queue_configs->nelts; ++index)
+  for (index = 0U; index < conf->queue_configs->nelts; ++index) {
     if (!ngx_http_laghu_attach_config_queues(entries[index])) complete = false;
+    (void)laghu_runtime_import_chrome_analysis(ngx_http_laghu_rum, entries[index]->service.chrome_analysis_output, (uint64_t)ngx_time(),
+                                               entries[index]->service.rum_ttl);
+  }
   return complete;
 }
 
