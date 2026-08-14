@@ -9,6 +9,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 9 * * 1"
 
 permissions:
   contents: read
@@ -28,6 +30,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y clang-format shellcheck
       - run: scripts/run-lint-all
+
+  release_contracts:
+    name: Release contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/test-release-contracts
 
   test:
     name: Test · ${{ matrix.label }} · vips=${{ matrix.vips }}
@@ -136,6 +145,49 @@ jobs:
         env:
           NGINX_VERSION: ${{ matrix.nginx_version }}
       - run: scripts/run-module-smoke-all
+        env:
+          NGINX_VERSION: ${{ matrix.nginx_version }}
+
+  nginx_release_policy:
+    name: NGINX release policy
+    runs-on: ubuntu-24.04
+    outputs:
+      stable: ${{ steps.releases.outputs.stable }}
+      mainline: ${{ steps.releases.outputs.mainline }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: releases
+        name: Verify pinned stable and mainline releases
+        run: scripts/check-nginx-release-policy
+
+  nginx_current_releases:
+    name: Current NGINX ${{ matrix.channel }}
+    needs: nginx_release_policy
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: stable
+            nginx_version: ${{ needs.nginx_release_policy.outputs.stable }}
+          - channel: mainline
+            nginx_version: ${{ needs.nginx_release_policy.outputs.mainline }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential libpcre2-dev libssl-dev zlib1g-dev \
+            libvips-dev libvips-tools
+      - name: Build libraries and runtime
+        run: scripts/run-build-all
+        env:
+          LAGHU_WITH_VIPS: "ON"
+      - name: Build and smoke current NGINX
+        run: |
+          scripts/run-module-build-all
+          scripts/run-module-smoke-all
         env:
           NGINX_VERSION: ${{ matrix.nginx_version }}
 
@@ -348,8 +400,9 @@ jobs:
         run: |
           test "$(docker run --rm --entrypoint uname laghu:test -m)" = \
             "${{ matrix.architecture }}"
-          docker run --rm --entrypoint laghu-libvips laghu:test --probe | \
-            grep -x 'backend=.* available=yes capabilities=000001ff'
+          LAGHU_VIPS_BIN=missing-vips \
+          LAGHU_RUNTIME_PROBE_OUTPUT="$(docker run --rm --entrypoint laghu-libvips laghu:test --probe)" \
+            scripts/check-runtime-dependencies --require-avif
       - name: Exercise bundled NGINX
         if: matrix.offering == 'ngx-laghu'
         run: |
@@ -422,8 +475,7 @@ jobs:
             ../laghu-libvips_0.1.0_*.deb ../laghu_0.1.0_*.deb
           nginx -t
           apache2ctl configtest
-          laghu-libvips --probe | \
-            grep -x 'backend=.* available=yes capabilities=000001ff'
+          LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
       - uses: actions/upload-artifact@v6
         with:
@@ -468,8 +520,7 @@ jobs:
           dnf install -y "$HOME"/rpmbuild/RPMS/*/*laghu*.rpm
           nginx -t
           httpd -t
-          laghu-libvips --probe | \
-            grep -x 'backend=.* available=yes capabilities=000001ff'
+          LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
       - uses: actions/upload-artifact@v6
         with:

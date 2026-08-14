@@ -1,0 +1,65 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+POLICY_PATH=${LAGHU_NGINX_RELEASE_POLICY:-"${REPO_ROOT}/packaging/nginx/release-policy.conf"}
+RELEASE_PAGE=${LAGHU_NGINX_RELEASE_PAGE:-https://nginx.org/en/download.html}
+
+[ -r "${POLICY_PATH}" ] || {
+  echo "NGINX release policy is not readable: ${POLICY_PATH}" >&2
+  exit 1
+}
+
+# shellcheck disable=SC1090
+. "${POLICY_PATH}"
+
+case "${LAGHU_NGINX_STABLE:-}" in
+  *[!0-9.]*|'') echo "Invalid stable NGINX pin in ${POLICY_PATH}" >&2; exit 1 ;;
+esac
+case "${LAGHU_NGINX_MAINLINE:-}" in
+  *[!0-9.]*|'') echo "Invalid mainline NGINX pin in ${POLICY_PATH}" >&2; exit 1 ;;
+esac
+[ "${LAGHU_NGINX_STABLE}" != "${LAGHU_NGINX_MAINLINE}" ] || {
+  echo "Stable and mainline NGINX pins must differ" >&2
+  exit 1
+}
+
+if [ -n "${LAGHU_NGINX_RELEASE_PAGE_FILE:-}" ]; then
+  page=$(cat "${LAGHU_NGINX_RELEASE_PAGE_FILE}")
+else
+  command -v curl >/dev/null 2>&1 || {
+    echo "curl is required to retrieve the NGINX release page" >&2
+    exit 127
+  }
+  page=$(curl --fail --location --proto '=https' --tlsv1.2 --retry 3 "${RELEASE_PAGE}")
+fi
+
+versions=$(printf '%s\n' "${page}" | tr '>' '\n' | \
+  sed -n 's/.*nginx-\([0-9][0-9.]*\)\.tar\.gz.*/\1/p' | awk '!seen[$0]++')
+mainline=$(printf '%s\n' "${versions}" | sed -n '1p')
+stable=$(printf '%s\n' "${versions}" | sed -n '2p')
+
+case "${mainline}:${stable}" in
+  *[!0-9.:]*|:*)
+    echo "Could not parse current mainline and stable NGINX releases from ${RELEASE_PAGE}" >&2
+    exit 1
+    ;;
+esac
+
+if [ "${LAGHU_NGINX_STABLE}" != "${stable}" ] || [ "${LAGHU_NGINX_MAINLINE}" != "${mainline}" ]; then
+  echo "NGINX release policy is stale." >&2
+  echo "Pinned stable=${LAGHU_NGINX_STABLE} mainline=${LAGHU_NGINX_MAINLINE}" >&2
+  echo "Current stable=${stable} mainline=${mainline}" >&2
+  exit 1
+fi
+
+printf 'stable=%s\nmainline=%s\n' "${stable}" "${mainline}"
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  printf 'stable=%s\nmainline=%s\n' "${stable}" "${mainline}" >>"${GITHUB_OUTPUT}"
+fi

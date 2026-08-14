@@ -1,0 +1,48 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/laghu-release-contracts.XXXXXX")
+trap 'rm -rf "${work}"' EXIT HUP INT TERM
+
+printf '%s\n' \
+  '<a href="/download/nginx-1.31.3.tar.gz">nginx-1.31.3</a>' \
+  '<a href="/download/nginx-1.30.4.tar.gz">nginx-1.30.4</a>' \
+  '<a href="/download/nginx-1.28.3.tar.gz">nginx-1.28.3</a>' >"${work}/current.html"
+LAGHU_NGINX_RELEASE_PAGE_FILE="${work}/current.html" \
+  "${SCRIPT_DIR}/check-nginx-release-policy" | grep -Fx 'stable=1.30.4' >/dev/null
+
+printf '%s\n' \
+  '<a href="/download/nginx-9.9.9.tar.gz">nginx-9.9.9</a>' \
+  '<a href="/download/nginx-9.9.8.tar.gz">nginx-9.9.8</a>' >"${work}/stale.html"
+if LAGHU_NGINX_RELEASE_PAGE_FILE="${work}/stale.html" \
+  "${SCRIPT_DIR}/check-nginx-release-policy" >/dev/null 2>&1; then
+  echo "Stale NGINX release policy was accepted" >&2
+  exit 1
+fi
+
+probe='backend=laghu-libvips-0.1.0-8.15.0-cap-000007ff available=yes capabilities=000007ff'
+LAGHU_VIPS_BIN=missing-vips LAGHU_RUNTIME_PROBE_OUTPUT="${probe}" \
+  "${SCRIPT_DIR}/check-runtime-dependencies" --require-avif | \
+  grep -Fx 'libvips=8.15.0 capabilities=000007ff avif=required' >/dev/null
+
+probe='backend=laghu-libvips-0.1.0-8.15.0-cap-000001ff available=yes capabilities=000001ff'
+if LAGHU_VIPS_BIN=missing-vips LAGHU_RUNTIME_PROBE_OUTPUT="${probe}" \
+  "${SCRIPT_DIR}/check-runtime-dependencies" --require-avif >/dev/null 2>&1; then
+  echo "Missing AVIF capability was accepted" >&2
+  exit 1
+fi
+
+probe='backend=laghu-libvips-0.1.0-8.15.0-cap-000000ff available=yes capabilities=000000ff'
+if LAGHU_VIPS_BIN=missing-vips LAGHU_RUNTIME_PROBE_OUTPUT="${probe}" \
+  "${SCRIPT_DIR}/check-runtime-dependencies" >/dev/null 2>&1; then
+  echo "Missing required codec capability was accepted" >&2
+  exit 1
+fi
+
+echo "release contract tests passed"

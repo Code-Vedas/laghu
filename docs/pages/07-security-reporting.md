@@ -10,6 +10,12 @@ Do not disclose a suspected vulnerability in a public issue.
 Use [GitHub private vulnerability reporting](https://github.com/Code-Vedas/laghu/security/advisories/new); if that is unavailable, contact <admin@codevedas.com>.
 Include the affected revision or release, deployment surface, reproduction steps, observed impact, and any proposed mitigation, but no production credentials or unrelated customer data.
 
+Laghu acknowledges private reports within five business days, triages severity and affected surfaces
+within ten business days, and sends a private status update at least every ten business days until
+resolution. Fixes remain in a private advisory during any embargo. A public advisory follows a released
+fix and includes affected/fixed versions, mitigation, and a CVE when eligible. Supported branches are
+only those explicitly identified by current release notes and advisories.
+
 ## Security Model
 
 Laghu is disabled by default in both native modules, bypasses authorization-bearing requests and private or `no-store` responses, and excludes API paths unless explicitly allowed. Transformations are bounded, validated, and fail open. Heavy codec and network work is isolated from web-server processes.

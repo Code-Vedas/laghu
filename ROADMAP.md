@@ -144,9 +144,9 @@
 - [x] Experiment framework for controlled filter-set rollout.
 
 ### 3.8 Legacy Pain-Point Non-Regression
-- [ ] Maintain active releases, current supported NGINX compatibility, security response, and CVE handling.
-- [ ] Eliminate opaque binary-library dependencies and exact-version manual build breakage from supported installation paths.
-- [ ] Keep modern image encoders and protocol behavior maintained.
+- [x] Maintain active releases, current supported NGINX compatibility, security response, and CVE handling.
+- [x] Eliminate opaque binary-library dependencies and exact-version manual build breakage from supported installation paths.
+- [x] Keep modern image encoders and protocol behavior maintained.
 - [ ] Make Core Web Vitals first-class optimization targets.
 - [x] Avoid loopback image re-fetch by optimizing the response body already observed by the server adapter.
 - [x] Bound and expose memory use, cache growth, and optimizer failure reasons.

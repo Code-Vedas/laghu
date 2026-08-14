@@ -1,0 +1,89 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+CONTRACT_PATH=${LAGHU_RUNTIME_DEPENDENCY_CONTRACT:-"${REPO_ROOT}/packaging/runtime-dependencies.conf"}
+VIPS_BIN=${LAGHU_VIPS_BIN:-vips}
+WORKER_BIN=${LAGHU_LIBVIPS_BIN:-laghu-libvips}
+require_avif=0
+
+if [ "${1:-}" = "--require-avif" ]; then
+  require_avif=1
+  shift
+fi
+[ "$#" -eq 0 ] || {
+  echo "Usage: $0 [--require-avif]" >&2
+  exit 2
+}
+[ -r "${CONTRACT_PATH}" ] || {
+  echo "Runtime dependency contract is not readable: ${CONTRACT_PATH}" >&2
+  exit 1
+}
+
+# shellcheck disable=SC1090
+. "${CONTRACT_PATH}"
+
+probe=${LAGHU_RUNTIME_PROBE_OUTPUT:-}
+if [ -z "${probe}" ]; then
+  command -v "${WORKER_BIN}" >/dev/null 2>&1 || {
+    echo "Laghu image worker is required: ${WORKER_BIN}" >&2
+    exit 127
+  }
+  probe=$(${WORKER_BIN} --probe)
+fi
+
+version=${LAGHU_RUNTIME_VIPS_VERSION:-}
+if [ -z "${version}" ] && command -v "${VIPS_BIN}" >/dev/null 2>&1; then
+  version=$(${VIPS_BIN} --version | sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | sed -n '1p')
+fi
+if [ -z "${version}" ]; then
+  version=$(printf '%s\n' "${probe}" | \
+    sed -n 's/.*-\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)-cap-.*/\1/p' | sed -n '1p')
+fi
+case "${version}" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) echo "Could not determine libvips version from the runtime" >&2; exit 1 ;;
+esac
+
+version_at_least() {
+  awk -v actual="$1" -v minimum="$2" 'BEGIN {
+    split(actual, a, "."); split(minimum, b, ".");
+    for (i = 1; i <= 3; i++) {
+      if ((a[i] + 0) > (b[i] + 0)) exit 0;
+      if ((a[i] + 0) < (b[i] + 0)) exit 1;
+    }
+    exit 0;
+  }'
+}
+
+version_at_least "${version}" "${LAGHU_RUNTIME_VIPS_MIN_VERSION}" || {
+  echo "libvips ${version} is below required ${LAGHU_RUNTIME_VIPS_MIN_VERSION}" >&2
+  exit 1
+}
+
+capabilities=$(printf '%s\n' "${probe}" | sed -n 's/.*available=yes capabilities=\([0-9a-fA-F][0-9a-fA-F]*\).*/\1/p' | sed -n '1p')
+case "${capabilities}" in
+  ''|*[!0-9a-fA-F]*) echo "Laghu image worker did not report an available codec backend" >&2; exit 1 ;;
+esac
+
+actual=$(printf '%d' "0x${capabilities}")
+required=$(printf '%d' "0x${LAGHU_RUNTIME_REQUIRED_CAPABILITIES}")
+avif=$(printf '%d' "0x${LAGHU_RUNTIME_AVIF_CAPABILITIES}")
+
+[ $((actual & required)) -eq "${required}" ] || {
+  echo "Laghu image worker lacks required codec capabilities: ${capabilities}" >&2
+  exit 1
+}
+if [ "${require_avif}" = 1 ] && [ $((actual & avif)) -ne "${avif}" ]; then
+  echo "Laghu image worker lacks required AVIF encode/decode capabilities: ${capabilities}" >&2
+  exit 1
+fi
+
+printf 'libvips=%s capabilities=%s avif=%s\n' "${version}" "${capabilities}" \
+  "$([ "${require_avif}" = 1 ] && printf required || printf optional)"
