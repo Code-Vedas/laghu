@@ -20,7 +20,6 @@
 #include "probe_fixtures.h"
 #endif
 
-#define LAGHU_IMAGE_BUILD_ID "laghu-libvips-0.1.0-image-v5"
 #define LAGHU_IMAGE_ENCODER_OPTIONS                                 \
   "jpeg-optimize=1;png-compression=9;png-filter=all;webp-effort=4;" \
   "metadata-policy=v1;autorot=1;resize=lanczos3"
@@ -155,9 +154,9 @@ bool laghu_image_variant_key(const laghu_image_backend *backend, const laghu_ima
   }
   length =
       snprintf(canonical, sizeof(canonical),
-               "laghu-image-v5\n%s\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
+               "laghu-image\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
                "016llx\n%d\n%d\n%d",
-               source_hash, policy_key, LAGHU_IMAGE_BUILD_ID, LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
+               source_hash, policy_key, LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
                (unsigned long long)(request->filters & LAGHU_IMAGE_FILTER_ALL), request->quality, request->target_width, request->target_height,
                (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0, request->accept_webp ? 1 : 0, request->accept_avif ? 1 : 0);
   if (length <= 0 || (size_t)length >= sizeof(canonical)) {
@@ -359,7 +358,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
     backend->capabilities |= LAGHU_IMAGE_CAP_ANIMATION;
   }
   backend->available = backend->capabilities != 0U;
-  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "%s-libvips-%d.%d.%d-cap-%08x", LAGHU_IMAGE_BUILD_ID, vips_version(0),
+  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "laghu-libvips-" LAGHU_VERSION "-%d.%d.%d-cap-%08x", vips_version(0),
                  vips_version(1), vips_version(2), backend->capabilities);
   return true;
 }
@@ -962,7 +961,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
     return false;
   }
   memset(backend, 0, sizeof(*backend));
-  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "%s-libvips-unavailable", LAGHU_IMAGE_BUILD_ID);
+  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "laghu-libvips-" LAGHU_VERSION "-unavailable");
   return true;
 }
 

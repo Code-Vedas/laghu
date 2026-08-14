@@ -228,7 +228,7 @@ static void test_capability_filtering(void) {
   assert(laghu_image_effective_filters(LAGHU_IMAGE_FILTER_ALL, 0U) == 0U);
 }
 
-static void test_image_key_v4_vector(void) {
+static void test_image_key_version_vector(void) {
   laghu_image_backend backend = {.available = true, .capabilities = 0x1ffU};
   laghu_image_request request;
   char output[LAGHU_SHA256_HEX_SIZE];
@@ -244,7 +244,7 @@ static void test_image_key_v4_vector(void) {
   request.allow_lossy = true;
   request.accept_webp = true;
   assert(laghu_image_variant_key(&backend, &request, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", output));
-  assert(strcmp(output, "9fef5ac33bfe89e7b6f05a06ff85c3310c62d1b67cb53709d867dbf843a049a3") == 0);
+  assert(strcmp(output, "85c5fcb18769ce76f9ffe4db7a4f90063c2565aecfd4bbe01b3162ccfb3b8a48") == 0);
 }
 
 static void test_backend_and_fail_open(void) {
@@ -254,6 +254,7 @@ static void test_backend_and_fail_open(void) {
   laghu_image_result result;
 
   assert(laghu_image_backend_probe(&backend));
+  assert(strncmp(backend.backend_id, "laghu-libvips-" LAGHU_VERSION "-", strlen("laghu-libvips-" LAGHU_VERSION "-")) == 0);
   assert(backend.backend_id[0] != '\0');
   laghu_image_request_init(&request);
   request.original = (laghu_buffer){malformed, sizeof(malformed)};
@@ -775,7 +776,7 @@ static void test_css_parser(void) {
 int main(void) {
   test_format_detection();
   test_capability_filtering();
-  test_image_key_v4_vector();
+  test_image_key_version_vector();
   test_backend_and_fail_open();
   test_markup_filters();
   test_html_discovery();
