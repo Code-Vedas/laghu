@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 set -eu
+umask 0007
 
 queue=${LAGHU_QUEUE_PATH:-/run/laghu/jobs.queue}
 cache=${LAGHU_CACHE_PATH:-/var/cache/laghu/images}
@@ -54,6 +55,11 @@ if [ -n "${chrome_analysis_queue}" ]; then
   runuser -u laghu -- laghu-chrome-analyze --serve "${chrome_analysis_queue}" "${chrome_analysis_output}" "${chrome_analysis_browser}" &
   chrome_analysis_pid=$!
 fi
+
+# Workers initialize shared cache state before Apache children attach their
+# operational registry.  The adapter belongs to the laghu group, so preserve
+# private shared access without making cache state world-writable.
+chmod -R g+rwX "$(dirname "${cache}")" "${cache}"
 
 cleanup() {
   kill "${service_pid}" 2>/dev/null || true

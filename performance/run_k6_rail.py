@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from instrumentation import cwv_metrics, histogram_delta, prometheus_snapshot, resource_delta, ssimulacra2_score
+
 
 @dataclass(frozen=True)
 class Target:
@@ -73,6 +75,7 @@ INDEX_SOURCE = (
 CHROME = "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36"
 WEBP = {"Accept": "image/webp,image/*;q=0.8", "User-Agent": CHROME}
 AVIF = {"Accept": "image/avif,image/jpeg;q=0.8", "User-Agent": CHROME}
+METRICS_HEADERS = {"X-Laghu-Purge-Token": "laghu-benchmark-metrics-token-0123456789"}
 SAVE_DATA = {"Accept": "image/webp,image/*;q=0.8", "Save-Data": "on", "User-Agent": CHROME}
 MOBILE_2X = {
     "Accept": "image/webp,image/*;q=0.8", "DPR": "2", "Viewport-Width": "480", "Width": "480", "User-Agent": CHROME,
@@ -213,6 +216,24 @@ def laghu_cache_files(target: Target) -> int | None:
     return len([line for line in completed.stdout.splitlines() if line])
 
 
+def cgroup_snapshot(target: Target) -> dict[str, int]:
+    command = ["docker", "exec", f"laghu-bench-{target.service}", "sh", "-c",
+               "cat /sys/fs/cgroup/cpu.stat; cat /sys/fs/cgroup/memory.peak; awk '/VmRSS:/{sum += $2} END {print sum * 1024}' /proc/[0-9]*/status"]
+    output = subprocess.run(command, check=True, capture_output=True, text=True).stdout.splitlines()
+    usage = next((line.split()[1] for line in output if line.startswith("usage_usec ")), None)
+    if usage is None or len(output) < 2:
+        raise RuntimeError(f"{target.name}: cgroup metrics unavailable")
+    return {"cpu_usec": int(usage), "memory_peak_bytes": int(output[-2]), "rss_bytes": int(output[-1])}
+
+
+def operational_snapshot(target: Target) -> dict[str, float] | None:
+    if "/laghu" not in target.name:
+        return None
+    response = request(target.base_url + "/.laghu/metrics", METRICS_HEADERS)
+    require(response["status"] == 200, f"{target.name}: metrics endpoint unavailable")
+    return prometheus_snapshot(response["body"].decode("utf-8", "strict"))
+
+
 def expected_html(target: Target) -> dict[str, Any]:
     for _ in range(120):
         response = request(target.base_url + "/index.html")
@@ -246,6 +267,7 @@ def expected_image(
     headers: dict[str, str],
     content_type: str,
     signature: bytes,
+    output: Path,
 ) -> dict[str, Any]:
     url = image_url(target, headers)
     source_bytes = original_bytes(target, "/image-480.jpg")
@@ -259,7 +281,14 @@ def expected_image(
             if "/laghu" in target.name:
                 require(response_headers.get("x-laghu-cache") == "hit", f"{target.name}: {label} cache miss")
                 require(response_headers.get("x-laghu") == "image-hit", f"{target.name}: {label} transform missing")
-            return cell(target, f"capability-{label.lower()}", url, response, source_bytes)
+            reference = output / "quality-reference.jpg"
+            if not reference.exists():
+                reference.write_bytes(request(plain_target(target).base_url + "/image-480.jpg")["body"])
+            artifact = output / f"quality-{target.name.replace('/', '-')}-{label.lower()}.image"
+            artifact.write_bytes(response["body"])
+            result = cell(target, f"capability-{label.lower()}", url, response, source_bytes)
+            result["quality_artifact"] = artifact.name
+            return result
         time.sleep(0.1)
     raise RuntimeError(f"{target.name}: {label} artifact not selected")
 
@@ -290,10 +319,10 @@ def correctness(target: Target, cells: list[dict[str, Any]], output: Path) -> No
         source = request(target.base_url + "/image-480.jpg", WEBP)
         require(source["status"] == 200, f"{target.name}: capability source")
         cells.append(cell(target, "capability-source", "/image-480.jpg", source, original_bytes(target, "/image-480.jpg")))
-        webp = expected_image(target, "WebP", WEBP, "image/webp", b"WEBP")
+        webp = expected_image(target, "WebP", WEBP, "image/webp", b"WEBP", output)
         cells.append(webp)
     if target.avif:
-        avif = expected_image(target, "AVIF", AVIF, "image/avif", b"ftyp")
+        avif = expected_image(target, "AVIF", AVIF, "image/avif", b"ftyp", output)
         cells.append(avif)
 
 
@@ -323,17 +352,22 @@ def run_k6(
         command.extend(("-e", f"DURATION={duration}", "-e", "RAMP_UP_DURATION=5s"))
     if execute_javascript is not None:
         command.extend(("-e", f"EXECUTE_JAVASCRIPT={execute_javascript}"))
+    resources_before = cgroup_snapshot(target)
+    operational_before = operational_snapshot(target)
     subprocess.run([*command, "/scripts/k6.js"], check=True)
+    resources_after = cgroup_snapshot(target)
+    operational_after = operational_snapshot(target)
     metrics = json.loads((output / summary_name).read_text(encoding="utf-8"))["metrics"]
     require(metrics["checks"]["fails"] == 0, f"{target.name}: k6 {scenario} checks")
     latency = metrics["http_req_duration"]
     waiting = metrics["http_req_waiting"]
-    return {
+    wire_bytes = int(metrics["data_received"]["count"])
+    result = {
         "target": target.name,
         "scenario": scenario,
         "vus": vus,
         "requests": iterations,
-        "wire_bytes": metrics["data_received"]["count"],
+        "wire_bytes": wire_bytes,
         "status": 200,
         "errors": metrics["checks"]["fails"],
         "throughput_rps": metrics["http_reqs"]["rate"],
@@ -344,9 +378,77 @@ def run_k6(
         "ttfb_p95_ms": waiting["p(95)"],
         "verdict": "pass",
     }
+    result["resource"] = resource_delta(resources_before, resources_after, wire_bytes)
+    result["optimizer_latency"] = (
+        {"supported": False, "reason": "not-laghu"}
+        if operational_before is None or operational_after is None
+        else histogram_delta(operational_before, operational_after, "laghu_request_duration_seconds")
+    )
+    return result
 
 
-def write_report(output: Path, cells: list[dict[str, Any]]) -> None:
+def image_dimensions(path: Path) -> tuple[int, int]:
+    width = subprocess.run(["vipsheader", "-f", "width", str(path)], check=True, capture_output=True, text=True).stdout.strip()
+    height = subprocess.run(["vipsheader", "-f", "height", str(path)], check=True, capture_output=True, text=True).stdout.strip()
+    return int(width), int(height)
+
+
+def image_quality(output: Path, cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    artifacts = [cell for cell in cells if isinstance(cell.get("quality_artifact"), str)]
+    if not artifacts:
+        return []
+    subprocess.run(["docker", "build", "--tag", "laghu-bench-ssimulacra2:local", "--file", str(Path(__file__).with_name("Dockerfile.ssimulacra2")),
+                    str(Path(__file__).parent)], check=True)
+    reference = output / "quality-reference.jpg"
+    reference_dimensions = image_dimensions(reference)
+    converted_reference = output / "quality-reference.png"
+    subprocess.run(["vips", "copy", str(reference), str(converted_reference)], check=True)
+    measurements = []
+    for cell in artifacts:
+        artifact = output / str(cell["quality_artifact"])
+        converted_artifact = artifact.with_suffix(".png")
+        subprocess.run(["vips", "copy", str(artifact), str(converted_artifact)], check=True)
+        dimensions = image_dimensions(artifact)
+        metric_artifact = converted_artifact
+        if dimensions != reference_dimensions:
+            metric_artifact = output / f"{artifact.stem}-metric.png"
+            subprocess.run(["vips", "resize", str(converted_artifact), str(metric_artifact),
+                            str(reference_dimensions[0] / dimensions[0])], check=True)
+            require(image_dimensions(metric_artifact) == reference_dimensions, f"{artifact.name}: non-proportional dimensions")
+        score = subprocess.run(["docker", "run", "--rm", "-v", f"{output.resolve()}:/output:ro", "laghu-bench-ssimulacra2:local", "image",
+                                f"/output/{converted_reference.name}", f"/output/{metric_artifact.name}"],
+                               check=True, capture_output=True, text=True)
+        measurements.append({"target": cell["target"], "scenario": cell["scenario"], "metric": "ssimulacra2",
+                             "score": ssimulacra2_score(score.stdout), "reference_dimensions": reference_dimensions,
+                             "candidate_dimensions": dimensions, "resized_for_metric": dimensions != reference_dimensions,
+                             "codec": lower(cell["response_headers"]).get("content-type", "").split(";", 1)[0],
+                             "original_wire_bytes": cell["original_wire_bytes"], "optimized_wire_bytes": cell["optimized_wire_bytes"],
+                             "byte_savings_percent": cell["byte_savings_percent"]})
+    return measurements
+
+
+def cwv(output: Path) -> list[dict[str, Any]]:
+    fixtures = ("cwv-image.html", "cwv-css-js.html", "cwv-mixed.html")
+    targets = tuple(target for target in TARGETS if target.name in {"nginx/plain", "nginx/pagespeed", "nginx/laghu"})
+    subprocess.run(["docker", "build", "--tag", "laghu-bench-cwv:local", "--file", str(Path(__file__).with_name("Dockerfile.lighthouse")),
+                    str(Path(__file__).parent)], check=True)
+    measurements = []
+    for target in targets:
+        for fixture in fixtures:
+            filename = f"cwv-{target.name.replace('/', '-')}-{fixture}.json"
+            destination = output / filename
+            subprocess.run(["docker", "run", "--rm", "--network", "host", "-v", f"{output.resolve()}:/output", "laghu-bench-cwv:local",
+                            target.base_url + "/" + fixture, f"/output/{filename}"], check=True)
+            parsed = json.loads(destination.read_text(encoding="utf-8"))
+            try:
+                evidence = cwv_metrics(parsed["audits"], parsed.get("inp_ms"))
+            except (KeyError, ValueError) as error:
+                raise RuntimeError(f"{target.name}: {fixture}: {error}") from error
+            measurements.append({"target": target.name, "fixture": fixture, **evidence})
+    return measurements
+
+
+def write_report(output: Path, cells: list[dict[str, Any]], instrumentation: dict[str, Any]) -> None:
     keys = (
         "target", "scenario", "vus", "bytes", "original_wire_bytes", "optimized_wire_bytes", "byte_savings_percent",
         "wire_bytes", "cache_state", "transform", "p95_ms", "throughput_rps", "errors", "verdict",
@@ -356,10 +458,17 @@ def write_report(output: Path, cells: list[dict[str, Any]]) -> None:
         columns = "".join(f"<td>{html.escape(str(current.get(key, '')))}</td>" for key in keys)
         rows.append(f"<tr>{columns}</tr>")
     document = "<!doctype html><title>Laghu k6 rail</title><table border=1><tbody>"
-    (output / "report.html").write_text(document + "".join(rows) + "</tbody></table>\n", encoding="utf-8")
+    report = document + "".join(rows) + "</tbody></table><h2>Instrumentation</h2><pre>"
+    (output / "report.html").write_text(report + html.escape(json.dumps(instrumentation, indent=2)) + "</pre>\n", encoding="utf-8")
 
 
-def write_results(output: Path, cells: list[dict[str, Any]], failures: list[dict[str, str]]) -> None:
+def write_results(
+    output: Path,
+    cells: list[dict[str, Any]],
+    failures: list[dict[str, str]],
+    quality: list[dict[str, Any]] | None = None,
+    cwv_results: list[dict[str, Any]] | None = None,
+) -> None:
     cache_states: dict[str, int] = {}
     transforms: dict[str, int] = {}
     original_wire_bytes = 0
@@ -387,8 +496,14 @@ def write_results(output: Path, cells: list[dict[str, Any]], failures: list[dict
         },
         "verdict": "pass" if not failures else "fail",
     }
+    result["resource"] = [{"target": cell["target"], "scenario": cell["scenario"], **cell["resource"]}
+                          for cell in cells if isinstance(cell.get("resource"), dict)]
+    result["optimizer_latency"] = [{"target": cell["target"], "scenario": cell["scenario"], **cell["optimizer_latency"]}
+                                    for cell in cells if isinstance(cell.get("optimizer_latency"), dict)]
+    result["image_quality"] = quality or []
+    result["cwv"] = cwv_results or []
     (output / "results.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    write_report(output, cells)
+    write_report(output, cells, {key: result[key] for key in ("resource", "optimizer_latency", "image_quality", "cwv")})
 
 
 def main() -> None:
@@ -424,6 +539,12 @@ def main() -> None:
             cells.append({"target": target.name, "scenario": "target", "verdict": "fail", "error": str(error)})
         finally:
             write_results(args.output, cells, failures)
+    quality: list[dict[str, Any]] = []
+    cwv_results: list[dict[str, Any]] = []
+    if not failures:
+        quality = image_quality(args.output, cells)
+        cwv_results = cwv(args.output)
+    write_results(args.output, cells, failures, quality, cwv_results)
     if failures:
         raise RuntimeError("k6 correctness rail failed: " + "; ".join(item["target"] for item in failures))
 

@@ -11,12 +11,16 @@ rewrite_level=${LAGHU_BENCH_REWRITE_LEVEL:-all}
 queue=/run/laghu/jobs.queue
 javascript_queue=/run/laghu/javascript.queue
 cache=/var/cache/laghu/images
+token=/run/laghu/benchmark.token
 
 laghu-libvips --init "${queue}" "${cache}"
 laghu-js-optimize --init "${javascript_queue}" "${cache}"
+install -o laghu -g laghu -m 600 /etc/laghu/benchmark.token "${token}"
 laghu --listen 0.0.0.0:8080 --origin "${LAGHU_BENCH_ORIGIN}" \
   --file-cache-backend "file://${cache}" --worker-queue "${queue}" \
   --javascript-queue "${javascript_queue}" --rewrite-level "${rewrite_level}" \
+  --metrics on \
+  --purge-token-file "${token}" --purge-allow 0.0.0.0/0 \
   --allow-resources '/*' &
 server=$!
 sleep 3

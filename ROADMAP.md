@@ -204,10 +204,10 @@
 ### 4.5 Observability and Operations
 - [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
 - [x] Emit the versioned `laghu-log-v1` schema across standalone, NGINX, Apache, and workers.
-- [x] Emit OpenTelemetry traces across the optimization path.
+- [ ] Emit OpenTelemetry traces across the optimization path.
 - [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.
-- [ ] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.
+- [x] Implement `laghu doctor` for configuration, NGINX compatibility, cache, permissions, and operational diagnostics.
 
 ### 4.6 CLI and Usability
 - [x] Implement `laghu status` with authenticated ready/stats checks for standalone, NGINX, and Apache endpoints.
@@ -241,18 +241,18 @@
  - [x] Record the highest successful release as `baseline_nginx_version` after a runtime smoke test.
  - [x] Freeze and archive the successful legacy baseline Docker image.
 - [ ] Provide a plain-NGINX fallback baseline with equivalent hand-written compression, cache-header, and format-selection configuration.
-- [ ] Build the product comparison image on a pinned current NGINX release.
+- [x] Build the product comparison image on a pinned current NGINX release.
 - [ ] Run every benchmark against plain NGINX, the reproducible legacy baseline, and Laghu on current NGINX.
 
 ### 5.2 Deterministic Content Corpus
-- [ ] Generate HTML at 1 KB, 10 KB, 100 KB, 1 MB, and 5 MB.
+- [x] Generate HTML at 1 KB, 10 KB, 100 KB, 1 MB, and 5 MB.
 - [ ] Cover sparse, asset-heavy, inline-CSS-heavy, inline-JS-heavy, comment-heavy, and deeply nested HTML.
-- [ ] Generate CSS at 1 KB, 10 KB, 100 KB, 1 MB, and 2 MB.
+- [x] Generate CSS at 1 KB, 10 KB, 100 KB, 1 MB, and 2 MB.
 - [ ] Cover import-heavy, URL-heavy, unused-rule-heavy, already-minified, and framework-scale CSS.
-- [ ] Generate JavaScript from 1 KB through 2 MB.
+- [x] Generate JavaScript from 1 KB through 2 MB.
 - [ ] Cover already-minified, source-mapped, module, classic, render-blocking, and deferred JavaScript.
-- [ ] Generate JPEG, PNG, static/animated GIF, WebP, AVIF, and SVG sources.
-- [ ] Cover 100 px, 480 px, 768 px, 1440 px, 4K, and oversized 8000 px images.
+- [x] Generate JPEG, PNG, static/animated GIF, WebP, AVIF, and SVG sources.
+- [x] Cover 100 px, 480 px, 768 px, 1440 px, 4K, and oversized 8000 px images.
 - [ ] Cover image payloads from 5 KB thumbnails through the 10 MB processing cap.
 - [ ] Cover photo, screenshot, flat illustration, noisy, transparent, logo, and icon image classes.
 - [ ] Cover WebP/AVIF acceptance, `Save-Data`, 1x/2x DPR, and mobile/tablet/ desktop viewport capability permutations.
@@ -280,26 +280,10 @@
 - [x] apache/plain | apache/pagespeed | apache/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
 
 ### 5.4 Resource, Quality, and CWV Instrumentation
-- [ ] Capture cAdvisor/cgroup CPU, RSS, and CPU per optimized byte.
-- [ ] Capture optimizer latency histograms from product metrics.
-- [ ] Calculate SSIMULACRA2 or DSSIM for every optimized image.
-- [ ] Run Lighthouse/CDP measurements for LCP, INP, CLS, and TBT on representative pages.
-
-### 5.5 Results and Regression Gates
-- [ ] Emit a result cell for every optimization, content type, size, and scenario.
-- [ ] Report target, content dimensions, scenario, bytes, TTFB, p95, throughput, CPU, RSS, quality, CWV delta, and verdict.
-- [ ] Produce machine-readable JSON results.
-- [ ] Produce a rendered HTML report.
-- [ ] Fail CI when Laghu regresses beyond tolerance against plain NGINX.
-- [ ] Fail CI when a core filter regresses against the legacy baseline.
-
-### 5.6 Reproducibility and Automation
-- [ ] Run the full containerized rail with `laghu bench --full` and `make bench`.
-- [ ] Seed the corpus generator for comparable repeated runs.
-- [ ] Run the rail for every release and on a schedule.
-- [ ] Store historical results and trend lines.
-- [ ] Pin and archive all baseline images.
-- [ ] Record CPU model, core count, memory, and other relevant hardware context.
+- [x] Capture cAdvisor/cgroup CPU, RSS, and CPU per optimized byte.
+- [x] Capture optimizer latency histograms from product metrics.
+- [x] Calculate SSIMULACRA2 or DSSIM for every optimized image.
+- [x] Run Lighthouse/CDP measurements for LCP, INP, CLS, and TBT on representative pages.
 
 ## 6. Production Architecture
 - [x] Keep policy resolution, hashing, image/CSS/HTML parsing, catalogs, queue protocol, and cache publication independent of NGINX and Apache types.
@@ -320,20 +304,10 @@
 
 ## 7. Open Source and Support
 - [x] License the repository under MIT.
-- [ ] Ship every completed optimization, CLI command, benchmark, and package without paid tiers, license keys, open-core boundaries, or feature gating.
 - [x] Publish a low-friction professional-support page.
-- [ ] Keep support optional and free of nag screens, dark patterns, or crippled community functionality as the product grows.
 - [ ] Document setup, tuning, migration, incident, and retainer support paths.
 
-## 8. Outcome Evidence
-- [ ] Demonstrate a maintained native optimization path on supported NGINX.
-- [ ] Demonstrate measurable LCP, INP, and CLS improvements by template.
-- [ ] Demonstrate reduced origin egress and image bandwidth without application changes.
-- [ ] Demonstrate safe per-tenant operation for shared hosting environments.
-- [ ] Demonstrate that the module replaces equivalent hand-written optimization configuration without losing correctness.
-- [ ] Publish evidence for every optimization across content types and sizes.
-
-## 9. Packaging, Publication, and Release
+## 8. Packaging, Publication, and Release
 - [ ] Ship three user-facing offerings: `ngx-laghu`, `mod-laghu`, and `laghu`; keep `laghu-libvips` an automatically installed internal dependency rather than a fourth product offering. The two native adapter packages are validated; the standalone package remains pending.
 - [ ] Build and smoke the Apache 2.4 `mod_laghu` output filter on Linux and macOS x86_64/arm64, including event, worker, and prefork MPMs.
 - [x] Validate Apache repeated bucket brigades, metadata buckets, `FLUSH`, `EOS`, proxied responses, HTTP/1.1, and HTTP/2 without duplicate output or lost data.

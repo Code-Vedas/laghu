@@ -108,6 +108,25 @@ def main() -> None:
         "<!doctype html><html><head><link rel=stylesheet href=/css-10k.css></head><body><h1>Laghu benchmark</h1>"
         "<!-- removable --><img src=/image-480.png width=480 height=320><script src=/js-10k.js></script></body></html>", encoding="utf-8"
     )
+    interaction = (
+        "<button id=laghu-interaction>Measure interaction</button><script>"
+        "window.laghuInteractionDuration=0;new PerformanceObserver(function(list){for(const entry of list.getEntries())"
+        "window.laghuInteractionDuration=Math.max(window.laghuInteractionDuration,entry.duration)}).observe("
+        "{type:'event',durationThreshold:0});"
+        "document.getElementById('laghu-interaction').onclick=function(){let start=performance.now(),end=start+20;"
+        "while(performance.now()<end){}window.laghuInteractionDuration=performance.now()-start}</script>"
+    )
+    fixtures = {
+        "cwv-image.html": "<img src=/image-1440.jpg width=1440 height=1080 fetchpriority=high>"
+        "<img src=/image-480.png width=480 height=360 loading=lazy>",
+        "cwv-css-js.html": "<link rel=stylesheet href=/css-100k.css><script src=/js-100k.js></script>"
+        "<main class=card>CSS and JavaScript</main>",
+        "cwv-mixed.html": "<link rel=stylesheet href=/css-10k.css><img src=/image-768.png width=768 height=576>"
+        "<script src=/js-10k.js></script><main>Mixed page</main>",
+    }
+    for name, body in fixtures.items():
+        document = f"<!doctype html><html><head><title>Laghu CWV</title></head><body>{body}{interaction}</body></html>"
+        (root / name).write_text(document, encoding="utf-8")
     (root / "normalized-image.html").write_text(
         "<!doctype html><img src=/image-480.jpg width=480 height=360>", encoding="utf-8"
     )

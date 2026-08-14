@@ -33,6 +33,7 @@ services:
       - "127.0.0.1:18092:8080"
     volumes:
       - ./nginx/laghu.conf:/etc/nginx/nginx.conf:ro
+      - ./metrics.token:/etc/laghu/benchmark.token:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
   apache-plain:
     build:
@@ -70,6 +71,7 @@ services:
     volumes:
       - ./apache/laghu.conf:/etc/apache2/sites-available/000-default.conf:ro
       - ./apache-laghu-entrypoint:/usr/local/bin/laghu-benchmark-apache-entrypoint:ro
+      - ./metrics.token:/etc/laghu/benchmark.token:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
   standalone-nginx-plain:
     build:
@@ -84,6 +86,7 @@ services:
       - "127.0.0.1:18200:8080"
     volumes:
       - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+      - ./metrics.token:/etc/laghu/benchmark.token:ro
     depends_on:
       - nginx-plain
   standalone-nginx-all:
@@ -99,6 +102,7 @@ services:
       - "127.0.0.1:18201:8080"
     volumes:
       - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+      - ./metrics.token:/etc/laghu/benchmark.token:ro
     depends_on:
       - nginx-plain
   standalone-apache-plain:
@@ -114,6 +118,7 @@ services:
       - "127.0.0.1:18210:8080"
     volumes:
       - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+      - ./metrics.token:/etc/laghu/benchmark.token:ro
     depends_on:
       - apache-plain
   standalone-apache-all:
@@ -129,5 +134,6 @@ services:
       - "127.0.0.1:18211:8080"
     volumes:
       - ./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro
+      - ./metrics.token:/etc/laghu/benchmark.token:ro
     depends_on:
       - apache-plain
