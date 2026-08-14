@@ -15,6 +15,7 @@ html_cache_origin=${LAGHU_HTML_CACHE_ORIGIN:-}
 chrome_analysis_queue=${LAGHU_CHROME_ANALYSIS_QUEUE:-}
 chrome_analysis_output=${LAGHU_CHROME_ANALYSIS_OUTPUT:-/var/cache/laghu/chrome-analysis}
 chrome_analysis_browser=${LAGHU_CHROME_ANALYSIS_BROWSER:-chromium}
+apache_malloc_arenas=${MALLOC_ARENA_MAX:-2}
 
 runuser -u laghu -- laghu-libvips --init "${queue}" "${cache}"
 chmod 0660 "${queue}"
@@ -70,4 +71,4 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-exec apache2ctl -D FOREGROUND
+exec env MALLOC_ARENA_MAX="${apache_malloc_arenas}" apache2ctl -D FOREGROUND

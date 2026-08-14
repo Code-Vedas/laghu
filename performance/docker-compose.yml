@@ -63,6 +63,8 @@ services:
     image: laghu-bench-apache-laghu:local
     container_name: laghu-bench-apache-laghu
     entrypoint: ["/usr/local/bin/laghu-benchmark-apache-entrypoint"]
+    environment:
+      MALLOC_ARENA_MAX: ${MALLOC_ARENA_MAX:-}
     ports:
       - "127.0.0.1:18102:80"
     volumes:
