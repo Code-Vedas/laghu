@@ -36,7 +36,7 @@ LABEL org.opencontainers.image.title="mod-laghu" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y apache2 libheif-plugin-aomenc libvips42 tini util-linux \
+    && apt-get install --no-install-recommends -y apache2 libheif-plugin-aomenc libjxl0.7 libvips42 tini util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system laghu \
     && useradd --system --gid laghu --home-dir /nonexistent --shell /usr/sbin/nologin laghu \

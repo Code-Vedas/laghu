@@ -13,7 +13,7 @@
 #include "runtime_platform.h"
 
 bool laghu_runtime_index_key_variant(const char *request_path, const char *validator, const char *policy_key, bool accept_webp,
-                                     bool accept_avif, unsigned int target_width, unsigned int target_height, unsigned int policy_variant,
+                                     bool accept_avif, bool accept_jxl, unsigned int target_width, unsigned int target_height, unsigned int policy_variant,
                                      char output[LAGHU_RUNTIME_KEY_SIZE]) {
   size_t path_length, validator_length, policy_length, total;
   unsigned char *canonical;
@@ -23,27 +23,29 @@ bool laghu_runtime_index_key_variant(const char *request_path, const char *valid
   path_length = strlen(request_path);
   validator_length = strlen(validator);
   policy_length = strlen(policy_key);
-  if (validator_length > SIZE_MAX - 40U || path_length > SIZE_MAX - validator_length - 40U ||
-      path_length + validator_length + 40U > SIZE_MAX - policy_length) {
+  if (validator_length > SIZE_MAX - 44U || path_length > SIZE_MAX - validator_length - 44U ||
+      path_length + validator_length + 44U > SIZE_MAX - policy_length) {
     output[0] = '\0';
     return false;
   }
-  total = path_length + validator_length + policy_length + 40U;
+  total = path_length + validator_length + policy_length + 44U;
   canonical = malloc(total);
   if (canonical == NULL) {
     output[0] = '\0';
     return false;
   }
-  written = snprintf((char *)canonical, total, "%s\n%s\n%s\n%c\n%c\n%u\n%u\n%u", request_path, validator, policy_key,
-                     accept_webp ? '1' : '0', accept_avif ? '1' : '0', target_width, target_height, policy_variant);
+  written = snprintf((char *)canonical, total, "%s\n%s\n%s\n%c\n%c\n%c\n%u\n%u\n%u", request_path, validator, policy_key,
+                     accept_webp ? '1' : '0', accept_avif ? '1' : '0', accept_jxl ? '1' : '0', target_width, target_height,
+                     policy_variant);
   success = written >= 0 && (size_t)written < total && laghu_sha256_hex((laghu_buffer){canonical, (size_t)written}, output);
   free(canonical);
   return success;
 }
 
 bool laghu_runtime_index_key(const char *request_path, const char *validator, const char *policy_key, bool accept_webp, bool accept_avif,
-                             unsigned int target_width, unsigned int target_height, char output[LAGHU_RUNTIME_KEY_SIZE]) {
-  return laghu_runtime_index_key_variant(request_path, validator, policy_key, accept_webp, accept_avif, target_width, target_height, 0U, output);
+                             bool accept_jxl, unsigned int target_width, unsigned int target_height, char output[LAGHU_RUNTIME_KEY_SIZE]) {
+  return laghu_runtime_index_key_variant(request_path, validator, policy_key, accept_webp, accept_avif, accept_jxl, target_width,
+                                         target_height, 0U, output);
 }
 
 bool laghu_runtime_index_key_content_class(const char *base_key, laghu_image_content_class content,

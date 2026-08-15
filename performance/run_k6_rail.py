@@ -23,7 +23,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from instrumentation import cwv_metrics, histogram_delta, prometheus_snapshot, resource_delta, ssimulacra2_score
+try:
+    from .instrumentation import cwv_metrics, histogram_delta, prometheus_snapshot, resource_delta, ssimulacra2_score
+except ImportError:
+    from instrumentation import cwv_metrics, histogram_delta, prometheus_snapshot, resource_delta, ssimulacra2_score
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class Target:
     optimized: bool
     webp: bool
     avif: bool
+    jxl: bool
 
 
 def target(*args: Any) -> Target:
@@ -45,25 +49,25 @@ def target(*args: Any) -> Target:
 
 TARGETS = (
     target("nginx/plain", "nginx", "nginx", "plain", "http://127.0.0.1:18090",
-           "nginx-plain", False, False, False),
+           "nginx-plain", False, False, False, False),
     target("nginx/pagespeed", "nginx", "nginx", "pagespeed", "http://127.0.0.1:18091",
-           "nginx-pagespeed", True, True, False),
+           "nginx-pagespeed", True, True, False, False),
     target("nginx/laghu", "nginx", "nginx", "all-optimizations", "http://127.0.0.1:18092",
-           "nginx-laghu", True, True, True),
+           "nginx-laghu", True, True, True, True),
     target("apache/plain", "apache", "apache", "plain", "http://127.0.0.1:18100",
-           "apache-plain", False, False, False),
+           "apache-plain", False, False, False, False),
     target("apache/pagespeed", "apache", "apache", "pagespeed", "http://127.0.0.1:18101",
-           "apache-pagespeed", True, True, False),
+           "apache-pagespeed", True, True, False, False),
     target("apache/laghu", "apache", "apache", "all-optimizations", "http://127.0.0.1:18102",
-           "apache-laghu", True, True, True),
+           "apache-laghu", True, True, True, True),
     target("standalone/laghu/plain/nginx", "standalone", "nginx", "plain",
-           "http://127.0.0.1:18200", "standalone-nginx-plain", False, False, False),
+           "http://127.0.0.1:18200", "standalone-nginx-plain", False, False, False, False),
     target("standalone/laghu/all-optimizations/nginx", "standalone", "nginx",
-           "all-optimizations", "http://127.0.0.1:18201", "standalone-nginx-all", True, True, True),
+           "all-optimizations", "http://127.0.0.1:18201", "standalone-nginx-all", True, True, True, True),
     target("standalone/laghu/plain/apache", "standalone", "apache", "plain",
-           "http://127.0.0.1:18210", "standalone-apache-plain", False, False, False),
+           "http://127.0.0.1:18210", "standalone-apache-plain", False, False, False, False),
     target("standalone/laghu/all-optimizations/apache", "standalone", "apache",
-           "all-optimizations", "http://127.0.0.1:18211", "standalone-apache-all", True, True, True),
+           "all-optimizations", "http://127.0.0.1:18211", "standalone-apache-all", True, True, True, True),
 )
 
 MIXED_PATHS = ("/index.html", "/css-100k.css", "/js-100k.js", "/image-480.jpg")
@@ -76,6 +80,7 @@ INDEX_SOURCE = (
 CHROME = "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36"
 WEBP = {"Accept": "image/webp,image/*;q=0.8", "User-Agent": CHROME}
 AVIF = {"Accept": "image/avif,image/jpeg;q=0.8", "User-Agent": CHROME}
+JXL = {"Accept": "image/jxl,image/avif,image/webp,image/jpeg;q=0.8", "User-Agent": CHROME}
 METRICS_HEADERS = {"X-Laghu-Purge-Token": "laghu-benchmark-metrics-token-0123456789"}
 SAVE_DATA = {"Accept": "image/webp,image/*;q=0.8", "Save-Data": "on", "User-Agent": CHROME}
 MOBILE_2X = {
@@ -84,6 +89,9 @@ MOBILE_2X = {
 TABLET_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "768", "Width": "768", "User-Agent": CHROME}
 DESKTOP_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "1200", "Width": "1200", "User-Agent": CHROME}
 CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illustration.jpg", "/image-flat-color.jpg")
+ARTIFACT_POLL_SECONDS = 0.1
+PAGE_SPEED_ARTIFACT_TIMEOUT_SECONDS = 30.0
+DEFAULT_ARTIFACT_TIMEOUT_SECONDS = 12.0
 
 
 def request(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
@@ -166,8 +174,12 @@ def validate_svg(target: Target, cells: list[dict[str, Any]]) -> None:
     cells.append(cell(target, "svg-safe-static", "/image.svg", response, len(source["body"])))
 
 
+def image_suffix(content_type: str) -> str:
+    return {"image/avif": ".avif", "image/jxl": ".jxl", "image/webp": ".webp"}[content_type]
+
+
 def decode_image(target: Target, label: str, content_type: str, body: bytes) -> None:
-    suffix = ".avif" if content_type == "image/avif" else ".webp"
+    suffix = image_suffix(content_type)
     with tempfile.TemporaryDirectory(prefix="laghu-k6-image-") as temporary:
         path = Path(temporary) / f"{label.lower()}{suffix}"
         path.write_bytes(body)
@@ -175,7 +187,7 @@ def decode_image(target: Target, label: str, content_type: str, body: bytes) -> 
 
 
 def image_dimensions_bytes(label: str, content_type: str, body: bytes) -> tuple[int, int]:
-    suffix = ".avif" if content_type == "image/avif" else ".webp"
+    suffix = image_suffix(content_type)
     with tempfile.TemporaryDirectory(prefix="laghu-k6-dimensions-") as temporary:
         path = Path(temporary) / f"{label.lower()}{suffix}"
         path.write_bytes(body)
@@ -245,8 +257,13 @@ def laghu_cache_files(target: Target) -> int | None:
 
 
 def cgroup_snapshot(target: Target) -> dict[str, int]:
+    rss_command = (
+        "{ for status in /proc/[0-9]*/status; do [ -r \"$status\" ] || continue; "
+        "awk '/VmRSS:/{sum += $2} END {print sum}' \"$status\" 2>/dev/null || true; done; } "
+        "| awk '{sum += $1} END {print sum * 1024}'"
+    )
     command = ["docker", "exec", f"laghu-bench-{target.service}", "sh", "-c",
-               "cat /sys/fs/cgroup/cpu.stat; cat /sys/fs/cgroup/memory.peak; awk '/VmRSS:/{sum += $2} END {print sum * 1024}' /proc/[0-9]*/status"]
+               f"cat /sys/fs/cgroup/cpu.stat; cat /sys/fs/cgroup/memory.peak; {rss_command}"]
     output = subprocess.run(command, check=True, capture_output=True, text=True).stdout.splitlines()
     usage = next((line.split()[1] for line in output if line.startswith("usage_usec ")), None)
     if usage is None or len(output) < 2:
@@ -278,15 +295,21 @@ def image_url(target: Target, headers: dict[str, str]) -> str:
         # Laghu's internal assets are immutable artifacts. Capability negotiation
         # occurs when the browser requests the source image, not that artifact.
         return target.base_url + "/image-480.jpg"
-    for _ in range(120):
+    deadline = time.monotonic() + artifact_timeout_seconds(target)
+    while time.monotonic() < deadline:
         page = request(target.base_url + "/normalized-image.html", headers)
         matches = re.findall(rb"<img\s+src=[\"']?([^\s\"'>]+)", page["body"], re.IGNORECASE)
         if matches:
             path = matches[0].decode("ascii")
             if not target.name.endswith("/pagespeed") or ".pagespeed." in path:
                 return urljoin(target.base_url + "/", path)
-        time.sleep(0.1)
+        time.sleep(ARTIFACT_POLL_SECONDS)
     raise RuntimeError(f"{target.name}: did not publish negotiated image URL")
+
+
+def artifact_timeout_seconds(target: Target) -> float:
+    """Allow frozen PageSpeed's asynchronous artifact publisher a cold-start window."""
+    return PAGE_SPEED_ARTIFACT_TIMEOUT_SECONDS if target.name.endswith("/pagespeed") else DEFAULT_ARTIFACT_TIMEOUT_SECONDS
 
 
 def expected_image(
@@ -300,10 +323,15 @@ def expected_image(
 ) -> dict[str, Any]:
     url = image_url(target, headers) if source_path == "/image-480.jpg" else target.base_url + source_path
     source_bytes = original_bytes(target, source_path)
-    for _ in range(120):
+    deadline = time.monotonic() + artifact_timeout_seconds(target)
+    last_status = 0
+    last_content_type = "missing"
+    while time.monotonic() < deadline:
         response = request(url, headers)
         response_headers = lower(response["headers"])
         received = response_headers.get("content-type", "")
+        last_status = response["status"]
+        last_content_type = received or "missing"
         if response["status"] == 200 and received.startswith(content_type) and signature in response["body"][:16]:
             require(len(response["body"]) <= source_bytes, f"{target.name}: {label} variant grew beyond source")
             decode_image(target, label, content_type, response["body"])
@@ -321,8 +349,8 @@ def expected_image(
             result["artifact_sha256"] = hashlib.sha256(response["body"]).hexdigest()
             result["dimensions"] = image_dimensions_bytes(label, content_type, response["body"])
             return result
-        time.sleep(0.1)
-    raise RuntimeError(f"{target.name}: {label} artifact not selected")
+        time.sleep(ARTIFACT_POLL_SECONDS)
+    raise RuntimeError(f"{target.name}: {label} artifact not selected (last status={last_status}, content-type={last_content_type})")
 
 
 def correctness(target: Target, cells: list[dict[str, Any]], output: Path) -> None:
@@ -371,6 +399,9 @@ def correctness(target: Target, cells: list[dict[str, Any]], output: Path) -> No
     if target.avif:
         avif = expected_image(target, "AVIF", AVIF, "image/avif", b"ftyp", output)
         cells.append(avif)
+    if target.jxl:
+        jxl = expected_image(target, "JXL", JXL, "image/jxl", b"\xff\x0a", output)
+        cells.append(jxl)
 
 
 def run_k6(

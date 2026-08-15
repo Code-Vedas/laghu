@@ -97,7 +97,7 @@ services:
     container_name: laghu-bench-standalone-nginx-all
     environment:
       LAGHU_BENCH_ORIGIN: http://nginx-plain:8080
-      LAGHU_BENCH_REWRITE_LEVEL: all
+      LAGHU_BENCH_REWRITE_LEVEL: experimental
     ports:
       - "127.0.0.1:18201:8080"
     volumes:
@@ -129,7 +129,7 @@ services:
     container_name: laghu-bench-standalone-apache-all
     environment:
       LAGHU_BENCH_ORIGIN: http://apache-plain:80
-      LAGHU_BENCH_REWRITE_LEVEL: all
+      LAGHU_BENCH_REWRITE_LEVEL: experimental
     ports:
       - "127.0.0.1:18211:8080"
     volumes:

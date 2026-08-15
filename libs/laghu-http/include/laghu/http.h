@@ -372,6 +372,7 @@ typedef struct {
   bool client_hint_variant;
   bool accept_webp;
   bool accept_avif;
+  bool accept_jxl;
   bool save_data;
   bool index_key_content_classified;
   bool prepared;

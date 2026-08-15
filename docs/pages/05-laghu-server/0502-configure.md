@@ -28,7 +28,7 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--worker-queue PATH` | bounded path | required | Selects the image queue. |
 | `--cache-mime-types LIST` | comma-separated MIME types | empty | Explicitly enables opaque media cache extension for matching response types. |
 | `--preset NAME` | supported preset | `balanced` | Selects policy; conflicts with `--rewrite-level`. |
-| `--rewrite-level NAME` | supported rewrite level | unset | Selects policy; conflicts with `--preset`. |
+| `--rewrite-level NAME` | supported rewrite level | unset | Selects policy; `experimental` permits negotiated JPEG XL and conflicts with `--preset`. |
 | `--enable-filter NAME` | filter name, repeatable | none | Enables one filter after resolving the baseline policy. |
 | `--disable-filter NAME` | filter name, repeatable | none | Disables one filter. |
 | `--forbid-filter NAME` | filter name, repeatable | none | Permanently disables one filter for configuration parity. |

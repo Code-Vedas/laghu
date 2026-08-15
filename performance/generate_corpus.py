@@ -64,7 +64,7 @@ def run_vips(output: Path, width: int, height: int, suffix: str, transparent: bo
     subprocess.run(["vips", "svgload", str(svg_path), str(source)], check=True)
     commands = {
         ".png": ["vips", "pngsave"], ".jpg": ["vips", "jpegsave", "--Q", "100"],
-        ".webp": ["vips", "webpsave"], ".avif": ["vips", "heifsave", "--compression", "av1"],
+        ".webp": ["vips", "webpsave"], ".avif": ["vips", "heifsave", "--compression", "av1"], ".jxl": ["vips", "jxlsave"],
     }
     command = commands[suffix]
     completed = subprocess.run([*command, str(source), str(output)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -165,7 +165,7 @@ def main() -> None:
         "<!doctype html><img src=/image-480.jpg width=480 height=360>", encoding="utf-8"
     )
     dimensions = (100, 480, 768, 1440, 3840, 8000)
-    formats = (".png", ".jpg", ".webp", ".avif")
+    formats = (".png", ".jpg", ".webp", ".avif", ".jxl")
     unavailable_formats: set[str] = set()
     for width in dimensions:
         height = max(1, width * 3 // 4)

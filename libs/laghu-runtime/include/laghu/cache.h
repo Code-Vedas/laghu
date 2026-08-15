@@ -93,9 +93,10 @@ struct laghu_cache_backend {
   void *implementation;
 };
 bool laghu_runtime_index_key(const char *request_path, const char *validator, const char *policy_key, bool accept_webp, bool accept_avif,
+                             bool accept_jxl,
                              unsigned int target_width, unsigned int target_height, char output[LAGHU_RUNTIME_KEY_SIZE]);
 bool laghu_runtime_index_key_variant(const char *request_path, const char *validator, const char *policy_key, bool accept_webp,
-                                     bool accept_avif, unsigned int target_width, unsigned int target_height, unsigned int policy_variant,
+                                     bool accept_avif, bool accept_jxl, unsigned int target_width, unsigned int target_height, unsigned int policy_variant,
                                      char output[LAGHU_RUNTIME_KEY_SIZE]);
 bool laghu_runtime_index_key_content_class(const char *base_key, laghu_image_content_class content,
                                            char output[LAGHU_RUNTIME_KEY_SIZE]);

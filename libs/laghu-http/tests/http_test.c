@@ -380,6 +380,40 @@ static void test_image_cold_warm_and_queue(void) {
   (void)remove(test_queue_path);
 }
 
+static void test_jxl_is_experimental_and_separately_keyed(void) {
+  const laghu_http_header request_headers[] = {{VIEW("Accept"), VIEW("image/jxl,image/avif,image/webp,image/jpeg")}};
+  const laghu_http_header response_headers[] = {{VIEW("Content-Type"), VIEW("image/jpeg")}, {VIEW("ETag"), VIEW("\"jxl-v1\"")}};
+  laghu_runtime_queue queue;
+  laghu_http_environment environment = test_environment(test_cache_path, &queue);
+  laghu_http_request request = test_request(request_headers, 1U, VIEW("/hero.jpg"));
+  laghu_http_response response = test_response(response_headers, 2U, 1024U);
+  laghu_http_transaction transaction;
+  laghu_http_transaction_result result;
+  char ordinary_key[LAGHU_RUNTIME_KEY_SIZE];
+
+  laghu_runtime_queue_init(&queue);
+  CHECK(laghu_runtime_queue_create(&queue, test_queue_path, 2U, LAGHU_IMAGE_MAX_INPUT_BYTES));
+  CHECK(laghu_runtime_queue_set_backend(&queue, LAGHU_IMAGE_CAP_JPEG_LOAD | LAGHU_IMAGE_CAP_JXL_SAVE, "jxl-worker"));
+  CHECK(laghu_runtime_queue_heartbeat(&queue, environment.now));
+  environment.queue_capabilities = LAGHU_IMAGE_CAP_JPEG_LOAD | LAGHU_IMAGE_CAP_JXL_SAVE;
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+  CHECK(!transaction.accept_jxl);
+  memcpy(ordinary_key, transaction.cache_key, sizeof(ordinary_key));
+  laghu_http_transaction_result_release(&result);
+
+  environment.config.preset = LAGHU_PRESET_UNSET;
+  environment.config.rewrite_level = LAGHU_REWRITE_LEVEL_EXPERIMENTAL;
+  laghu_http_transaction_init(&transaction);
+  CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
+  CHECK(transaction.accept_jxl);
+  CHECK(strcmp(ordinary_key, transaction.cache_key) != 0);
+  CHECK(result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE);
+  laghu_http_transaction_result_release(&result);
+  laghu_runtime_queue_close(&queue);
+  (void)remove(test_queue_path);
+}
+
 static void test_request_does_not_attach_queue(void) {
   const laghu_http_header headers[] = {{VIEW("Content-Type"), VIEW("image/png")}};
   laghu_runtime_queue producer;
@@ -1392,6 +1426,7 @@ int main(void) {
   test_bounds_and_incomplete_body();
   test_transport_exclusions();
   test_image_cold_warm_and_queue();
+  test_jxl_is_experimental_and_separately_keyed();
   test_request_does_not_attach_queue();
   test_css_cold_warm();
   test_javascript_cold_publication();

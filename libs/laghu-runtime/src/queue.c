@@ -331,6 +331,7 @@ static void laghu_queue_job_encode(unsigned char *slot, const laghu_runtime_job 
   slot[LAGHU_WIRE_QUEUE_SLOT_TRACE_SAMPLED_OFFSET] = job->trace.sampled ? 1U : 0U;
   slot[LAGHU_WIRE_QUEUE_SLOT_SAVE_DATA_OFFSET] = job->save_data ? 1U : 0U;
   slot[LAGHU_WIRE_QUEUE_SLOT_INDEX_KEY_CONTENT_CLASSIFIED_OFFSET] = job->index_key_content_classified ? 1U : 0U;
+  slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_JXL_OFFSET] = job->accept_jxl ? 1U : 0U;
 }
 
 bool laghu_runtime_queue_try_publish(laghu_runtime_queue *queue, const laghu_runtime_job *job) {
@@ -397,6 +398,7 @@ static void laghu_queue_job_decode(const unsigned char *slot, laghu_runtime_job 
   job->trace.sampled = slot[LAGHU_WIRE_QUEUE_SLOT_TRACE_SAMPLED_OFFSET] != 0U;
   job->save_data = slot[LAGHU_WIRE_QUEUE_SLOT_SAVE_DATA_OFFSET] != 0U;
   job->index_key_content_classified = slot[LAGHU_WIRE_QUEUE_SLOT_INDEX_KEY_CONTENT_CLASSIFIED_OFFSET] != 0U;
+  job->accept_jxl = slot[LAGHU_WIRE_QUEUE_SLOT_ACCEPT_JXL_OFFSET] != 0U;
   if (payload_length != 0U) memcpy(payload, laghu_queue_payload((unsigned char *)slot), payload_length);
   job->payload = (laghu_buffer){payload, payload_length};
 }
@@ -420,7 +422,7 @@ bool laghu_runtime_queue_try_take(laghu_runtime_queue *queue, laghu_runtime_job 
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_KIND_OFFSET) <= LAGHU_RUNTIME_JOB_TRACE_EXPORT &&
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_TARGET_COUNT_OFFSET) <= LAGHU_RUNTIME_MAX_TARGETS &&
           laghu_wire_u32_read(slot + LAGHU_WIRE_QUEUE_SLOT_SPRITE_COUNT_OFFSET) <= LAGHU_RUNTIME_MAX_SPRITE_INPUTS &&
-          laghu_queue_slot_strings_valid(slot) && laghu_wire_zeroes(slot + 4617U, 7U)) {
+          laghu_queue_slot_strings_valid(slot) && laghu_wire_zeroes(slot + 4618U, 6U)) {
         laghu_queue_job_decode(slot, job, payload, (size_t)payload_length);
         if (!laghu_queue_job_valid(job, state->slot_payload_size))
           memset(job, 0, sizeof(*job));

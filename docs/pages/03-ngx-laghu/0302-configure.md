@@ -16,7 +16,7 @@ Laghu transaction records use the configured NGINX error_log sink. Each native e
 | --- | --- | --- | --- | --- |
 | `laghu on\|off;` | inherited | boolean | `off` | Enables or bypasses transformation. |
 | `laghu preset NAME;` | inherited | `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, `static` | `balanced` | Selects a policy preset. |
-| `laghu rewrite_level NAME;` | inherited | `passthrough`, `bandwidth`, `core`, `all`, `experimental` | unset | Selects a rewrite level instead of a preset. |
+| `laghu rewrite_level NAME;` | inherited | `passthrough`, `bandwidth`, `core`, `all`, `experimental` | unset | Selects a rewrite level; `experimental` permits negotiated JPEG XL. |
 | `laghu enable_filter NAME;` | inherited, repeatable | filter name | none | Enables one filter after resolving the baseline policy. |
 | `laghu disable_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter; a child scope may re-enable it. |
 | `laghu forbid_filter NAME;` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |

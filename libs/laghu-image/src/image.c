@@ -90,10 +90,13 @@ bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output)
 laghu_image_format laghu_image_detect_format(laghu_buffer input) {
   const unsigned char *bytes = input.data;
 
-  if ((bytes == NULL && input.length != 0U) || input.length < 3U) {
+  if ((bytes == NULL && input.length != 0U) || input.length < 2U) {
     return LAGHU_IMAGE_FORMAT_UNKNOWN;
   }
-  if (bytes[0] == 0xffU && bytes[1] == 0xd8U && bytes[2] == 0xffU) {
+  if (bytes[0] == 0xffU && bytes[1] == 0x0aU) {
+    return LAGHU_IMAGE_FORMAT_JXL;
+  }
+  if (input.length >= 3U && bytes[0] == 0xffU && bytes[1] == 0xd8U && bytes[2] == 0xffU) {
     return LAGHU_IMAGE_FORMAT_JPEG;
   }
   if (input.length >= 8U && bytes[0] == 0x89U && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G' && bytes[4] == 0x0dU && bytes[5] == 0x0aU &&
@@ -108,6 +111,9 @@ laghu_image_format laghu_image_detect_format(laghu_buffer input) {
   }
   if (input.length >= 12U && memcmp(bytes + 4U, "ftyp", 4U) == 0 && (memcmp(bytes + 8U, "avif", 4U) == 0 || memcmp(bytes + 8U, "avis", 4U) == 0)) {
     return LAGHU_IMAGE_FORMAT_AVIF;
+  }
+  if (input.length >= 12U && memcmp(bytes, "\0\0\0\fJXL \r\n\x87\n", 12U) == 0) {
+    return LAGHU_IMAGE_FORMAT_JXL;
   }
   return LAGHU_IMAGE_FORMAT_UNKNOWN;
 }
@@ -124,6 +130,8 @@ const char *laghu_image_format_name(laghu_image_format format) {
       return "webp";
     case LAGHU_IMAGE_FORMAT_AVIF:
       return "avif";
+    case LAGHU_IMAGE_FORMAT_JXL:
+      return "jxl";
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
       return "unknown";
@@ -142,6 +150,8 @@ const char *laghu_image_content_type(laghu_image_format format) {
       return "image/webp";
     case LAGHU_IMAGE_FORMAT_AVIF:
       return "image/avif";
+    case LAGHU_IMAGE_FORMAT_JXL:
+      return "image/jxl";
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
       return "application/octet-stream";
@@ -200,10 +210,11 @@ bool laghu_image_variant_key(const laghu_image_backend *backend, const laghu_ima
   length =
       snprintf(canonical, sizeof(canonical),
                "laghu-image\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
-               "016llx\n%d\n%d\n%d",
+               "016llx\n%d\n%d\n%d\n%d",
                source_hash, policy_key, LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
                (unsigned long long)(request->filters & LAGHU_IMAGE_FILTER_ALL), request->quality, request->target_width, request->target_height,
-               (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0, request->accept_webp ? 1 : 0, request->accept_avif ? 1 : 0);
+               (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0, request->accept_webp ? 1 : 0, request->accept_avif ? 1 : 0,
+               request->accept_jxl ? 1 : 0);
   if (length <= 0 || (size_t)length >= sizeof(canonical)) {
     output[0] = '\0';
     return false;
@@ -305,6 +316,26 @@ done:
   return available;
 }
 
+static bool laghu_vips_probe_jxl(void) {
+  VipsImage *source = NULL;
+  VipsImage *decoded = NULL;
+  void *encoded = NULL;
+  size_t encoded_length = 0U;
+  bool available = false;
+  if (!laghu_vips_has_operation("jxlsave_buffer") || !laghu_vips_has_operation("jxlload_buffer") ||
+      vips_black(&source, 2, 2, "bands", 3, NULL) != 0 || vips_image_write_to_buffer(source, ".jxl", &encoded, &encoded_length, NULL) != 0 ||
+      (decoded = vips_image_new_from_buffer(encoded, encoded_length, "", NULL)) == NULL) {
+    vips_error_clear();
+    goto done;
+  }
+  available = true;
+done:
+  if (decoded != NULL) g_object_unref(decoded);
+  if (source != NULL) g_object_unref(source);
+  g_free(encoded);
+  return available;
+}
+
 static bool laghu_vips_probe_animation(void) {
   VipsImage *gif = NULL;
   VipsImage *webp = NULL;
@@ -351,6 +382,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
   bool webp_load;
   bool webp_save;
   bool avif;
+  bool jxl;
 
   if (backend == NULL) {
     return false;
@@ -370,6 +402,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
   laghu_vips_probe_codec(LAGHU_IMAGE_FORMAT_WEBP, "webpload_buffer", "webpsave_buffer", laghu_probe_webp, sizeof(laghu_probe_webp) - 1U, &webp_load,
                          &webp_save);
   avif = laghu_vips_probe_avif();
+  jxl = laghu_vips_probe_jxl();
 
   if (jpeg_load) {
     backend->capabilities |= LAGHU_IMAGE_CAP_JPEG_LOAD;
@@ -397,6 +430,9 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
   }
   if (avif) {
     backend->capabilities |= LAGHU_IMAGE_CAP_AVIF_LOAD | LAGHU_IMAGE_CAP_AVIF_SAVE;
+  }
+  if (jxl) {
+    backend->capabilities |= LAGHU_IMAGE_CAP_JXL_SAVE;
   }
   if ((backend->capabilities & (LAGHU_IMAGE_CAP_GIF_LOAD | LAGHU_IMAGE_CAP_WEBP_SAVE)) == (LAGHU_IMAGE_CAP_GIF_LOAD | LAGHU_IMAGE_CAP_WEBP_SAVE) &&
       webp_load && laghu_vips_probe_animation()) {
@@ -426,6 +462,9 @@ static int laghu_image_load(laghu_image_format format, laghu_buffer input, unsig
       status = vips_webpload_buffer(bytes, input.length, &first_page, "n", 1, "access", VIPS_ACCESS_RANDOM, NULL);
       break;
     case LAGHU_IMAGE_FORMAT_AVIF:
+      *image = vips_image_new_from_buffer(bytes, input.length, "", "access", VIPS_ACCESS_RANDOM, NULL);
+      return *image == NULL ? -1 : 0;
+    case LAGHU_IMAGE_FORMAT_JXL:
       *image = vips_image_new_from_buffer(bytes, input.length, "", "access", VIPS_ACCESS_RANDOM, NULL);
       return *image == NULL ? -1 : 0;
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
@@ -576,6 +615,8 @@ static int laghu_image_save(VipsImage *image, laghu_image_format format, const l
       return vips_webpsave_buffer(image, output, output_length, "Q", (int)request->quality, "lossless", lossless, "effort", 4, "keep", keep, NULL);
     case LAGHU_IMAGE_FORMAT_AVIF:
       return vips_image_write_to_buffer(image, ".avif", output, output_length, "Q", (int)request->quality, "keep", keep, NULL);
+    case LAGHU_IMAGE_FORMAT_JXL:
+      return vips_image_write_to_buffer(image, ".jxl", output, output_length, "Q", (int)request->quality, "keep", keep, NULL);
     case LAGHU_IMAGE_FORMAT_GIF:
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:
@@ -794,7 +835,9 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
                          (effective & LAGHU_IMAGE_JPEG_SAMPLING) != 0U, &candidate_bytes, &candidate_length) == 0) {                     \
       laghu_image_consider(result, candidate_bytes, candidate_length, target_format, prepared_filters | (filter_bits), candidate_source, \
                            lossless_value, width, height, frames,                                                                         \
-                           (target_format == LAGHU_IMAGE_FORMAT_AVIF && request->accept_avif) ||                                         \
+                           (target_format == LAGHU_IMAGE_FORMAT_JXL && request->accept_jxl) ||                                           \
+                               (target_format == LAGHU_IMAGE_FORMAT_AVIF && request->accept_avif &&                                      \
+                                (!request->accept_jxl || result->output_format != LAGHU_IMAGE_FORMAT_JXL)) ||                            \
                                (target_format == LAGHU_IMAGE_FORMAT_WEBP && request->accept_webp));                                      \
     } else {                                                                                                                             \
       vips_error_clear();                                                                                                                \
@@ -813,7 +856,10 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
                        effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_JPEG_TO_WEBP | LAGHU_IMAGE_STRIP_METADATA |
                                     LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
       }
-      if (request->accept_avif && request->allow_lossy) {
+      if (request->accept_jxl && request->allow_lossy && (backend->capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U) {
+        LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_JXL, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
+      }
+      if (request->accept_avif && request->allow_lossy && result->output_format != LAGHU_IMAGE_FORMAT_JXL) {
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_AVIF, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
       }
       break;
@@ -849,7 +895,10 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
                                     LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
         candidate_source = prepared;
       }
-      if (request->accept_avif && request->allow_lossy) {
+      if (request->accept_jxl && request->allow_lossy && (backend->capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U) {
+        LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_JXL, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
+      }
+      if (request->accept_avif && request->allow_lossy && result->output_format != LAGHU_IMAGE_FORMAT_JXL) {
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_AVIF, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
       }
       break;
@@ -879,6 +928,7 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
       }
       break;
     case LAGHU_IMAGE_FORMAT_AVIF:
+    case LAGHU_IMAGE_FORMAT_JXL:
       break;
     case LAGHU_IMAGE_FORMAT_UNKNOWN:
     default:

@@ -158,7 +158,7 @@
 
 ### 4.1 Image Pipeline
 - [x] AVIF encoding and `Accept`-based negotiation.
-- [ ] Flag-gated JPEG XL encoding when client support warrants it.
+- [x] Flag-gated JPEG XL encoding when client support warrants it.
 - [x] Modern lossy, lossless, and animated WebP encoding.
 - [x] Perceptual quality targeting with SSIMULACRA2 or DSSIM.
 - [x] Photo, screenshot, illustration, and flat-color classification with content-aware presets.

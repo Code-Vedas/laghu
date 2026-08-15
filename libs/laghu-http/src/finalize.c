@@ -925,6 +925,7 @@ static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu
   job.allow_lossy = transaction->policy.allow_lossy;
   job.accept_webp = transaction->accept_webp;
   job.accept_avif = transaction->accept_avif;
+  job.accept_jxl = transaction->accept_jxl;
   (void)laghu_trace_context_child(&transaction->trace, &job.trace);
   job.payload = body;
   result->job_published = laghu_runtime_queue_try_publish(transaction->environment.queue, &job);
@@ -964,7 +965,7 @@ static bool laghu_http_finalize_resource(laghu_http_transaction *transaction, la
   laghu_runtime_cache_entry entry;
   char resource_index[LAGHU_RUNTIME_KEY_SIZE];
   if (!laghu_sha256_hex(body, payload_hash) ||
-      !laghu_runtime_index_key(transaction->path, "", transaction->policy_key, false, false, 0U, 0U, resource_index) ||
+      !laghu_runtime_index_key(transaction->path, "", transaction->policy_key, false, false, false, 0U, 0U, resource_index) ||
       !laghu_runtime_cache_publish(transaction->environment.cache_path, transaction->cache_key, payload_hash, transaction->validator,
                                    transaction->content_type, "opaque", body, &entry) ||
       !laghu_runtime_cache_publish(transaction->environment.cache_path, resource_index, payload_hash, "", transaction->content_type, "opaque", body,

@@ -28,6 +28,8 @@ A change is incomplete until those owners agree on versioning, bounds, fail-open
 screenshot, illustration, or flat-color quality caps before publication.
 `Save-Data: on` lowers that selected cap. Mobile (≤767px), tablet (768–1199px), desktop (≥1200px), format, and data-saver
 representations use separate identities. Explicit `image_quality` remains an upper bound; images never enlarge or upscale.
+JPEG XL is off unless `rewrite_level experimental` is selected and the client accepts `image/jxl`. A missing JXL worker capability fails
+open to the normal WebP/AVIF path. Its capability bit is part of both cache and worker variant identity.
 Safe static SVGs are optimized in the shared HTTP path by removing comments, metadata, and Inkscape/Sodipodi editor attributes after
 rejecting scripts, event handlers, external references, entities, and unsupported constructs. Rejected SVGs pass through unchanged.
 HTML discovery does not fetch images; normal image traffic populates catalogs.

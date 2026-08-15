@@ -67,6 +67,7 @@ int main(void) {
 
   job = laghu_test_job(payload, sizeof(payload) - 1U);
   job.accept_avif = true;
+  job.accept_jxl = true;
   job.save_data = true;
   job.index_key_content_classified = true;
   assert(laghu_trace_context_parse("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", NULL, &job.trace));
@@ -76,7 +77,7 @@ int main(void) {
   assert(laghu_runtime_queue_snapshot_get(&queue, &snapshot));
   assert(snapshot.occupied == 2U);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
-  assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT && taken.payload.length == sizeof(payload) - 1U && taken.accept_avif &&
+  assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT && taken.payload.length == sizeof(payload) - 1U && taken.accept_avif && taken.accept_jxl &&
          taken.save_data && taken.index_key_content_classified && memcmp(output, payload, taken.payload.length) == 0 &&
          strcmp(taken.trace.trace_id, job.trace.trace_id) == 0 &&
          taken.trace.sampled);

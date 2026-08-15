@@ -279,18 +279,21 @@ static laghu_image_filter_mask laghu_http_image_filters(const laghu_policy *poli
   return filters;
 }
 
-static bool laghu_http_backend_supports(const char *content_type, laghu_image_filter_mask filters, uint32_t capabilities, bool allow_lossy) {
+static bool laghu_http_backend_supports(const char *content_type, laghu_image_filter_mask filters, uint32_t capabilities, bool allow_lossy,
+                                       bool accept_jxl) {
   if (laghu_http_content_type_is(content_type, "image/jpeg")) {
     return allow_lossy && (capabilities & LAGHU_IMAGE_CAP_JPEG_LOAD) != 0U &&
            (((capabilities & LAGHU_IMAGE_CAP_JPEG_SAVE) != 0U && (filters & (LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_JPEG |
                                                                              LAGHU_IMAGE_JPEG_PROGRESSIVE | LAGHU_IMAGE_JPEG_SAMPLING)) != 0U) ||
-            ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U && (filters & LAGHU_IMAGE_JPEG_TO_WEBP) != 0U));
+            ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U && (filters & LAGHU_IMAGE_JPEG_TO_WEBP) != 0U) ||
+            (accept_jxl && (capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U));
   }
   if (laghu_http_content_type_is(content_type, "image/png")) {
     return (capabilities & LAGHU_IMAGE_CAP_PNG_LOAD) != 0U &&
            (((capabilities & LAGHU_IMAGE_CAP_PNG_SAVE) != 0U && (filters & (LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_PNG)) != 0U) ||
             ((capabilities & LAGHU_IMAGE_CAP_JPEG_SAVE) != 0U && allow_lossy && (filters & LAGHU_IMAGE_PNG_TO_JPEG) != 0U) ||
-            ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U && (filters & LAGHU_IMAGE_TO_WEBP_LOSSLESS) != 0U));
+            ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U && (filters & LAGHU_IMAGE_TO_WEBP_LOSSLESS) != 0U) ||
+            (accept_jxl && allow_lossy && (capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U));
   }
   if (laghu_http_content_type_is(content_type, "image/gif")) {
     return (capabilities & LAGHU_IMAGE_CAP_GIF_LOAD) != 0U &&
@@ -848,6 +851,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
   transaction->html_plan = laghu_http_html_plan(&transaction->policy);
   transaction->accept_webp = laghu_http_accepts_image(request, "image/webp");
   transaction->accept_avif = laghu_http_accepts_image(request, "image/avif");
+  transaction->accept_jxl = transaction->policy.allow_experimental && laghu_http_accepts_image(request, "image/jxl");
   {
     char asset_source[LAGHU_RUNTIME_PATH_SIZE];
     transaction->asset_allowed =
@@ -918,7 +922,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
       }
     }
     if (!laghu_runtime_index_key_variant(transaction->path, transaction->validator, transaction->policy_key, transaction->accept_webp,
-                                         transaction->accept_avif, transaction->client_hint_variant ? transaction->target_width[0] : 0U,
+                                         transaction->accept_avif, transaction->accept_jxl,
+                                         transaction->client_hint_variant ? transaction->target_width[0] : 0U,
                                          transaction->client_hint_variant ? transaction->target_height[0] : 0U,
                                          (unsigned int)laghu_image_viewport_bucket_for_width(transaction->viewport_width) |
                                              (transaction->save_data ? 4U : 0U), transaction->cache_key)) {
@@ -954,7 +959,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
       result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
     } else if (transaction->image_filters == 0U || environment->queue == NULL ||
         !laghu_http_backend_supports(transaction->content_type, transaction->image_filters, transaction->capability_mask,
-                                     transaction->policy.allow_lossy)) {
+                                     transaction->policy.allow_lossy, transaction->accept_jxl)) {
       if (transaction->asset_allowed || ((transaction->policy.filter_families & (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) != 0U &&
                                          laghu_mime_type_allowed(transaction->policy.cache_mime_types, transaction->content_type))) {
         transaction->action = LAGHU_HTTP_ACTION_CAPTURE_RESOURCE;
@@ -977,7 +982,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
     result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
   } else if (transaction->asset_allowed || ((transaction->policy.filter_families & (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) != 0U &&
                                             laghu_mime_type_allowed(transaction->policy.cache_mime_types, transaction->content_type))) {
-    if (!laghu_runtime_index_key(transaction->path, transaction->validator, transaction->policy_key, false, false, 0U, 0U, transaction->cache_key)) {
+    if (!laghu_runtime_index_key(transaction->path, transaction->validator, transaction->policy_key, false, false, false, 0U, 0U,
+                                 transaction->cache_key)) {
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
     }
     (void)laghu_cache_backend_associate_path(environment->cache_path, transaction->cache_key, transaction->path);

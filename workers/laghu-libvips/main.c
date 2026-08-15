@@ -314,6 +314,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
     request.allow_lossy = job->allow_lossy;
     request.accept_webp = job->accept_webp;
     request.accept_avif = job->accept_avif;
+    request.accept_jxl = job->accept_jxl;
     request.quality = laghu_image_adaptive_quality(content_class, job->quality, job->save_data);
     request.target_width = job->target_width[target];
     request.target_height = job->target_height[target];
@@ -379,6 +380,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
     request.allow_lossy = job->allow_lossy;
     request.accept_webp = job->accept_webp;
     request.accept_avif = job->accept_avif;
+    request.accept_jxl = job->accept_jxl;
     request.quality = job->quality;
     if (laghu_image_preview_data_uri(&backend, &request, LAGHU_IMAGE_PREVIEW_DIMENSION, &preview)) {
       if (preview.length < sizeof(catalog.preview_data_uri)) {
@@ -441,7 +443,7 @@ static int laghu_libvips_submit(const char *queue_path, const char *input_path, 
   format = laghu_image_detect_format((laghu_buffer){input, input_length});
   if (format == LAGHU_IMAGE_FORMAT_UNKNOWN || strlen(request_path) >= sizeof(job.request_path) || strlen(validator) >= sizeof(job.validator) ||
       !laghu_sha256_hex((laghu_buffer){(const unsigned char *)"standalone-policy", 17U}, job.policy_key) ||
-      !laghu_runtime_index_key(request_path, validator, job.policy_key, true, true, 0U, 0U, job.index_key)) {
+      !laghu_runtime_index_key(request_path, validator, job.policy_key, true, true, false, 0U, 0U, job.index_key)) {
     laghu_runtime_queue_close(&queue);
     free(input);
     return 1;

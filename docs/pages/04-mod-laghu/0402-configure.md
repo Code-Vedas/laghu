@@ -16,7 +16,7 @@ Laghu transaction records use Apache's configured ErrorLog sink. Each native err
 | --- | --- | --- | --- | --- |
 | `Laghu On\|Off` | inherited | boolean | `Off` | Enables or bypasses transformation. |
 | `Laghu Preset NAME` | inherited | `safe`, `balanced`, `aggressive`, `ecommerce`, `blog`, `static` | `balanced` | Selects a policy preset. |
-| `Laghu RewriteLevel NAME` | inherited | `passthrough`, `bandwidth`, `core`, `all`, `experimental` | unset | Selects a rewrite level instead of a preset. |
+| `Laghu RewriteLevel NAME` | inherited | `passthrough`, `bandwidth`, `core`, `all`, `experimental` | unset | Selects a rewrite level; `experimental` permits negotiated JPEG XL. |
 | `Laghu EnableFilter NAME` | inherited, repeatable | filter name | none | Enables one filter after resolving the baseline policy. |
 | `Laghu DisableFilter NAME` | inherited, repeatable | filter name | none | Disables one filter; a child scope may re-enable it. |
 | `Laghu ForbidFilter NAME` | inherited, repeatable | filter name | none | Disables one filter permanently for this scope and descendants. |

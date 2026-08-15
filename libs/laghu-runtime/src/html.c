@@ -46,7 +46,7 @@ static bool laghu_runtime_replace_cached_urls(const char *cache_path, const char
     size_t matches = 0U;
     unsigned char *next;
     if (source_length == 0U ||
-        !laghu_runtime_index_key(discovery->resources[index].source_url, "", policy_key, false, false, 0U, 0U, resource_index) ||
+        !laghu_runtime_index_key(discovery->resources[index].source_url, "", policy_key, false, false, false, 0U, 0U, resource_index) ||
         !laghu_runtime_cache_lookup(cache_path, resource_index, "", &entry))
       continue;
     (void)snprintf(replacement, sizeof(replacement), "/.laghu/media/%s", entry.variant_key);

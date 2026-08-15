@@ -244,7 +244,7 @@ static void test_image_key_version_vector(void) {
   request.allow_lossy = true;
   request.accept_webp = true;
   assert(laghu_image_variant_key(&backend, &request, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", output));
-  assert(strcmp(output, "85c5fcb18769ce76f9ffe4db7a4f90063c2565aecfd4bbe01b3162ccfb3b8a48") == 0);
+  assert(strcmp(output, "a23755ca4d5e1ac307f6d0296fd7162928a233b37196cdd26a58d8b42cda0362") == 0);
 }
 
 static void test_backend_and_fail_open(void) {
@@ -468,6 +468,22 @@ static void test_byte_filters(void) {
     avif = vips_image_new_from_buffer(result.selected.data, result.selected.length, "", NULL);
     assert(avif != NULL);
     g_object_unref(avif);
+    laghu_image_result_release(&result);
+  }
+
+  if ((backend.capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U) {
+    laghu_image_request request;
+    VipsImage *jxl = NULL;
+    laghu_image_request_init(&request);
+    request.original = (laghu_buffer){jpeg.data, jpeg.length};
+    request.filters = LAGHU_IMAGE_REWRITE_IMAGES;
+    request.allow_lossy = true;
+    request.accept_jxl = true;
+    assert(laghu_image_optimize(&backend, &request, &result));
+    assert(result.used_candidate && result.output_format == LAGHU_IMAGE_FORMAT_JXL);
+    jxl = vips_image_new_from_buffer(result.selected.data, result.selected.length, "", NULL);
+    assert(jxl != NULL);
+    g_object_unref(jxl);
     laghu_image_result_release(&result);
   }
 
