@@ -167,7 +167,7 @@
 - [x] 1x and 2x pixel-density variants.
 - [x] Lower-quality `Save-Data` variants.
 - [x] Client-hint-aware selection using `Sec-CH-DPR` and `Sec-CH-Viewport-Width`.
-- [ ] SVG optimization and optional simple raster-to-vector conversion.
+- [x] SVG optimization and optional simple raster-to-vector conversion.
 - [x] LQIP and blur-placeholder generation.
 - [x] Automatic width and height injection.
 - [x] LCP-image `fetchpriority=high` with safe below-fold lazy loading.
