@@ -107,6 +107,22 @@ def run_class_vips(output: Path, content_class: str) -> bool:
     return completed.returncode == 0
 
 
+def write_noisy_jpeg(output: Path) -> bool:
+    """Write a seeded photographic-noise fixture without relying on libvips RNG."""
+    width, height = 512, 384
+    state = 0x4C616768
+    source = output.with_suffix(".ppm")
+    with source.open("wb") as file:
+        file.write(f"P6\n{width} {height}\n255\n".encode())
+        for _ in range(width * height * 3):
+            state = (state * 1664525 + 1013904223) & 0xFFFFFFFF
+            file.write(bytes((state >> 24,)))
+    completed = subprocess.run(["vips", "jpegsave", "--Q", "100", str(source), str(output)], check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    source.unlink()
+    return completed.returncode == 0
+
+
 def write_animated_gif(path: Path) -> None:
     """Write a deterministic two-frame animated GIF without another tool dependency."""
     path.write_bytes(base64.b64decode(
@@ -175,6 +191,8 @@ def main() -> None:
     for content_class in ("photo", "screenshot", "illustration", "flat-color"):
         if not run_class_vips(root / f"image-{content_class}.jpg", content_class):
             raise RuntimeError(f"could not generate {content_class} corpus image")
+    if not write_noisy_jpeg(root / "image-noisy.jpg"):
+        raise RuntimeError("could not generate noisy corpus image")
     if not run_vips(
         root / "image-transparent-1440.png", 1440, 1080, ".png", transparent=True
     ):
@@ -186,7 +204,7 @@ def main() -> None:
     (root / "image.svg").write_text(svg, encoding="utf-8")
     write_animated_gif(root / "image-animated.gif")
     manifest = {"seed": args.seed, "sha256": {}, "images": dimensions,
-                "image_content_classes": ["photo", "screenshot", "illustration", "flat-color"],
+                "image_content_classes": ["photo", "screenshot", "illustration", "flat-color", "noisy"],
                 "unavailable_formats": sorted(unavailable_formats)}
     for path in sorted(root.iterdir()):
         if path.is_file():

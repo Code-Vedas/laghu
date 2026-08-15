@@ -162,7 +162,7 @@
 - [x] Modern lossy, lossless, and animated WebP encoding.
 - [x] Perceptual quality targeting with SSIMULACRA2 or DSSIM.
 - [x] Photo, screenshot, illustration, and flat-color classification with content-aware presets.
-- [ ] Denoise-before-encode for suitable noisy sources.
+- [x] Denoise-before-encode for suitable noisy sources.
 - [x] Mobile, tablet, and desktop viewport-width variants.
 - [x] 1x and 2x pixel-density variants.
 - [x] Lower-quality `Save-Data` variants.

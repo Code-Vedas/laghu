@@ -22,7 +22,7 @@
 
 #define LAGHU_IMAGE_ENCODER_OPTIONS                                 \
   "jpeg-optimize=1;png-compression=9;png-filter=all;webp-effort=4;" \
-  "metadata-policy=v1;autorot=1;resize=lanczos3"
+  "metadata-policy=v1;autorot=1;resize=lanczos3;denoise=median3-v1"
 
 static bool laghu_image_filter_needs(laghu_image_filter_mask filter, laghu_image_capability_mask available, laghu_image_capability_mask required) {
   return (filter & LAGHU_IMAGE_FILTER_ALL) != 0U && (available & required) == required;
@@ -81,6 +81,60 @@ bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output)
   else if (deviation < 24.0) *output = LAGHU_IMAGE_CONTENT_ILLUSTRATION;
   else *output = LAGHU_IMAGE_CONTENT_PHOTO;
   return true;
+#else
+  (void)input;
+  return false;
+#endif
+}
+
+bool laghu_image_denoise_eligible(laghu_buffer input, laghu_image_content_class content_class) {
+  if ((content_class != LAGHU_IMAGE_CONTENT_PHOTO && content_class != LAGHU_IMAGE_CONTENT_ILLUSTRATION) || input.data == NULL || input.length == 0U ||
+      input.length > LAGHU_IMAGE_MAX_INPUT_BYTES)
+    return false;
+#if LAGHU_HAVE_VIPS
+  VipsImage *thumbnail = NULL;
+  VipsImage *pixels = NULL;
+  unsigned char *memory = NULL;
+  size_t memory_length = 0U;
+  size_t x, y, band;
+  uint64_t roughness = 0U;
+  uint64_t samples = 0U;
+  int width, height, bands;
+  bool eligible = false;
+
+  if (vips_thumbnail_buffer((void *)(uintptr_t)input.data, input.length, &thumbnail, 256, "height", 256, "size", VIPS_SIZE_DOWN, NULL) != 0 ||
+      vips_cast(thumbnail, &pixels, VIPS_FORMAT_UCHAR, NULL) != 0) {
+    if (pixels != NULL) g_object_unref(pixels);
+    if (thumbnail != NULL) g_object_unref(thumbnail);
+    vips_error_clear();
+    return false;
+  }
+  width = vips_image_get_width(pixels);
+  height = vips_image_get_height(pixels);
+  bands = vips_image_get_bands(pixels);
+  if (width >= 64 && height >= 64 && bands >= 3 && bands <= 4) {
+    memory = vips_image_write_to_memory(pixels, &memory_length);
+    if (memory != NULL && memory_length == (size_t)width * (size_t)height * (size_t)bands) {
+      for (y = 1U; y < (size_t)height; ++y) {
+        for (x = 1U; x < (size_t)width; ++x) {
+          size_t offset = (y * (size_t)width + x) * (size_t)bands;
+          size_t left = offset - (size_t)bands;
+          size_t above = offset - (size_t)width * (size_t)bands;
+          for (band = 0U; band < 3U; ++band) {
+            int current = memory[offset + band];
+            roughness += (uint64_t)abs(current - (int)memory[left + band]) + (uint64_t)abs(current - (int)memory[above + band]);
+            samples += 2U;
+          }
+        }
+      }
+      /* A 256px thumbnail bounds work while retaining high-frequency noise. */
+      eligible = samples != 0U && roughness / samples >= 24U;
+      g_free(memory);
+    }
+  }
+  g_object_unref(pixels);
+  g_object_unref(thumbnail);
+  return eligible;
 #else
   (void)input;
   return false;
@@ -210,11 +264,11 @@ bool laghu_image_variant_key(const laghu_image_backend *backend, const laghu_ima
   length =
       snprintf(canonical, sizeof(canonical),
                "laghu-image\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
-               "016llx\n%d\n%d\n%d\n%d",
+               "016llx\n%d\n%d\n%d\n%d\n%d",
                source_hash, policy_key, LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
                (unsigned long long)(request->filters & LAGHU_IMAGE_FILTER_ALL), request->quality, request->target_width, request->target_height,
                (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0, request->accept_webp ? 1 : 0, request->accept_avif ? 1 : 0,
-               request->accept_jxl ? 1 : 0);
+               request->accept_jxl ? 1 : 0, request->denoise ? 1 : 0);
   if (length <= 0 || (size_t)length >= sizeof(canonical)) {
     output[0] = '\0';
     return false;
@@ -595,6 +649,8 @@ static int laghu_image_prepare(VipsImage *input, const laghu_image_request *requ
   return 0;
 }
 
+static int laghu_image_denoise(VipsImage *input, VipsImage **output) { return vips_median(input, output, 3, NULL); }
+
 static int laghu_image_save(VipsImage *image, laghu_image_format format, const laghu_image_request *request, bool lossless, bool progressive,
                             bool sampling, void **output, size_t *output_length) {
   int keep = VIPS_FOREIGN_KEEP_ALL;
@@ -770,6 +826,7 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
   laghu_image_format input_format;
   VipsImage *input = NULL;
   VipsImage *prepared = NULL;
+  VipsImage *denoised = NULL;
   VipsImage *opaque_rgb = NULL;
   VipsImage *candidate_source;
   unsigned int width;
@@ -826,6 +883,16 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
   width = (unsigned int)vips_image_get_width(prepared);
   height = laghu_image_page_height(prepared);
   candidate_source = prepared;
+  /* JPEG is the bounded safe lane: every JPEG candidate below is lossy. PNG
+   * and WebP can take lossless branches and must retain exact pixels. */
+  if (request->denoise && request->allow_lossy && frames == 1U && !vips_image_hasalpha(prepared) && input_format == LAGHU_IMAGE_FORMAT_JPEG) {
+    if (laghu_image_denoise(prepared, &denoised) == 0) {
+      candidate_source = denoised;
+      result->denoised = true;
+    } else {
+      vips_error_clear();
+    }
+  }
 
 #define LAGHU_TRY_SAVE(target_format, lossless_value, filter_bits)                                                                       \
   do {                                                                                                                                   \
@@ -875,11 +942,11 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
         if (!jpeg_ready) {
           vips_error_clear();
         } else {
-          candidate_source = opaque_rgb != NULL ? opaque_rgb : prepared;
+          candidate_source = opaque_rgb != NULL ? opaque_rgb : (denoised != NULL ? denoised : prepared);
           LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_JPEG, false,
                          effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_PNG_TO_JPEG | LAGHU_IMAGE_STRIP_METADATA |
                                       LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
-          candidate_source = prepared;
+          candidate_source = denoised != NULL ? denoised : prepared;
         }
       }
       if (request->accept_webp && (effective & LAGHU_IMAGE_TO_WEBP_LOSSLESS) != 0U) {
@@ -893,7 +960,7 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_WEBP, true,
                        effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_STRIP_METADATA |
                                     LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
-        candidate_source = prepared;
+        candidate_source = denoised != NULL ? denoised : prepared;
       }
       if (request->accept_jxl && request->allow_lossy && (backend->capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U) {
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_JXL, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
@@ -944,6 +1011,9 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
   }
   if (opaque_rgb != NULL) {
     g_object_unref(opaque_rgb);
+  }
+  if (denoised != NULL) {
+    g_object_unref(denoised);
   }
   g_object_unref(prepared);
   g_object_unref(input);

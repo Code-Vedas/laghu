@@ -14,7 +14,7 @@ from typing import Any
 
 _METRIC = re.compile(r"^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+([0-9.eE+-]+)$")
 _LE = re.compile(r'(?:^|,)le="([^"]+)"')
-_SCORE = re.compile(r"(?:ssimulacra2(?: score)?|score)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", re.I)
+_SCORE = re.compile(r"(?:ssimulacra2(?: score)?|score)\s*[:=]\s*(-?[0-9]+(?:\.[0-9]+)?)", re.I)
 
 
 def prometheus_snapshot(text: str) -> dict[str, float]:

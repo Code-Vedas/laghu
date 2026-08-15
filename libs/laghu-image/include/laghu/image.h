@@ -126,6 +126,7 @@ typedef struct {
   bool accept_webp;
   bool accept_avif;
   bool accept_jxl;
+  bool denoise;
   unsigned int quality;
   unsigned int target_width;
   unsigned int target_height;
@@ -151,6 +152,7 @@ typedef struct {
   bool used_candidate;
   bool backend_unavailable;
   bool input_rejected;
+  bool denoised;
 } laghu_image_result;
 
 typedef struct {
@@ -283,6 +285,9 @@ laghu_image_viewport_bucket laghu_image_viewport_bucket_for_width(unsigned int w
 unsigned int laghu_image_quality_cap(unsigned int configured_quality, bool save_data);
 unsigned int laghu_image_adaptive_quality(laghu_image_content_class content, unsigned int configured_quality, bool save_data);
 bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output);
+/* Uses a bounded thumbnail roughness measurement. Photo and illustration
+ * input may qualify; undecodable input and unavailable backends return false. */
+bool laghu_image_denoise_eligible(laghu_buffer input, laghu_image_content_class content_class);
 bool laghu_image_backend_probe(laghu_image_backend *backend);
 laghu_image_format laghu_image_detect_format(laghu_buffer input);
 const char *laghu_image_format_name(laghu_image_format format);

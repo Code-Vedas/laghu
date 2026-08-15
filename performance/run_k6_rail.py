@@ -88,7 +88,7 @@ MOBILE_2X = {
 }
 TABLET_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "768", "Width": "768", "User-Agent": CHROME}
 DESKTOP_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "1200", "Width": "1200", "User-Agent": CHROME}
-CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illustration.jpg", "/image-flat-color.jpg")
+CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illustration.jpg", "/image-flat-color.jpg", "/image-noisy.jpg")
 ARTIFACT_POLL_SECONDS = 0.1
 PAGE_SPEED_ARTIFACT_TIMEOUT_SECONDS = 30.0
 DEFAULT_ARTIFACT_TIMEOUT_SECONDS = 12.0
@@ -341,7 +341,7 @@ def expected_image(
             reference = output / f"quality-reference-{source_path.rsplit('/', 1)[-1]}"
             if not reference.exists():
                 reference.write_bytes(request(plain_target(target).base_url + source_path)["body"])
-            artifact = output / f"quality-{target.name.replace('/', '-')}-{label.lower()}-{source_path.rsplit('/', 1)[-1]}.image"
+            artifact = output / f"quality-{target.name.replace('/', '-')}-{label.lower()}-{source_path.rsplit('/', 1)[-1]}{image_suffix(content_type)}"
             artifact.write_bytes(response["body"])
             result = cell(target, f"capability-{label.lower()}", url, response, source_bytes)
             result["quality_artifact"] = artifact.name
@@ -498,7 +498,7 @@ def image_quality(output: Path, cells: list[dict[str, Any]]) -> list[dict[str, A
                                 f"/output/{converted_reference.name}", f"/output/{metric_artifact.name}"],
                                check=True, capture_output=True, text=True)
         measurements.append({"target": cell["target"], "scenario": cell["scenario"], "metric": "ssimulacra2",
-                             "score": ssimulacra2_score(score.stdout), "reference_dimensions": reference_dimensions,
+                            "score": ssimulacra2_score(score.stdout or score.stderr), "reference_dimensions": reference_dimensions,
                              "candidate_dimensions": dimensions, "resized_for_metric": dimensions != reference_dimensions,
                              "codec": lower(cell["response_headers"]).get("content-type", "").split(";", 1)[0],
                              "original_wire_bytes": cell["original_wire_bytes"], "optimized_wire_bytes": cell["optimized_wire_bytes"],

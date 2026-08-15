@@ -114,6 +114,28 @@ static test_encoded_image test_static_image(laghu_image_format format, bool alph
   return encoded;
 }
 
+static test_encoded_image test_noisy_jpeg(void) {
+  const unsigned int width = 512U;
+  const unsigned int height = 384U;
+  unsigned char *pixels = g_malloc((size_t)width * height * 3U);
+  uint32_t state = 0x4c616768U;
+  VipsImage *image;
+  test_encoded_image encoded;
+  size_t index;
+
+  assert(pixels != NULL);
+  for (index = 0U; index < (size_t)width * height * 3U; ++index) {
+    state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+    pixels[index] = (unsigned char)(state >> 24U);
+  }
+  image = vips_image_new_from_memory_copy(pixels, (size_t)width * height * 3U, (int)width, (int)height, 3, VIPS_FORMAT_UCHAR);
+  g_free(pixels);
+  assert(image != NULL);
+  encoded = test_encode(image, LAGHU_IMAGE_FORMAT_JPEG);
+  g_object_unref(image);
+  return encoded;
+}
+
 static test_encoded_image test_opaque_alpha_png(void) {
   VipsImage *rgb = test_pattern(512U, 384U, false);
   VipsImage *alpha_base = NULL;
@@ -244,8 +266,39 @@ static void test_image_key_version_vector(void) {
   request.allow_lossy = true;
   request.accept_webp = true;
   assert(laghu_image_variant_key(&backend, &request, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", output));
-  assert(strcmp(output, "a23755ca4d5e1ac307f6d0296fd7162928a233b37196cdd26a58d8b42cda0362") == 0);
+  assert(strcmp(output, "777d767f02880bb3a1fae46e673288979afe3ca63e3a6a2abd4f042627fa0662") == 0);
+  request.denoise = true;
+  assert(laghu_image_variant_key(&backend, &request, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", output));
+  assert(strcmp(output, "4e42fed41f6db6c2292d1912848d4f5d57aa2f294311b682d0e5fbf17928a702") != 0);
 }
+
+#if LAGHU_HAVE_VIPS
+static void test_adaptive_denoise(void) {
+  laghu_image_backend backend;
+  laghu_image_content_class content_class;
+  laghu_image_request request;
+  laghu_image_result result;
+  test_encoded_image noisy = test_noisy_jpeg();
+
+  assert(laghu_image_backend_probe(&backend));
+  assert(laghu_image_classify((laghu_buffer){noisy.data, noisy.length}, &content_class));
+  assert(content_class == LAGHU_IMAGE_CONTENT_PHOTO || content_class == LAGHU_IMAGE_CONTENT_ILLUSTRATION);
+  assert(laghu_image_denoise_eligible((laghu_buffer){noisy.data, noisy.length}, content_class));
+  laghu_image_request_init(&request);
+  request.original = (laghu_buffer){noisy.data, noisy.length};
+  request.filters = LAGHU_IMAGE_RECOMPRESS_JPEG;
+  request.allow_lossy = true;
+  request.denoise = true;
+  assert(laghu_image_optimize(&backend, &request, &result));
+  assert(result.used_candidate && result.denoised);
+  laghu_image_result_release(&result);
+  request.allow_lossy = false;
+  assert(laghu_image_optimize(&backend, &request, &result));
+  assert(!result.denoised);
+  laghu_image_result_release(&result);
+  g_free(noisy.data);
+}
+#endif
 
 static void test_backend_and_fail_open(void) {
   static const unsigned char malformed[] = {0xff, 0xd8, 0xff, 0x00};
@@ -834,6 +887,7 @@ int main(void) {
   test_adaptive_quality_policy();
   test_svg_optimization();
 #if LAGHU_HAVE_VIPS
+  test_adaptive_denoise();
   test_byte_filters();
   test_geometry_inline_and_sprites();
   test_limits_capabilities_and_keys();

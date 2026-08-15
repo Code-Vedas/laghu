@@ -186,6 +186,7 @@ static int laghu_libvips_transform(const char *input_path, const char *output_pa
   laghu_image_backend backend;
   laghu_image_request request;
   laghu_image_result result;
+  laghu_image_content_class content_class = LAGHU_IMAGE_CONTENT_PHOTO;
   unsigned char *input;
   size_t input_length;
   int status;
@@ -199,13 +200,15 @@ static int laghu_libvips_transform(const char *input_path, const char *output_pa
   request.original = (laghu_buffer){input, input_length};
   request.allow_lossy = true;
   request.accept_webp = true;
+  (void)laghu_image_classify(request.original, &content_class);
+  request.denoise = laghu_image_denoise_eligible(request.original, content_class);
   if (!laghu_image_optimize(&backend, &request, &result)) {
     free(input);
     return 1;
   }
   status = laghu_write_file(output_path, result.selected);
-  fprintf(stderr, "laghu-libvips: %s -> %s (%zu -> %zu bytes)\n", laghu_image_format_name(result.input_format),
-          laghu_image_format_name(result.output_format), input_length, result.selected.length);
+  fprintf(stderr, "laghu-libvips: %s -> %s (%zu -> %zu bytes; denoise=%s)\n", laghu_image_format_name(result.input_format),
+          laghu_image_format_name(result.output_format), input_length, result.selected.length, result.denoised ? "yes" : "no");
   laghu_image_result_release(&result);
   free(input);
   return status;
@@ -316,6 +319,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
     request.accept_avif = job->accept_avif;
     request.accept_jxl = job->accept_jxl;
     request.quality = laghu_image_adaptive_quality(content_class, job->quality, job->save_data);
+    request.denoise = job->allow_lossy && laghu_image_denoise_eligible(job->payload, content_class);
     request.target_width = job->target_width[target];
     request.target_height = job->target_height[target];
     request.resize_filter = job->resize_filter[target];
