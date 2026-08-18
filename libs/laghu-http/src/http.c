@@ -617,6 +617,8 @@ static bool laghu_http_finish_cached_headers(const laghu_http_transaction *trans
   }
   (void)snprintf(etag, sizeof(etag), "\"laghu-%s\"", entry->payload_hash);
   return laghu_http_add_length(result, entry->length) && laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", vary) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "CDN-Cache-Control", "public, max-age=31536000, immutable") &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Surrogate-Control", "max-age=31536000") &&
          laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag", etag) &&
          laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Content-MD5", NULL) &&
          laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Digest", NULL);

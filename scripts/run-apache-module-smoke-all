@@ -30,6 +30,13 @@ modules=$(${APXS} -q LIBEXECDIR)
 service=${LAGHU_SERVICE:-"${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips"}
 javascript_service=${LAGHU_JAVASCRIPT_BIN:-"${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize"}
 status_bin=${LAGHU_STATUS_BIN:-"${REPO_ROOT}/tmp/build/servers/laghu/laghu"}
+core_build_dir=${LAGHU_CORE_BUILD_DIR:-"${REPO_ROOT}/tmp/build"}
+if [ "${LAGHU_SERVICE+x}" = "" ]; then
+  cmake --build "${core_build_dir}" --target laghu-libvips
+fi
+if [ "${LAGHU_STATUS_BIN+x}" = "" ]; then
+  cmake --build "${core_build_dir}" --target laghu
+fi
 service_pid=
 javascript_pid=
 origin_pid=
@@ -227,6 +234,7 @@ load_first_mpm() {
   printf 'Laghu FileCacheMetadataSize 16m\n'
   printf 'Laghu HtmlCacheOrigin https://h3-cache.example.test\n'
   printf 'Laghu HtmlCacheTtl 60\n'
+  printf 'Laghu OriginShield On\n'
   printf 'Laghu PurgeMethod PURGE\n'
   printf 'Laghu PurgeQuery On\n'
   printf 'Laghu PurgeTokenFile "%s/purge.token"\n' "${work}"
@@ -490,7 +498,7 @@ curl --fail --silent --dump-header "${work}/compression-cold.headers" \
 grep -i '^X-Laghu-Cache: miss' "${work}/compression-cold.headers" >/dev/null
 compression_attempt=0
 while [ "${compression_attempt}" -lt 100 ]; do
-  curl --fail --silent --compressed --dump-header "${work}/compression-warm.headers" \
+  curl --fail --silent --compressed --header 'Accept-Encoding: br' --dump-header "${work}/compression-warm.headers" \
     http://127.0.0.1:18081/compression-page.html >"${work}/compression-warm"
   if grep -i '^X-Laghu-Cache: hit' "${work}/compression-warm.headers" >/dev/null; then
     break
@@ -744,7 +752,11 @@ if grep '<!-- remove -->' "${work}/minify-page-warm" >/dev/null; then
   exit 1
 fi
 grep -i '^ETag: "laghu-html-' "${work}/minify-page-warm.headers" >/dev/null
-curl --fail --silent --compressed --dump-header "${work}/minify-page-br.headers" \
+grep -i '^CDN-Cache-Control: public, s-maxage=60, stale-while-revalidate=0' \
+  "${work}/minify-page-warm.headers" >/dev/null
+grep -i '^Surrogate-Control: public, s-maxage=60, stale-while-revalidate=0' \
+  "${work}/minify-page-warm.headers" >/dev/null
+curl --fail --silent --compressed --header 'Accept-Encoding: br' --dump-header "${work}/minify-page-br.headers" \
   http://127.0.0.1:18081/minify-page.html >"${work}/minify-page-br"
 cmp "${work}/minify-page-warm" "${work}/minify-page-br"
 grep -i '^Content-Encoding: br' "${work}/minify-page-br.headers" >/dev/null

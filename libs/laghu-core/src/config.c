@@ -52,6 +52,7 @@ static const laghu_config_name laghu_config_names[] = {
     {LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "html_cache_origin", "HtmlCacheOrigin"},
     {LAGHU_CONFIG_SETTING_HTML_CACHE_TTL, "html_cache_ttl", "HtmlCacheTtl"},
     {LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "html_cache_stale_ttl", "HtmlCacheStaleTtl"},
+    {LAGHU_CONFIG_SETTING_ORIGIN_SHIELD, "origin_shield", "OriginShield"},
     {LAGHU_CONFIG_SETTING_CACHE_MIME_TYPES, "cache_mime_types", "CacheMimeTypes"},
     {LAGHU_CONFIG_SETTING_DOMAIN, "domain", "Domain"},
     {LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN, "map_rewrite_domain", "MapRewriteDomain"},
@@ -203,6 +204,9 @@ bool laghu_config_setting_apply(laghu_config *config, laghu_config_setting setti
       break;
     case LAGHU_CONFIG_SETTING_QUERY_FILTER_OVERRIDES:
       mode = &config->query_filter_overrides;
+      break;
+    case LAGHU_CONFIG_SETTING_ORIGIN_SHIELD:
+      mode = &config->origin_shield;
       break;
     case LAGHU_CONFIG_SETTING_ALLOW_API:
       mode = &config->allow_api;

@@ -106,6 +106,22 @@ static bool laghu_http_apply_precompressed(laghu_http_transaction *transaction, 
   return true;
 }
 
+static bool laghu_http_apply_origin_shield(const laghu_http_transaction *transaction, laghu_http_transaction_result *result) {
+  char policy[96U];
+  int written;
+  if (transaction == NULL || result == NULL || transaction->environment.config.origin_shield != LAGHU_MODE_ON ||
+      transaction->action != LAGHU_HTTP_ACTION_CAPTURE_HTML || !transaction->cache_publishable || result->dependencies_pending ||
+      transaction->environment.config.html_cache_origin[0] == '\0' || transaction->environment.config.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET)
+    return true;
+  written = snprintf(policy, sizeof(policy), "public, s-maxage=%u, stale-while-revalidate=%u", transaction->environment.config.html_cache_ttl,
+                     transaction->environment.config.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET
+                         ? 0U
+                         : transaction->environment.config.html_cache_stale_ttl);
+  return written > 0 && (size_t)written < sizeof(policy) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "CDN-Cache-Control", policy) &&
+         laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Surrogate-Control", policy);
+}
+
 static void laghu_http_retain_preview_headers(laghu_http_transaction_result *result) {
   size_t index;
   size_t write = 0U;
@@ -1104,6 +1120,13 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction, laghu_
     result->owned_body = NULL;
   }
   if (!laghu_http_apply_precompressed(transaction, result)) {
+    laghu_http_transaction_result_release(result);
+    result->original = captured_body;
+    result->selected = captured_body;
+    result->action = transaction->action;
+    return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR);
+  }
+  if (!laghu_http_apply_origin_shield(transaction, result)) {
     laghu_http_transaction_result_release(result);
     result->original = captured_body;
     result->selected = captured_body;

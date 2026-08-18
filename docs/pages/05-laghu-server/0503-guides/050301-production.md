@@ -34,6 +34,7 @@ laghu \
   --html-cache-origin https://origin.example.com \
   --html-cache-ttl 30 \
   --html-cache-stale-ttl 300 \
+  --origin-shield on \
   --javascript-queue /run/laghu/javascript.queue \
   --javascript-target "defaults and supports es6-module and not dead" \
   --javascript-observation-config /etc/laghu/javascript-observation.conf \

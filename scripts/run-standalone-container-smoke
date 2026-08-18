@@ -555,6 +555,8 @@ def run_origin_mode(mode: str, executable: Path, optimizer: Path | None) -> None
             "https://h3-cache.example.test",
             "--html-cache-ttl",
             "60",
+            "--origin-shield",
+            "on",
             "--worker-queue",
             str(cache_root / "jobs.queue"),
             "--javascript-queue",

@@ -78,6 +78,7 @@ Laghu HtmlRefreshQueue /run/laghu/html-refresh-www.queue
   Laghu HtmlCacheOrigin https://origin.example.com
   Laghu HtmlCacheTtl 30
   Laghu HtmlCacheStaleTtl 300
+  Laghu OriginShield On
   Laghu ImageBeacon On
   Laghu CriticalCssBeacon On
   Laghu InstrumentationBeacon On

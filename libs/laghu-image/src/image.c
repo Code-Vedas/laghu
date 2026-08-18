@@ -414,12 +414,15 @@ static void laghu_vips_probe_codec(laghu_image_format format, const char *load_o
 
 static bool laghu_vips_probe_avif(void) {
   VipsImage *source = NULL;
+  VipsImage *rgb = NULL;
   VipsImage *decoded = NULL;
   void *encoded = NULL;
   size_t encoded_length = 0U;
   bool available = false;
   if (!laghu_vips_has_operation("heifsave_buffer") || !laghu_vips_has_operation("heifload_buffer") ||
-      vips_black(&source, 2, 2, "bands", 3, NULL) != 0 || vips_image_write_to_buffer(source, ".avif", &encoded, &encoded_length, NULL) != 0 ||
+      vips_black(&source, 2, 2, "bands", 3, NULL) != 0 ||
+      vips_copy(source, &rgb, "interpretation", VIPS_INTERPRETATION_sRGB, NULL) != 0 ||
+      vips_image_write_to_buffer(rgb, ".avif", &encoded, &encoded_length, NULL) != 0 ||
       (decoded = vips_image_new_from_buffer(encoded, encoded_length, "", NULL)) == NULL) {
     vips_error_clear();
     goto done;
@@ -427,6 +430,7 @@ static bool laghu_vips_probe_avif(void) {
   available = true;
 done:
   if (decoded != NULL) g_object_unref(decoded);
+  if (rgb != NULL) g_object_unref(rgb);
   if (source != NULL) g_object_unref(source);
   g_free(encoded);
   return available;

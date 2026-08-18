@@ -88,6 +88,7 @@ http {
     laghu html_cache_origin https://origin.example.com;
     laghu html_cache_ttl 30;
     laghu html_cache_stale_ttl 300;
+    laghu origin_shield on;
 
     # Opt-in learning. Sampling occurs in the browser.
     laghu image_beacon on;

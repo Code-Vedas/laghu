@@ -313,22 +313,24 @@ static void test_image_cold_warm_and_queue(void) {
   CHECK(result.decision == LAGHU_DECISION_IMAGE_HIT);
   CHECK(result.selected.length == sizeof(variant) - 1U);
   CHECK(result.cached_file && strcmp(result.cached_entry.variant_path, entry.variant_path) == 0);
-  CHECK(result.header_operation_count == 9U);
+  CHECK(result.header_operation_count == 11U);
   CHECK(strcmp(result.header_operations[0].name, "Content-Type") == 0);
   CHECK(strcmp(result.header_operations[1].name, "Content-Length") == 0);
   CHECK(strcmp(result.header_operations[2].name, "Vary") == 0);
-  CHECK(strcmp(result.header_operations[3].name, "ETag") == 0);
-  CHECK(strcmp(result.header_operations[3].value,
+  CHECK(strcmp(result.header_operations[3].name, "CDN-Cache-Control") == 0);
+  CHECK(strcmp(result.header_operations[4].name, "Surrogate-Control") == 0);
+  CHECK(strcmp(result.header_operations[5].name, "ETag") == 0);
+  CHECK(strcmp(result.header_operations[5].value,
                "\"laghu-"
                "81db8ebbbbc69c6c6ad4a6aa92b76e0c08af547da236b9e2c9dbe1d8285a813"
                "0\"") == 0);
-  CHECK(result.header_operations[4].kind == LAGHU_HTTP_HEADER_REMOVE);
-  CHECK(result.header_operations[5].kind == LAGHU_HTTP_HEADER_REMOVE);
-  CHECK(strcmp(result.header_operations[6].name, "X-Laghu") == 0);
-  CHECK(strcmp(result.header_operations[7].name, "X-Laghu-Cache") == 0);
-  CHECK(strcmp(result.header_operations[7].value, "hit") == 0);
-  CHECK(strcmp(result.header_operations[8].name, "X-Laghu-Transform") == 0);
-  CHECK(strcmp(result.header_operations[8].value, "optimized") == 0);
+  CHECK(result.header_operations[6].kind == LAGHU_HTTP_HEADER_REMOVE);
+  CHECK(result.header_operations[7].kind == LAGHU_HTTP_HEADER_REMOVE);
+  CHECK(strcmp(result.header_operations[8].name, "X-Laghu") == 0);
+  CHECK(strcmp(result.header_operations[9].name, "X-Laghu-Cache") == 0);
+  CHECK(strcmp(result.header_operations[9].value, "hit") == 0);
+  CHECK(strcmp(result.header_operations[10].name, "X-Laghu-Transform") == 0);
+  CHECK(strcmp(result.header_operations[10].value, "optimized") == 0);
   laghu_http_transaction_result_release(&result);
   {
     char internal_path[LAGHU_RUNTIME_PATH_SIZE];
@@ -685,6 +687,10 @@ static void test_html_cache_representation_precedes_encoding(void) {
   laghu_http_transaction transaction;
   laghu_http_transaction_result prepared;
   laghu_http_transaction_result finalized;
+  strcpy(environment.config.html_cache_origin, "https://origin.example.test");
+  environment.config.html_cache_ttl = 30U;
+  environment.config.html_cache_stale_ttl = 300U;
+  environment.config.origin_shield = LAGHU_MODE_ON;
   laghu_http_transaction_init(&transaction);
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &prepared));
   CHECK(prepared.action == LAGHU_HTTP_ACTION_CAPTURE_HTML);
@@ -693,6 +699,13 @@ static void test_html_cache_representation_precedes_encoding(void) {
   CHECK(finalized.cache_selected.length == sizeof(html) - 1U);
   CHECK(memcmp(finalized.cache_selected.data, html, sizeof(html) - 1U) == 0);
   CHECK(finalized.selected.length < finalized.cache_selected.length);
+  {
+    laghu_http_header shield;
+    CHECK(find_operation_header(&finalized, "CDN-Cache-Control", &shield) != NULL);
+    CHECK(shield.value.length == sizeof("public, s-maxage=30, stale-while-revalidate=300") - 1U);
+    CHECK(memcmp(shield.value.data, "public, s-maxage=30, stale-while-revalidate=300", shield.value.length) == 0);
+    CHECK(find_operation_header(&finalized, "Surrogate-Control", &shield) != NULL);
+  }
   {
     size_t index;
     bool encoding_vary = false;

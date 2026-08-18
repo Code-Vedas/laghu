@@ -88,6 +88,12 @@ static int laghu_apache_html_cache_handler(request_rec *request, laghu_apache_co
   }
   apr_table_setn(request->headers_out, "x-laghu-cache", "hit");
   apr_table_setn(request->headers_out, "Vary", "Accept-Encoding");
+  if (config->core.origin_shield == LAGHU_MODE_ON && config->core.html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET) {
+    const char *policy = apr_psprintf(request->pool, "public, s-maxage=%u, stale-while-revalidate=%u", config->core.html_cache_ttl,
+                                      config->core.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET ? 0U : config->core.html_cache_stale_ttl);
+    apr_table_set(request->headers_out, "CDN-Cache-Control", policy);
+    apr_table_set(request->headers_out, "Surrogate-Control", policy);
+  }
   if (request->header_only) return OK;
   return ap_rwrite(body, (int)record.entry.length, request) == (int)record.entry.length ? OK : HTTP_INTERNAL_SERVER_ERROR;
 }

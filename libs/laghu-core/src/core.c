@@ -194,6 +194,7 @@ void laghu_config_init(laghu_config *config) {
   config->html_cache_origin[0] = '\0';
   config->html_cache_ttl = LAGHU_HTML_CACHE_TTL_UNSET;
   config->html_cache_stale_ttl = LAGHU_HTML_CACHE_STALE_TTL_UNSET;
+  config->origin_shield = LAGHU_MODE_UNSET;
   config->cache_mime_types[0] = '\0';
   config->respect_vary = LAGHU_MODE_UNSET;
   config->respect_x_forwarded_proto = LAGHU_MODE_UNSET;
@@ -229,6 +230,7 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent, const 
   laghu_mode parent_respect_vary = LAGHU_MODE_ON;
   laghu_mode parent_respect_x_forwarded_proto = LAGHU_MODE_OFF;
   laghu_mode parent_query_filter_overrides = LAGHU_MODE_OFF;
+  laghu_mode parent_origin_shield = LAGHU_MODE_OFF;
   laghu_mode parent_rollout = LAGHU_MODE_OFF;
   unsigned int parent_rollout_percentage = LAGHU_ROLLOUT_PERCENTAGE_UNSET;
   laghu_preset parent_rollout_preset = LAGHU_PRESET_UNSET;
@@ -248,6 +250,9 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent, const 
     }
     if (parent->allow_api != LAGHU_MODE_UNSET) {
       parent_allow_api = parent->allow_api;
+    }
+    if (parent->origin_shield != LAGHU_MODE_UNSET) {
+      parent_origin_shield = parent->origin_shield;
     }
     if (parent->image_quality != LAGHU_IMAGE_QUALITY_UNSET) {
       parent_image_quality = parent->image_quality;
@@ -373,6 +378,7 @@ void laghu_config_merge(laghu_config *result, const laghu_config *parent, const 
       child != NULL && child->respect_x_forwarded_proto != LAGHU_MODE_UNSET ? child->respect_x_forwarded_proto : parent_respect_x_forwarded_proto;
   result->query_filter_overrides =
       child != NULL && child->query_filter_overrides != LAGHU_MODE_UNSET ? child->query_filter_overrides : parent_query_filter_overrides;
+  result->origin_shield = child != NULL && child->origin_shield != LAGHU_MODE_UNSET ? child->origin_shield : parent_origin_shield;
   result->rollout = child != NULL && child->rollout != LAGHU_MODE_UNSET ? child->rollout : parent_rollout;
   result->rollout_percentage =
       child != NULL && child->rollout_percentage != LAGHU_ROLLOUT_PERCENTAGE_UNSET ? child->rollout_percentage : parent_rollout_percentage;

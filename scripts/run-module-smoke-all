@@ -20,6 +20,7 @@ H3_PORT=$((PORT + 2))
 OPTIMIZER_BIN="${LAGHU_OPTIMIZER_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-libvips/laghu-libvips}"
 JAVASCRIPT_BIN="${LAGHU_JAVASCRIPT_BIN:-${REPO_ROOT}/tmp/build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize}"
 STATUS_BIN="${LAGHU_STATUS_BIN:-${REPO_ROOT}/tmp/build/servers/laghu/laghu}"
+CORE_BUILD_DIR="${LAGHU_CORE_BUILD_DIR:-${REPO_ROOT}/tmp/build}"
 HTTP2_ENABLED=0
 HTTP2_DIRECTIVE=
 HTTP3_ENABLED=0
@@ -29,6 +30,12 @@ nginx_user_directive="user $(id -un);"
 
 if [ ! -x "${NGINX_BIN}" ] || [ ! -f "${MODULE}" ]; then
   "${SCRIPT_DIR}/build-nginx-module"
+fi
+if [ "${LAGHU_OPTIMIZER_BIN+x}" = "" ]; then
+  cmake --build "${CORE_BUILD_DIR}" --target laghu-libvips
+fi
+if [ "${LAGHU_STATUS_BIN+x}" = "" ]; then
+  cmake --build "${CORE_BUILD_DIR}" --target laghu
 fi
 
 if "${NGINX_BIN}" -V 2>&1 | grep -q 'http_v2_module'; then
@@ -251,6 +258,7 @@ ${HTTP2_DIRECTIVE}
     location = /http3.html {
       laghu html_cache_origin https://h3-cache.example.test;
       laghu html_cache_ttl 60;
+      laghu origin_shield on;
       default_type text/html;
       try_files /http3.html =404;
     }
@@ -351,6 +359,7 @@ ${HTTP2_DIRECTIVE}
       laghu rewrite_level bandwidth;
       laghu html_cache_origin https://h3-cache.example.test;
       laghu html_cache_ttl 60;
+      laghu origin_shield on;
       default_type text/html;
       try_files /minify-page.html =404;
     }
@@ -805,6 +814,10 @@ if [ "${HTTP3_ENABLED}" -eq 1 ] && [ "${CURL_HTTP3_SUPPORT}" -eq 1 ]; then
     exit 1
   fi
   grep -i '^X-Laghu-Cache: hit' "${SMOKE_DIR}/http3-headers-2" >/dev/null
+  grep -i '^CDN-Cache-Control: public, s-maxage=60, stale-while-revalidate=0' \
+    "${SMOKE_DIR}/http3-headers-2" >/dev/null
+  grep -i '^Surrogate-Control: public, s-maxage=60, stale-while-revalidate=0' \
+    "${SMOKE_DIR}/http3-headers-2" >/dev/null
   grep -F '<!-- @license keep -->' "${SMOKE_DIR}/http3-body-2" >/dev/null
   if grep -F '<!-- remove -->' "${SMOKE_DIR}/http3-body-2" >/dev/null; then
     echo "HTTP/3 warm transformation output retained removed content." >&2
@@ -1436,6 +1449,10 @@ if grep '<!-- remove -->' "${SMOKE_DIR}/minify-page-warm" >/dev/null; then
   exit 1
 fi
 grep -i '^ETag: "laghu-html-' \
+  "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
+grep -i '^CDN-Cache-Control: public, s-maxage=60, stale-while-revalidate=0' \
+  "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
+grep -i '^Surrogate-Control: public, s-maxage=60, stale-while-revalidate=0' \
   "${SMOKE_DIR}/minify-page-warm.headers" >/dev/null
 curl --fail --silent -H 'Accept-Encoding: br' \
   --dump-header "${SMOKE_DIR}/minify-page-br.headers" \

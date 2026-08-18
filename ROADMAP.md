@@ -191,7 +191,7 @@
 - [x] Store Brotli and Gzip pre-compressed text variants at optimization time.
 - [x] Serve immutable, content-hashed resources with safe long TTLs.
 - [x] Key cached variants by the bounded client-capability inputs that affect each transform.
-- [ ] Emit CDN-safe headers and support origin-shield operation.
+- [x] Emit CDN-safe headers and support origin-shield operation.
 
 ### 4.4 Safety and Security
 - [x] Make transforms Content-Security-Policy-safe, including nonce and `strict-dynamic` detection and unsafe-transform auto-disable.

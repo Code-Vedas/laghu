@@ -189,6 +189,8 @@ typedef struct {
   char html_cache_origin[LAGHU_HTML_CACHE_ORIGIN_SIZE];
   unsigned int html_cache_ttl;
   unsigned int html_cache_stale_ttl;
+  /* Opt-in shared-CDN cache policy for safe HTML; browser directives remain origin-owned. */
+  laghu_mode origin_shield;
   char cache_mime_types[LAGHU_MIME_ALLOWLIST_SIZE];
   laghu_mode respect_vary;
   laghu_mode respect_x_forwarded_proto;

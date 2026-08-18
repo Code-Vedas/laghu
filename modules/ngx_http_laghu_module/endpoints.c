@@ -52,6 +52,8 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(ngx_http_request_t *request, 
   ngx_int_t status;
   size_t content_type_length;
   ngx_table_elt_t *header;
+  u_char *shield_policy;
+  size_t shield_policy_length;
   bool administration_candidate;
   if (request == NULL || conf == NULL || conf->core.mode != LAGHU_MODE_ON || request->method != NGX_HTTP_GET ||
       conf->core.html_cache_origin[0] == '\0' || conf->core.html_cache_ttl == LAGHU_HTML_CACHE_TTL_UNSET ||
@@ -123,6 +125,26 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(ngx_http_request_t *request, 
   header->hash = 1U;
   ngx_str_set(&header->key, "Vary");
   ngx_str_set(&header->value, "Accept-Encoding");
+  if (conf->core.origin_shield == LAGHU_MODE_ON && conf->core.html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET) {
+    shield_policy = ngx_pnalloc(request->pool, 96U);
+    if (shield_policy == NULL) return NGX_DECLINED;
+    shield_policy_length = (size_t)(ngx_snprintf(shield_policy, 96U, "public, s-maxage=%ui, stale-while-revalidate=%ui", conf->core.html_cache_ttl,
+                                                  conf->core.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET
+                                                      ? 0U
+                                                      : conf->core.html_cache_stale_ttl) -
+                                    shield_policy);
+    for (unsigned int shield_index = 0U; shield_index < 2U; ++shield_index) {
+      header = ngx_list_push(&request->headers_out.headers);
+      if (header == NULL) return NGX_DECLINED;
+      header->hash = 1U;
+      if (shield_index == 0U) {
+        ngx_str_set(&header->key, "CDN-Cache-Control");
+      } else {
+        ngx_str_set(&header->key, "Surrogate-Control");
+      }
+      header->value = (ngx_str_t){shield_policy_length, shield_policy};
+    }
+  }
   buffer->pos = body;
   buffer->last = body + record.entry.length;
   buffer->memory = 1U;

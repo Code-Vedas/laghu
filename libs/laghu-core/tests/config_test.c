@@ -20,6 +20,7 @@ int main(void) {
   assert(laghu_config_setting_find("Preset") == LAGHU_CONFIG_SETTING_PRESET);
   assert(laghu_config_setting_find("--rewrite-level") == LAGHU_CONFIG_SETTING_REWRITE_LEVEL);
   assert(laghu_config_setting_find("HtmlCacheOrigin") == LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN);
+  assert(laghu_config_setting_find("origin-shield") == LAGHU_CONFIG_SETTING_ORIGIN_SHIELD);
   assert(laghu_config_setting_find("--not-a-setting") == LAGHU_CONFIG_SETTING_UNKNOWN);
 
   assert(laghu_config_setting_apply(&config, LAGHU_CONFIG_SETTING_PRESET, "balanced", error, sizeof(error)));
@@ -37,6 +38,8 @@ int main(void) {
   assert(laghu_config_setting_apply(&config, LAGHU_CONFIG_SETTING_HTML_CACHE_STALE_TTL, "300", error, sizeof(error)));
   assert(config.html_cache_ttl == 30U);
   assert(config.html_cache_stale_ttl == 300U);
+  assert(laghu_config_setting_apply(&config, LAGHU_CONFIG_SETTING_ORIGIN_SHIELD, "on", error, sizeof(error)));
+  assert(config.origin_shield == LAGHU_MODE_ON);
   assert(!laghu_config_setting_apply(&config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "https://other.example", error, sizeof(error)));
   laghu_config_init(&config);
   assert(!laghu_config_setting_apply(&config, LAGHU_CONFIG_SETTING_HTML_CACHE_ORIGIN, "http://origin.example", error, sizeof(error)));

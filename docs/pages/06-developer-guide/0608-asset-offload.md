@@ -52,3 +52,19 @@ If capture and file acquisition miss, the same worker may use the asset policy's
 `rewrite_only` verifies pre-existing immutable objects; `upload_and_rewrite` uploads and then verifies them. Both modes preserve the original URL for pending, failed, stale, corrupt, oversized, denied, or unavailable assets. Query strings and fragments are preserved by default but never determine the immutable content key.
 
 Provider health is represented by catalog transitions. Retryable failures use bounded exponential backoff; permanent failures remain fail-open. Deleting a failed catalog record allows an administrator to retry after correcting configuration. Mutable overwrites, proxy-domain routing, and vendor-specific providers are outside this feature.
+
+## CDN and origin shield headers
+
+Laghu's content-hashed internal assets always emit browser-safe immutable
+`Cache-Control`, plus `CDN-Cache-Control` and `Surrogate-Control` for shared
+caches. The controls contain only fixed freshness policy and never carry an
+origin URL, cache key, request header, or user identity.
+
+For HTML, enable an origin-shield policy only alongside the existing safe HTML
+micro-cache settings: `html_cache_origin`, `html_cache_ttl`, and optionally
+`html_cache_stale_ttl`. `origin_shield on` preserves origin browser directives
+and emits the configured shared-cache TTL/SWR through `CDN-Cache-Control` and
+`Surrogate-Control`. Authenticated, `private`, `no-store`, unsupported-Vary,
+partial, and failed/dependency-pending responses never receive shield headers.
+The local cache and CDN are independent fail-open layers; neither performs
+provider I/O on Laghu's request path.
