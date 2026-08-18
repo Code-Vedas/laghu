@@ -631,6 +631,7 @@ static bool laghu_http_apply_precompressed_cached(const laghu_http_transaction *
   if (transaction == NULL || result == NULL || !result->cached_file || result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
       !laghu_precompressed_text_type(transaction->content_type))
     return true;
+  if (laghu_http_find_header(transaction->request->headers, transaction->request->header_count, "Range") != NULL) return true;
   accept_encoding = laghu_http_find_header(transaction->request->headers, transaction->request->header_count, "Accept-Encoding");
   if (accept_encoding != NULL && (accept_encoding->value.length > LAGHU_HTTP_MAX_HEADER_VALUE ||
                                   !laghu_http_copy_view(accept_encoding->value, accept_encoding_value, sizeof(accept_encoding_value))))

@@ -188,7 +188,7 @@
 - [x] Inject preconnect and DNS-prefetch hints for detected third-party origins.
 - [x] Validate all transforms and caching behavior under HTTP/2.
 - [x] Validate all transforms and caching behavior under HTTP/3/QUIC.
-- [ ] Store Brotli and Gzip pre-compressed text variants at optimization time.
+- [x] Store Brotli and Gzip pre-compressed text variants at optimization time.
 - [x] Serve immutable, content-hashed resources with safe long TTLs.
 - [x] Key cached variants by the bounded client-capability inputs that affect each transform.
 - [ ] Emit CDN-safe headers and support origin-shield operation.

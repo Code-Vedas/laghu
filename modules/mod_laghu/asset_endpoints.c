@@ -80,7 +80,6 @@ int laghu_apache_asset_endpoint(request_rec *request, laghu_apache_config *confi
   ap_set_content_type(request, css_asset ? "text/css" : javascript_map ? "application/json" : entry.content_type);
   ap_set_content_length(request, (apr_off_t)entry.length);
   apr_table_setn(request->headers_out, "Cache-Control", "public, max-age=31536000, immutable");
-  apr_table_set(request->headers_out, "ETag", apr_psprintf(request->pool, "\"%s\"", key));
   if (request->header_only) return OK;
   if (apr_file_open(&file, entry.variant_path, APR_READ | APR_BINARY, APR_OS_DEFAULT, request->pool) != APR_SUCCESS ||
       ap_send_fd(file, request, 0, entry.length, &sent) != APR_SUCCESS || sent != entry.length) {

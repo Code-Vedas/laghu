@@ -95,17 +95,6 @@ ngx_int_t ngx_http_laghu_asset_endpoint(ngx_http_request_t *request, ngx_http_la
   header->hash = 1U;
   ngx_str_set(&header->key, "Cache-Control");
   ngx_str_set(&header->value, "public, max-age=31536000, immutable");
-  header = ngx_list_push(&request->headers_out.headers);
-  if (header == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
-  header->hash = 1U;
-  ngx_str_set(&header->key, "ETag");
-  header->value.data = ngx_pnalloc(request->pool, LAGHU_SHA256_HEX_LENGTH + 3U);
-  if (header->value.data == NULL) return NGX_HTTP_INTERNAL_SERVER_ERROR;
-  header->value.len = LAGHU_SHA256_HEX_LENGTH + 2U;
-  header->value.data[0] = '"';
-  ngx_memcpy(header->value.data + 1U, key, LAGHU_SHA256_HEX_LENGTH);
-  header->value.data[LAGHU_SHA256_HEX_LENGTH + 1U] = '"';
-  header->value.data[LAGHU_SHA256_HEX_LENGTH + 2U] = '\0';
   if (ngx_http_send_header(request) == NGX_ERROR || request->method == NGX_HTTP_HEAD) return NGX_OK;
   buffer = ngx_calloc_buf(request->pool);
   cleanup = ngx_pool_cleanup_add(request->pool, sizeof(*file));

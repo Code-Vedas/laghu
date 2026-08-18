@@ -72,6 +72,10 @@ static bool laghu_http_apply_precompressed(laghu_http_transaction *transaction, 
   if (transaction == NULL || result == NULL || result->selected.data == NULL || result->selected.length < LAGHU_PRECOMPRESSED_MINIMUM ||
       !laghu_precompressed_text_type(transaction->content_type))
     return true;
+  /* A byte range addresses the identity representation.  Adapters mark a
+   * partial origin response before finalize, but retain this guard for
+   * callers which expose a cached representation directly. */
+  if (laghu_http_find_header(transaction->request->headers, transaction->request->header_count, "Range") != NULL) return true;
   (void)laghu_precompressed_publish(transaction->environment.cache_path, result->selected, transaction->content_type, transaction->validator);
   accept_encoding = laghu_http_find_header(transaction->request->headers, transaction->request->header_count, "Accept-Encoding");
   if (accept_encoding != NULL) {
@@ -81,14 +85,14 @@ static bool laghu_http_apply_precompressed(laghu_http_transaction *transaction, 
   }
   if (!laghu_precompressed_select(transaction->environment.cache_path, result->selected, accept_encoding == NULL ? NULL : accept_encoding_value,
                                   &entry, &coding))
-    return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", "Accept-Encoding");
+    return laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_APPEND, "Vary", "Accept-Encoding");
   body = malloc(entry.length);
   if (body == NULL || !laghu_runtime_cache_read(&entry, body, entry.length)) {
     free(body);
     return false;
   }
   (void)snprintf(etag, sizeof(etag), "\"laghu-%s-%s\"", laghu_precompressed_coding_name(coding), entry.payload_hash);
-  if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Vary", "Accept-Encoding") ||
+  if (!laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_APPEND, "Vary", "Accept-Encoding") ||
       !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "Content-Encoding", laghu_precompressed_coding_name(coding)) ||
       !laghu_http_add_length(result, entry.length) || !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_SET, "ETag", etag) ||
       !laghu_http_add_header_operation(result, LAGHU_HTTP_HEADER_REMOVE, "Content-MD5", NULL) ||

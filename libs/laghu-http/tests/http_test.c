@@ -673,7 +673,7 @@ static void test_html_preconnect_headers(void) {
 }
 
 static void test_html_cache_representation_precedes_encoding(void) {
-  const laghu_http_header response_headers[] = {{VIEW("Content-Type"), VIEW("text/html")}};
+  const laghu_http_header response_headers[] = {{VIEW("Content-Type"), VIEW("text/html")}, {VIEW("Vary"), VIEW("Accept")}};
   const laghu_http_header request_headers[] = {{VIEW("Accept-Encoding"), VIEW("br")}};
   static const unsigned char html[] =
       "<html><body>cache representation cache representation cache "
@@ -681,7 +681,7 @@ static void test_html_cache_representation_precedes_encoding(void) {
       "representation cache representation cache representation</body></html>";
   laghu_http_environment environment = test_environment(test_cache_path, NULL);
   laghu_http_request request = test_request(request_headers, 1U, VIEW("/encoded-cache.html"));
-  laghu_http_response response = test_response(response_headers, 1U, sizeof(html) - 1U);
+  laghu_http_response response = test_response(response_headers, 2U, sizeof(html) - 1U);
   laghu_http_transaction transaction;
   laghu_http_transaction_result prepared;
   laghu_http_transaction_result finalized;
@@ -693,7 +693,31 @@ static void test_html_cache_representation_precedes_encoding(void) {
   CHECK(finalized.cache_selected.length == sizeof(html) - 1U);
   CHECK(memcmp(finalized.cache_selected.data, html, sizeof(html) - 1U) == 0);
   CHECK(finalized.selected.length < finalized.cache_selected.length);
+  {
+    size_t index;
+    bool encoding_vary = false;
+    for (index = 0U; index < finalized.header_operation_count; ++index) {
+      const laghu_http_header_operation *operation = &finalized.header_operations[index];
+      if (strcmp(operation->name, "Vary") == 0 && operation->kind == LAGHU_HTTP_HEADER_APPEND &&
+          strcmp(operation->value, "Accept-Encoding") == 0)
+        encoding_vary = true;
+    }
+    CHECK(encoding_vary);
+  }
   laghu_http_transaction_result_release(&finalized);
+  {
+    const laghu_http_header range_headers[] = {{VIEW("Accept-Encoding"), VIEW("br")}, {VIEW("Range"), VIEW("bytes=0-31")}};
+    laghu_http_header content_encoding;
+    request.headers = range_headers;
+    request.header_count = 2U;
+    laghu_http_transaction_init(&transaction);
+    CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &prepared));
+    laghu_http_transaction_result_release(&prepared);
+    CHECK(laghu_http_transaction_finalize(&transaction, (laghu_buffer){html, sizeof(html) - 1U}, &finalized));
+    CHECK(finalized.selected.length == sizeof(html) - 1U);
+    CHECK(find_operation_header(&finalized, "Content-Encoding", &content_encoding) == NULL);
+    laghu_http_transaction_result_release(&finalized);
+  }
 }
 
 static void test_validator_hints_and_worker_liveness(void) {
