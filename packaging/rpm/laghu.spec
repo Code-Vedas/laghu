@@ -24,6 +24,7 @@ BuildRequires: pkgconfig(vips) >= 8.15
 BuildRequires: cargo
 BuildRequires: rust >= 1.86
 Requires: vips >= 8.15
+Requires: ffmpeg
 Requires(pre): shadow-utils
 Requires(post): shadow-utils
 Requires(post): systemd

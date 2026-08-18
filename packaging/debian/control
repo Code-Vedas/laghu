@@ -29,7 +29,7 @@ Description: native Laghu HTTP optimization module for NGINX
 
 Package: laghu-libvips
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser, ffmpeg
 Replaces: laghu-optimizer (<< ${binary:Version})
 Breaks: laghu-optimizer (<< ${binary:Version})
 Description: shared asynchronous libvips service for Laghu
@@ -38,7 +38,8 @@ Description: shared asynchronous libvips service for Laghu
  optional per-origin HTTPS HTML stale-while-revalidate and headless-Chrome
  analysis workers; the latter requires a separately installed Chromium binary.
  The official Ubuntu 24.04 build requires the distribution libvips runtime and
- its JPEG, PNG, GIF, and WebP codec dependencies.
+ its JPEG, PNG, GIF, and WebP codec dependencies plus FFmpeg for bounded,
+ asynchronous large animated-GIF video conversion.
 
 Package: laghu
 Architecture: any

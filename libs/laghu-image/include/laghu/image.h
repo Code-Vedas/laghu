@@ -20,6 +20,7 @@ extern "C" {
 #define LAGHU_IMAGE_MAX_DIMENSION 8192U
 #define LAGHU_IMAGE_MAX_PIXELS 64000000U
 #define LAGHU_IMAGE_MAX_FRAMES 300U
+#define LAGHU_IMAGE_GIF_VIDEO_MIN_BYTES (256U * 1024U)
 #define LAGHU_IMAGE_BACKEND_ID_SIZE 128U
 #define LAGHU_IMAGE_MAX_PAGE_RESOURCES 256U
 #define LAGHU_IMAGE_URL_SIZE 2048U
@@ -63,10 +64,12 @@ enum {
   LAGHU_IMAGE_LAZYLOAD = UINT64_C(1) << 22,
   LAGHU_IMAGE_STRIP_METADATA = UINT64_C(1) << 23,
   LAGHU_IMAGE_STRIP_COLOR_PROFILE = UINT64_C(1) << 24,
-  LAGHU_IMAGE_IN_PLACE_BROWSER = UINT64_C(1) << 25
+  LAGHU_IMAGE_IN_PLACE_BROWSER = UINT64_C(1) << 25,
+  /* Animated, substantial GIFs are asynchronously converted to video. */
+  LAGHU_IMAGE_GIF_TO_VIDEO = UINT64_C(1) << 26
 };
 
-#define LAGHU_IMAGE_FILTER_ALL ((UINT64_C(1) << 26) - UINT64_C(1))
+#define LAGHU_IMAGE_FILTER_ALL ((UINT64_C(1) << 27) - UINT64_C(1))
 #define LAGHU_CSS_MINIFY_APPLIED (UINT64_C(1) << 63)
 #define LAGHU_CSS_FLATTEN_IMPORTS_APPLIED (UINT64_C(1) << 62)
 
@@ -164,6 +167,8 @@ typedef struct {
   const char *inline_data_uri;
   const char *preview_data_uri;
   const char *sprite_url;
+  const char *video_mp4_url;
+  const char *video_webm_url;
   unsigned int width;
   unsigned int height;
   unsigned int sprite_x;
@@ -174,6 +179,7 @@ typedef struct {
   unsigned int declared_height;
   bool above_fold;
   bool terminally_excluded;
+  bool video_ready;
   size_t inline_payload_length;
 } laghu_image_resource;
 
@@ -288,6 +294,9 @@ bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output)
 /* Uses a bounded thumbnail roughness measurement. Photo and illustration
  * input may qualify; undecodable input and unavailable backends return false. */
 bool laghu_image_denoise_eligible(laghu_buffer input, laghu_image_content_class content_class);
+/* Bounded structural GIF inspection; conversion is only appropriate for an
+ * animated GIF that is large enough to pay for video markup. */
+bool laghu_image_gif_video_eligible(laghu_buffer input, unsigned int *width, unsigned int *height, unsigned int *frames);
 bool laghu_image_backend_probe(laghu_image_backend *backend);
 laghu_image_format laghu_image_detect_format(laghu_buffer input);
 const char *laghu_image_format_name(laghu_image_format format);

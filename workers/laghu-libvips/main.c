@@ -28,6 +28,7 @@
 #define LAGHU_CACHE_REGISTER_INITIAL_DELAY_MILLISECONDS 5U
 #define LAGHU_CACHE_REGISTER_MAX_DELAY_MILLISECONDS 250U
 
+static unsigned char *laghu_read_file(const char *path, size_t *length);
 static bool laghu_libvips_stop_requested(void) { return false; }
 
 static void laghu_libvips_pause(unsigned int milliseconds) {
@@ -75,6 +76,93 @@ static bool laghu_libvips_cache_publish(const char *cache_path, const char *inde
     if (attempt + 1U < 4U) laghu_libvips_pause(5U << attempt);
   }
   return false;
+}
+
+static bool laghu_libvips_read_path(const char *path, unsigned char **output, size_t *length) {
+  *output = laghu_read_file(path, length);
+  return *output != NULL;
+}
+
+static bool laghu_libvips_write_all(int descriptor, laghu_buffer input) {
+  size_t written = 0U;
+  while (written < input.length) {
+    ssize_t result = write(descriptor, input.data + written, input.length - written);
+    if (result <= 0) return false;
+    written += (size_t)result;
+  }
+  return true;
+}
+
+static bool laghu_libvips_ffmpeg(const char *input, const char *output, bool webm) {
+  pid_t child = fork();
+  int status;
+  if (child < 0) return false;
+  if (child == 0) {
+    if (webm) {
+      char *const arguments[] = {"ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "gif", "-i", (char *)input,
+                                 "-an", "-c:v", "libvpx-vp9", "-crf", "36", "-b:v", "0", "-f", "webm", (char *)output, NULL};
+      execvp(arguments[0], arguments);
+    } else {
+      char *const arguments[] = {"ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "gif", "-i", (char *)input,
+                                 "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p", "-movflags",
+                                 "+faststart", "-f", "mp4", (char *)output, NULL};
+      execvp(arguments[0], arguments);
+    }
+    _exit(127);
+  }
+  return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static bool laghu_libvips_gif_video(const laghu_runtime_job *job, const char *cache_path, const char *source_hash,
+                                    const laghu_image_backend *backend, laghu_catalog_record *catalog) {
+  char input[] = "/tmp/laghu-gif-XXXXXX";
+  char mp4[] = "/tmp/laghu-mp4-XXXXXX";
+  char webm[] = "/tmp/laghu-webm-XXXXXX";
+  char material[LAGHU_RUNTIME_KEY_SIZE + 96U];
+  unsigned char *mp4_data = NULL;
+  unsigned char *webm_data = NULL;
+  laghu_runtime_cache_entry mp4_entry;
+  laghu_runtime_cache_entry webm_entry;
+  size_t mp4_length = 0U;
+  size_t webm_length = 0U;
+  int input_fd = -1, mp4_fd = -1, webm_fd = -1;
+  bool ok = false;
+  unsigned int width, height, frames;
+  int material_length;
+  if ((job->filters & LAGHU_IMAGE_GIF_TO_VIDEO) == 0U || !laghu_image_gif_video_eligible(job->payload, &width, &height, &frames)) return true;
+  input_fd = mkstemp(input);
+  mp4_fd = mkstemp(mp4);
+  webm_fd = mkstemp(webm);
+  if (input_fd < 0 || mp4_fd < 0 || webm_fd < 0 || !laghu_libvips_write_all(input_fd, job->payload)) goto done;
+  (void)close(input_fd); input_fd = -1;
+  (void)close(mp4_fd); mp4_fd = -1;
+  (void)close(webm_fd); webm_fd = -1;
+  if (!laghu_libvips_ffmpeg(input, mp4, false) || !laghu_libvips_ffmpeg(input, webm, true) ||
+      !laghu_libvips_read_path(mp4, &mp4_data, &mp4_length) || !laghu_libvips_read_path(webm, &webm_data, &webm_length) ||
+      mp4_length >= job->payload.length || webm_length >= job->payload.length)
+    goto done;
+  material_length = snprintf(material, sizeof(material), "gif-video-v1\\n%s\\n%s\\nmp4", source_hash, job->policy_key);
+  if (material_length < 0 || (size_t)material_length >= sizeof(material) ||
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, catalog->gif_video_mp4_key)) goto done;
+  material_length = snprintf(material, sizeof(material), "gif-video-v1\\n%s\\n%s\\nwebm", source_hash, job->policy_key);
+  if (material_length < 0 || (size_t)material_length >= sizeof(material) ||
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, catalog->gif_video_webm_key) ||
+      !laghu_libvips_cache_publish(cache_path, catalog->gif_video_mp4_key, catalog->gif_video_mp4_key, job->validator, "video/mp4",
+                                   backend->backend_id, (laghu_buffer){mp4_data, mp4_length}, &mp4_entry) ||
+      !laghu_libvips_cache_publish(cache_path, catalog->gif_video_webm_key, catalog->gif_video_webm_key, job->validator, "video/webm",
+                                   backend->backend_id, (laghu_buffer){webm_data, webm_length}, &webm_entry)) goto done;
+  catalog->gif_video_mp4_length = mp4_length;
+  catalog->gif_video_webm_length = webm_length;
+  catalog->gif_video_ready = true;
+  ok = true;
+done:
+  if (!ok) catalog->gif_video_excluded = true;
+  if (input_fd >= 0) (void)close(input_fd);
+  if (mp4_fd >= 0) (void)close(mp4_fd);
+  if (webm_fd >= 0) (void)close(webm_fd);
+  (void)unlink(input); (void)unlink(mp4); (void)unlink(webm);
+  free(mp4_data); free(webm_data);
+  return true; /* transcoder absence/failure is always fail-open. */
 }
 
 static int laghu_libvips_probe(void) {
@@ -305,6 +393,7 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
   catalog.last_accessed_at = catalog.updated_at;
   (void)laghu_image_classify(job->payload, &content_class);
   catalog.content_class = content_class;
+  if (!laghu_libvips_gif_video(job, cache_path, source_hash, &backend, &catalog)) return 1;
   target_count = job->target_count == 0U ? 1U : job->target_count;
   if (target_count > LAGHU_RUNTIME_MAX_TARGETS) {
     return 1;

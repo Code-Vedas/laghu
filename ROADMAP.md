@@ -171,7 +171,7 @@
 - [x] LQIP and blur-placeholder generation.
 - [x] Automatic width and height injection.
 - [x] LCP-image `fetchpriority=high` with safe below-fold lazy loading.
-- [ ] Large animated GIF conversion to MP4/WebM video markup.
+- [x] Large animated GIF conversion to MP4/WebM video markup.
 
 ### 4.2 Core Web Vitals
 - [x] Detect, preload, prioritize, and exclude the LCP element from lazy loading.

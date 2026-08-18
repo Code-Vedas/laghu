@@ -4,7 +4,7 @@ Laghu is a free, open-source server-level content optimizer with native NGINX an
 
 Cache extension is MIME-driven: `extend_cache_media` only handles administrator-allowlisted opaque media such as images, PDFs, fonts, audio, and video. CSS and JavaScript remain separate parser-aware resource filters; unsafe, private, uncached, oversized, or mismatched resources remain unchanged.
 
-The image path uses an out-of-process libvips worker: a cold request serves the original while the adapter publishes a try-only job, and a later request can use a validated, strictly smaller cached variant. Codec work never runs inside NGINX or Apache.
+The image path uses an out-of-process libvips worker: a cold request serves the original while the adapter publishes a try-only job, and a later request can use a validated, strictly smaller cached variant. Large animated GIFs may become cached MP4/WebM video markup only after both artifacts validate; unavailable video encoding preserves the original GIF. Codec work never runs inside NGINX or Apache.
 
 ## Structured logs
 

@@ -172,6 +172,68 @@ laghu_image_format laghu_image_detect_format(laghu_buffer input) {
   return LAGHU_IMAGE_FORMAT_UNKNOWN;
 }
 
+bool laghu_image_gif_video_eligible(laghu_buffer input, unsigned int *width, unsigned int *height, unsigned int *frames) {
+  size_t index = 0U;
+  unsigned int count = 0U;
+  unsigned int parsed_width;
+  unsigned int parsed_height;
+  if (width != NULL) *width = 0U;
+  if (height != NULL) *height = 0U;
+  if (frames != NULL) *frames = 0U;
+  if (input.data == NULL || input.length < 13U || input.length > LAGHU_IMAGE_MAX_INPUT_BYTES || input.length < LAGHU_IMAGE_GIF_VIDEO_MIN_BYTES ||
+      (memcmp(input.data, "GIF87a", 6U) != 0 && memcmp(input.data, "GIF89a", 6U) != 0))
+    return false;
+  parsed_width = (unsigned int)input.data[6] | (unsigned int)input.data[7] << 8U;
+  parsed_height = (unsigned int)input.data[8] | (unsigned int)input.data[9] << 8U;
+  if (parsed_width == 0U || parsed_height == 0U || parsed_width > LAGHU_IMAGE_MAX_DIMENSION || parsed_height > LAGHU_IMAGE_MAX_DIMENSION ||
+      (uint64_t)parsed_width * parsed_height > LAGHU_IMAGE_MAX_PIXELS)
+    return false;
+  index = 13U;
+  if ((input.data[10] & 0x80U) != 0U) {
+    size_t palette = (size_t)3U * ((size_t)1U << ((input.data[10] & 0x07U) + 1U));
+    if (palette > input.length - index) return false;
+    index += palette;
+  }
+  while (index < input.length) {
+    unsigned char marker = input.data[index++];
+    if (marker == 0x3bU) break;
+    if (marker == 0x2cU) {
+      size_t palette;
+      if (input.length - index < 9U) return false;
+      index += 8U;
+      if ((input.data[index++] & 0x80U) != 0U) {
+        palette = (size_t)3U * ((size_t)1U << ((input.data[index - 1U] & 0x07U) + 1U));
+        if (palette > input.length - index) return false;
+        index += palette;
+      }
+      if (index >= input.length) return false;
+      ++index; /* LZW minimum code size. */
+      while (index < input.length) {
+        size_t block = input.data[index++];
+        if (block == 0U) break;
+        if (block > input.length - index) return false;
+        index += block;
+      }
+      if (++count > LAGHU_IMAGE_MAX_FRAMES) return false;
+    } else if (marker == 0x21U) {
+      if (index >= input.length) return false;
+      ++index; /* extension label */
+      while (index < input.length) {
+        size_t block = input.data[index++];
+        if (block == 0U) break;
+        if (block > input.length - index) return false;
+        index += block;
+      }
+    } else {
+      return false;
+    }
+  }
+  if (width != NULL) *width = parsed_width;
+  if (height != NULL) *height = parsed_height;
+  if (frames != NULL) *frames = count;
+  return count > 1U;
+}
+
 const char *laghu_image_format_name(laghu_image_format format) {
   switch (format) {
     case LAGHU_IMAGE_FORMAT_JPEG:

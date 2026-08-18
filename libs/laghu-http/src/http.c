@@ -261,7 +261,8 @@ static laghu_image_filter_mask laghu_http_image_filters(const laghu_policy *poli
   }
   if ((policy->filter_families & LAGHU_FILTER_IMAGE_MODERN) != 0U) {
     filters |= LAGHU_IMAGE_JPEG_PROGRESSIVE | LAGHU_IMAGE_JPEG_TO_WEBP | LAGHU_IMAGE_PNG_TO_JPEG | LAGHU_IMAGE_GIF_TO_PNG |
-               LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_TO_WEBP_ANIMATED | LAGHU_IMAGE_JPEG_SAMPLING | LAGHU_IMAGE_IN_PLACE_BROWSER;
+               LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_TO_WEBP_ANIMATED | LAGHU_IMAGE_JPEG_SAMPLING | LAGHU_IMAGE_IN_PLACE_BROWSER |
+               LAGHU_IMAGE_GIF_TO_VIDEO;
   }
   if ((policy->filter_families & LAGHU_FILTER_IMAGE_RESPONSIVE) != 0U) {
     filters |=
@@ -298,7 +299,8 @@ static bool laghu_http_backend_supports(const char *content_type, laghu_image_fi
   if (laghu_http_content_type_is(content_type, "image/gif")) {
     return (capabilities & LAGHU_IMAGE_CAP_GIF_LOAD) != 0U &&
            (((capabilities & LAGHU_IMAGE_CAP_PNG_SAVE) != 0U && (filters & LAGHU_IMAGE_GIF_TO_PNG) != 0U) ||
-            ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U && (filters & (LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_TO_WEBP_ANIMATED)) != 0U));
+            ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U && (filters & (LAGHU_IMAGE_TO_WEBP_LOSSLESS | LAGHU_IMAGE_TO_WEBP_ANIMATED)) != 0U) ||
+            (filters & LAGHU_IMAGE_GIF_TO_VIDEO) != 0U);
   }
   return laghu_http_content_type_is(content_type, "image/webp") && (capabilities & LAGHU_IMAGE_CAP_WEBP_LOAD) != 0U &&
          (capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U;

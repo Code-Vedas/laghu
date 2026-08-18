@@ -70,7 +70,7 @@ LABEL org.opencontainers.image.title="ngx-laghu" \
       org.codevedas.laghu.nginx.version="${NGINX_VERSION}"
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
-      ca-certificates curl libheif-plugin-aomenc libjxl0.7 libpcre2-8-0 libssl3t64 libvips42t64 tini zlib1g && \
+      ca-certificates curl ffmpeg libheif-plugin-aomenc libjxl0.7 libpcre2-8-0 libssl3t64 libvips42t64 tini zlib1g && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system laghu && useradd --system --gid laghu laghu && \
     install -d -o laghu -g laghu -m 0750 \

@@ -20,6 +20,8 @@ typedef struct {
   char optimized[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];
   char one_x[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];
   char two_x[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];
+  char video_mp4[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];
+  char video_webm[sizeof("/.laghu/image/") + LAGHU_SHA256_HEX_SIZE];
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
   char preview_data_uri[4096U];
   char *inline_uri;
@@ -220,10 +222,21 @@ bool laghu_runtime_rewrite_html(laghu_rum_engine *rum, const char *cache_path, l
     resources[index].source_hash = storage[index].source_hash;
     resources[index].width = catalog.natural_width;
     resources[index].height = catalog.natural_height;
+    if ((filters & LAGHU_IMAGE_GIF_TO_VIDEO) != 0U && catalog.gif_video_ready &&
+        laghu_image_variant_url(catalog.gif_video_mp4_key, storage[index].video_mp4) &&
+        laghu_image_variant_url(catalog.gif_video_webm_key, storage[index].video_webm)) {
+      resources[index].video_ready = true;
+      resources[index].video_mp4_url = storage[index].video_mp4;
+      resources[index].video_webm_url = storage[index].video_webm;
+    }
     if (catalog.natural_width == 0U || catalog.natural_height == 0U) {
       pending = true;
       continue;
     }
+    /* Video markup has its own pair of immutable artifacts.  Do not couple it
+     * to a raster candidate being smaller: an animated GIF often has no useful
+     * WebP replacement, while both video encodes are still worthwhile. */
+    if (resources[index].video_ready) continue;
     geometry.natural_width = catalog.natural_width;
     geometry.natural_height = catalog.natural_height;
     geometry.declared_width = discovery->resources[index].declared_width;

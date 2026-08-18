@@ -18,6 +18,7 @@ typedef struct {
 } laghu_markup_builder;
 
 static bool laghu_builder_append(laghu_markup_builder *builder, const void *data, size_t length);
+static bool laghu_attribute(const unsigned char *tag, size_t length, const char *name, const unsigned char **value, size_t *value_length);
 
 static bool laghu_svg_contains(laghu_buffer input, const char *needle) {
   size_t index, length = strlen(needle);
@@ -297,7 +298,8 @@ static bool laghu_markup_dependency_key(const laghu_image_markup_options *option
     }
     if (!laghu_builder_string(&builder, resource->source_url) || !laghu_builder_string(&builder, resource->source_hash) ||
         !laghu_builder_string(&builder, resource->optimized_url) || !laghu_builder_string(&builder, resource->responsive_1x_url) ||
-        !laghu_builder_string(&builder, resource->responsive_2x_url) || !laghu_builder_string(&builder, resource->inline_data_uri) ||
+        !laghu_builder_string(&builder, resource->responsive_2x_url) || !laghu_builder_string(&builder, resource->video_mp4_url) ||
+        !laghu_builder_string(&builder, resource->video_webm_url) || !laghu_builder_string(&builder, resource->inline_data_uri) ||
         !laghu_builder_string(&builder, resource->preview_data_uri) || !laghu_builder_string(&builder, resource->sprite_url) ||
         !laghu_builder_format(&builder, "%u:%u:%u:%u\n", resource->width, resource->height, resource->sprite_x, resource->sprite_y)) {
       free(builder.data);
@@ -390,8 +392,23 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder, const unsigned 
     return laghu_builder_append(builder, tag, tag_length);
   }
   resource = laghu_find_resource(options, source, url_length, &resource_index);
-  if (resource == NULL || resource->optimized_url == NULL) {
+  if (resource == NULL || (resource->optimized_url == NULL && !resource->video_ready)) {
     return laghu_builder_append(builder, tag, tag_length);
+  }
+
+  if (resource->video_ready && resource->video_mp4_url != NULL && resource->video_webm_url != NULL) {
+    const unsigned char *alt = NULL;
+    size_t alt_length = 0U;
+    (void)laghu_attribute(tag, tag_length, "alt", &alt, &alt_length);
+    if (!laghu_builder_format(builder, "<video autoplay muted loop playsinline preload=\"metadata\" width=\"%u\" height=\"%u\"><source src=\"%s\" type=\"video/webm\"><source src=\"%s\" type=\"video/mp4\"><img src=\"",
+                              resource->declared_width != 0U ? resource->declared_width : resource->width,
+                              resource->declared_height != 0U ? resource->declared_height : resource->height, resource->video_webm_url,
+                              resource->video_mp4_url) ||
+        !laghu_builder_append(builder, source, url_length) || !laghu_builder_append(builder, "\" alt=\"", 7U) ||
+        (alt != NULL && !laghu_builder_append(builder, alt, alt_length)) || !laghu_builder_append(builder, "\"></video>", 11U))
+      return false;
+    *applied |= LAGHU_IMAGE_GIF_TO_VIDEO;
+    return true;
   }
 
   replacement = resource->optimized_url;
@@ -501,7 +518,7 @@ bool laghu_image_rewrite_html(laghu_buffer input, const laghu_image_markup_optio
   free(seen);
   result->data = builder.data;
   result->length = builder.length;
-  if (options->enforce_bundle_gate && result->length > input.length) {
+  if (options->enforce_bundle_gate && (result->applied_filters & LAGHU_IMAGE_GIF_TO_VIDEO) == 0U && result->length > input.length) {
     size_t growth = result->length - input.length;
     size_t savings = options->unique_variant_savings_1x;
     if (options->unique_variant_savings_2x < savings) {

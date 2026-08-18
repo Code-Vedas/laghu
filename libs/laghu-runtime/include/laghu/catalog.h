@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_CATALOG_VERSION 3U
+#define LAGHU_CATALOG_VERSION 4U
 #define LAGHU_CATALOG_MAX_WIDTHS 8U
 #define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
 #define LAGHU_CATALOG_DEFAULT_TTL 604800U
@@ -57,6 +57,13 @@ typedef struct {
   unsigned int learned_dpr_hundredths;
   uint64_t learned_at;
   bool learned_above_fold;
+  /* Both encodes must be present before HTML becomes video markup. */
+  char gif_video_mp4_key[LAGHU_RUNTIME_KEY_SIZE];
+  char gif_video_webm_key[LAGHU_RUNTIME_KEY_SIZE];
+  size_t gif_video_mp4_length;
+  size_t gif_video_webm_length;
+  bool gif_video_ready;
+  bool gif_video_excluded;
 } laghu_catalog_record;
 
 typedef struct {

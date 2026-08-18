@@ -266,7 +266,7 @@ static void test_image_key_version_vector(void) {
   request.allow_lossy = true;
   request.accept_webp = true;
   assert(laghu_image_variant_key(&backend, &request, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", output));
-  assert(strcmp(output, "777d767f02880bb3a1fae46e673288979afe3ca63e3a6a2abd4f042627fa0662") == 0);
+  assert(strcmp(output, "2582b484adb4326f566f172cee10c8c319e83c0d808c6c8c1ada3509bc782333") == 0);
   request.denoise = true;
   assert(laghu_image_variant_key(&backend, &request, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", output));
   assert(strcmp(output, "4e42fed41f6db6c2292d1912848d4f5d57aa2f294311b682d0e5fbf17928a702") != 0);
@@ -381,6 +381,24 @@ static void test_markup_filters(void) {
   assert(laghu_image_rewrite_html((laghu_buffer){NULL, 0U}, &options, &result));
   assert(result.length == 0U && result.dependency_key[0] != '\0');
   laghu_image_markup_result_release(&result);
+
+  {
+    static const unsigned char gif_html[] = "<img src=\"/large.gif\" alt=\"An animation\">";
+    laghu_image_resource video = {.source_url = "/large.gif",
+                                  .source_hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                                  .video_mp4_url = "/.laghu/image/mp4",
+                                  .video_webm_url = "/.laghu/image/webm",
+                                  .width = 640U,
+                                  .height = 360U,
+                                  .video_ready = true};
+    laghu_image_markup_options video_options = {.resources = &video, .resource_count = 1U};
+    assert(laghu_image_rewrite_html((laghu_buffer){gif_html, sizeof(gif_html) - 1U}, &video_options, &result));
+    assert(strstr((const char *)result.data, "<video autoplay muted loop playsinline") != NULL);
+    assert(strstr((const char *)result.data, "video/webm") != NULL && strstr((const char *)result.data, "video/mp4") != NULL);
+    assert(strstr((const char *)result.data, "alt=\"An animation\"") != NULL);
+    assert((result.applied_filters & LAGHU_IMAGE_GIF_TO_VIDEO) != 0U);
+    laghu_image_markup_result_release(&result);
+  }
 }
 
 static void test_html_discovery(void) {
@@ -461,10 +479,10 @@ static void test_byte_filters(void) {
   memset((unsigned char *)gif.data + gif.length, 0, 65536U);
   gif.length += 65536U;
   animated_gif = test_animated_gif();
-  animated_gif.data = g_realloc(animated_gif.data, animated_gif.length + 65536U);
+  animated_gif.data = g_realloc(animated_gif.data, animated_gif.length + LAGHU_IMAGE_GIF_VIDEO_MIN_BYTES);
   assert(animated_gif.data != NULL);
-  memset((unsigned char *)animated_gif.data + animated_gif.length, 0, 65536U);
-  animated_gif.length += 65536U;
+  memset((unsigned char *)animated_gif.data + animated_gif.length, 0, LAGHU_IMAGE_GIF_VIDEO_MIN_BYTES);
+  animated_gif.length += LAGHU_IMAGE_GIF_VIDEO_MIN_BYTES;
   webp = test_static_image(LAGHU_IMAGE_FORMAT_WEBP, false);
 
   assert(vips_gifload_buffer(animated_gif.data, animated_gif.length, &decoded, "n", 2, NULL) == 0);
@@ -472,6 +490,11 @@ static void test_byte_filters(void) {
   assert(vips_image_hasalpha(decoded));
   g_object_unref(decoded);
   decoded = NULL;
+  {
+    unsigned int width, height, frames;
+    assert(laghu_image_gif_video_eligible((laghu_buffer){animated_gif.data, animated_gif.length}, &width, &height, &frames));
+    assert(width == 1U && height == 1U && frames == 2U);
+  }
 
   assert(vips_jpegload_buffer(jpeg.data, jpeg.length, &decoded, NULL) == 0);
   assert(vips_image_get_typeof(decoded, "exif-data") != 0U);
