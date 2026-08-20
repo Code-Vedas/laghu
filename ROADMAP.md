@@ -302,10 +302,16 @@
 - [x] Make worker, queue, cache, and image-optimization failures fail open.
 - [x] Generate deterministic content-hashed variant URLs for fleet-safe caching.
 
-## 7. Laghu standalone nginx-apache parity 
-- [ ] compare full suite of nginx without optimizations with Laghu standaline and add/update any missing features to Laghu standalone to achieve parity with nginx.
-- [ ] compare full suite of apache without optimizations with Laghu standaline and add/update any missing features to Laghu standalone to achieve parity with apache.
-- [ ] Laghu standalone must be configurable via config files only preferably yaml. Location can be similar to nginx or apache config file locations whichever is best.
+## 7. Laghu standalone NGINX/Apache parity
+
+- [ ] `laghu reload [--config PATH]`: validate an immutable replacement, atomically swap it, and retain the last valid configuration.
+- [ ] Real site inheritance: per-site/per-route Laghu policy and service settings.
+- [ ] TLS/SNI virtual hosts.
+- [ ] Static gaps: SPA fallback, compression, configurable limits, CIDR allow/deny, Basic-auth, and rate limits; static responses must enter Laghu transforms.
+- [ ] Upstreams: HTTPS route targets, health checks/failover, FastCGI, uWSGI, and SCGI.
+- [ ] Full access-logging semantics across new routes.
+- [ ] Versioned NGINX/Apache/Laghu execution rail with normalized raw evidence; current contract is only a schema-checked case list.
+- [ ] Native NGINX/Apache and AMD64 container parity validation.
 
 ## 8. Open Source and Support
 - [x] License the repository under MIT.

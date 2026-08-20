@@ -10,6 +10,8 @@ project(laghu VERSION 0.1.0 LANGUAGES C)
 include(CTest)
 include(cmake/LaghuSources.cmake)
 
+add_subdirectory(third_party/libyaml)
+
 option(LAGHU_BUILD_TESTS "Build the Laghu core test suite" ${BUILD_TESTING})
 option(LAGHU_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(LAGHU_BUILD_FUZZERS "Build libFuzzer harnesses" OFF)

@@ -178,7 +178,8 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket, const char *
 SSL *proxy_downstream_tls_handshake(proxy_worker *worker, laghu_socket socket, unsigned int timeout, bool *timed_out);
 bool proxy_read_headers(laghu_socket socket, char *buffer, SSL *tls, size_t *header_length, unsigned char **initial, size_t *initial_length);
 laghu_socket proxy_connect(proxy_worker *worker, const char *host, const char *port, unsigned int timeout);
-bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, bool *timed_out);
+bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, const char *host, const char *port,
+                          const char *authority, bool origin_tls, bool *timed_out);
 void proxy_origin_release(proxy_worker *worker, proxy_origin_connection *origin, bool reusable);
 void proxy_origin_pool_close(proxy_queue *queue);
 void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, const char *reason);
@@ -210,6 +211,12 @@ void proxy_send_admin_html(laghu_socket client, SSL *tls, unsigned int status, c
 void proxy_send_metrics(laghu_socket client, SSL *tls, const char *body, size_t length, bool head);
 bool proxy_handle_beacon_routes(const proxy_connection *connection, proxy_worker *worker, proxy_request *request, const unsigned char *request_body,
                                 size_t request_body_length, proxy_access_log *access);
+bool proxy_static_serve(const laghu_proxy_options *options, const proxy_request *request, laghu_socket client, SSL *tls,
+                        proxy_access_log *access);
+bool proxy_route_serve(const laghu_proxy_options *options, const proxy_request *request, laghu_socket client, SSL *tls,
+                       proxy_access_log *access);
+bool proxy_route_rewrite(const laghu_proxy_options *options, proxy_request *request);
+const laghu_proxy_route *proxy_route_upstream(const laghu_proxy_options *options, const proxy_request *request);
 bool proxy_handle_administrative_routes(const proxy_connection *connection, proxy_worker *worker, proxy_request *request, proxy_access_log *access);
 bool proxy_peer_trusted(const laghu_proxy_options *options, const proxy_connection *connection);
 const char *proxy_effective_scheme(const laghu_proxy_options *options, const proxy_connection *connection, const proxy_request *request);

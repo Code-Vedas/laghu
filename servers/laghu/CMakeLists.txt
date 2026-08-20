@@ -10,8 +10,8 @@ laghu_manifest_sources(standalone LAGHU_STANDALONE_SOURCES)
 add_library(laghu_proxy STATIC ${LAGHU_STANDALONE_SOURCES})
 target_include_directories(laghu_proxy PUBLIC include)
 target_compile_features(laghu_proxy PUBLIC c_std_11)
-target_link_libraries(laghu_proxy PUBLIC Laghu::Http Threads::Threads OpenSSL::SSL
-                                          OpenSSL::Crypto)
+target_link_libraries(laghu_proxy PUBLIC Laghu::Http Laghu::Yaml Threads::Threads
+                                          OpenSSL::SSL OpenSSL::Crypto)
 
 add_executable(laghu src/main.c)
 target_link_libraries(laghu PRIVATE laghu_proxy)
@@ -36,4 +36,7 @@ if(LAGHU_BUILD_TESTS)
                    $<TARGET_FILE:laghu>
                    $<TARGET_FILE:laghu_runtime_cache_fixture>
                    ${LAGHU_JS_BINARY})
+  add_test(NAME laghu_parity_contract_test
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity_contract_test.py
+                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity-contract-v1.json)
 endif()

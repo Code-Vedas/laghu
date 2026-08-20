@@ -11,8 +11,7 @@
 
 static void usage(FILE *stream) {
   fputs(
-      "Usage: laghu --listen HOST:PORT --origin http[s]://HOST[:PORT] "
-      "--file-cache-backend file:///PATH --worker-queue PATH [options]\n"
+      "Usage: laghu [--config PATH]\n"
       "Options:\n"
       "  --preset NAME | --rewrite-level NAME\n"
       "  --enable-filter NAME --disable-filter NAME --forbid-filter NAME\n"
@@ -91,7 +90,17 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "bench") == 0) return laghu_bench_run(argc - 1, argv + 1);
   if (argc > 1 && strcmp(argv[1], "migrate") == 0) return laghu_migrate_run(argc - 1, argv + 1);
   laghu_proxy_options_init(&options);
-  parsed = laghu_proxy_parse_options(argc, argv, &options, error, sizeof(error));
+  if (argc == 1) {
+    const char *path = LAGHU_PROXY_DEFAULT_CONFIG_PATH;
+    parsed = laghu_proxy_load_yaml(path, &options, error, sizeof(error));
+  } else if (argc == 3 && strcmp(argv[1], "--config") == 0) {
+    parsed = laghu_proxy_load_yaml(argv[2], &options, error, sizeof(error));
+  } else if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "--version") == 0)) {
+    parsed = laghu_proxy_parse_options(argc, argv, &options, error, sizeof(error));
+  } else {
+    (void)snprintf(error, sizeof(error), "runtime settings belong in YAML; use --config PATH only to override the main config");
+    parsed = LAGHU_PROXY_PARSE_ERROR;
+  }
   if (parsed == LAGHU_PROXY_PARSE_HELP) {
     usage(stdout);
     laghu_proxy_options_dispose(&options);

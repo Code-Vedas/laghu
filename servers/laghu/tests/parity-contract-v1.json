@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "contract": "laghu-standalone-parity-v1",
+  "baselines": {
+    "nginx": "1.30.4",
+    "apache": "Debian package image recorded by the rail"
+  },
+  "cases": [
+    "virtual-host-routing", "static-index-and-mime", "conditional-and-range", "compression-and-cache", "directory-listing",
+    "redirect-rewrite-and-header", "request-limits", "cidr-access-and-basic-auth", "tls-sni", "http-proxy",
+    "fastcgi", "uwsgi", "scgi", "upstream-health-failure", "graceful-reload"
+  ]
+}

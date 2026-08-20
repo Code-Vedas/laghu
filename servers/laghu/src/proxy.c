@@ -218,6 +218,11 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   bool html_cache_response = false;
   bool tls_timed_out = false;
   proxy_header *request_host = NULL;
+  const laghu_proxy_route *upstream_route = NULL;
+  const char *origin_host;
+  const char *origin_port;
+  const char *origin_authority;
+  bool selected_origin_tls;
   char cached_content_type[LAGHU_RUNTIME_TYPE_SIZE];
   char cached_validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
   memset(&request, 0, sizeof(request));
@@ -247,6 +252,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   }
   access.input_bytes = header_length + request.content_length;
   request_host = proxy_find(request.headers, request.header_count, "Host");
+  (void)proxy_route_rewrite(options, &request);
   proxy_poll_flush_file(options);
   if (!strcmp(request.method, "CONNECT") || !strcmp(request.method, "TRACE")) {
     PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
@@ -274,6 +280,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     goto done;
   }
   if (proxy_handle_administrative_routes(connection, worker, &request, &access)) goto done;
+  if (proxy_route_serve(options, &request, client, client_tls, &access)) goto done;
+  if (proxy_static_serve(options, &request, client, client_tls, &access)) goto done;
   if (!strncmp(request.target, "/.laghu/", 8U)) {
     if (proxy_handle_beacon_routes(connection, worker, &request, request_body, request_body_length, &access)) goto done;
     if (strcmp(request.method, "GET") != 0 && strcmp(request.method, "HEAD") != 0) {
@@ -442,14 +450,20 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     cached_body = NULL;
     memset(&response, 0, sizeof(response));
   }
-  if (!proxy_origin_acquire(worker, &upstream, &tls_timed_out)) {
+  upstream_route = proxy_route_upstream(options, &request);
+  origin_host = upstream_route == NULL ? options->origin_host : upstream_route->upstream_host;
+  origin_port = upstream_route == NULL ? options->origin_port : upstream_route->upstream_port;
+  origin_authority = upstream_route == NULL ? options->origin_authority : upstream_route->upstream_authority;
+  selected_origin_tls = upstream_route == NULL ? options->origin_tls : upstream_route->upstream_tls;
+  if (origin_host[0] == '\0' ||
+      !proxy_origin_acquire(worker, &upstream, origin_host, origin_port, origin_authority, selected_origin_tls, &tls_timed_out)) {
     PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : (options->origin_tls ? "origin_tls" : "origin_connect"));
     goto done;
   }
   origin = upstream.socket;
   origin_tls = upstream.tls;
   outbound_length = (size_t)snprintf(outbound, sizeof(outbound), "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n", request.method,
-                                     request.target, options->origin_authority);
+                                     request.target, origin_authority);
   for (index = 0U; index < request.header_count; ++index) {
     int n;
     if (proxy_hop(request.headers[index].name) || proxy_connection_nominates(request.headers, request.header_count, request.headers[index].name) ||

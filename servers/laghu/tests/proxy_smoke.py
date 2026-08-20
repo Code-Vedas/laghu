@@ -23,7 +23,10 @@ BODY = b"<!doctype html>\n<html>  <head><!-- remove --></head>  <body>hello</bod
 
 
 def start_process(arguments, **options):
-    return subprocess.Popen(arguments, **options)
+    process_arguments, config_path = yaml_runtime_arguments(arguments)
+    process = subprocess.Popen(process_arguments, **options)
+    process.laghu_config_path = config_path
+    return process
 
 
 def request_shutdown(process):
@@ -32,8 +35,67 @@ def request_shutdown(process):
 
 def wait_for_shutdown(process, timeout=5):
     status = process.wait(timeout=timeout)
+    config_path = getattr(process, "laghu_config_path", None)
+    if config_path:
+        os.unlink(config_path)
     assert status == 0
     return status
+
+
+def yaml_runtime_arguments(arguments):
+    implicit_flags = {
+        "--allow-api",
+        "--image-beacon",
+        "--critical-css-beacon",
+        "--instrumentation-beacon",
+        "--include-js-source-maps",
+        "--rum-store-required",
+    }
+    pair_settings = {"--map-rewrite-domain", "--map-proxy-domain", "--shard-domain"}
+    if len(arguments) < 2 or pathlib.Path(arguments[0]).name != "laghu":
+        return arguments, None
+    runtime = {}
+    index = 1
+    while index < len(arguments):
+        option = arguments[index]
+        assert option.startswith("--"), option
+        key = option[2:].replace("-", "_")
+        if option in implicit_flags:
+            value = "true"
+            index += 1
+        elif option in pair_settings:
+            assert index + 2 < len(arguments), option
+            value = [arguments[index + 1], arguments[index + 2]]
+            index += 3
+        else:
+            assert index + 1 < len(arguments), option
+            value = arguments[index + 1]
+            index += 2
+        if option in pair_settings:
+            if key not in runtime:
+                runtime[key] = []
+            runtime[key].append(value)
+        elif key in runtime:
+            if not isinstance(runtime[key], list):
+                runtime[key] = [runtime[key]]
+            runtime[key].append(value)
+        else:
+            runtime[key] = value
+    lines = ["schema: 1", "runtime:"]
+    for key, value in runtime.items():
+        if isinstance(value, list):
+            lines.append(f"  {key}:")
+            for item in value:
+                if isinstance(item, list):
+                    lines.append("    - [" + ", ".join(json.dumps(part) for part in item) + "]")
+                else:
+                    lines.append(f"    - {json.dumps(item)}")
+        else:
+            lines.append(f"  {key}: {json.dumps(value)}")
+    config = tempfile.NamedTemporaryFile(prefix="laghu-runtime-", suffix=".yaml", mode="w", delete=False)
+    config.write("\n".join(lines) + "\n")
+    config.close()
+    return [arguments[0], "--config", config.name], config.name
 
 
 class Origin(http.server.BaseHTTPRequestHandler):
@@ -1154,16 +1216,19 @@ def main():
             downstream_tls_logs = downstream_tls_process.stderr.read().decode()
             downstream_tls_process.stderr.close()
         assert downstream_tls_process.returncode == 0, downstream_tls_logs
-        invalid_downstream_tls = subprocess.run(
+        invalid_arguments, invalid_config = yaml_runtime_arguments(
             [
                 str(executable), "--listen", f"127.0.0.1:{free_port()}",
-                "--origin", f"http://127.0.0.1:{origin_port}", "--cache",
-                str(root / "cache"), "--worker-queue", str(root / "missing.queue"),
-                "--tls-certificate", str(server_file), "--tls-private-key", str(root / "ca.key"),
-            ],
-            capture_output=True,
-            text=True,
+                "--origin", f"http://127.0.0.1:{origin_port}", "--cache", str(root / "cache"),
+                "--worker-queue", str(root / "missing.queue"), "--tls-certificate", str(server_file),
+                "--tls-private-key", str(root / "ca.key"),
+            ]
         )
+        try:
+            invalid_downstream_tls = subprocess.run(invalid_arguments, capture_output=True, text=True)
+        finally:
+            if invalid_config:
+                os.unlink(invalid_config)
         assert invalid_downstream_tls.returncode != 0
         assert '"failure":"downstream_tls"' in invalid_downstream_tls.stderr
         unknown_ca_port = free_port()
@@ -1263,21 +1328,18 @@ def main():
                 broken_process.stderr.close()
         tls_origin.shutdown()
         invalid_port = free_port()
-        invalid = subprocess.run(
+        invalid_arguments, invalid_config = yaml_runtime_arguments(
             [
-                str(executable),
-                "--listen",
-                f"127.0.0.1:{invalid_port}",
-                "--origin",
-                f"http://127.0.0.1:{origin_port}",
-                "--cache",
-                str(root / "missing-cache"),
-                "--worker-queue",
-                str(root / "missing.queue"),
-            ],
-            capture_output=True,
-            timeout=5,
+                str(executable), "--listen", f"127.0.0.1:{invalid_port}", "--origin",
+                f"http://127.0.0.1:{origin_port}", "--cache", str(root / "missing-cache"),
+                "--worker-queue", str(root / "missing.queue"),
+            ]
         )
+        try:
+            invalid = subprocess.run(invalid_arguments, capture_output=True, timeout=5)
+        finally:
+            if invalid_config:
+                os.unlink(invalid_config)
         assert invalid.returncode == 1
         invalid_log = invalid.stderr.decode().strip()
         invalid_record = json.loads(invalid_log)

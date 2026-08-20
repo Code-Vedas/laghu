@@ -1,0 +1,22 @@
+# Strict standalone configuration schema. Files in conf.d/*.yaml are read in
+# lexical order after this file. Keep the service account as the owner and do
+# not make configuration group- or world-writable.
+schema: 1
+runtime:
+  listen: 0.0.0.0:8080
+  origin: http://127.0.0.1:8000
+  file_cache_backend: file:///var/cache/laghu/images
+  worker_queue: /run/laghu/jobs.queue
+  preset: balanced
+  workers: 4
+  connection_queue: 64
+  connect_timeout: 5
+  io_timeout: 30
+  drain_timeout: 30
+
+# Ordered routes run before static or the global origin. Exactly one of
+# redirect or proxy_pass is required for each route.
+routes:
+  - match: prefix
+    pattern: /api/
+    proxy_pass: http://127.0.0.1:9000

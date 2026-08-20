@@ -123,6 +123,7 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
   options->origin_pool_size = LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE;
   options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
+  (void)snprintf(options->index_file, sizeof(options->index_file), "%s", "index.html");
   laghu_service_config_init(&options->service);
 }
 
@@ -145,6 +146,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
   bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, forwarded_seen = false;
+  bool document_root_seen = false, index_seen = false;
+  bool directory_listing_seen = false;
+  bool static_cache_control_seen = false;
   bool respect_vary_seen = false, respect_proto_seen = false;
   bool query_overrides_seen = false;
   laghu_config shared_config;
@@ -219,6 +223,46 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       NEED_VALUE();
       if (origin_seen || !proxy_origin(value, options)) return proxy_error(error, error_size, "invalid or duplicate --origin");
       origin_seen = true;
+    } else if (strcmp(name, "--add-header") == 0) {
+      const char *second = index + 2 < argc ? argv[index + 2] : NULL;
+      laghu_proxy_response_header *header;
+      size_t name_length;
+      if (second == NULL || value == NULL || value[0] == '-' || second[0] == '-' || options->response_header_count == LAGHU_PROXY_MAX_RESPONSE_HEADERS)
+        return proxy_error(error, error_size, "invalid or excessive --add-header");
+      name_length = strlen(value);
+      if (name_length == 0U || name_length >= sizeof(header->name) || strpbrk(value, " \t\r\n:") || strlen(second) >= sizeof(header->value) ||
+          strpbrk(second, "\r\n"))
+        return proxy_error(error, error_size, "invalid --add-header");
+      header = &options->response_headers[options->response_header_count++];
+      (void)snprintf(header->name, sizeof(header->name), "%s", value);
+      (void)snprintf(header->value, sizeof(header->value), "%s", second);
+      index += 2;
+    } else if (strcmp(name, "--document-root") == 0) {
+      NEED_VALUE();
+      if (document_root_seen || !proxy_absolute_path(value) || !proxy_copy(options->document_root, sizeof(options->document_root), value))
+        return proxy_error(error, error_size, "invalid or duplicate --document-root");
+      document_root_seen = true;
+    } else if (strcmp(name, "--index") == 0) {
+      size_t value_length;
+      NEED_VALUE();
+      value_length = strlen(value);
+      if (index_seen || value_length == 0U || value_length >= sizeof(options->index_file) || strchr(value, '/') != NULL ||
+          strstr(value, "..") != NULL)
+        return proxy_error(error, error_size, "invalid or duplicate --index");
+      (void)snprintf(options->index_file, sizeof(options->index_file), "%s", value);
+      index_seen = true;
+    } else if (strcmp(name, "--directory-listing") == 0) {
+      NEED_VALUE();
+      if (directory_listing_seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
+        return proxy_error(error, error_size, "invalid or duplicate --directory-listing");
+      options->directory_listing = strcmp(value, "on") == 0;
+      directory_listing_seen = true;
+    } else if (strcmp(name, "--static-cache-control") == 0) {
+      NEED_VALUE();
+      if (static_cache_control_seen || strlen(value) >= sizeof(options->static_cache_control) || strpbrk(value, "\r\n"))
+        return proxy_error(error, error_size, "invalid or duplicate --static-cache-control");
+      (void)snprintf(options->static_cache_control, sizeof(options->static_cache_control), "%s", value);
+      static_cache_control_seen = true;
     } else if (strcmp(name, "--javascript-inline-limit") == 0) {
       char *end = NULL;
       unsigned long limit;
@@ -405,10 +449,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
     laghu_service_diagnostic diagnostic;
     if (!laghu_service_config_finalize(&options->service, &finalize_options, &diagnostic)) return proxy_error(error, error_size, diagnostic.message);
   }
-  if (!listen_seen || !origin_seen)
+  if (!listen_seen || (!origin_seen && options->document_root[0] == '\0' && options->site_count == 0U))
     return proxy_error(error, error_size,
-                       "--listen, --origin, a file cache backend, and "
-                       "--worker-queue are required");
+                       "--listen, a static document root or --origin, a file cache backend, and --worker-queue are required");
   if (ca_seen && !options->origin_tls) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
   if (tls_certificate_seen != tls_private_key_seen)
     return proxy_error(error, error_size, "--tls-certificate and --tls-private-key are required together");

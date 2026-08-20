@@ -7,12 +7,36 @@ permalink: /laghu-server/configure/
 
 # Configure the Laghu Server
 
-The standalone server accepts command-line options only.
-`--listen`, `--origin`, one of `--file-cache-backend` or deprecated `--cache`, and `--worker-queue` are required; duplicate, conflicting, or unknown options fail startup.
+The standalone server accepts runtime settings only from strict YAML. Like NGINX, `laghu` reads its fixed main
+configuration, `/etc/laghu/laghu.yaml`, then `/etc/laghu/conf.d/*.yaml` in lexical order. `--config PATH` is only an
+administrative override for an alternate main configuration; it uses `PATH` and its sibling `conf.d/*.yaml` directory.
+Every file requires `schema: 1` and one `runtime:` mapping. Unknown keys, duplicate top-level keys, unsupported YAML shapes,
+unsafe paths, and invalid option combinations fail startup. Configuration files must be absolute regular files and cannot be
+group- or world-writable.
+
+Runtime keys are the former option name without the `--` prefix, with hyphens written as underscores. Repeated settings use a
+YAML sequence. Operational commands (`status`, `doctor`, `bench`, `migrate`, and `purge`) remain argument-driven.
+
+```yaml
+schema: 1
+runtime:
+  listen: 127.0.0.1:8080
+  origin: http://127.0.0.1:8000
+  file_cache_backend: file:///var/cache/laghu/images
+  worker_queue: /run/laghu/jobs.queue
+  preset: balanced
+  forwarded_headers: both
+  trusted_proxy:
+    - 127.0.0.0/8
+```
+
+`sites` selects a host-specific static document root. `routes` are ordered and use `exact`, `prefix`, or `ordered_regex` matching;
+each route declares either a local `redirect` or an HTTP `proxy_pass`. Optional `response_header_name` and
+`response_header_value` add one validated response header to a redirect.
 
 Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lifecycle changes. Transaction paths exclude the complete query string; headers, bodies, credentials, tokens, hosts, and cache keys are never emitted. Worker services use the same schema on stderr for lifecycle and job events.
 
-| Option | Accepted value | Default | Effect |
+| YAML key (former option) | Accepted value | Default | Effect |
 | --- | --- | --- | --- |
 | `--listen HOST:PORT` | valid endpoint | required | Selects the client listener. |
 | `--origin http[s]://HOST[:PORT]` | one origin without path/query/credentials | required | Selects the upstream origin. |

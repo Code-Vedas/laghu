@@ -95,15 +95,17 @@ Use `scripts/run-in-docker` for the default Linux test or `--all` for the comple
 Run the standalone proxy from a development build with one plaintext origin:
 
 ```bash
-tmp/build/servers/laghu/laghu \
-  --listen 127.0.0.1:8080 \
-  --origin http://127.0.0.1:8000 \
-  --cache /tmp/laghu-cache \
-  --worker-queue /tmp/laghu.queue \
-  --drain-timeout 30
+mkdir -p /tmp/laghu-conf/conf.d
+cp servers/laghu/laghu.yaml.example /tmp/laghu-conf/laghu.yaml
+# Edit paths and origin in /tmp/laghu-conf/laghu.yaml.
+tmp/build/servers/laghu/laghu --config /tmp/laghu-conf/laghu.yaml
 ```
 
-The origin may use verified HTTPS. `--origin-ca-file` adds a private CA to system trust; certificate and hostname verification cannot be disabled. Forwarding headers are stripped unless `--forwarded-headers` explicitly enables deterministic output, and only repeated `--trusted-proxy` CIDRs may contribute an existing chain. The proxy exposes local health and readiness JSON beneath `/.laghu/`, drains active requests on shutdown, and emits privacy-bounded JSON Lines to standard error. `scripts/run-proxy-rootless` validates it as a non-root process with a read-only container filesystem.
+Runtime settings belong only in strict YAML. Like NGINX, `laghu` starts from its fixed main configuration,
+`/etc/laghu/laghu.yaml`, then reads sibling `conf.d/*.yaml` fragments in lexical order. `--config PATH` is only
+an administrative override for an alternate main configuration; it retains the same sibling fragment convention.
+The origin may use verified HTTPS. `origin_ca_file` adds a private CA to system trust; certificate and hostname verification cannot be disabled.
+The proxy exposes local health and readiness JSON beneath `/.laghu/`, drains active requests on shutdown, and emits privacy-bounded JSON Lines to standard error.
 
 Server modules are architecture- and ABI-specific. Build each module against the target server ABI.
 

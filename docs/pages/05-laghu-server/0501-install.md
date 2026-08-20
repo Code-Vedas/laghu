@@ -63,7 +63,9 @@ Initialize and start the worker queue before starting the proxy:
 ```bash
 tmp/build/workers/laghu-libvips/laghu-libvips --init /tmp/laghu/jobs.queue /tmp/laghu/cache
 tmp/build/workers/laghu-libvips/laghu-libvips --serve /tmp/laghu/jobs.queue /tmp/laghu/cache
-tmp/build/servers/laghu/laghu --listen 127.0.0.1:8080 --origin http://127.0.0.1:8000 --file-cache-backend file:///tmp/laghu/cache --worker-queue /tmp/laghu/jobs.queue
+cp servers/laghu/laghu.yaml.example /tmp/laghu.yaml
+# Set origin and cache paths in /tmp/laghu.yaml.
+tmp/build/servers/laghu/laghu --config /tmp/laghu.yaml
 ```
 
 Use administrator-owned persistent paths instead of `/tmp` in production.

@@ -6,9 +6,13 @@
 #include "laghu/proxy.h"
 #include "server_internal.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #define CHECK(value)                                          \
   do {                                                        \
@@ -35,12 +39,137 @@ static bool service_finalize(laghu_service_config *config) {
   return laghu_service_config_finalize(config, &options, &diagnostic);
 }
 
+static bool write_yaml_fixture(char path[])
+{
+  static const char fixture[] =
+      "schema: 1\n"
+      "runtime:\n"
+      "  listen: 127.0.0.1:8080\n"
+      "  origin: http://127.0.0.1:8000\n"
+      "  cache: /tmp/cache\n"
+      "  worker_queue: /tmp/jobs\n"
+      "  preset: balanced\n"
+      "  trusted_proxy:\n"
+      "    - 127.0.0.0/8\n"
+      "  forwarded_headers: both\n"
+      "  add_header:\n"
+      "    - [X-Static-Policy, enabled]\n"
+      "    - [X-Frame-Options, DENY]\n"
+      "sites:\n"
+      "  - host: static.example.test\n"
+      "    document_root: /srv/static\n"
+      "routes:\n"
+      "  - match: ordered_regex\n"
+      "    pattern: ^/old/[0-9]+$\n"
+      "    proxy_pass: http://127.0.0.1:9000\n";
+  int file = mkstemp(path);
+  return file >= 0 && write(file, fixture, sizeof(fixture) - 1U) == (ssize_t)(sizeof(fixture) - 1U) && close(file) == 0;
+}
+
+static bool write_yaml_fragment_fixture(char directory[], char root[], char fragment[])
+{
+  static const char root_contents[] =
+      "schema: 1\n"
+      "runtime:\n"
+      "  listen: 127.0.0.1:8080\n"
+      "  origin: http://127.0.0.1:8000\n"
+      "  cache: /tmp/cache\n"
+      "  worker_queue: /tmp/jobs\n";
+  static const char fragment_contents[] =
+      "schema: 1\n"
+      "runtime:\n"
+      "  forwarded_headers: both\n"
+      "  trusted_proxy:\n"
+      "    - 127.0.0.0/8\n";
+  char fragments[LAGHU_RUNTIME_PATH_SIZE];
+  FILE *file;
+  if (mkdtemp(directory) == NULL) return false;
+  (void)snprintf(root, LAGHU_RUNTIME_PATH_SIZE, "%s/laghu.yaml", directory);
+  (void)snprintf(fragments, sizeof(fragments), "%s/conf.d", directory);
+  (void)snprintf(fragment, LAGHU_RUNTIME_PATH_SIZE, "%s/10-forwarding.yaml", fragments);
+  if (mkdir(fragments, 0700) != 0) return false;
+  file = fopen(root, "wb");
+  if (file == NULL || fputs(root_contents, file) < 0 || fclose(file) != 0) return false;
+  file = fopen(fragment, "wb");
+  return file != NULL && fputs(fragment_contents, file) >= 0 && fclose(file) == 0;
+}
+
+static bool static_response_test(void) {
+  char directory[] = "/tmp/laghu-static-XXXXXX";
+  char path[LAGHU_RUNTIME_PATH_SIZE];
+  int sockets[2];
+  int file;
+  char listed[LAGHU_RUNTIME_PATH_SIZE];
+  proxy_request request = {0};
+  proxy_access_log access = {0};
+  laghu_proxy_options options;
+  char output[1024];
+  ssize_t received;
+  if (mkdtemp(directory) == NULL) return false;
+  (void)snprintf(path, sizeof(path), "%s/index.html", directory);
+  file = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (file < 0 || write(file, "hello", 5U) != 5 || close(file) != 0 || socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) return false;
+  laghu_proxy_options_init(&options);
+  (void)snprintf(options.sites[0].host, sizeof(options.sites[0].host), "%s", "static.example.test");
+  (void)snprintf(options.sites[0].document_root, sizeof(options.sites[0].document_root), "%s", directory);
+  (void)snprintf(options.sites[0].index_file, sizeof(options.sites[0].index_file), "%s", "index.html");
+  options.site_count = 1U;
+  (void)snprintf(options.response_headers[0].name, sizeof(options.response_headers[0].name), "%s", "X-Static-Policy");
+  (void)snprintf(options.response_headers[0].value, sizeof(options.response_headers[0].value), "%s", "enabled");
+  options.response_header_count = 1U;
+  (void)snprintf(request.method, sizeof(request.method), "%s", "GET");
+  (void)snprintf(request.target, sizeof(request.target), "%s", "/");
+  request.headers[request.header_count++] = (proxy_header){"Host", "STATIC.example.test:8080"};
+  if (!proxy_static_serve(&options, &request, sockets[0], NULL, &access)) return false;
+  received = recv(sockets[1], output, sizeof(output) - 1U, 0);
+  close(sockets[0]);
+  close(sockets[1]);
+  if (received <= 0) return false;
+  output[received] = '\0';
+  if (access.status != 200U || strstr(output, "Content-Type: text/html") == NULL ||
+      strstr(output, "X-Static-Policy: enabled") == NULL || strstr(output, "\r\n\r\nhello") == NULL)
+    return false;
+  (void)snprintf(listed, sizeof(listed), "%s/listed", directory);
+  if (mkdir(listed, 0700) != 0 || socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) return false;
+  options.directory_listing = true;
+  memset(&request, 0, sizeof(request));
+  (void)snprintf(request.method, sizeof(request.method), "%s", "GET");
+  (void)snprintf(request.target, sizeof(request.target), "%s", "/listed/");
+  request.headers[request.header_count++] = (proxy_header){"Host", "static.example.test"};
+  if (!proxy_static_serve(&options, &request, sockets[0], NULL, &access)) return false;
+  received = recv(sockets[1], output, sizeof(output) - 1U, 0);
+  close(sockets[0]);
+  close(sockets[1]);
+  rmdir(listed);
+  unlink(path);
+  rmdir(directory);
+  if (received <= 0) return false;
+  output[received] = '\0';
+  return access.status == 200U && strstr(output, "Content-Type: text/plain") != NULL;
+}
+
+static bool route_rewrite_test(void) {
+  laghu_proxy_options options;
+  proxy_request request = {0};
+  laghu_proxy_options_init(&options);
+  options.route_count = 1U;
+  options.routes[0].match = LAGHU_PROXY_ROUTE_PREFIX;
+  (void)snprintf(options.routes[0].pattern, sizeof(options.routes[0].pattern), "%s", "/legacy/");
+  (void)snprintf(options.routes[0].rewrite, sizeof(options.routes[0].rewrite), "%s", "/index.html");
+  (void)snprintf(request.target, sizeof(request.target), "%s", "/legacy/page?keep=ignored");
+  return proxy_route_rewrite(&options, &request) && !strcmp(request.target, "/index.html");
+}
+
 int main(void) {
   laghu_proxy_options options;
   proxy_queue queue;
   proxy_worker worker;
   laghu_service_config expected_service;
   char error[128];
+  char yaml_path[] = "/tmp/laghu-yaml-XXXXXX";
+  char yaml_directory[] = "/tmp/laghu-yaml-dir-XXXXXX";
+  char yaml_root[LAGHU_RUNTIME_PATH_SIZE];
+  char yaml_fragment[LAGHU_RUNTIME_PATH_SIZE];
   char *valid[] = {"laghu",
                    "--listen",
                    "127.0.0.1:8080",
@@ -80,6 +209,8 @@ int main(void) {
                      "1m",
                      "--worker-queue",
                      "/tmp/jobs"};
+  char *static_only[] = {"laghu", "--listen", "127.0.0.1:8080", "--document-root", "/srv/static", "--cache", "/tmp/cache",
+                         "--worker-queue", "/tmp/jobs"};
   char *backend_conflict[] = {"laghu",    "--listen",   "127.0.0.1:8080",       "--origin",          "http://127.0.0.1:8000",
                               "--cache",  "/tmp/cache", "--file-cache-backend", "file:///tmp/cache", "--worker-queue",
                               "/tmp/jobs"};
@@ -229,6 +360,32 @@ int main(void) {
   int first[2], second[2];
   size_t decoded_length = 0U;
   laghu_proxy_options_init(&options);
+  CHECK(write_yaml_fixture(yaml_path));
+  CHECK(laghu_proxy_load_yaml(yaml_path, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(!strcmp(options.listen_host, "127.0.0.1") && options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
+  CHECK(options.service.trusted_proxy_count == 1U);
+  CHECK(options.response_header_count == 2U && !strcmp(options.response_headers[0].name, "X-Static-Policy"));
+  CHECK(options.site_count == 1U && !strcmp(options.sites[0].host, "static.example.test"));
+  CHECK(options.route_count == 1U && options.routes[0].match == LAGHU_PROXY_ROUTE_ORDERED_REGEX);
+  CHECK(!strcmp(options.routes[0].upstream_host, "127.0.0.1") && !strcmp(options.routes[0].upstream_port, "9000"));
+  CHECK(unlink(yaml_path) == 0);
+  CHECK(write_yaml_fragment_fixture(yaml_directory, yaml_root, yaml_fragment));
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_load_yaml(yaml_root, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
+  CHECK(options.service.trusted_proxy_count == 1U);
+  laghu_proxy_options_dispose(&options);
+  CHECK(unlink(yaml_fragment) == 0);
+  {
+    char fragments[LAGHU_RUNTIME_PATH_SIZE];
+    (void)snprintf(fragments, sizeof(fragments), "%s/conf.d", yaml_directory);
+    CHECK(unlink(yaml_root) == 0);
+    CHECK(rmdir(fragments) == 0);
+  }
+  CHECK(rmdir(yaml_directory) == 0);
+  CHECK(static_response_test());
+  CHECK(route_rewrite_test());
+  laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.service.purge_method && options.service.purge_query && options.service.statistics && options.service.purge_allow_count == 1U);
   laghu_proxy_options_init(&options);
@@ -301,6 +458,10 @@ int main(void) {
   CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_TRUSTED_PROXY, "127.0.0.0/8"));
   CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_TRUSTED_PROXY, "2001:db8::/32"));
   CHECK(service_finalize(&expected_service));
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(9, static_only, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(!strcmp(options.document_root, "/srv/static") && options.origin_host[0] == '\0');
+  laghu_proxy_options_dispose(&options);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, secure, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(memcmp(&options.service, &expected_service, sizeof(options.service)) == 0);

@@ -270,7 +270,8 @@ static bool proxy_origin_idle_alive(laghu_socket socket) {
   return recv(socket, &byte, 1U, MSG_PEEK | MSG_DONTWAIT) > 0 ? false : errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
-bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, bool *timed_out) {
+bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, const char *host, const char *port,
+                          const char *authority, bool origin_tls, bool *timed_out) {
   proxy_queue *queue = worker->queue;
   const laghu_proxy_options *options = queue->options;
   uint64_t now = proxy_monotonic_ms();
@@ -281,7 +282,7 @@ bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin,
   proxy_queue_lock(queue);
   while (index < queue->origin_count) {
     proxy_origin_connection candidate = queue->origins[index];
-    bool matches = candidate.origin_tls == options->origin_tls && !strcmp(candidate.authority, options->origin_authority);
+    bool matches = candidate.origin_tls == origin_tls && !strcmp(candidate.authority, authority);
     bool expired = now - candidate.idle_since_ms >= (uint64_t)options->origin_idle_timeout * 1000U;
     queue->origins[index] = queue->origins[queue->origin_count - 1U];
     --queue->origin_count;
@@ -296,18 +297,18 @@ bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin,
     proxy_queue_lock(queue);
   }
   proxy_queue_unlock(queue);
-  origin->socket = proxy_connect(worker, options->origin_host, options->origin_port, options->connect_timeout);
+  origin->socket = proxy_connect(worker, host, port, options->connect_timeout);
   if (origin->socket == LAGHU_INVALID_SOCKET) return false;
-  if (options->origin_tls) {
-    origin->tls = proxy_tls_handshake(worker, origin->socket, options->origin_host, options->connect_timeout, timed_out);
+  if (origin_tls) {
+    origin->tls = proxy_tls_handshake(worker, origin->socket, host, options->connect_timeout, timed_out);
     if (origin->tls == NULL) {
       proxy_origin_dispose(origin);
       proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
       return false;
     }
   }
-  (void)snprintf(origin->authority, sizeof(origin->authority), "%s", options->origin_authority);
-  origin->origin_tls = options->origin_tls;
+  (void)snprintf(origin->authority, sizeof(origin->authority), "%s", authority);
+  origin->origin_tls = origin_tls;
   proxy_timeout(origin->socket, options->io_timeout);
   return true;
 }
