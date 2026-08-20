@@ -201,6 +201,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   size_t request_body_length = 0U, origin_body_length = 0U;
   laghu_socket origin = LAGHU_INVALID_SOCKET;
   SSL *origin_tls = NULL;
+  proxy_origin_connection upstream = {.socket = LAGHU_INVALID_SOCKET};
+  bool origin_reusable = false;
   char outbound[LAGHU_PROXY_HEADER_BYTES + 1U];
   size_t outbound_length = 0U, index;
   laghu_http_header request_headers[LAGHU_HTTP_MAX_REQUEST_HEADERS];
@@ -438,21 +440,13 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     cached_body = NULL;
     memset(&response, 0, sizeof(response));
   }
-  origin = proxy_connect(worker, options->origin_host, options->origin_port, options->connect_timeout);
-  if (origin == LAGHU_INVALID_SOCKET) {
-    PROXY_FAIL(502U, "Bad Gateway", "origin_connect");
+  if (!proxy_origin_acquire(worker, &upstream, &tls_timed_out)) {
+    PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : (options->origin_tls ? "origin_tls" : "origin_connect"));
     goto done;
   }
-  proxy_worker_origin(worker, origin);
-  proxy_timeout(origin, options->io_timeout);
-  if (options->origin_tls) {
-    origin_tls = proxy_tls_handshake(worker, origin, options->origin_host, options->connect_timeout, &tls_timed_out);
-    if (origin_tls == NULL) {
-      PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : "origin_tls");
-      goto done;
-    }
-  }
-  outbound_length = (size_t)snprintf(outbound, sizeof(outbound), "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n", request.method,
+  origin = upstream.socket;
+  origin_tls = upstream.tls;
+  outbound_length = (size_t)snprintf(outbound, sizeof(outbound), "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n", request.method,
                                      request.target, options->origin_authority);
   for (index = 0U; index < request.header_count; ++index) {
     int n;
@@ -580,6 +574,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       PROXY_FAIL(502U, "Bad Gateway", proxy_socket_timed_out() ? "origin_timeout" : (origin_tls != NULL ? "origin_tls" : "origin_protocol"));
       goto done;
     }
+    origin_reusable = !strcmp(response.version, "HTTP/1.1") && !proxy_connection_nominates(response.headers, response.header_count, "close") &&
+                      (bodyless ? initial_length == 0U : response.has_content_length || response.chunked);
   }
   if (response.chunked) {
     size_t decoded_length = 0U;
@@ -671,12 +667,8 @@ done:
   laghu_http_transaction_result_release(&finalized);
   free(request_body);
   free(origin_body);
-  if (origin_tls != NULL) SSL_free(origin_tls);
   free(decoded);
-  if (origin != LAGHU_INVALID_SOCKET) {
-    proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
-    laghu_close(origin);
-  }
+  if (origin != LAGHU_INVALID_SOCKET) proxy_origin_release(worker, &upstream, origin_reusable);
   laghu_close(client);
 #undef PROXY_FAIL
 }

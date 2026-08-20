@@ -195,3 +195,87 @@ laghu_socket proxy_connect(proxy_worker *worker, const char *host, const char *p
   freeaddrinfo(addresses);
   return descriptor;
 }
+
+static void proxy_origin_dispose(proxy_origin_connection *origin) {
+  if (origin->tls != NULL) SSL_free(origin->tls);
+  if (origin->socket != LAGHU_INVALID_SOCKET) laghu_close(origin->socket);
+  memset(origin, 0, sizeof(*origin));
+  origin->socket = LAGHU_INVALID_SOCKET;
+}
+
+static bool proxy_origin_idle_alive(laghu_socket socket) {
+  struct pollfd ready = {(int)socket, POLLIN, 0};
+  unsigned char byte;
+  int selected = poll(&ready, 1U, 0);
+  if (selected < 0) return false;
+  if (selected == 0 || (ready.revents & (POLLIN | POLLHUP | POLLERR)) == 0) return true;
+  return recv(socket, &byte, 1U, MSG_PEEK | MSG_DONTWAIT) > 0 ? false : errno == EAGAIN || errno == EWOULDBLOCK;
+}
+
+bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, bool *timed_out) {
+  proxy_queue *queue = worker->queue;
+  const laghu_proxy_options *options = queue->options;
+  uint64_t now = proxy_monotonic_ms();
+  unsigned int index = 0U;
+  memset(origin, 0, sizeof(*origin));
+  origin->socket = LAGHU_INVALID_SOCKET;
+  *timed_out = false;
+  proxy_queue_lock(queue);
+  while (index < queue->origin_count) {
+    proxy_origin_connection candidate = queue->origins[index];
+    bool matches = candidate.origin_tls == options->origin_tls && !strcmp(candidate.authority, options->origin_authority);
+    bool expired = now - candidate.idle_since_ms >= (uint64_t)options->origin_idle_timeout * 1000U;
+    queue->origins[index] = queue->origins[queue->origin_count - 1U];
+    --queue->origin_count;
+    if (matches && !expired && proxy_origin_idle_alive(candidate.socket)) {
+      *origin = candidate;
+      proxy_queue_unlock(queue);
+      proxy_worker_origin(worker, origin->socket);
+      return true;
+    }
+    proxy_queue_unlock(queue);
+    proxy_origin_dispose(&candidate);
+    proxy_queue_lock(queue);
+  }
+  proxy_queue_unlock(queue);
+  origin->socket = proxy_connect(worker, options->origin_host, options->origin_port, options->connect_timeout);
+  if (origin->socket == LAGHU_INVALID_SOCKET) return false;
+  if (options->origin_tls) {
+    origin->tls = proxy_tls_handshake(worker, origin->socket, options->origin_host, options->connect_timeout, timed_out);
+    if (origin->tls == NULL) {
+      proxy_origin_dispose(origin);
+      proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
+      return false;
+    }
+  }
+  (void)snprintf(origin->authority, sizeof(origin->authority), "%s", options->origin_authority);
+  origin->origin_tls = options->origin_tls;
+  proxy_timeout(origin->socket, options->io_timeout);
+  return true;
+}
+
+void proxy_origin_release(proxy_worker *worker, proxy_origin_connection *origin, bool reusable) {
+  proxy_queue *queue = worker->queue;
+  proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
+  if (!reusable || queue->options->origin_pool_size == 0U || proxy_is_forcing(queue)) {
+    proxy_origin_dispose(origin);
+    return;
+  }
+  origin->idle_since_ms = proxy_monotonic_ms();
+  proxy_queue_lock(queue);
+  if (queue->origin_count < queue->options->origin_pool_size) {
+    queue->origins[queue->origin_count++] = *origin;
+    origin->socket = LAGHU_INVALID_SOCKET;
+    origin->tls = NULL;
+  }
+  proxy_queue_unlock(queue);
+  proxy_origin_dispose(origin);
+}
+
+void proxy_origin_pool_close(proxy_queue *queue) {
+  unsigned int index;
+  proxy_queue_lock(queue);
+  for (index = 0U; index < queue->origin_count; ++index) proxy_origin_dispose(&queue->origins[index]);
+  queue->origin_count = 0U;
+  proxy_queue_unlock(queue);
+}

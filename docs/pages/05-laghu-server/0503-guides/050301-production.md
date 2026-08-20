@@ -51,6 +51,8 @@ laghu \
   --connection-queue 1024 \
   --connect-timeout 5 \
   --io-timeout 30 \
+  --origin-pool-size 64 \
+  --origin-idle-timeout 30 \
   --drain-timeout 30 \
   --forwarded-headers both \
   --trusted-proxy 10.20.0.0/16 \

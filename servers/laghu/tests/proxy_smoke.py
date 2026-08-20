@@ -38,6 +38,13 @@ def wait_for_shutdown(process, timeout=5):
 
 class Origin(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    connections = 0
+    connections_lock = threading.Lock()
+
+    def setup(self):
+        super().setup()
+        with self.connections_lock:
+            type(self).connections += 1
 
     def do_GET(self):
         request_path = urllib.parse.urlsplit(self.path).path
@@ -184,7 +191,8 @@ class Origin(http.server.BaseHTTPRequestHandler):
             "ETag",
             '"trim-v1"' if request_path == "/trim-urls.html" else '"origin-v1"',
         )
-        self.send_header("Connection", "close")
+        if request_path != "/pooled":
+            self.send_header("Connection", "close")
         if request_path == "/hints.html":
             self.send_header("Link", "<https://origin.example.test>; rel=preload")
         if request_path == "/private":
@@ -196,7 +204,7 @@ class Origin(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         self.wfile.flush()
-        self.close_connection = True
+        self.close_connection = request_path != "/pooled"
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -1305,6 +1313,10 @@ def main():
                 "1",
                 "--connection-queue",
                 "1",
+                "--origin-pool-size",
+                "1",
+                "--origin-idle-timeout",
+                "1",
                 "--purge-method",
                 "PURGE",
                 "--purge-query",
@@ -1350,6 +1362,25 @@ def main():
             assert b"/.laghu/beacon/instrumentation.js" in first_body
             assert b'data-laghu-sample="100"' in first_body
             assert b"x-laghu: pass" in first_head, first_head
+            with Origin.connections_lock:
+                pooled_before = Origin.connections
+            _, pooled_one = request(proxy_port, "/pooled")
+            _, pooled_two = request(proxy_port, "/pooled")
+            assert b"<body>hello" in pooled_one and b"<body>hello" in pooled_two
+            with Origin.connections_lock:
+                assert Origin.connections == pooled_before + 1, Origin.connections
+            _, closed_origin = request(proxy_port, "/api/data")
+            assert closed_origin == b'{"ok":true}'
+            _, pooled_after_close = request(proxy_port, "/pooled")
+            assert b"<body>hello" in pooled_after_close
+            with Origin.connections_lock:
+                assert Origin.connections == pooled_before + 2, Origin.connections
+                idle_before = Origin.connections
+            time.sleep(1.05)
+            _, pooled_after_idle = request(proxy_port, "/pooled")
+            assert b"<body>hello" in pooled_after_idle
+            with Origin.connections_lock:
+                assert Origin.connections == idle_before + 1, Origin.connections
             lcp_head, lcp_body, lcp_interim = request(
                 proxy_port, "/lcp.html", include_interim=True
             )

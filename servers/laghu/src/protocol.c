@@ -180,6 +180,7 @@ bool proxy_parse_response(proxy_response *response, size_t length) {
   if (space2 == NULL) return false;
   *space2++ = '\0';
   if (strcmp(line, "HTTP/1.1") && strcmp(line, "HTTP/1.0")) return false;
+  if (!laghu_base_string_copy(response->version, sizeof(response->version), line)) return false;
   if (strlen(space1) != 3U || !laghu_base_parse_u64(space1, 100U, 599U, &parsed_status)) return false;
   response->status = (unsigned int)parsed_status;
   if (*space2 == '\0' || !laghu_base_string_copy(response->reason, sizeof(response->reason), space2) ||

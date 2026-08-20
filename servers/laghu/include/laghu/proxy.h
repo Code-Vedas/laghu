@@ -26,6 +26,8 @@ extern "C" {
 #define LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT 5U
 #define LAGHU_PROXY_DEFAULT_IO_TIMEOUT 30U
 #define LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT 30U
+#define LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE 16U
+#define LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT 30U
 
 typedef enum {
   LAGHU_PROXY_FORWARDED_OFF = 0,
@@ -48,6 +50,8 @@ typedef struct {
   unsigned int connect_timeout;
   unsigned int io_timeout;
   unsigned int drain_timeout;
+  unsigned int origin_pool_size;
+  unsigned int origin_idle_timeout;
   laghu_proxy_forwarded_mode forwarded_mode;
   bool origin_tls;
 } laghu_proxy_options;

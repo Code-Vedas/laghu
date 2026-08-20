@@ -55,6 +55,7 @@ typedef struct {
 
 typedef struct {
   char storage[LAGHU_PROXY_HEADER_BYTES + 1U];
+  char version[9];
   char reason[128];
   unsigned int status;
   proxy_header headers[LAGHU_HTTP_MAX_RESPONSE_HEADERS];
@@ -69,6 +70,14 @@ typedef struct {
   struct sockaddr_storage peer;
   laghu_socklen peer_length;
 } proxy_connection;
+
+typedef struct {
+  laghu_socket socket;
+  SSL *tls;
+  char authority[264];
+  bool origin_tls;
+  uint64_t idle_since_ms;
+} proxy_origin_connection;
 
 typedef enum { PROXY_STARTING = 0, PROXY_RUNNING, PROXY_DRAINING, PROXY_FORCING, PROXY_STOPPED } proxy_lifecycle_state;
 
@@ -85,6 +94,8 @@ typedef struct proxy_queue {
   int optimizer_readiness;
   unsigned int beacon_count;
   unsigned int active_count;
+  proxy_origin_connection *origins;
+  unsigned int origin_count;
   proxy_lifecycle_state state;
   bool stopping;
   SSL_CTX *tls_context;
@@ -162,6 +173,9 @@ SSL_CTX *proxy_tls_context(const laghu_proxy_options *options);
 SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket, const char *host, unsigned int timeout, bool *timed_out);
 bool proxy_read_headers(laghu_socket socket, char *buffer, SSL *tls, size_t *header_length, unsigned char **initial, size_t *initial_length);
 laghu_socket proxy_connect(proxy_worker *worker, const char *host, const char *port, unsigned int timeout);
+bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, bool *timed_out);
+void proxy_origin_release(proxy_worker *worker, proxy_origin_connection *origin, bool reusable);
+void proxy_origin_pool_close(proxy_queue *queue);
 void proxy_error_response(laghu_socket client, unsigned int status, const char *reason);
 void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char *failure);
 bool proxy_read_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, size_t expected, bool to_close,

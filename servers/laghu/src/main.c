@@ -28,6 +28,7 @@ static void usage(FILE *stream) {
       "--image-quality 1..100\n"
       "  --workers N --connection-queue N\n"
       "  --connect-timeout SECONDS --io-timeout SECONDS\n"
+      "  --origin-pool-size 0..1024 --origin-idle-timeout SECONDS\n"
       "  --drain-timeout SECONDS\n"
       "  --transform-memory-limit 4m..256m\n"
       "  --transform-deadline-ms 5..1000\n"

@@ -212,9 +212,10 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   queue.options = options;
   queue.capacity = options->connection_queue;
   queue.items = calloc(queue.capacity, sizeof(*queue.items));
+  if (options->origin_pool_size != 0U) queue.origins = calloc(options->origin_pool_size, sizeof(*queue.origins));
   workers = calloc(options->workers, sizeof(*workers));
   threads = calloc(options->workers, sizeof(*threads));
-  if (queue.items == NULL || workers == NULL || threads == NULL) goto cleanup;
+  if (queue.items == NULL || (options->origin_pool_size != 0U && queue.origins == NULL) || workers == NULL || threads == NULL) goto cleanup;
   if (pthread_mutex_init(&queue.lock, NULL) != 0) goto cleanup;
   lock_ready = true;
   if (pthread_cond_init(&queue.ready, NULL) != 0) goto cleanup;
@@ -351,6 +352,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   proxy_log_event(&queue, "shutdown", "stopped");
   result = started == options->workers ? 0 : 1;
 cleanup:
+  if (lock_ready) proxy_origin_pool_close(&queue);
   laghu_runtime_queue_close(&queue.runtime_queue);
   laghu_runtime_queue_close(&queue.html_refresh_queue);
   laghu_runtime_queue_close(&queue.font_fetch_queue);
@@ -367,5 +369,6 @@ cleanup:
   free(threads);
   free(workers);
   free(queue.items);
+  free(queue.origins);
   return result;
 }

@@ -74,6 +74,8 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--connection-queue N` | `1..65536` | `64` | Bounds accepted connections waiting for workers. |
 | `--connect-timeout SECONDS` | `1..300` | `5` | Bounds origin connection establishment. |
 | `--io-timeout SECONDS` | `1..300` | `30` | Bounds client/origin I/O. |
+| `--origin-pool-size N` | `0..1024` | `16` | Bounds idle HTTP/1.1 origin connections; `0` disables reuse. |
+| `--origin-idle-timeout SECONDS` | `1..3600` | `30` | Closes an idle retained origin connection before reuse. |
 | `--drain-timeout SECONDS` | `1..300` | `30` | Bounds graceful shutdown. |
 | `--origin-ca-file PATH` | CA bundle path | platform trust | Overrides trust for HTTPS origins; invalid with HTTP. |
 | `--forwarded-headers MODE` | `off`, `forwarded`, `x-forwarded`, `both` | `off` | Selects trusted forwarding syntax. |

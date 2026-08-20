@@ -4,8 +4,10 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "laghu/proxy.h"
+#include "server_internal.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(value)                                          \
@@ -35,6 +37,8 @@ static bool service_finalize(laghu_service_config *config) {
 
 int main(void) {
   laghu_proxy_options options;
+  proxy_queue queue;
+  proxy_worker worker;
   laghu_service_config expected_service;
   char error[128];
   char *valid[] = {"laghu",
@@ -98,6 +102,8 @@ int main(void) {
                       "--worker-queue", "/tmp/jobs", "--preset",       "safe",     "--rewrite-level",       "core"};
   char *bad_drain[] = {"laghu",          "--listen",  "127.0.0.1:8080",  "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                        "--worker-queue", "/tmp/jobs", "--drain-timeout", "0"};
+  char *pool[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
+                  "--worker-queue", "/tmp/jobs", "--origin-pool-size", "1", "--origin-idle-timeout", "9"};
   char *filters[] = {"laghu",           "--listen",         "127.0.0.1:8080", "--origin",        "http://127.0.0.1:8000",
                      "--cache",         "/tmp/cache",       "--worker-queue", "/tmp/jobs",       "--enable-filter",
                      "resource_inline", "--disable-filter", "html_minify",    "--forbid-filter", "javascript_defer"};
@@ -214,6 +220,8 @@ int main(void) {
                  "--rum-store-required"};
   static const unsigned char chunked[] = "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
   unsigned char decoded[16];
+  unsigned char marker;
+  int first[2], second[2];
   size_t decoded_length = 0U;
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
@@ -230,6 +238,32 @@ int main(void) {
   CHECK(options.config.javascript_inline_limit == 4096U);
   CHECK(options.config.javascript_outline_threshold == 16384U);
   CHECK(options.drain_timeout == 45U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(13, pool, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.origin_pool_size == 1U && options.origin_idle_timeout == 9U);
+  memset(&queue, 0, sizeof(queue));
+  queue.options = &options;
+  queue.origins = calloc(options.origin_pool_size, sizeof(*queue.origins));
+  CHECK(queue.origins != NULL);
+  CHECK(pthread_mutex_init(&queue.lock, NULL) == 0);
+  memset(&worker, 0, sizeof(worker));
+  worker.queue = &queue;
+  worker.active_origin = LAGHU_INVALID_SOCKET;
+  CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, first) == 0);
+  CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, second) == 0);
+  {
+    proxy_origin_connection first_origin = {.socket = first[0]};
+    proxy_origin_connection second_origin = {.socket = second[0]};
+    proxy_origin_release(&worker, &first_origin, true);
+    proxy_origin_release(&worker, &second_origin, true);
+  }
+  CHECK(queue.origin_count == 1U);
+  CHECK(recv(second[1], &marker, 1U, 0) == 0);
+  proxy_origin_pool_close(&queue);
+  free(queue.origins);
+  close(first[1]);
+  close(second[1]);
+  CHECK(pthread_mutex_destroy(&queue.lock) == 0);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, backend, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.service.file_cache_backend, "file:///tmp/cache"));

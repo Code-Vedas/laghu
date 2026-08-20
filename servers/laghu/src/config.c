@@ -121,6 +121,8 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->connect_timeout = LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT;
   options->io_timeout = LAGHU_PROXY_DEFAULT_IO_TIMEOUT;
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
+  options->origin_pool_size = LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE;
+  options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
   laghu_service_config_init(&options->service);
 }
 
@@ -141,7 +143,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool javascript_defer_suggestions_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
-  bool io_timeout_seen = false, drain_timeout_seen = false;
+  bool io_timeout_seen = false, drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
   bool ca_seen = false, forwarded_seen = false;
   bool respect_vary_seen = false, respect_proto_seen = false;
   bool query_overrides_seen = false;
@@ -347,6 +349,16 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (drain_timeout_seen || !proxy_uint(value, 1U, 300U, &options->drain_timeout))
         return proxy_error(error, error_size, "invalid or duplicate --drain-timeout");
       drain_timeout_seen = true;
+    } else if (strcmp(name, "--origin-pool-size") == 0) {
+      NEED_VALUE();
+      if (origin_pool_size_seen || !proxy_uint(value, 0U, 1024U, &options->origin_pool_size))
+        return proxy_error(error, error_size, "invalid or duplicate --origin-pool-size");
+      origin_pool_size_seen = true;
+    } else if (strcmp(name, "--origin-idle-timeout") == 0) {
+      NEED_VALUE();
+      if (origin_idle_timeout_seen || !proxy_uint(value, 1U, 3600U, &options->origin_idle_timeout))
+        return proxy_error(error, error_size, "invalid or duplicate --origin-idle-timeout");
+      origin_idle_timeout_seen = true;
     } else if (strcmp(name, "--origin-ca-file") == 0) {
       NEED_VALUE();
       if (ca_seen || !proxy_copy(options->origin_ca_file, sizeof(options->origin_ca_file), value))
