@@ -5,7 +5,12 @@
 
 services:
   nginx-plain:
-    image: nginx:1.30.4-alpine
+    build:
+      context: ..
+      dockerfile: performance/Dockerfile.nginx-plain
+      args:
+        NGINX_VERSION: "1.30.4"
+    image: laghu-bench-nginx-plain:local
     container_name: laghu-bench-nginx-plain
     ports:
       - "127.0.0.1:18090:8080"
@@ -45,6 +50,7 @@ services:
       - "127.0.0.1:18100:80"
     volumes:
       - ./apache/plain.conf:/etc/apache2/sites-available/000-default.conf:ro
+      - ./apache/benchmark-mpm.conf:/etc/apache2/mods-enabled/mpm_event.conf:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
   apache-pagespeed:
     build:
@@ -56,6 +62,7 @@ services:
       - "127.0.0.1:18101:80"
     volumes:
       - ./apache/pagespeed.conf:/etc/apache2/sites-available/000-default.conf:ro
+      - ./apache/benchmark-mpm.conf:/etc/apache2/mods-enabled/mpm_event.conf:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
   apache-laghu:
     build:
@@ -70,6 +77,7 @@ services:
       - "127.0.0.1:18102:80"
     volumes:
       - ./apache/laghu.conf:/etc/apache2/sites-available/000-default.conf:ro
+      - ./apache/benchmark-mpm.conf:/etc/apache2/mods-enabled/mpm_event.conf:ro
       - ./apache-laghu-entrypoint:/usr/local/bin/laghu-benchmark-apache-entrypoint:ro
       - ./metrics.token:/etc/laghu/benchmark.token:ro
       - ${LAGHU_BENCH_CORPUS}:/srv/corpus:ro
@@ -82,6 +90,10 @@ services:
     environment:
       LAGHU_BENCH_ORIGIN: http://nginx-plain:8080
       LAGHU_BENCH_REWRITE_LEVEL: passthrough
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "127.0.0.1:18200:8080"
     volumes:
@@ -98,6 +110,10 @@ services:
     environment:
       LAGHU_BENCH_ORIGIN: http://nginx-plain:8080
       LAGHU_BENCH_REWRITE_LEVEL: experimental
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "127.0.0.1:18201:8080"
     volumes:
@@ -114,6 +130,10 @@ services:
     environment:
       LAGHU_BENCH_ORIGIN: http://apache-plain:80
       LAGHU_BENCH_REWRITE_LEVEL: passthrough
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "127.0.0.1:18210:8080"
     volumes:
@@ -130,6 +150,10 @@ services:
     environment:
       LAGHU_BENCH_ORIGIN: http://apache-plain:80
       LAGHU_BENCH_REWRITE_LEVEL: experimental
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "127.0.0.1:18211:8080"
     volumes:

@@ -55,6 +55,9 @@ export default function () {
   }
   const paths = __ENV.REQUEST_PATHS ? JSON.parse(__ENV.REQUEST_PATHS) : [__ENV.REQUEST_PATH];
   const headers = __ENV.REQUEST_HEADERS ? JSON.parse(__ENV.REQUEST_HEADERS) : { Accept: __ENV.ACCEPT || "*/*" };
-  const response = http.get(`${__ENV.BASE_URL}${paths[__ITER % paths.length]}`, { headers });
+  const response = http.get(`${__ENV.BASE_URL}${paths[__ITER % paths.length]}`, {
+    headers,
+    timeout: __ENV.REQUEST_TIMEOUT || "90s",
+  });
   check(response, { "HTTP 200": (value) => value.status === 200 });
 }

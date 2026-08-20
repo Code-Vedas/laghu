@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -765,13 +766,10 @@ static int status_connect(const status_origin *origin, unsigned int timeout) {
       break;
     }
     if (errno == EINPROGRESS) {
-      fd_set writable;
-      struct timeval value = {(time_t)timeout, 0};
+      struct pollfd writable = {status_socket, POLLOUT, 0};
       int error = 0;
       socklen_t error_length = sizeof(error);
-      FD_ZERO(&writable);
-      FD_SET(status_socket, &writable);
-      if (select(status_socket + 1, NULL, &writable, NULL, &value) > 0 &&
+      if (poll(&writable, 1U, (int)timeout * 1000) > 0 &&
           getsockopt(status_socket, SOL_SOCKET, SO_ERROR, &error, &error_length) == 0 && error == 0) {
         (void)fcntl(status_socket, F_SETFL, flags);
         break;

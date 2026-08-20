@@ -12,8 +12,8 @@ import argparse
 import hashlib
 import html
 import json
+import platform
 import re
-import socket
 import subprocess
 import tempfile
 import time
@@ -49,7 +49,7 @@ def target(*args: Any) -> Target:
 
 TARGETS = (
     target("nginx/plain", "nginx", "nginx", "plain", "http://127.0.0.1:18090",
-           "nginx-plain", False, False, False, False),
+           "nginx-plain", False, True, False, False),
     target("nginx/pagespeed", "nginx", "nginx", "pagespeed", "http://127.0.0.1:18091",
            "nginx-pagespeed", True, True, False, False),
     target("nginx/laghu", "nginx", "nginx", "all-optimizations", "http://127.0.0.1:18092",
@@ -69,6 +69,7 @@ TARGETS = (
     target("standalone/laghu/all-optimizations/apache", "standalone", "apache",
            "all-optimizations", "http://127.0.0.1:18211", "standalone-apache-all", True, True, True, True),
 )
+BENCHMARK_CONTAINERS = frozenset(f"laghu-bench-{current.service}" for current in TARGETS)
 
 MIXED_PATHS = ("/index.html", "/css-100k.css", "/js-100k.js", "/image-480.jpg")
 CACHE_THRASH_PATHS = ("/image-100.jpg", "/image-480.jpg", "/image-768.jpg", "/image-1440.jpg", "/image-3840.jpg")
@@ -92,6 +93,7 @@ CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illu
 ARTIFACT_POLL_SECONDS = 0.1
 PAGE_SPEED_ARTIFACT_TIMEOUT_SECONDS = 30.0
 DEFAULT_ARTIFACT_TIMEOUT_SECONDS = 12.0
+BENCH_REQUEST_TIMEOUT = "90s"
 
 
 def request(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
@@ -225,14 +227,49 @@ def cell(target: Target, scenario: str, path: str, response: dict[str, Any], ori
 def wait_ready(target: Target) -> None:
     parsed = urlparse(target.base_url)
     require(parsed.hostname is not None and parsed.port is not None, f"{target.name}: invalid target URL")
-    for _ in range(120):
+    for _ in range(240):
         try:
-            with socket.create_connection((parsed.hostname, parsed.port), timeout=1):
+            completed = subprocess.run(
+                ["curl", "--silent", "--show-error", "--fail", "--max-time", "1", target.base_url + "/cold.html"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+            )
+            metrics_ready = "/laghu" not in target.name or subprocess.run(
+                ["curl", "--silent", "--show-error", "--fail", "--max-time", "1", "--header",
+                 "X-Laghu-Purge-Token: laghu-benchmark-metrics-token-0123456789", target.base_url + "/.laghu/metrics"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+            ).returncode == 0
+            if completed.returncode == 0 and metrics_ready:
                 return
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             pass
         time.sleep(0.25)
     raise RuntimeError(f"{target.name}: readiness timed out")
+
+
+def active_containers(target: Target) -> frozenset[str]:
+    """Return target, plain reference, and required origin; exclude unrelated workers."""
+    active = {f"laghu-bench-{target.service}", f"laghu-bench-{target.origin}-plain"}
+    return frozenset(active)
+
+
+def activate_target(target: Target) -> None:
+    active = active_containers(target)
+    running = set(subprocess.run(["docker", "ps", "--format", "{{.Names}}"], check=True,
+                                 capture_output=True, text=True).stdout.splitlines())
+    inactive = sorted((BENCHMARK_CONTAINERS - active) & running)
+    if inactive:
+        subprocess.run(["docker", "stop", *inactive], check=True, capture_output=True, text=True)
+    required = sorted(active - running)
+    if required:
+        subprocess.run(["docker", "start", *required], check=True, capture_output=True, text=True)
+
+
+def activate_all_targets() -> None:
+    running = set(subprocess.run(["docker", "ps", "--format", "{{.Names}}"], check=True,
+                                 capture_output=True, text=True).stdout.splitlines())
+    stopped = sorted(BENCHMARK_CONTAINERS - running)
+    if stopped:
+        subprocess.run(["docker", "start", *stopped], check=True, capture_output=True, text=True)
 
 
 def plain_target(target: Target) -> Target:
@@ -274,9 +311,16 @@ def cgroup_snapshot(target: Target) -> dict[str, int]:
 def operational_snapshot(target: Target) -> dict[str, float] | None:
     if "/laghu" not in target.name:
         return None
-    response = request(target.base_url + "/.laghu/metrics", METRICS_HEADERS)
-    require(response["status"] == 200, f"{target.name}: metrics endpoint unavailable")
-    return prometheus_snapshot(response["body"].decode("utf-8", "strict"))
+    deadline = time.monotonic() + DEFAULT_ARTIFACT_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            response = request(target.base_url + "/.laghu/metrics", METRICS_HEADERS)
+            if response["status"] == 200:
+                return prometheus_snapshot(response["body"].decode("utf-8", "strict"))
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        time.sleep(ARTIFACT_POLL_SECONDS)
+    raise RuntimeError(f"{target.name}: metrics endpoint unavailable")
 
 
 def expected_html(target: Target) -> dict[str, Any]:
@@ -305,6 +349,26 @@ def image_url(target: Target, headers: dict[str, str]) -> str:
                 return urljoin(target.base_url + "/", path)
         time.sleep(ARTIFACT_POLL_SECONDS)
     raise RuntimeError(f"{target.name}: did not publish negotiated image URL")
+
+
+def validate_plain_nginx_baseline(target: Target) -> None:
+    if target.name != "nginx/plain":
+        return
+    webp = request(target.base_url + "/image-480.jpg", WEBP)
+    webp_headers = lower(webp["headers"])
+    require(webp_headers.get("content-type", "").startswith("image/webp"), "nginx/plain: WebP selection missing")
+    require("accept" in webp_headers.get("vary", "").lower(), "nginx/plain: Accept Vary missing")
+    require("public, max-age=3600" == webp_headers.get("cache-control", ""), "nginx/plain: cache policy missing")
+    fallback = request(target.base_url + "/image-480.jpg", {"Accept": "image/jpeg"})
+    require(lower(fallback["headers"]).get("content-type", "").startswith("image/jpeg"), "nginx/plain: JPEG fallback missing")
+    compressed = request(target.base_url + "/css-10k.css", {"Accept-Encoding": "br"})
+    compressed_headers = lower(compressed["headers"])
+    require(compressed_headers.get("content-encoding") == "br", "nginx/plain: Brotli selection missing")
+    compressed = request(target.base_url + "/css-10k.css", {"Accept-Encoding": "gzip"})
+    require(lower(compressed["headers"]).get("content-encoding") == "gzip", "nginx/plain: gzip selection missing")
+    for path, directive in (("/no-store.html", "no-store"), ("/private.html", "private")):
+        response = request(target.base_url + path, WEBP)
+        require(directive == lower(response["headers"]).get("cache-control", ""), f"nginx/plain: {path} cache policy")
 
 
 def artifact_timeout_seconds(target: Target) -> float:
@@ -336,12 +400,17 @@ def expected_image(
             require(len(response["body"]) <= source_bytes, f"{target.name}: {label} variant grew beyond source")
             decode_image(target, label, content_type, response["body"])
             if "/laghu" in target.name:
-                require(response_headers.get("x-laghu-cache") == "hit", f"{target.name}: {label} cache miss")
-                require(response_headers.get("x-laghu") == "image-hit", f"{target.name}: {label} transform missing")
+                if response_headers.get("x-laghu-cache") != "hit" or response_headers.get("x-laghu") != "image-hit":
+                    time.sleep(ARTIFACT_POLL_SECONDS)
+                    continue
             reference = output / f"quality-reference-{source_path.rsplit('/', 1)[-1]}"
             if not reference.exists():
                 reference.write_bytes(request(plain_target(target).base_url + source_path)["body"])
-            artifact = output / f"quality-{target.name.replace('/', '-')}-{label.lower()}-{source_path.rsplit('/', 1)[-1]}{image_suffix(content_type)}"
+            artifact_name = (
+                f"quality-{target.name.replace('/', '-')}-{label.lower()}-"
+                f"{source_path.rsplit('/', 1)[-1]}{image_suffix(content_type)}"
+            )
+            artifact = output / artifact_name
             artifact.write_bytes(response["body"])
             result = cell(target, f"capability-{label.lower()}", url, response, source_bytes)
             result["quality_artifact"] = artifact.name
@@ -414,6 +483,7 @@ def run_k6(
     headers: dict[str, str] | None = None,
     duration: str | None = None,
     execute_javascript: str | None = None,
+    request_timeout: str | None = None,
 ) -> dict[str, Any]:
     iterations = max(iterations, vus)
     summary_name = f"k6-{target.service}-{scenario}-{vus}.json"
@@ -428,6 +498,8 @@ def run_k6(
     ]
     if duration is not None:
         command.extend(("-e", f"DURATION={duration}", "-e", "RAMP_UP_DURATION=5s"))
+    if request_timeout is not None:
+        command.extend(("-e", f"REQUEST_TIMEOUT={request_timeout}"))
     if execute_javascript is not None:
         command.extend(("-e", f"EXECUTE_JAVASCRIPT={execute_javascript}"))
     resources_before = cgroup_snapshot(target)
@@ -454,6 +526,7 @@ def run_k6(
         "p95_ms": latency["p(95)"],
         "p99_ms": latency["p(99)"],
         "ttfb_p95_ms": waiting["p(95)"],
+        "request_timeout": request_timeout or BENCH_REQUEST_TIMEOUT,
         "verdict": "pass",
     }
     result["resource"] = resource_delta(resources_before, resources_after, wire_bytes)
@@ -463,6 +536,70 @@ def run_k6(
         else histogram_delta(operational_before, operational_after, "laghu_request_duration_seconds")
     )
     return result
+
+
+def nginx_comparison(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join equivalent k6 cells for the required plain/PageSpeed/Laghu NGINX triad."""
+    names = ("nginx/plain", "nginx/pagespeed", "nginx/laghu")
+    grouped: dict[tuple[str, str, int], dict[str, dict[str, Any]]] = {}
+    for current in cells:
+        if current.get("target") not in names or not isinstance(current.get("requests"), int):
+            continue
+        key = (str(current.get("scenario")), str(current.get("path", "")), int(current.get("vus", 0)))
+        grouped.setdefault(key, {})[str(current["target"])] = current
+    rows = []
+    for (scenario, path, vus), targets in sorted(grouped.items()):
+        if all(name in targets for name in names):
+            rows.append({
+                "scenario": scenario,
+                "path": path,
+                "vus": vus,
+                "plain": targets["nginx/plain"],
+                "pagespeed": targets["nginx/pagespeed"],
+                "laghu": targets["nginx/laghu"],
+            })
+    return rows
+
+
+def require_nginx_comparison(cells: list[dict[str, Any]]) -> None:
+    names = ("nginx/plain", "nginx/pagespeed", "nginx/laghu")
+    keys: dict[str, set[tuple[str, str, int]]] = {name: set() for name in names}
+    for current in cells:
+        name = current.get("target")
+        if name not in keys or not isinstance(current.get("requests"), int):
+            continue
+        keys[str(name)].add((str(current.get("scenario")), str(current.get("path", "")), int(current.get("vus", 0))))
+    reference = keys[names[0]]
+    require(reference, "nginx comparison: plain NGINX has no k6 cells")
+    for name in names[1:]:
+        require(keys[name] == reference, f"nginx comparison: missing equivalent cells for {name}")
+    require(len(nginx_comparison(cells)) == len(reference), "nginx comparison: incomplete joined output")
+
+
+def benchmark_metadata(corpus: Path) -> dict[str, Any]:
+    configs = (
+        "Dockerfile.nginx-plain", "nginx/plain-entrypoint", "nginx/plain.conf",
+        "nginx/pagespeed-nginx.conf", "nginx/pagespeed.conf", "nginx/laghu.conf",
+    )
+    performance = Path(__file__).parent
+    targets = {}
+    for current in TARGETS:
+        container = f"laghu-bench-{current.service}"
+        inspected = subprocess.run(["docker", "inspect", "--format", "{{.Image}}", container], check=False,
+                                   capture_output=True, text=True)
+        version = subprocess.run(["docker", "exec", container, "nginx", "-V"], check=False,
+                                 capture_output=True, text=True)
+        targets[current.name] = {
+            "container_image_id": inspected.stdout.strip() if inspected.returncode == 0 else "unavailable",
+            "nginx_version": (version.stdout + version.stderr).strip() if version.returncode == 0 else "unavailable",
+        }
+    return {
+        "corpus_manifest_sha256": hashlib.sha256((corpus / "manifest.json").read_bytes()).hexdigest(),
+        "config_sha256": {name: hashlib.sha256((performance / name).read_bytes()).hexdigest() for name in configs},
+        "k6_image": "grafana/k6:0.57.0",
+        "host": {"platform": platform.platform(), "machine": platform.machine()},
+        "targets": targets,
+    }
 
 
 def image_dimensions(path: Path) -> tuple[int, int]:
@@ -538,7 +675,7 @@ def cwv(output: Path) -> list[dict[str, Any]]:
     return measurements
 
 
-def write_report(output: Path, cells: list[dict[str, Any]], instrumentation: dict[str, Any]) -> None:
+def write_report(output: Path, cells: list[dict[str, Any]], instrumentation: dict[str, Any], comparison: list[dict[str, Any]]) -> None:
     keys = (
         "target", "scenario", "vus", "bytes", "original_wire_bytes", "optimized_wire_bytes", "byte_savings_percent",
         "wire_bytes", "cache_state", "transform", "p95_ms", "throughput_rps", "errors", "verdict",
@@ -548,7 +685,16 @@ def write_report(output: Path, cells: list[dict[str, Any]], instrumentation: dic
         columns = "".join(f"<td>{html.escape(str(current.get(key, '')))}</td>" for key in keys)
         rows.append(f"<tr>{columns}</tr>")
     document = "<!doctype html><title>Laghu k6 rail</title><table border=1><tbody>"
-    report = document + "".join(rows) + "</tbody></table><h2>Instrumentation</h2><pre>"
+    comparison_rows = []
+    for current in comparison:
+        comparison_rows.append("<tr>" + "".join(
+            f"<td>{html.escape(str(current.get(key, '')))}</td>" for key in ("scenario", "path", "vus")
+        ) + "".join(
+            f"<td>{html.escape(str(current[name].get(metric, '')))}</td>"
+            for name in ("plain", "pagespeed", "laghu") for metric in ("p95_ms", "throughput_rps")
+        ) + "</tr>")
+    report = document + "".join(rows) + "</tbody></table><h2>NGINX comparison</h2><table border=1><tbody>"
+    report += "".join(comparison_rows) + "</tbody></table><h2>Instrumentation</h2><pre>"
     (output / "report.html").write_text(report + html.escape(json.dumps(instrumentation, indent=2)) + "</pre>\n", encoding="utf-8")
 
 
@@ -558,6 +704,7 @@ def write_results(
     failures: list[dict[str, str]],
     quality: list[dict[str, Any]] | None = None,
     cwv_results: list[dict[str, Any]] | None = None,
+    corpus: Path | None = None,
 ) -> None:
     cache_states: dict[str, int] = {}
     transforms: dict[str, int] = {}
@@ -592,8 +739,12 @@ def write_results(
                                     for cell in cells if isinstance(cell.get("optimizer_latency"), dict)]
     result["image_quality"] = quality or []
     result["cwv"] = cwv_results or []
+    result["nginx_comparison"] = nginx_comparison(cells)
+    if corpus is not None:
+        result["reproducibility"] = benchmark_metadata(corpus)
     (output / "results.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    write_report(output, cells, {key: result[key] for key in ("resource", "optimizer_latency", "image_quality", "cwv")})
+    write_report(output, cells, {key: result[key] for key in ("resource", "optimizer_latency", "image_quality", "cwv")},
+                 result["nginx_comparison"])
 
 
 def main() -> None:
@@ -601,6 +752,7 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--soak-duration", default="30s")
+    parser.add_argument("--corpus", required=True, type=Path)
     parser.add_argument("--full", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -609,32 +761,40 @@ def main() -> None:
     failures: list[dict[str, str]] = []
     for target in TARGETS:
         try:
+            activate_target(target)
             wait_ready(target)
+            validate_plain_nginx_baseline(target)
             cold = request(target.base_url + "/cold.html")
             require(cold["status"] == 200, f"{target.name}: cold request failed")
             cells.append(cell(target, "cold", "/cold.html", cold, original_bytes(target, "/cold.html")))
             correctness(target, cells, args.output)
             for vus in levels:
                 cells.append(run_k6(args.output, target, "warm", ("/index.html",), vus, args.iterations))
-            cells.append(run_k6(args.output, target, "mixed", MIXED_PATHS, levels[-1], args.iterations))
+            cells.append(run_k6(args.output, target, "mixed", MIXED_PATHS, levels[-1], args.iterations,
+                                request_timeout=BENCH_REQUEST_TIMEOUT))
             before_storm = laghu_cache_files(target)
-            cells.append(run_k6(args.output, target, "cache-storm", ("/image-480.jpg",), levels[-1], args.iterations, WEBP))
+            cells.append(run_k6(args.output, target, "cache-storm", ("/image-480.jpg",), levels[-1], args.iterations,
+                                WEBP, request_timeout=BENCH_REQUEST_TIMEOUT))
             after_storm = laghu_cache_files(target)
             if before_storm is not None and after_storm is not None:
                 require(after_storm <= before_storm, f"{target.name}: cache storm grew cache ({before_storm} to {after_storm})")
-            cells.append(run_k6(args.output, target, "cache-thrash", CACHE_THRASH_PATHS, levels[-1], args.iterations, WEBP))
-            cells.append(run_k6(args.output, target, "soak", MIXED_PATHS, levels[-1], args.iterations, duration=args.soak_duration))
+            cells.append(run_k6(args.output, target, "cache-thrash", CACHE_THRASH_PATHS, levels[-1], args.iterations,
+                                WEBP, request_timeout=BENCH_REQUEST_TIMEOUT))
+            cells.append(run_k6(args.output, target, "soak", MIXED_PATHS, levels[-1], args.iterations,
+                                duration=args.soak_duration, request_timeout=BENCH_REQUEST_TIMEOUT))
         except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
             failures.append({"target": target.name, "error": str(error)})
             cells.append({"target": target.name, "scenario": "target", "verdict": "fail", "error": str(error)})
         finally:
-            write_results(args.output, cells, failures)
+            write_results(args.output, cells, failures, corpus=args.corpus)
     quality: list[dict[str, Any]] = []
     cwv_results: list[dict[str, Any]] = []
     if not failures:
+        activate_all_targets()
+        require_nginx_comparison(cells)
         quality = image_quality(args.output, cells)
         cwv_results = cwv(args.output)
-    write_results(args.output, cells, failures, quality, cwv_results)
+    write_results(args.output, cells, failures, quality, cwv_results, args.corpus)
     if failures:
         raise RuntimeError("k6 correctness rail failed: " + "; ".join(item["target"] for item in failures))
 

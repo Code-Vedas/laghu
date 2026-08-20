@@ -1056,8 +1056,11 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
       if ((effective & (LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_WEBP)) != 0U) {
         bool lossless = (effective & LAGHU_IMAGE_RECOMPRESS_IMAGES) != 0U || !request->allow_lossy;
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_WEBP, lossless,
-                       effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_WEBP |
+                        effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_WEBP |
                                     LAGHU_IMAGE_STRIP_METADATA | LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
+      }
+      if (request->accept_jxl && request->allow_lossy && (backend->capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U) {
+        LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_JXL, false, LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_IN_PLACE_BROWSER);
       }
       break;
     case LAGHU_IMAGE_FORMAT_AVIF:

@@ -9,4 +9,7 @@ docs/_site
 tmp
 performance/*
 !performance/standalone-entrypoint
+!performance/Dockerfile.nginx-plain
+!performance/nginx/
+!performance/nginx/plain-entrypoint
 workers/laghu-js-optimize/target

@@ -28,7 +28,7 @@ cleanup() { compose down --volumes; }
 trap cleanup EXIT HUP INT TERM
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 compose up --build --detach
-set -- --output "${output}"
+set -- --output "${output}" --corpus "${corpus}"
 if [ "${LAGHU_BENCH_FULL:-0}" = 1 ]; then set -- "$@" --full; fi
 python3 "${REPO_ROOT}/performance/run_k6_rail.py" "$@"
 printf '%s\n' "${output}"

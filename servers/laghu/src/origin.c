@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <openssl/x509v3.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -87,8 +88,6 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket, const char *
   for (;;) {
     int result = SSL_connect(tls);
     int error;
-    fd_set set;
-    struct timeval wait = {0, 200000};
     if (result == 1) {
       complete = true;
       break;
@@ -102,9 +101,10 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket, const char *
     if ((error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) || proxy_is_forcing(worker->queue)) {
       break;
     }
-    FD_ZERO(&set);
-    FD_SET(socket, &set);
-    (void)select(socket + 1, error == SSL_ERROR_WANT_READ ? &set : NULL, error == SSL_ERROR_WANT_WRITE ? &set : NULL, NULL, &wait);
+    {
+      struct pollfd ready = {(int)socket, error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, 0};
+      (void)poll(&ready, 1U, 200);
+    }
   }
   (void)fcntl(socket, F_SETFL, flags);
   if (!complete) {
@@ -172,12 +172,9 @@ laghu_socket proxy_connect(proxy_worker *worker, const char *host, const char *p
         int socket_error = 0;
         laghu_socklen error_length = (laghu_socklen)sizeof(socket_error);
         while (!proxy_is_forcing(worker->queue) && proxy_monotonic_ms() < deadline) {
-          fd_set writable;
-          struct timeval wait = {0, 200000};
+          struct pollfd writable = {(int)descriptor, POLLOUT, 0};
           int selected;
-          FD_ZERO(&writable);
-          FD_SET(descriptor, &writable);
-          selected = select(descriptor + 1, NULL, &writable, NULL, &wait);
+          selected = poll(&writable, 1U, 200);
           if (selected > 0 && getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &socket_error, &error_length) == 0 && socket_error == 0) {
             connected = true;
             break;

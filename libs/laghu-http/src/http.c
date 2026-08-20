@@ -303,7 +303,7 @@ static bool laghu_http_backend_supports(const char *content_type, laghu_image_fi
             (filters & LAGHU_IMAGE_GIF_TO_VIDEO) != 0U);
   }
   return laghu_http_content_type_is(content_type, "image/webp") && (capabilities & LAGHU_IMAGE_CAP_WEBP_LOAD) != 0U &&
-         (capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U;
+         ((capabilities & LAGHU_IMAGE_CAP_WEBP_SAVE) != 0U || (accept_jxl && (capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U));
 }
 
 static laghu_html_planner_mask laghu_http_html_plan(const laghu_policy *policy) {

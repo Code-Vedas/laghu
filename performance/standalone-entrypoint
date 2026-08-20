@@ -19,6 +19,7 @@ install -o laghu -g laghu -m 600 /etc/laghu/benchmark.token "${token}"
 laghu --listen 0.0.0.0:8080 --origin "${LAGHU_BENCH_ORIGIN}" \
   --file-cache-backend "file://${cache}" --worker-queue "${queue}" \
   --javascript-queue "${javascript_queue}" --rewrite-level "${rewrite_level}" \
+  --workers 32 --connection-queue 4096 \
   --metrics on \
   --purge-token-file "${token}" --purge-allow 0.0.0.0/0 \
   --allow-resources '/*' &

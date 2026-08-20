@@ -4,6 +4,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,11 +144,11 @@ static void proxy_signal_handler(int signal_number) {
 }
 
 static bool proxy_listener_ready(laghu_socket listener) {
-  fd_set readable;
-  struct timeval wait = {0, 200000};
-  FD_ZERO(&readable);
-  FD_SET(listener, &readable);
-  return select(listener + 1, &readable, NULL, NULL, &wait) > 0;
+  struct pollfd readable;
+  readable.fd = listener;
+  readable.events = POLLIN;
+  readable.revents = 0;
+  return poll(&readable, 1U, 200) > 0 && (readable.revents & POLLIN) != 0;
 }
 
 static void proxy_begin_drain(proxy_queue *queue) {

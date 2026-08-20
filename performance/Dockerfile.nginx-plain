@@ -1,0 +1,55 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+ARG NGINX_VERSION=1.30.4
+ARG NGX_BROTLI_REVISION=a71f9312c2deb28875acc7bacfdd5695a111aa53
+
+FROM ubuntu:24.04 AS build
+
+ARG NGINX_VERSION
+ARG NGX_BROTLI_REVISION
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+      build-essential ca-certificates curl git libbrotli-dev libpcre2-dev \
+      libssl-dev zlib1g-dev && \
+    rm -rf /var/lib/apt/lists/*
+RUN git clone --recurse-submodules https://github.com/google/ngx_brotli.git /tmp/ngx_brotli && \
+    cd /tmp/ngx_brotli && git checkout --detach "${NGX_BROTLI_REVISION}" && \
+    git submodule update --init --recursive
+RUN curl --fail --location --retry 3 --output /tmp/nginx.tar.gz \
+      "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" && \
+    mkdir -p /tmp/nginx && tar -xzf /tmp/nginx.tar.gz --strip-components=1 -C /tmp/nginx && \
+    cd /tmp/nginx && ./configure \
+      --prefix=/etc/nginx \
+      --sbin-path=/usr/sbin/nginx \
+      --conf-path=/etc/nginx/nginx.conf \
+      --pid-path=/run/nginx.pid \
+      --error-log-path=/dev/stderr \
+      --http-log-path=/dev/stdout \
+      --http-client-body-temp-path=/var/cache/nginx/client_temp \
+      --http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+      --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+      --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+      --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+      --with-http_gzip_static_module \
+      --with-http_ssl_module \
+      --with-pcre-jit \
+      --add-module=/tmp/ngx_brotli && \
+    make -j"$(nproc)" && make install DESTDIR=/out
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+      brotli ca-certificates libbrotli1 libpcre2-8-0 libssl3t64 zlib1g && \
+    rm -rf /var/lib/apt/lists/* && \
+    install -d /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp \
+      /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp \
+      /var/cache/nginx/scgi_temp /var/cache/plain-corpus
+COPY --from=build /out/usr/sbin/nginx /usr/sbin/nginx
+COPY --from=build /out/etc/nginx/mime.types /etc/nginx/mime.types
+COPY performance/nginx/plain-entrypoint /usr/local/bin/laghu-benchmark-plain-entrypoint
+RUN chmod 0755 /usr/local/bin/laghu-benchmark-plain-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/laghu-benchmark-plain-entrypoint"]

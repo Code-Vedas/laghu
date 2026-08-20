@@ -240,9 +240,9 @@
  - [x] Add a compatibility job that tries legacy module builds from newest to older candidate NGINX releases.
  - [x] Record the highest successful release as `baseline_nginx_version` after a runtime smoke test.
  - [x] Freeze and archive the successful legacy baseline Docker image.
-- [ ] Provide a plain-NGINX fallback baseline with equivalent hand-written compression, cache-header, and format-selection configuration.
+- [x] Provide a plain-NGINX fallback baseline with equivalent hand-written compression, cache-header, and format-selection configuration.
 - [x] Build the product comparison image on a pinned current NGINX release.
-- [ ] Run every benchmark against plain NGINX, the reproducible legacy baseline, and Laghu on current NGINX.
+- [x] Run every benchmark against plain NGINX, the reproducible legacy baseline, and Laghu on current NGINX.
 
 ### 5.2 Deterministic Content Corpus
 - [x] Generate HTML at 1 KB, 10 KB, 100 KB, 1 MB, and 5 MB.
