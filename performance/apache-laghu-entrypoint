@@ -6,6 +6,7 @@
 
 set -eu
 
+rm -f /var/run/apache2/apache2.pid
 a2enmod headers >/dev/null
 sed -i 's/^Laghu Off$/Laghu On/' /etc/apache2/mods-available/laghu.conf
 sed -i '/^Laghu Metrics On$/d; /^Laghu PurgeTokenFile \/etc\/laghu\/benchmark.token$/d; /^Laghu PurgeAllow 0\.0\.0\.0\/0$/d' \

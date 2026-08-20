@@ -20,3 +20,7 @@ artifact records each target's origin and optimization mode.
 The JSON includes a joined `nginx_comparison` table and reproducibility metadata (corpus/config
 digests, image IDs, NGINX versions, k6 image, host profile). The report records any unavailable
 optional measurement as `unavailable`; it never substitutes an estimate for image quality or CWV data.
+
+The corpus manifest is versioned and recursively records each fixture's path, MIME type, byte count, and SHA-256.
+It covers structural HTML/CSS/JavaScript variants, image size/class boundaries, capability variants, font containers,
+and parser/cache edge cases. The rail records a representative fixture ID for each corpus evidence cell.

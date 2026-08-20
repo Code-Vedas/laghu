@@ -11,8 +11,10 @@ from performance.run_k6_rail import (
     TARGETS,
     active_containers,
     artifact_timeout_seconds,
+    cgroup_snapshot,
     nginx_comparison,
     require_nginx_comparison,
+    load_corpus_manifest,
 )
 
 
@@ -75,6 +77,35 @@ class K6RailTest(unittest.TestCase):
              patch.object(rail.time, "sleep"):
             snapshot = rail.operational_snapshot(target)
         self.assertEqual(snapshot["laghu_requests_total"], 1.0)
+
+    def test_corpus_manifest_rejects_missing_required_fixture(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "manifest.json").write_text('{"schema":"laghu-deterministic-corpus-v2","files":[],"categories":{}}')
+            with self.assertRaisesRegex(RuntimeError, "category coverage"):
+                load_corpus_manifest(root)
+
+    def test_empty_source_has_no_byte_savings_percentage(self):
+        result = rail.cell(
+            TARGETS[0], "corpus-edge", "/corpus/edges/empty.bin",
+            {"status": 200, "headers": {}, "body": b"", "ttfb_ms": 1.0}, 0,
+        )
+        self.assertIsNone(result["byte_savings_percent"])
+
+    def test_huge_query_edge_accepts_safe_client_rejection(self):
+        self.assertTrue(rail.is_safe_huge_query_response(200))
+        self.assertTrue(rail.is_safe_huge_query_response(414))
+        self.assertFalse(rail.is_safe_huge_query_response(500))
+
+    def test_cgroup_snapshot_accepts_labeled_v2_output(self):
+        completed = type("Completed", (), {
+            "stdout": "laghu_cpu_usec 42\nlaghu_memory_peak_bytes 84\n126\n",
+        })()
+        with patch.object(rail.subprocess, "run", return_value=completed):
+            self.assertEqual(cgroup_snapshot(TARGETS[0]), {
+                "cpu_usec": 42, "memory_peak_bytes": 84, "rss_bytes": 126,
+            })
+
 
 
 if __name__ == "__main__":

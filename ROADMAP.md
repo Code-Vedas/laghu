@@ -246,18 +246,18 @@
 
 ### 5.2 Deterministic Content Corpus
 - [x] Generate HTML at 1 KB, 10 KB, 100 KB, 1 MB, and 5 MB.
-- [ ] Cover sparse, asset-heavy, inline-CSS-heavy, inline-JS-heavy, comment-heavy, and deeply nested HTML.
+- [x] Cover sparse, asset-heavy, inline-CSS-heavy, inline-JS-heavy, comment-heavy, and deeply nested HTML.
 - [x] Generate CSS at 1 KB, 10 KB, 100 KB, 1 MB, and 2 MB.
-- [ ] Cover import-heavy, URL-heavy, unused-rule-heavy, already-minified, and framework-scale CSS.
+- [x] Cover import-heavy, URL-heavy, unused-rule-heavy, already-minified, and framework-scale CSS.
 - [x] Generate JavaScript from 1 KB through 2 MB.
-- [ ] Cover already-minified, source-mapped, module, classic, render-blocking, and deferred JavaScript.
+- [x] Cover already-minified, source-mapped, module, classic, render-blocking, and deferred JavaScript.
 - [x] Generate JPEG, PNG, static/animated GIF, WebP, AVIF, and SVG sources.
 - [x] Cover 100 px, 480 px, 768 px, 1440 px, 4K, and oversized 8000 px images.
-- [ ] Cover image payloads from 5 KB thumbnails through the 10 MB processing cap.
-- [ ] Cover photo, screenshot, flat illustration, noisy, transparent, logo, and icon image classes.
-- [ ] Cover WebP/AVIF acceptance, `Save-Data`, 1x/2x DPR, and mobile/tablet/ desktop viewport capability permutations.
-- [ ] Generate WOFF2, WOFF, subsettable, full, and icon-font cases.
-- [ ] Cover empty responses, `no-store`, already-hashed URLs, huge query strings, malformed HTML, mixed content, and non-UTF-8 inputs.
+- [x] Cover image payloads from 5 KB thumbnails through the 10 MB processing cap.
+- [x] Cover photo, screenshot, flat illustration, noisy, transparent, logo, and icon image classes.
+- [x] Cover WebP/AVIF acceptance, `Save-Data`, 1x/2x DPR, and mobile/tablet/ desktop viewport capability permutations.
+- [x] Generate WOFF2, WOFF, subsettable, full, and icon-font cases.
+- [x] Cover empty responses, `no-store`, already-hashed URLs, huge query strings, malformed HTML, mixed content, and non-UTF-8 inputs.
 
 ### 5.3 k6 Load and Correctness Driver
 - [x] Add cold-cache scenarios for first-hit optimization latency and TTFB.

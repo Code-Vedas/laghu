@@ -89,7 +89,8 @@ MOBILE_2X = {
 }
 TABLET_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "768", "Width": "768", "User-Agent": CHROME}
 DESKTOP_1X = {"Accept": "image/webp,image/*;q=0.8", "DPR": "1", "Viewport-Width": "1200", "Width": "1200", "User-Agent": CHROME}
-CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illustration.jpg", "/image-flat-color.jpg", "/image-noisy.jpg")
+CONTENT_CLASS_PATHS = ("/image-photo.jpg", "/image-screenshot.jpg", "/image-illustration.jpg", "/image-flat-color.jpg",
+                       "/image-noisy.jpg", "/image-logo.jpg", "/image-icon.jpg")
 ARTIFACT_POLL_SECONDS = 0.1
 PAGE_SPEED_ARTIFACT_TIMEOUT_SECONDS = 30.0
 DEFAULT_ARTIFACT_TIMEOUT_SECONDS = 12.0
@@ -203,7 +204,8 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def cell(target: Target, scenario: str, path: str, response: dict[str, Any], original_bytes: int | None = None) -> dict[str, Any]:
+def cell(target: Target, scenario: str, path: str, response: dict[str, Any], original_bytes: int | None = None,
+         fixture_id: str | None = None) -> dict[str, Any]:
     response_headers = lower(response["headers"])
     result = {
         "target": target.name,
@@ -220,8 +222,63 @@ def cell(target: Target, scenario: str, path: str, response: dict[str, Any], ori
     if original_bytes is not None:
         result["original_wire_bytes"] = original_bytes
         result["optimized_wire_bytes"] = len(response["body"])
-        result["byte_savings_percent"] = round((1.0 - len(response["body"]) / original_bytes) * 100.0, 3)
+        result["byte_savings_percent"] = (
+            round((1.0 - len(response["body"]) / original_bytes) * 100.0, 3)
+            if original_bytes > 0 else None
+        )
+    if fixture_id is not None:
+        result["fixture_id"] = fixture_id
     return result
+
+
+def load_corpus_manifest(corpus: Path) -> dict[str, Any]:
+    try:
+        manifest = json.loads((corpus / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"corpus manifest unavailable: {error}") from error
+    require(manifest.get("schema") == "laghu-deterministic-corpus-v2", "unsupported corpus manifest schema")
+    files = manifest.get("files")
+    categories = manifest.get("categories")
+    require(isinstance(files, list) and isinstance(categories, dict), "corpus manifest fields missing")
+    inventory = {entry.get("path"): entry for entry in files if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
+    required = {"html", "css", "javascript", "images", "fonts", "edges"}
+    require(required <= set(categories), "corpus manifest category coverage missing")
+    for paths in categories.values():
+        require(isinstance(paths, list), "corpus manifest category is invalid")
+        for path in paths:
+            require(path in inventory and (corpus / path).is_file(), f"corpus fixture missing: {path}")
+    return manifest
+
+
+def corpus_evidence(target: Target, cells: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
+    """Exercise one deterministic request per generated category/edge."""
+    categories = manifest["categories"]
+    representatives = {
+        "html": "corpus/html/html-assets.html", "css": "corpus/css/import-heavy.css",
+        "javascript": "corpus/js/source-mapped.js", "images": "image-thumbnail.jpg",
+        "fonts": "corpus/fonts/subset.woff", "edges": "malformed.html",
+    }
+    for category, path in representatives.items():
+        require(path in categories[category], f"corpus {category} representative missing")
+        response = request(target.base_url + "/" + path)
+        require(response["status"] == 200, f"{target.name}: corpus {category} status")
+        cells.append(cell(target, f"corpus-{category}", "/" + path, response,
+                          original_bytes(target, "/" + path), path))
+    for path in categories["edges"]:
+        query = "?" + "q" * 4096 if path == "huge-query.html" else ""
+        response = request(target.base_url + "/" + path + query)
+        if path == "huge-query.html":
+            require(is_safe_huge_query_response(response["status"]), f"{target.name}: corpus edge {path}")
+            original = original_bytes(target, "/" + path) if response["status"] == 200 else len(response["body"])
+        else:
+            require(response["status"] == 200, f"{target.name}: corpus edge {path}")
+            original = original_bytes(target, "/" + path)
+        cells.append(cell(target, "corpus-edge", "/" + path, response, original, path))
+
+
+def is_safe_huge_query_response(status: int) -> bool:
+    """Accept delivery or explicit client rejection, never a server error."""
+    return status in (200, 400, 414)
 
 
 def wait_ready(target: Target) -> None:
@@ -300,12 +357,20 @@ def cgroup_snapshot(target: Target) -> dict[str, int]:
         "| awk '{sum += $1} END {print sum * 1024}'"
     )
     command = ["docker", "exec", f"laghu-bench-{target.service}", "sh", "-c",
-               f"cat /sys/fs/cgroup/cpu.stat; cat /sys/fs/cgroup/memory.peak; {rss_command}"]
+               "cpu=$(awk '/^usage_usec / {print $2}' /sys/fs/cgroup/cpu.stat 2>/dev/null "
+               "|| cat /sys/fs/cgroup/cpuacct/cpuacct.usage 2>/dev/null); "
+               "memory=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null "
+               "|| cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes 2>/dev/null "
+               "|| cat /sys/fs/cgroup/memory.current 2>/dev/null "
+               "|| cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null); "
+               f"printf 'laghu_cpu_usec %s\\nlaghu_memory_peak_bytes %s\\n' \"$cpu\" \"$memory\"; {rss_command}"]
     output = subprocess.run(command, check=True, capture_output=True, text=True).stdout.splitlines()
-    usage = next((line.split()[1] for line in output if line.startswith("usage_usec ")), None)
-    if usage is None or len(output) < 2:
+    values = dict(line.split(maxsplit=1) for line in output if " " in line)
+    usage = values.get("laghu_cpu_usec")
+    memory_peak = values.get("laghu_memory_peak_bytes")
+    if usage is None or memory_peak is None or not output:
         raise RuntimeError(f"{target.name}: cgroup metrics unavailable")
-    return {"cpu_usec": int(usage), "memory_peak_bytes": int(output[-2]), "rss_bytes": int(output[-1])}
+    return {"cpu_usec": int(usage), "memory_peak_bytes": int(memory_peak), "rss_bytes": int(output[-1])}
 
 
 def operational_snapshot(target: Target) -> dict[str, float] | None:
@@ -678,7 +743,7 @@ def cwv(output: Path) -> list[dict[str, Any]]:
 def write_report(output: Path, cells: list[dict[str, Any]], instrumentation: dict[str, Any], comparison: list[dict[str, Any]]) -> None:
     keys = (
         "target", "scenario", "vus", "bytes", "original_wire_bytes", "optimized_wire_bytes", "byte_savings_percent",
-        "wire_bytes", "cache_state", "transform", "p95_ms", "throughput_rps", "errors", "verdict",
+        "fixture_id", "wire_bytes", "cache_state", "transform", "p95_ms", "throughput_rps", "errors", "verdict",
     )
     rows = []
     for current in cells:
@@ -756,6 +821,7 @@ def main() -> None:
     parser.add_argument("--full", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    manifest = load_corpus_manifest(args.corpus)
     levels = VUS if args.full else (1, 10)
     cells: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
@@ -768,6 +834,7 @@ def main() -> None:
             require(cold["status"] == 200, f"{target.name}: cold request failed")
             cells.append(cell(target, "cold", "/cold.html", cold, original_bytes(target, "/cold.html")))
             correctness(target, cells, args.output)
+            corpus_evidence(target, cells, manifest)
             for vus in levels:
                 cells.append(run_k6(args.output, target, "warm", ("/index.html",), vus, args.iterations))
             cells.append(run_k6(args.output, target, "mixed", MIXED_PATHS, levels[-1], args.iterations,
