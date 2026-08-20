@@ -302,12 +302,17 @@
 - [x] Make worker, queue, cache, and image-optimization failures fail open.
 - [x] Generate deterministic content-hashed variant URLs for fleet-safe caching.
 
-## 7. Open Source and Support
+## 7. Laghu standalone nginx-apache parity 
+- [ ] compare full suite of nginx without optimizations with Laghu standaline and add/update any missing features to Laghu standalone to achieve parity with nginx.
+- [ ] compare full suite of apache without optimizations with Laghu standaline and add/update any missing features to Laghu standalone to achieve parity with apache.
+- [ ] Laghu standalone must be configurable via config files only preferably yaml. Location can be similar to nginx or apache config file locations whichever is best.
+
+## 8. Open Source and Support
 - [x] License the repository under MIT.
 - [x] Publish a low-friction professional-support page.
 - [ ] Document setup, tuning, migration, incident, and retainer support paths.
 
-## 8. Packaging, Publication, and Release
+## 9. Packaging, Publication, and Release
 - [ ] Ship three user-facing offerings: `ngx-laghu`, `mod-laghu`, and `laghu`; keep `laghu-libvips` an automatically installed internal dependency rather than a fourth product offering. The two native adapter packages are validated; the standalone package remains pending.
 - [ ] Build and smoke the Apache 2.4 `mod_laghu` output filter on Linux and macOS x86_64/arm64, including event, worker, and prefork MPMs.
 - [x] Validate Apache repeated bucket brigades, metadata buckets, `FLUSH`, `EOS`, proxied responses, HTTP/1.1, and HTTP/2 without duplicate output or lost data.
