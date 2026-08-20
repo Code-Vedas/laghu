@@ -10,13 +10,13 @@
 
 #include "server_internal.h"
 
-void proxy_error_response(laghu_socket client, unsigned int status, const char *reason) {
+void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, const char *reason) {
   char response[512];
   int length = snprintf(response, sizeof(response),
                         "HTTP/1.1 %u %s\r\nContent-Length: 0\r\nConnection: "
                         "close\r\nX-Laghu: bypass-error\r\n\r\n",
                         status, reason);
-  if (length > 0) (void)proxy_send_all(client, response, (size_t)length);
+  if (length > 0) (void)proxy_client_send_all(client, tls, response, (size_t)length);
 }
 
 void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char *failure) {
@@ -25,7 +25,7 @@ void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char
   proxy_access_init(&access, queue);
   access.status = 503U;
   access.failure = failure;
-  proxy_error_response(client, 503U, "Service Unavailable");
+  if (!queue->options->downstream_tls) proxy_error_response(client, NULL, 503U, "Service Unavailable");
   (void)shutdown(client, LAGHU_SHUT_WRITE);
   while (recv(client, discarded, sizeof(discarded), MSG_DONTWAIT) > 0) {
   }
@@ -102,34 +102,34 @@ bool proxy_beacon_allowed(proxy_queue *queue, uint64_t now) {
   return allowed;
 }
 
-bool proxy_send_headers(laghu_socket client, const proxy_response *origin, const laghu_http_transaction_result *result, size_t content_length,
-                        bool has_content_length) {
+bool proxy_send_headers(laghu_socket client, SSL *client_tls, const proxy_response *origin, const laghu_http_transaction_result *result,
+                        size_t content_length, bool has_content_length) {
   char line[16384];
   size_t index;
   unsigned int status = result != NULL && result->not_modified ? 304U : origin->status;
   const char *reason = result != NULL && result->not_modified ? "Not Modified" : (origin->reason[0] ? origin->reason : "OK");
   int count = snprintf(line, sizeof(line), "HTTP/1.1 %u %s\r\n", status, reason);
   if (result != NULL && result->not_modified) has_content_length = false;
-  if (count <= 0 || !proxy_send_all(client, line, (size_t)count)) return false;
+  if (count <= 0 || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
   for (index = 0U; index < origin->header_count; ++index) {
     if (proxy_hop(origin->headers[index].name) || proxy_connection_nominates(origin->headers, origin->header_count, origin->headers[index].name) ||
         proxy_name_equal(origin->headers[index].name, "Content-Length") || proxy_operation_removes(result, origin->headers[index].name))
       continue;
     count = snprintf(line, sizeof(line), "%s: %s\r\n", origin->headers[index].name, origin->headers[index].value);
-    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_send_all(client, line, (size_t)count)) return false;
+    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
   }
   for (index = 0U; index < result->header_operation_count; ++index) {
     const laghu_http_header_operation *operation = &result->header_operations[index];
     if (operation->kind == LAGHU_HTTP_HEADER_REMOVE || proxy_name_equal(operation->name, "Content-Length")) continue;
     count = snprintf(line, sizeof(line), "%s: %s\r\n", operation->name, operation->value == NULL ? "" : operation->value);
-    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_send_all(client, line, (size_t)count)) return false;
+    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
   }
   count = has_content_length ? snprintf(line, sizeof(line), "Content-Length: %zu\r\nConnection: close\r\n\r\n", content_length)
                              : snprintf(line, sizeof(line), "Connection: close\r\n\r\n");
-  return count > 0 && proxy_send_all(client, line, (size_t)count);
+  return count > 0 && proxy_client_send_all(client, client_tls, line, (size_t)count);
 }
 
-bool proxy_send_early_hints(laghu_socket client, const char *request_version, const laghu_http_transaction_result *result) {
+bool proxy_send_early_hints(laghu_socket client, SSL *client_tls, const char *request_version, const laghu_http_transaction_result *result) {
   char line[16384];
   size_t index;
   bool emitted = false;
@@ -140,35 +140,37 @@ bool proxy_send_early_hints(laghu_socket client, const char *request_version, co
     int count;
     if (!operation->early_hint) continue;
     if (!emitted) {
-      if (!proxy_send_all(client, "HTTP/1.1 103 Early Hints\r\n", sizeof("HTTP/1.1 103 Early Hints\r\n") - 1U)) return false;
+      if (!proxy_client_send_all(client, client_tls, "HTTP/1.1 103 Early Hints\r\n", sizeof("HTTP/1.1 103 Early Hints\r\n") - 1U)) return false;
       emitted = true;
     }
     count = snprintf(line, sizeof(line), "Link: %s\r\n", operation->value);
-    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_send_all(client, line, (size_t)count)) return false;
+    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
   }
-  return !emitted || proxy_send_all(client, "\r\n", 2U);
+  return !emitted || proxy_client_send_all(client, client_tls, "\r\n", 2U);
 }
 
-bool proxy_send_result(laghu_socket client, const proxy_response *origin, const laghu_http_transaction_result *result, laghu_buffer body) {
+bool proxy_send_result(laghu_socket client, SSL *client_tls, const proxy_response *origin, const laghu_http_transaction_result *result,
+                       laghu_buffer body) {
   if (result != NULL && result->not_modified) body.length = 0U;
-  return proxy_send_headers(client, origin, result, body.length, true) && (body.length == 0U || proxy_send_all(client, body.data, body.length));
+  return proxy_send_headers(client, client_tls, origin, result, body.length, true) &&
+         (body.length == 0U || proxy_client_send_all(client, client_tls, body.data, body.length));
 }
 
-bool proxy_stream_body(laghu_socket origin, SSL *tls, laghu_socket client, const unsigned char *initial, size_t initial_length, size_t expected,
-                       bool until_close) {
+bool proxy_stream_body(laghu_socket origin, SSL *origin_tls, laghu_socket client, SSL *client_tls, const unsigned char *initial,
+                       size_t initial_length, size_t expected, bool until_close) {
   unsigned char buffer[65536U];
   size_t sent = 0U;
   if (expected != 0U && initial_length > expected) return false;
-  if (initial_length != 0U && !proxy_send_all(client, initial, initial_length)) return false;
+  if (initial_length != 0U && !proxy_client_send_all(client, client_tls, initial, initial_length)) return false;
   sent = initial_length;
   while ((expected != 0U && sent < expected) || until_close) {
     size_t wanted = sizeof(buffer);
     int got;
     if (expected != 0U && wanted > expected - sent) wanted = expected - sent;
-    got = proxy_origin_recv(origin, tls, buffer, wanted);
+    got = proxy_origin_recv(origin, origin_tls, buffer, wanted);
     if (got == 0 && until_close) return true;
     if (got <= 0) return false;
-    if (!proxy_send_all(client, buffer, (size_t)got)) return false;
+    if (!proxy_client_send_all(client, client_tls, buffer, (size_t)got)) return false;
     sent += (size_t)got;
   }
   return expected == 0U || sent == expected;

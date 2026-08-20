@@ -43,6 +43,8 @@ typedef struct {
   char origin_port[6];
   char origin_authority[264];
   char origin_ca_file[LAGHU_RUNTIME_PATH_SIZE];
+  char tls_certificate[LAGHU_RUNTIME_PATH_SIZE];
+  char tls_private_key[LAGHU_RUNTIME_PATH_SIZE];
   laghu_config config;
   laghu_service_config service;
   unsigned int workers;
@@ -54,6 +56,7 @@ typedef struct {
   unsigned int origin_idle_timeout;
   laghu_proxy_forwarded_mode forwarded_mode;
   bool origin_tls;
+  bool downstream_tls;
 } laghu_proxy_options;
 
 typedef enum { LAGHU_PROXY_PARSE_OK = 0, LAGHU_PROXY_PARSE_HELP, LAGHU_PROXY_PARSE_VERSION, LAGHU_PROXY_PARSE_ERROR } laghu_proxy_parse_result;

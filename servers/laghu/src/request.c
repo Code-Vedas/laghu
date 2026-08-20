@@ -33,6 +33,7 @@ bool proxy_peer_trusted(const laghu_proxy_options *options, const proxy_connecti
 const char *proxy_effective_scheme(const laghu_proxy_options *options, const proxy_connection *connection, const proxy_request *request) {
   const proxy_header *header = NULL;
   size_t index;
+  if (connection->tls != NULL) return "https";
   if (options->config.respect_x_forwarded_proto != LAGHU_MODE_ON || !proxy_peer_trusted(options, connection)) return "http";
   for (index = 0U; index < request->header_count; ++index)
     if (proxy_name_equal(request->headers[index].name, "X-Forwarded-Proto")) {
@@ -188,6 +189,7 @@ bool proxy_append_forwarding(const laghu_proxy_options *options, const proxy_con
                              char *output, size_t capacity, size_t *length) {
   bool trusted = proxy_peer_trusted(options, connection);
   char peer[INET6_ADDRSTRLEN + 4U];
+  const char *scheme = proxy_effective_scheme(options, connection, request);
   const char *existing;
   size_t host_index;
   if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF) return true;
@@ -198,7 +200,7 @@ bool proxy_append_forwarding(const laghu_proxy_options *options, const proxy_con
   if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_STANDARD || options->forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
     char standard[INET6_ADDRSTRLEN + 300U];
     if (!proxy_peer_text(connection, peer, sizeof(peer), true) ||
-        snprintf(standard, sizeof(standard), "for=%s;proto=http;host=\"%s\"", peer, host) <= 0)
+        snprintf(standard, sizeof(standard), "for=%s;proto=%s;host=\"%s\"", peer, scheme, host) <= 0)
       return false;
     existing = trusted ? proxy_single_header(request, "Forwarded") : NULL;
     if (existing != NULL && !proxy_forwarded_value_valid(existing)) existing = NULL;
@@ -209,7 +211,7 @@ bool proxy_append_forwarding(const laghu_proxy_options *options, const proxy_con
     existing = trusted ? proxy_single_header(request, "X-Forwarded-For") : NULL;
     if (existing != NULL && !proxy_xff_value_valid(existing)) existing = NULL;
     if (!proxy_append_line(output, capacity, length, "X-Forwarded-For", existing, peer) ||
-        !proxy_append_line(output, capacity, length, "X-Forwarded-Proto", NULL, "http") ||
+        !proxy_append_line(output, capacity, length, "X-Forwarded-Proto", NULL, scheme) ||
         !proxy_append_line(output, capacity, length, "X-Forwarded-Host", NULL, host))
       return false;
   }

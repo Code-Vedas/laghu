@@ -192,6 +192,7 @@ static void proxy_html_cache_enqueue_refresh(proxy_worker *worker, const char *r
 
 void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   laghu_socket client = connection->socket;
+  SSL *client_tls = connection->tls;
   const laghu_proxy_options *options = worker->queue->options;
   proxy_request request;
   proxy_response response;
@@ -228,10 +229,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   do {                                            \
     access.status = (code);                       \
     access.failure = (category);                  \
-    proxy_error_response(client, (code), reason); \
+    proxy_error_response(client, client_tls, (code), reason); \
   } while (0)
   proxy_timeout(client, options->io_timeout);
-  if (!proxy_read_headers(client, request.storage, NULL, &header_length, &initial, &initial_length) ||
+  if (!proxy_read_headers(client, request.storage, client_tls, &header_length, &initial, &initial_length) ||
       !proxy_parse_request(&request, header_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
@@ -326,7 +327,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED && proxy_materialize_cached_result(&prepared)) {
       response.status = 200U;
       (void)laghu_base_string_copy(response.reason, sizeof(response.reason), "OK");
-      if (!proxy_send_result(client, &response, &prepared, prepared.selected)) access.failure = "client_disconnect";
+      if (!proxy_send_result(client, client_tls, &response, &prepared, prepared.selected)) access.failure = "client_disconnect";
       access.cache_state = "immutable";
       access.output_bytes = prepared.selected.length;
     } else
@@ -407,7 +408,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       if (prepared_ok && record.state == LAGHU_HTML_CACHE_STALE) proxy_html_cache_enqueue_refresh(worker, request.target, &record);
       if (prepared_ok && prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
         (void)proxy_html_cache_mark_hit(&prepared);
-        if (!proxy_send_result(client, &response, &prepared, (laghu_buffer){cached_body, record.entry.length})) access.failure = "client_disconnect";
+        if (!proxy_send_result(client, client_tls, &response, &prepared, (laghu_buffer){cached_body, record.entry.length}))
+          access.failure = "client_disconnect";
         access.cache_state = record.state == LAGHU_HTML_CACHE_STALE ? "html_stale" : "html_fresh";
         origin_body_length = record.entry.length;
         free(cached_body);
@@ -421,8 +423,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
                                        finalized.lcp_profile_ready);
         finalized.not_modified = laghu_http_request_matches_result_etag(&normalized_request, &finalized);
         (void)proxy_html_cache_mark_hit(&finalized);
-        if ((!finalized.not_modified && !proxy_send_early_hints(client, request.version, &finalized)) ||
-            !proxy_send_result(client, &response, &finalized, finalized.selected))
+        if ((!finalized.not_modified && !proxy_send_early_hints(client, client_tls, request.version, &finalized)) ||
+            !proxy_send_result(client, client_tls, &response, &finalized, finalized.selected))
           access.failure = "client_disconnect";
         access.cache_state = record.state == LAGHU_HTML_CACHE_STALE ? "html_stale" : "html_fresh";
         origin_body_length = record.entry.length;
@@ -550,16 +552,17 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         PROXY_FAIL(502U, "Bad Gateway", "cache_read");
         goto done;
       }
-      if (!proxy_send_early_hints(client, request.version, &prepared) || !proxy_send_result(client, &response, &prepared, prepared.selected))
+      if (!proxy_send_early_hints(client, client_tls, request.version, &prepared) ||
+          !proxy_send_result(client, client_tls, &response, &prepared, prepared.selected))
         access.failure = "client_disconnect";
       goto done;
     }
     if (prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
       size_t expected = bodyless ? 0U : response.content_length;
       bool until_close = !bodyless && !response.has_content_length;
-      if (!proxy_send_early_hints(client, request.version, &prepared) ||
-          !proxy_send_headers(client, &response, &prepared, response.content_length, response.has_content_length) ||
-          !proxy_stream_body(origin, origin_tls, client, initial, bodyless ? 0U : initial_length, expected, until_close)) {
+      if (!proxy_send_early_hints(client, client_tls, request.version, &prepared) ||
+          !proxy_send_headers(client, client_tls, &response, &prepared, response.content_length, response.has_content_length) ||
+          !proxy_stream_body(origin, origin_tls, client, client_tls, initial, bodyless ? 0U : initial_length, expected, until_close)) {
         access.failure = "client_disconnect";
         goto done;
       }
@@ -607,10 +610,12 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       goto done;
     }
     prepared.not_modified = laghu_http_request_matches_result_etag(&normalized_request, &prepared);
-    if (!proxy_send_early_hints(client, request.version, &prepared) || !proxy_send_result(client, &response, &prepared, prepared.selected))
+    if (!proxy_send_early_hints(client, client_tls, request.version, &prepared) ||
+        !proxy_send_result(client, client_tls, &response, &prepared, prepared.selected))
       access.failure = "client_disconnect";
   } else if (prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
-    if (!proxy_send_result(client, &response, &prepared, (laghu_buffer){origin_body, origin_body_length})) access.failure = "client_disconnect";
+    if (!proxy_send_result(client, client_tls, &response, &prepared, (laghu_buffer){origin_body, origin_body_length}))
+      access.failure = "client_disconnect";
   } else if (!proxy_is_forcing(worker->queue) &&
              laghu_http_transaction_finalize(&transaction, (laghu_buffer){origin_body, origin_body_length}, &finalized)) {
     laghu_operational_registry_budget(&worker->queue->operational, &transaction.budget, transaction.environment.config.transform_deadline_ms);
@@ -623,13 +628,14 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       (void)laghu_html_cache_publish(options->service.image_cache, options->config.html_cache_origin, request.target,
                                      validator == NULL ? "" : validator->value, finalized.selected, (uint64_t)time(NULL), &record);
     }
-    if ((!finalized.not_modified && !proxy_send_early_hints(client, request.version, &finalized)) ||
-        !proxy_send_result(client, &response, &finalized, finalized.selected))
+    if ((!finalized.not_modified && !proxy_send_early_hints(client, client_tls, request.version, &finalized)) ||
+        !proxy_send_result(client, client_tls, &response, &finalized, finalized.selected))
       access.failure = "client_disconnect";
   } else {
     if (prepared_ok)
       laghu_operational_registry_budget(&worker->queue->operational, &transaction.budget, transaction.environment.config.transform_deadline_ms);
-    if (!proxy_send_result(client, &response, &finalized, (laghu_buffer){origin_body, origin_body_length})) access.failure = "client_disconnect";
+    if (!proxy_send_result(client, client_tls, &response, &finalized, (laghu_buffer){origin_body, origin_body_length}))
+      access.failure = "client_disconnect";
   }
 done:
   if (transaction.version == LAGHU_HTTP_ABI_VERSION && transaction.trace.trace_id[0] != '\0') {
@@ -669,6 +675,7 @@ done:
   free(origin_body);
   free(decoded);
   if (origin != LAGHU_INVALID_SOCKET) proxy_origin_release(worker, &upstream, origin_reusable);
+  SSL_free(client_tls);
   laghu_close(client);
 #undef PROXY_FAIL
 }

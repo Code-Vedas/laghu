@@ -8,7 +8,8 @@ permalink: /laghu-server/guides/production/
 
 # Laghu Server Production Configuration
 
-The standalone server is installed as a managed service and can terminate downstream TLS, speak modern HTTP to clients, maintain bounded persistent origin connections, and expose the same optimization and administration surfaces as the native modules.
+The standalone server is installed as a managed service, terminates downstream TLS for HTTP/1.1 clients, maintains bounded persistent origin
+connections, and exposes the same optimization and administration surfaces as the native modules.
 
 ## Environment File
 
@@ -26,6 +27,8 @@ laghu \
   --listen 0.0.0.0:8443 \
   --origin https://application.internal:443 \
   --origin-ca-file /etc/laghu/origin-ca.pem \
+  --tls-certificate /etc/laghu/tls/fullchain.pem \
+  --tls-private-key /etc/laghu/tls/privkey.pem \
   --file-cache-backend file:///var/cache/laghu/images \
   --worker-queue /run/laghu/jobs.queue \
   --font-fetch-queue /run/laghu/fonts.queue \
@@ -69,6 +72,10 @@ laghu \
 
 Add `--rum-store-required` only when the service must refuse startup without the selected backend.
 The default fail-open mode restores the local snapshot, keeps request decisions in memory, and retries backend synchronization.
+
+Protect the certificate and private-key paths so only the service account can read them. Laghu validates the PEM chain and matching key before it
+opens the listener. The TLS listener accepts TLS 1.2+ only; it does not negotiate HTTP/2 or HTTP/3, request client certificates, or mix plaintext
+HTTP and TLS on the same port.
 
 ## Service Lifecycle
 

@@ -67,6 +67,7 @@ typedef struct {
 
 typedef struct {
   laghu_socket socket;
+  SSL *tls;
   struct sockaddr_storage peer;
   laghu_socklen peer_length;
 } proxy_connection;
@@ -99,6 +100,7 @@ typedef struct proxy_queue {
   proxy_lifecycle_state state;
   bool stopping;
   SSL_CTX *tls_context;
+  SSL_CTX *downstream_tls_context;
   laghu_rum_engine *rum;
   laghu_operational_registry operational;
   laghu_runtime_queue runtime_queue;
@@ -166,27 +168,31 @@ bool proxy_connection_nominates(const proxy_header *headers, size_t count, const
 bool proxy_forwarding_name(const char *name);
 void proxy_timeout(laghu_socket socket, unsigned int seconds);
 bool proxy_send_all(laghu_socket socket, const void *data, size_t length);
+bool proxy_client_send_all(laghu_socket socket, SSL *tls, const void *data, size_t length);
 bool proxy_socket_timed_out(void);
 int proxy_origin_recv(laghu_socket socket, SSL *tls, void *data, size_t length);
 bool proxy_origin_send_all(laghu_socket socket, SSL *tls, const void *data, size_t length);
 SSL_CTX *proxy_tls_context(const laghu_proxy_options *options);
+SSL_CTX *proxy_downstream_tls_context(const laghu_proxy_options *options);
 SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket, const char *host, unsigned int timeout, bool *timed_out);
+SSL *proxy_downstream_tls_handshake(proxy_worker *worker, laghu_socket socket, unsigned int timeout, bool *timed_out);
 bool proxy_read_headers(laghu_socket socket, char *buffer, SSL *tls, size_t *header_length, unsigned char **initial, size_t *initial_length);
 laghu_socket proxy_connect(proxy_worker *worker, const char *host, const char *port, unsigned int timeout);
 bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, bool *timed_out);
 void proxy_origin_release(proxy_worker *worker, proxy_origin_connection *origin, bool reusable);
 void proxy_origin_pool_close(proxy_queue *queue);
-void proxy_error_response(laghu_socket client, unsigned int status, const char *reason);
+void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, const char *reason);
 void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char *failure);
 bool proxy_read_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, size_t expected, bool to_close,
                      unsigned char **body, size_t *length);
 bool proxy_beacon_allowed(proxy_queue *queue, uint64_t now);
-bool proxy_send_headers(laghu_socket client, const proxy_response *origin, const laghu_http_transaction_result *result, size_t content_length,
-                        bool has_content_length);
-bool proxy_send_early_hints(laghu_socket client, const char *request_version, const laghu_http_transaction_result *result);
-bool proxy_send_result(laghu_socket client, const proxy_response *origin, const laghu_http_transaction_result *result, laghu_buffer body);
-bool proxy_stream_body(laghu_socket origin, SSL *tls, laghu_socket client, const unsigned char *initial, size_t initial_length, size_t expected,
-                       bool until_close);
+bool proxy_send_headers(laghu_socket client, SSL *client_tls, const proxy_response *origin, const laghu_http_transaction_result *result,
+                        size_t content_length, bool has_content_length);
+bool proxy_send_early_hints(laghu_socket client, SSL *client_tls, const char *request_version, const laghu_http_transaction_result *result);
+bool proxy_send_result(laghu_socket client, SSL *client_tls, const proxy_response *origin, const laghu_http_transaction_result *result,
+                       laghu_buffer body);
+bool proxy_stream_body(laghu_socket origin, SSL *origin_tls, laghu_socket client, SSL *client_tls, const unsigned char *initial,
+                       size_t initial_length, size_t expected, bool until_close);
 void proxy_worker_origin(proxy_worker *worker, laghu_socket origin);
 bool proxy_is_forcing(proxy_queue *queue);
 uint64_t proxy_monotonic_ms(void);
@@ -198,10 +204,10 @@ void proxy_access_init(proxy_access_log *access, proxy_queue *queue);
 void proxy_access_write(proxy_queue *queue, const proxy_access_log *access);
 proxy_lifecycle_state proxy_state(proxy_queue *queue);
 const char *proxy_state_name(proxy_lifecycle_state state);
-void proxy_send_json(laghu_socket client, unsigned int status, const char *reason, const char *json, bool head);
-void proxy_send_admin_json(laghu_socket client, unsigned int status, const char *reason, const char *json, bool head);
-void proxy_send_admin_html(laghu_socket client, unsigned int status, const char *reason, const char *html, bool head);
-void proxy_send_metrics(laghu_socket client, const char *body, size_t length, bool head);
+void proxy_send_json(laghu_socket client, SSL *tls, unsigned int status, const char *reason, const char *json, bool head);
+void proxy_send_admin_json(laghu_socket client, SSL *tls, unsigned int status, const char *reason, const char *json, bool head);
+void proxy_send_admin_html(laghu_socket client, SSL *tls, unsigned int status, const char *reason, const char *html, bool head);
+void proxy_send_metrics(laghu_socket client, SSL *tls, const char *body, size_t length, bool head);
 bool proxy_handle_beacon_routes(const proxy_connection *connection, proxy_worker *worker, proxy_request *request, const unsigned char *request_body,
                                 size_t request_body_length, proxy_access_log *access);
 bool proxy_handle_administrative_routes(const proxy_connection *connection, proxy_worker *worker, proxy_request *request, proxy_access_log *access);

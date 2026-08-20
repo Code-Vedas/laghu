@@ -290,7 +290,7 @@
 - [x] Support bounded HTTP/1.1 origin forwarding, connection and header limits, request cancellation, upstream timeouts, and original-response fallback.
 - [x] Require verified TLS-to-origin and enforce an explicit trusted-forwarding policy.
 - [x] Add persistent origin connections and bounded per-origin pooling.
-- [ ] Add downstream TLS termination.
+- [x] Add downstream TLS termination.
 - [x] Add standalone health/readiness, graceful drain, structured access and optimization logs, and rootless/read-only-container operation without making telemetry or a hosted service mandatory.
 - [x] Keep the standalone proxy entirely self-hostable with no account, license key, feature gate, phone-home behavior, or required Codevedas service.
 - [x] Complete the image-path two-process architecture for both lightweight NGINX and Apache interceptors plus the asynchronous out-of-process service.

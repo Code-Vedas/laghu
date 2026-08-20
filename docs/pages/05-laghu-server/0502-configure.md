@@ -78,6 +78,8 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--origin-idle-timeout SECONDS` | `1..3600` | `30` | Closes an idle retained origin connection before reuse. |
 | `--drain-timeout SECONDS` | `1..300` | `30` | Bounds graceful shutdown. |
 | `--origin-ca-file PATH` | CA bundle path | platform trust | Overrides trust for HTTPS origins; invalid with HTTP. |
+| `--tls-certificate PATH` | absolute PEM path | disabled | Enables standalone HTTPS only with `--tls-private-key`. |
+| `--tls-private-key PATH` | absolute PEM path | disabled | Private key paired with `--tls-certificate`; invalid alone. |
 | `--forwarded-headers MODE` | `off`, `forwarded`, `x-forwarded`, `both` | `off` | Selects trusted forwarding syntax. |
 | `--trusted-proxy CIDR` | canonical IPv4/IPv6 CIDR, repeatable to 64 | none | Trusts forwarding headers from matching peers; requires forwarding mode. |
 | `--purge-method PURGE` | literal `PURGE` | disabled | Enables authenticated method-driven URL purge. |
@@ -103,6 +105,12 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--version` | flag | n/a | Prints version. |
 
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
+
+## Downstream TLS
+
+Provide both `--tls-certificate` and `--tls-private-key` to terminate TLS 1.2+ for the standalone HTTP/1.1 listener.
+Laghu validates the PEM chain and matching private key before it opens the listener. Omit both options for the existing plaintext listener;
+Laghu does not mix plaintext and TLS on one port. Client certificates and HTTP/2 or HTTP/3 listener negotiation are not configured by these options.
 
 ## Preset behavior contract
 

@@ -148,6 +148,11 @@ int main(void) {
   char *secure[] = {"laghu",      "--listen",        "127.0.0.1:8080", "--origin",         "https://example.test", "--cache",
                     "/tmp/cache", "--worker-queue",  "/tmp/jobs",      "--origin-ca-file", "/tmp/ca.pem",          "--forwarded-headers",
                     "both",       "--trusted-proxy", "127.0.0.0/8",    "--trusted-proxy",  "2001:db8::/32"};
+  char *downstream_tls[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache",
+                            "/tmp/cache", "--worker-queue", "/tmp/jobs", "--tls-certificate", "/tmp/server.pem",
+                            "--tls-private-key", "/tmp/server.key"};
+  char *incomplete_downstream_tls[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache",
+                                       "/tmp/cache", "--worker-queue", "/tmp/jobs", "--tls-certificate", "/tmp/server.pem"};
   char *bad_cidr[] = {"laghu",          "--listen",  "127.0.0.1:8080",  "--origin",   "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                       "--worker-queue", "/tmp/jobs", "--trusted-proxy", "127.0.0.1/8"};
   char *bad_rum[] = {"laghu",      "--listen",       "127.0.0.1:8080", "--origin",    "http://127.0.0.1:8000",      "--cache",
@@ -284,12 +289,20 @@ int main(void) {
   CHECK(options.origin_tls && !strcmp(options.origin_port, "443"));
   CHECK(options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
   CHECK(options.service.trusted_proxy_count == 2U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(13, downstream_tls, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.downstream_tls && !strcmp(options.tls_certificate, "/tmp/server.pem") &&
+        !strcmp(options.tls_private_key, "/tmp/server.key"));
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, incomplete_downstream_tls, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   laghu_service_config_init(&expected_service);
   CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_IMAGE_CACHE, "/tmp/cache"));
   CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_WORKER_QUEUE, "/tmp/jobs"));
   CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_TRUSTED_PROXY, "127.0.0.0/8"));
   CHECK(service_apply(&expected_service, LAGHU_SERVICE_SETTING_TRUSTED_PROXY, "2001:db8::/32"));
   CHECK(service_finalize(&expected_service));
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(17, secure, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(memcmp(&options.service, &expected_service, sizeof(options.service)) == 0);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(26, rum, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);

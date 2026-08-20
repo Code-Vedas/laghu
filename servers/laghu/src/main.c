@@ -34,6 +34,7 @@ static void usage(FILE *stream) {
       "  --transform-deadline-ms 5..1000\n"
       "  --variants-per-source 1..64\n"
       "  --origin-ca-file PATH\n"
+      "  --tls-certificate PATH --tls-private-key PATH\n"
       "  --font-fetch-queue PATH\n"
       "  --font-provider-config PATH\n"
       "  --javascript-queue PATH\n"

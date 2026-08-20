@@ -909,7 +909,9 @@ def create_tls_certificate(root):
         [
             openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes",
             "-keyout", str(ca_key), "-out", str(ca_file), "-days", "1",
-            "-subj", "/CN=Laghu Test CA",
+            "-subj", "/CN=Laghu Test CA", "-addext",
+            "basicConstraints=critical,CA:TRUE", "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
         ],
         check=True,
         **quiet,
@@ -936,8 +938,10 @@ def create_tls_certificate(root):
 
 
 def request(port, path, method="GET", headers=None, body=b"", timeout=10,
-            include_interim=False):
+            include_interim=False, tls_context=None):
     sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    if tls_context is not None:
+        sock = tls_context.wrap_socket(sock, server_hostname="127.0.0.1")
     extra = ""
     for name, value in (headers or {}).items():
         extra += f"{name}: {value}\r\n"
@@ -947,7 +951,8 @@ def request(port, path, method="GET", headers=None, body=b"", timeout=10,
         f"{method} {path} HTTP/1.1\r\nHost: example.test\r\n{extra}Connection: close\r\n\r\n".encode()
         + body
     )
-    sock.shutdown(socket.SHUT_WR)
+    if tls_context is None:
+        sock.shutdown(socket.SHUT_WR)
     chunks = []
     expected_length = None
     while True:
@@ -1099,6 +1104,68 @@ def main():
             tls_process.stderr.close()
         assert b" 200 " in tls_head.split(b"\r\n", 1)[0], (tls_head, tls_logs)
         assert tls_body == b'{"ok":true}'
+        downstream_tls_port = free_port()
+        downstream_tls_process = start_process(
+            [
+                str(executable), "--listen", f"127.0.0.1:{downstream_tls_port}",
+                "--origin", f"http://127.0.0.1:{origin_port}", "--cache",
+                str(root / "cache"), "--worker-queue", str(root / "missing.queue"),
+                "--tls-certificate", str(server_file), "--tls-private-key",
+                str(server_key), "--forwarded-headers", "both",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        downstream_client_context = ssl.create_default_context(cafile=ca_file)
+        try:
+            downstream_error = None
+            for _ in range(warm_attempts):
+                try:
+                    downstream_head, downstream_body = request(
+                        downstream_tls_port, "/api/data", tls_context=downstream_client_context
+                    )
+                    break
+                except OSError as error:
+                    downstream_error = error
+                    time.sleep(0.05)
+            else:
+                raise AssertionError(f"downstream TLS proxy did not start: {downstream_error}")
+            assert b" 200 " in downstream_head.split(b"\r\n", 1)[0]
+            assert downstream_body == b'{"ok":true}'
+            health_head, health_body = request(
+                downstream_tls_port, "/.laghu/health", tls_context=downstream_client_context
+            )
+            assert b" 200 " in health_head.split(b"\r\n", 1)[0]
+            assert b'"status":"ok"' in health_body
+            _, forwarded_body = request(
+                downstream_tls_port, "/headers", tls_context=downstream_client_context
+            )
+            forwarded = json.loads(forwarded_body)
+            assert forwarded["x-forwarded-proto"] == ["https"]
+            assert "proto=https" in forwarded["forwarded"][0]
+            try:
+                request(downstream_tls_port, "/api/data", tls_context=ssl.create_default_context())
+                raise AssertionError("downstream TLS unexpectedly trusted an unknown CA")
+            except ssl.SSLCertVerificationError:
+                pass
+        finally:
+            request_shutdown(downstream_tls_process)
+            downstream_tls_process.wait(timeout=5)
+            downstream_tls_logs = downstream_tls_process.stderr.read().decode()
+            downstream_tls_process.stderr.close()
+        assert downstream_tls_process.returncode == 0, downstream_tls_logs
+        invalid_downstream_tls = subprocess.run(
+            [
+                str(executable), "--listen", f"127.0.0.1:{free_port()}",
+                "--origin", f"http://127.0.0.1:{origin_port}", "--cache",
+                str(root / "cache"), "--worker-queue", str(root / "missing.queue"),
+                "--tls-certificate", str(server_file), "--tls-private-key", str(root / "ca.key"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert invalid_downstream_tls.returncode != 0
+        assert '"failure":"downstream_tls"' in invalid_downstream_tls.stderr
         unknown_ca_port = free_port()
         unknown_ca_process = start_process(
             [

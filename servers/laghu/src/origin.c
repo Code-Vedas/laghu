@@ -47,6 +47,10 @@ bool proxy_origin_send_all(laghu_socket socket, SSL *tls, const void *data, size
   return true;
 }
 
+bool proxy_client_send_all(laghu_socket socket, SSL *tls, const void *data, size_t length) {
+  return proxy_origin_send_all(socket, tls, data, length);
+}
+
 SSL_CTX *proxy_tls_context(const laghu_proxy_options *options) {
   SSL_CTX *context;
   if (!options->origin_tls) return NULL;
@@ -58,6 +62,22 @@ SSL_CTX *proxy_tls_context(const laghu_proxy_options *options) {
     return NULL;
   }
   SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+  SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
+  return context;
+}
+
+SSL_CTX *proxy_downstream_tls_context(const laghu_proxy_options *options) {
+  SSL_CTX *context;
+  if (!options->downstream_tls) return NULL;
+  context = SSL_CTX_new(TLS_server_method());
+  if (context == NULL) return NULL;
+  if (!SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) ||
+      SSL_CTX_use_certificate_chain_file(context, options->tls_certificate) != 1 ||
+      SSL_CTX_use_PrivateKey_file(context, options->tls_private_key, SSL_FILETYPE_PEM) != 1 ||
+      SSL_CTX_check_private_key(context) != 1) {
+    SSL_CTX_free(context);
+    return NULL;
+  }
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
   return context;
 }
@@ -119,6 +139,44 @@ SSL *proxy_tls_handshake(proxy_worker *worker, laghu_socket socket, const char *
       SSL_free(tls);
       return NULL;
     }
+  }
+  return tls;
+}
+
+SSL *proxy_downstream_tls_handshake(proxy_worker *worker, laghu_socket socket, unsigned int timeout, bool *timed_out) {
+  SSL *tls = SSL_new(worker->queue->downstream_tls_context);
+  bool complete = false;
+  uint64_t deadline;
+  int flags = fcntl(socket, F_GETFL, 0);
+  *timed_out = false;
+  if (tls == NULL || flags < 0 || fcntl(socket, F_SETFL, flags | O_NONBLOCK) < 0 || !SSL_set_fd(tls, (int)socket)) {
+    SSL_free(tls);
+    return NULL;
+  }
+  deadline = proxy_monotonic_ms() + (uint64_t)timeout * 1000U;
+  for (;;) {
+    int result = SSL_accept(tls);
+    int error;
+    if (result == 1) {
+      complete = true;
+      break;
+    }
+    error = SSL_get_error(tls, result);
+    if (proxy_monotonic_ms() >= deadline) {
+      *timed_out = true;
+      errno = ETIMEDOUT;
+      break;
+    }
+    if ((error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) || proxy_is_forcing(worker->queue)) break;
+    {
+      struct pollfd ready = {(int)socket, error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, 0};
+      (void)poll(&ready, 1U, 200);
+    }
+  }
+  (void)fcntl(socket, F_SETFL, flags);
+  if (!complete) {
+    SSL_free(tls);
+    return NULL;
   }
   return tls;
 }

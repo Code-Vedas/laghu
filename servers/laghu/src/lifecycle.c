@@ -290,6 +290,10 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_startup_failure(&queue, "origin_tls");
     goto cleanup;
   }
+  if (options->downstream_tls && (queue.downstream_tls_context = proxy_downstream_tls_context(options)) == NULL) {
+    proxy_log_startup_failure(&queue, "downstream_tls");
+    goto cleanup;
+  }
   listener = proxy_listen(options->listen_host, options->listen_port);
   if (listener == LAGHU_INVALID_SOCKET) {
     proxy_log_startup_failure(&queue, "listen");
@@ -363,6 +367,7 @@ cleanup:
   laghu_rum_engine_destroy(queue.rum);
   if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);
   SSL_CTX_free(queue.tls_context);
+  SSL_CTX_free(queue.downstream_tls_context);
   if (drained_condition) pthread_cond_destroy(&queue.drained);
   if (ready_condition) pthread_cond_destroy(&queue.ready);
   if (lock_ready) pthread_mutex_destroy(&queue.lock);

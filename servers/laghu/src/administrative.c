@@ -32,7 +32,7 @@ const char *proxy_state_name(proxy_lifecycle_state state) {
   return "unknown";
 }
 
-void proxy_send_json(laghu_socket client, unsigned int status, const char *reason, const char *json, bool head) {
+void proxy_send_json(laghu_socket client, SSL *tls, unsigned int status, const char *reason, const char *json, bool head) {
   char headers[512];
   size_t length = strlen(json);
   int count = snprintf(headers, sizeof(headers),
@@ -40,11 +40,11 @@ void proxy_send_json(laghu_socket client, unsigned int status, const char *reaso
                        "Content-Length: %zu\r\nCache-Control: no-store\r\n"
                        "Connection: close\r\n\r\n",
                        status, reason, length);
-  if (count > 0 && (size_t)count < sizeof(headers) && proxy_send_all(client, headers, (size_t)count) && !head)
-    (void)proxy_send_all(client, json, length);
+  if (count > 0 && (size_t)count < sizeof(headers) && proxy_client_send_all(client, tls, headers, (size_t)count) && !head)
+    (void)proxy_client_send_all(client, tls, json, length);
 }
 
-void proxy_send_admin_json(laghu_socket client, unsigned int status, const char *reason, const char *json, bool head) {
+void proxy_send_admin_json(laghu_socket client, SSL *tls, unsigned int status, const char *reason, const char *json, bool head) {
   char headers[512];
   size_t length = strlen(json);
   int count = snprintf(headers, sizeof(headers),
@@ -53,12 +53,12 @@ void proxy_send_admin_json(laghu_socket client, unsigned int status, const char 
                        "Connection: close\r\n\r\n",
                        status, reason, length);
   if (count > 0 && (size_t)count < sizeof(headers)) {
-    (void)proxy_send_all(client, headers, (size_t)count);
-    if (!head) (void)proxy_send_all(client, json, length);
+    (void)proxy_client_send_all(client, tls, headers, (size_t)count);
+    if (!head) (void)proxy_client_send_all(client, tls, json, length);
   }
 }
 
-void proxy_send_admin_html(laghu_socket client, unsigned int status, const char *reason, const char *html, bool head) {
+void proxy_send_admin_html(laghu_socket client, SSL *tls, unsigned int status, const char *reason, const char *html, bool head) {
   char headers[512];
   size_t length = strlen(html);
   int count = snprintf(headers, sizeof(headers),
@@ -67,12 +67,12 @@ void proxy_send_admin_html(laghu_socket client, unsigned int status, const char 
                        "Content-Length: %zu\r\nConnection: close\r\n\r\n",
                        status, reason, length);
   if (count > 0 && (size_t)count < sizeof(headers)) {
-    (void)proxy_send_all(client, headers, (size_t)count);
-    if (!head) (void)proxy_send_all(client, html, length);
+    (void)proxy_client_send_all(client, tls, headers, (size_t)count);
+    if (!head) (void)proxy_client_send_all(client, tls, html, length);
   }
 }
 
-void proxy_send_metrics(laghu_socket client, const char *body, size_t length, bool head) {
+void proxy_send_metrics(laghu_socket client, SSL *tls, const char *body, size_t length, bool head) {
   char headers[512];
   int count = snprintf(headers, sizeof(headers),
                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; "
@@ -81,7 +81,7 @@ void proxy_send_metrics(laghu_socket client, const char *body, size_t length, bo
                        "Connection: close\r\n\r\n",
                        length);
   if (count > 0 && (size_t)count < sizeof(headers)) {
-    (void)proxy_send_all(client, headers, (size_t)count);
-    if (!head) (void)proxy_send_all(client, body, length);
+    (void)proxy_client_send_all(client, tls, headers, (size_t)count);
+    if (!head) (void)proxy_client_send_all(client, tls, body, length);
   }
 }

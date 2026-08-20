@@ -144,7 +144,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
-  bool ca_seen = false, forwarded_seen = false;
+  bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, forwarded_seen = false;
   bool respect_vary_seen = false, respect_proto_seen = false;
   bool query_overrides_seen = false;
   laghu_config shared_config;
@@ -364,6 +364,14 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (ca_seen || !proxy_copy(options->origin_ca_file, sizeof(options->origin_ca_file), value))
         return proxy_error(error, error_size, "invalid or duplicate --origin-ca-file");
       ca_seen = true;
+    } else if (strcmp(name, "--tls-certificate") == 0 || strcmp(name, "--tls-private-key") == 0) {
+      bool *seen = strcmp(name, "--tls-certificate") == 0 ? &tls_certificate_seen : &tls_private_key_seen;
+      char *target = strcmp(name, "--tls-certificate") == 0 ? options->tls_certificate : options->tls_private_key;
+      size_t capacity = strcmp(name, "--tls-certificate") == 0 ? sizeof(options->tls_certificate) : sizeof(options->tls_private_key);
+      NEED_VALUE();
+      if (*seen || !proxy_absolute_path(value) || !proxy_copy(target, capacity, value))
+        return proxy_error(error, error_size, "invalid or duplicate downstream TLS file");
+      *seen = true;
     } else if (strcmp(name, "--forwarded-headers") == 0) {
       NEED_VALUE();
       if (forwarded_seen) return proxy_error(error, error_size, "duplicate --forwarded-headers");
@@ -402,6 +410,9 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
                        "--listen, --origin, a file cache backend, and "
                        "--worker-queue are required");
   if (ca_seen && !options->origin_tls) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
+  if (tls_certificate_seen != tls_private_key_seen)
+    return proxy_error(error, error_size, "--tls-certificate and --tls-private-key are required together");
+  options->downstream_tls = tls_certificate_seen;
   if (options->service.trusted_proxy_count != 0U && options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF &&
       options->config.respect_x_forwarded_proto != LAGHU_MODE_ON)
     return proxy_error(error, error_size, "--trusted-proxy requires forwarded headers");
