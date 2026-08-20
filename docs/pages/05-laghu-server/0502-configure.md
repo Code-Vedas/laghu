@@ -15,7 +15,7 @@ unsafe paths, and invalid option combinations fail startup. Configuration files 
 group- or world-writable.
 
 Runtime keys are the former option name without the `--` prefix, with hyphens written as underscores. Repeated settings use a
-YAML sequence. Operational commands (`status`, `doctor`, `bench`, `migrate`, and `purge`) remain argument-driven.
+YAML sequence. Operational commands (`status`, `doctor`, `bench`, `migrate`, `purge`, and `reload`) remain argument-driven.
 
 ```yaml
 schema: 1
@@ -24,6 +24,7 @@ runtime:
   origin: http://127.0.0.1:8000
   file_cache_backend: file:///var/cache/laghu/images
   worker_queue: /run/laghu/jobs.queue
+  pid_file: /run/laghu/laghu.pid
   preset: balanced
   forwarded_headers: both
   trusted_proxy:
@@ -32,7 +33,33 @@ runtime:
 
 `sites` selects a host-specific static document root. `routes` are ordered and use `exact`, `prefix`, or `ordered_regex` matching;
 each route declares either a local `redirect` or an HTTP `proxy_pass`. Optional `response_header_name` and
-`response_header_value` add one validated response header to a redirect.
+`response_header_value` add one validated response header to a redirect. A site can contain its own `routes` list, which only
+matches that site's `Host` value. Global routes apply to every host.
+
+Place shared Laghu policy keys in a `laghu:` mapping and shared service-setting keys in a `service:` mapping at the site or route.
+Each scope is parsed by the same shared setting parsers as NGINX and Apache, then resolved once while loading: global → site →
+matching route. A request borrows those immutable resolved settings; it never loads files or merges configuration. This is useful
+for policy boundaries such as a conservative host or a route with `mode: off`:
+
+```yaml
+sites:
+  - host: shop.example.test
+    document_root: /srv/shop/public
+    laghu:
+      preset: safe
+    service:
+      javascript_target: defaults
+    routes:
+      - match: exact
+        pattern: /checkout/legacy
+        redirect: /checkout/
+        laghu:
+          mode: off
+```
+
+Lifecycle-owned service resources (cache backend, queues, TLS contexts, RUM engine, and source registry) remain stable for a
+running process. Keep their topology global; scoped values are validated and resolved, and request behavior receives the matching
+resolved service settings.
 
 Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lifecycle changes. Transaction paths exclude the complete query string; headers, bodies, credentials, tokens, hosts, and cache keys are never emitted. Worker services use the same schema on stderr for lifecycle and job events.
 
@@ -104,6 +131,7 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 | `--origin-ca-file PATH` | CA bundle path | platform trust | Overrides trust for HTTPS origins; invalid with HTTP. |
 | `--tls-certificate PATH` | absolute PEM path | disabled | Enables standalone HTTPS only with `--tls-private-key`. |
 | `--tls-private-key PATH` | absolute PEM path | disabled | Private key paired with `--tls-certificate`; invalid alone. |
+| `--pid-file PATH` | absolute path | disabled | Creates the protected process-id file used by `laghu reload`. |
 | `--forwarded-headers MODE` | `off`, `forwarded`, `x-forwarded`, `both` | `off` | Selects trusted forwarding syntax. |
 | `--trusted-proxy CIDR` | canonical IPv4/IPv6 CIDR, repeatable to 64 | none | Trusts forwarding headers from matching peers; requires forwarding mode. |
 | `--purge-method PURGE` | literal `PURGE` | disabled | Enables authenticated method-driven URL purge. |
@@ -130,11 +158,26 @@ Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lif
 
 The proxy itself defaults enabled with `balanced`, unlike the disabled-by-default native modules.
 
-## Downstream TLS
+## Reload
+
+Set `runtime.pid_file` and run `laghu reload --config /etc/laghu/laghu.yaml`. The command first performs the same strict YAML,
+policy, service, and path validation as startup, then signals the running process. The process constructs a separate
+immutable replacement and atomically publishes it only after validation and compatibility checks. Invalid or incompatible input
+leaves the last valid configuration live and emits a `reload` `retained` lifecycle record; a successful swap emits `reload`
+`applied`.
+
+Reload changes request-policy, route, and static-site settings without stopping workers. Listener, worker, connection-pool,
+cache/queue/RUM/source, PID-file, and TLS/SNI topology are lifecycle-owned, so changes to them require a normal restart and are
+retained rather than partially applied. The PID path itself must stay stable across a reload.
+
+## Downstream TLS and SNI virtual hosts
 
 Provide both `--tls-certificate` and `--tls-private-key` to terminate TLS 1.2+ for the standalone HTTP/1.1 listener.
 Laghu validates the PEM chain and matching private key before it opens the listener. Omit both options for the existing plaintext listener;
-Laghu does not mix plaintext and TLS on one port. Client certificates and HTTP/2 or HTTP/3 listener negotiation are not configured by these options.
+Laghu does not mix plaintext and TLS on one port. A `sites` entry may instead provide its own paired `tls_certificate` and
+`tls_private_key`; Laghu selects that certificate by exact case-insensitive SNI hostname before HTTP routing. Use a global pair as
+the default certificate, or let the first TLS site provide it. Every TLS site needs both files and hostnames must be unique.
+Certificate changes require restart. Client certificates and HTTP/2 or HTTP/3 listener negotiation are not configured by these options.
 
 ## Preset behavior contract
 

@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <regex.h>
 
 #include "server_internal.h"
@@ -29,10 +30,60 @@ static bool route_matches(const laghu_proxy_route *route, const char *target) {
   return false;
 }
 
+size_t proxy_site_index(const laghu_proxy_options *options, const proxy_request *request) {
+  proxy_header *host;
+  size_t index;
+  if (options == NULL || request == NULL || (host = proxy_find((proxy_header *)request->headers, request->header_count, "Host")) == NULL) return LAGHU_PROXY_SITE_GLOBAL;
+  for (index = 0U; index < options->site_count; ++index) {
+    size_t length = strlen(options->sites[index].host);
+    if (!strncasecmp(host->value, options->sites[index].host, length) && (host->value[length] == '\0' || host->value[length] == ':')) return index;
+  }
+  return LAGHU_PROXY_SITE_GLOBAL;
+}
+
+static bool route_visible(const laghu_proxy_options *options, const laghu_proxy_route *route, const proxy_request *request) {
+  return route->site_index == LAGHU_PROXY_SITE_GLOBAL || route->site_index == proxy_site_index(options, request);
+}
+
+void proxy_options_for_request(const laghu_proxy_options *options, const proxy_request *request, laghu_proxy_options *resolved) {
+  const laghu_config *core;
+  const laghu_service_config *service;
+  if (options == NULL || request == NULL || resolved == NULL) return;
+  *resolved = *options;
+  proxy_scope_for_request(options, request, &core, &service);
+  resolved->config = *core;
+  resolved->service = *service;
+}
+
+void proxy_scope_for_request(const laghu_proxy_options *options, const proxy_request *request, const laghu_config **core,
+                             const laghu_service_config **service) {
+  size_t index;
+  size_t site_index;
+  if (core == NULL || service == NULL || options == NULL) return;
+  *core = &options->config;
+  *service = &options->service;
+  if (request == NULL) return;
+  site_index = proxy_site_index(options, request);
+  if (site_index != LAGHU_PROXY_SITE_GLOBAL) {
+    *core = &options->sites[site_index].config;
+    *service = &options->sites[site_index].service;
+  }
+  for (index = 0U; index < options->route_count; ++index) {
+    const laghu_proxy_route *route = &options->routes[index];
+    if (route_visible(options, route, request) && route_matches(route, request->target)) {
+      *core = &route->config;
+      *service = &route->service;
+      return;
+    }
+  }
+}
+
 const laghu_proxy_route *proxy_route_upstream(const laghu_proxy_options *options, const proxy_request *request) {
   size_t index;
   for (index = 0U; index < options->route_count; ++index)
-    if (options->routes[index].upstream_host[0] != '\0' && route_matches(&options->routes[index], request->target)) return &options->routes[index];
+    if (options->routes[index].upstream_host[0] != '\0' && route_visible(options, &options->routes[index], request) &&
+        route_matches(&options->routes[index], request->target))
+      return &options->routes[index];
   return NULL;
 }
 
@@ -40,7 +91,7 @@ bool proxy_route_rewrite(const laghu_proxy_options *options, proxy_request *requ
   size_t index;
   for (index = 0U; index < options->route_count; ++index) {
     const laghu_proxy_route *route = &options->routes[index];
-    if (route->rewrite[0] == '\0' || !route_matches(route, request->target)) continue;
+    if (route->rewrite[0] == '\0' || !route_visible(options, route, request) || !route_matches(route, request->target)) continue;
     (void)snprintf(request->target, sizeof(request->target), "%s", route->rewrite);
     return true;
   }
@@ -54,7 +105,7 @@ bool proxy_route_serve(const laghu_proxy_options *options, const proxy_request *
     const laghu_proxy_route *route = &options->routes[index];
     char output[1024];
     int written;
-    if (!route_matches(route, request->target)) continue;
+    if (!route_visible(options, route, request) || !route_matches(route, request->target)) continue;
     if (route->redirect[0] == '\0') return false;
     if (strcmp(request->method, "GET") != 0 && strcmp(request->method, "HEAD") != 0) {
       proxy_error_response(client, tls, 405U, "Method Not Allowed");

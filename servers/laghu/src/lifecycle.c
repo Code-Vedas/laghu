@@ -13,6 +13,7 @@
 #include "server_internal.h"
 
 volatile sig_atomic_t proxy_stop_requests;
+volatile sig_atomic_t proxy_reload_requests;
 
 static laghu_socket proxy_listen(const char *host, const char *port) {
   struct addrinfo hints, *addresses = NULL, *address;
@@ -122,9 +123,11 @@ static bool proxy_attach_queue(proxy_queue *queue, laghu_runtime_queue *runtime,
 }
 
 void proxy_maintain_queue_attachments(proxy_queue *queue) {
+  const laghu_proxy_options *options;
   const laghu_service_config *service;
-  if (queue == NULL || queue->options == NULL) return;
-  service = &queue->options->service;
+  if (queue == NULL) return;
+  options = proxy_current_options(queue);
+  service = &options->service;
   (void)proxy_attach_queue(queue, &queue->runtime_queue, &queue->runtime_queue_ready, service->worker_queue);
   if (service->html_refresh_queue[0] != '\0')
     (void)proxy_attach_queue(queue, &queue->html_refresh_queue, &queue->html_refresh_queue_ready, service->html_refresh_queue);
@@ -139,7 +142,10 @@ void proxy_maintain_queue_attachments(proxy_queue *queue) {
 }
 
 static void proxy_signal_handler(int signal_number) {
-  (void)signal_number;
+  if (signal_number == SIGHUP) {
+    if (proxy_reload_requests < 2) ++proxy_reload_requests;
+    return;
+  }
   if (proxy_stop_requests < 2) ++proxy_stop_requests;
 }
 
@@ -191,13 +197,134 @@ static void proxy_force_workers(proxy_queue *queue, proxy_worker *workers, unsig
   proxy_queue_unlock(queue);
 }
 
-int laghu_proxy_run(const laghu_proxy_options *options) {
+static bool proxy_reload_string_equal(const char *left, const char *right) { return strcmp(left, right) == 0; }
+
+/* Queue mappings, cache registrations, the RUM engine, and TLS contexts are
+ * lifecycle-owned.  A reload swaps only a fully validated immutable request
+ * snapshot while those ownership boundaries stay fixed. */
+static bool proxy_reload_service_compatible(const laghu_service_config *left, const laghu_service_config *right) {
+  return left->present == right->present && !memcmp(&left->cache_limits, &right->cache_limits, sizeof(left->cache_limits)) &&
+         left->purge_allow_count == right->purge_allow_count && left->trusted_proxy_count == right->trusted_proxy_count &&
+         !memcmp(left->purge_allow, right->purge_allow, sizeof(left->purge_allow)) &&
+         !memcmp(left->trusted_proxies, right->trusted_proxies, sizeof(left->trusted_proxies)) &&
+         proxy_reload_string_equal(left->file_cache_backend, right->file_cache_backend) && proxy_reload_string_equal(left->image_cache, right->image_cache) &&
+         proxy_reload_string_equal(left->worker_queue, right->worker_queue) && proxy_reload_string_equal(left->html_refresh_queue, right->html_refresh_queue) &&
+         proxy_reload_string_equal(left->chrome_analysis_queue, right->chrome_analysis_queue) &&
+         proxy_reload_string_equal(left->chrome_analysis_output, right->chrome_analysis_output) &&
+         proxy_reload_string_equal(left->font_fetch_queue, right->font_fetch_queue) &&
+         proxy_reload_string_equal(left->font_provider_config, right->font_provider_config) &&
+         proxy_reload_string_equal(left->javascript_queue, right->javascript_queue) &&
+         proxy_reload_string_equal(left->javascript_target, right->javascript_target) &&
+         proxy_reload_string_equal(left->javascript_observation_config, right->javascript_observation_config) &&
+         proxy_reload_string_equal(left->javascript_defer_config, right->javascript_defer_config) &&
+         proxy_reload_string_equal(left->layout_reservation_config, right->layout_reservation_config) &&
+         proxy_reload_string_equal(left->otel_endpoint, right->otel_endpoint) && proxy_reload_string_equal(left->otel_trace_queue, right->otel_trace_queue) &&
+         proxy_reload_string_equal(left->otel_ca_file, right->otel_ca_file) && proxy_reload_string_equal(left->asset_offload_config, right->asset_offload_config) &&
+         proxy_reload_string_equal(left->asset_upload_queue, right->asset_upload_queue) && proxy_reload_string_equal(left->rum_store, right->rum_store) &&
+         proxy_reload_string_equal(left->rum_snapshot_path, right->rum_snapshot_path) && proxy_reload_string_equal(left->rum_client_library, right->rum_client_library) &&
+         proxy_reload_string_equal(left->purge_token_file, right->purge_token_file) && proxy_reload_string_equal(left->cache_flush_file, right->cache_flush_file) &&
+         !memcmp(&left->source_policy, &right->source_policy, sizeof(left->source_policy)) &&
+         left->rum_timeout_ms == right->rum_timeout_ms && left->otel_sampling_rate == right->otel_sampling_rate &&
+         left->chrome_analysis_timeout_ms == right->chrome_analysis_timeout_ms && left->rum_ttl == right->rum_ttl &&
+         left->rum_retry_limit == right->rum_retry_limit && left->rum_sync_interval == right->rum_sync_interval &&
+         left->rum_memory_limit == right->rum_memory_limit && left->rum_pending_limit == right->rum_pending_limit &&
+         left->purge_method == right->purge_method && left->purge_query == right->purge_query && left->statistics == right->statistics &&
+         left->metrics == right->metrics && left->readiness == right->readiness && left->readiness_strict == right->readiness_strict &&
+         left->rum_store_required == right->rum_store_required;
+}
+
+static bool proxy_reload_compatible(const laghu_proxy_options *active, const laghu_proxy_options *candidate) {
+  size_t index;
+  if (!proxy_reload_string_equal(active->listen_host, candidate->listen_host) || !proxy_reload_string_equal(active->listen_port, candidate->listen_port) ||
+      active->workers != candidate->workers || active->connection_queue != candidate->connection_queue ||
+      active->origin_pool_size != candidate->origin_pool_size || active->origin_tls != candidate->origin_tls ||
+      active->downstream_tls != candidate->downstream_tls || !proxy_reload_string_equal(active->origin_ca_file, candidate->origin_ca_file) ||
+      !proxy_reload_string_equal(active->tls_certificate, candidate->tls_certificate) || !proxy_reload_string_equal(active->tls_private_key, candidate->tls_private_key) ||
+      !proxy_reload_string_equal(active->pid_file, candidate->pid_file) || !proxy_reload_service_compatible(&active->service, &candidate->service))
+    return false;
+  if (active->site_count != candidate->site_count) return false;
+  for (index = 0U; index < active->site_count; ++index) {
+    if (!proxy_reload_string_equal(active->sites[index].host, candidate->sites[index].host) ||
+        !proxy_reload_string_equal(active->sites[index].tls_certificate, candidate->sites[index].tls_certificate) ||
+        !proxy_reload_string_equal(active->sites[index].tls_private_key, candidate->sites[index].tls_private_key) ||
+        !proxy_reload_service_compatible(&active->sites[index].service, &candidate->sites[index].service))
+      return false;
+  }
+  if (active->route_count != candidate->route_count) return false;
+  for (index = 0U; index < active->route_count; ++index)
+    if (!proxy_reload_service_compatible(&active->routes[index].service, &candidate->routes[index].service)) return false;
+  return true;
+}
+
+static void proxy_reload_snapshots_dispose(proxy_queue *queue) {
+  proxy_reload_snapshot *snapshot = queue->reload_snapshots;
+  while (snapshot != NULL) {
+    proxy_reload_snapshot *next = snapshot->next;
+    laghu_proxy_options_dispose(&snapshot->options);
+    free(snapshot);
+    snapshot = next;
+  }
+  queue->reload_snapshots = NULL;
+}
+
+static void proxy_reload_configuration(proxy_queue *queue) {
+  proxy_reload_snapshot *snapshot;
+  char error[256] = {0};
+  const laghu_proxy_options *active;
+  if (queue->config_path[0] == '\0') {
+    proxy_log_event(queue, "reload", "retained");
+    return;
+  }
+  snapshot = calloc(1U, sizeof(*snapshot));
+  if (snapshot == NULL) {
+    proxy_log_event(queue, "reload", "retained");
+    return;
+  }
+  laghu_proxy_options_init(&snapshot->options);
+  if (laghu_proxy_load_yaml(queue->config_path, &snapshot->options, error, sizeof(error)) != LAGHU_PROXY_PARSE_OK) {
+    laghu_proxy_options_dispose(&snapshot->options);
+    free(snapshot);
+    proxy_log_event(queue, "reload", "retained");
+    return;
+  }
+  active = proxy_current_options(queue);
+  if (!proxy_reload_compatible(active, &snapshot->options)) {
+    laghu_proxy_options_dispose(&snapshot->options);
+    free(snapshot);
+    proxy_log_event(queue, "reload", "retained");
+    return;
+  }
+  proxy_queue_lock(queue);
+  snapshot->next = queue->reload_snapshots;
+  queue->reload_snapshots = snapshot;
+  queue->options = &snapshot->options;
+  proxy_queue_unlock(queue);
+  proxy_log_event(queue, "reload", "applied");
+}
+
+static bool proxy_pid_create(const char *path) {
+  char value[32U];
+  int file;
+  int length;
+  if (path == NULL || path[0] == '\0') return true;
+  file = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
+  if (file < 0) return false;
+  length = snprintf(value, sizeof(value), "%ld\n", (long)getpid());
+  if (length <= 0 || (size_t)length >= sizeof(value) || write(file, value, (size_t)length) != length || fsync(file) != 0 || close(file) != 0) {
+    (void)close(file);
+    (void)unlink(path);
+    return false;
+  }
+  return true;
+}
+
+int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *config_path) {
   proxy_queue queue;
   proxy_worker *workers;
   laghu_socket listener = LAGHU_INVALID_SOCKET;
   unsigned int index, started = 0U;
   int result = 1;
-  bool lock_ready = false;
+  bool lock_ready = false, pid_created = false;
   if (options == NULL) return 1;
   bool ready_condition = false, drained_condition = false;
   pthread_t *threads;
@@ -210,6 +337,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
   laghu_runtime_queue_init(&queue.chrome_analysis_queue);
   laghu_runtime_queue_init(&queue.otel_trace_queue);
   queue.options = options;
+  if (config_path != NULL && strlen(config_path) < sizeof(queue.config_path)) (void)snprintf(queue.config_path, sizeof(queue.config_path), "%s", config_path);
   queue.capacity = options->connection_queue;
   queue.items = calloc(queue.capacity, sizeof(*queue.items));
   if (options->origin_pool_size != 0U) queue.origins = calloc(options->origin_pool_size, sizeof(*queue.origins));
@@ -290,7 +418,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_startup_failure(&queue, "origin_tls");
     goto cleanup;
   }
-  if (options->downstream_tls && (queue.downstream_tls_context = proxy_downstream_tls_context(options)) == NULL) {
+  if (options->downstream_tls && (queue.downstream_tls_context = proxy_downstream_tls_context(&queue)) == NULL) {
     proxy_log_startup_failure(&queue, "downstream_tls");
     goto cleanup;
   }
@@ -299,7 +427,13 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     proxy_log_startup_failure(&queue, "listen");
     goto cleanup;
   }
+  if (!proxy_pid_create(options->pid_file)) {
+    proxy_log_startup_failure(&queue, "pid_file");
+    goto cleanup;
+  }
+  pid_created = options->pid_file[0] != '\0';
   proxy_stop_requests = 0;
+  proxy_reload_requests = 0;
   {
     struct sigaction action;
     memset(&action, 0, sizeof(action));
@@ -307,6 +441,7 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     sigemptyset(&action.sa_mask);
     (void)sigaction(SIGINT, &action, NULL);
     (void)sigaction(SIGTERM, &action, NULL);
+    (void)sigaction(SIGHUP, &action, NULL);
     action.sa_handler = SIG_IGN;
     (void)sigaction(SIGPIPE, &action, NULL);
   }
@@ -324,9 +459,16 @@ int laghu_proxy_run(const laghu_proxy_options *options) {
     queue.state = PROXY_RUNNING;
     proxy_log_event(&queue, "startup", "running");
     while (proxy_stop_requests == 0) {
+      if (proxy_reload_requests != 0) {
+        proxy_reload_requests = 0;
+        proxy_reload_configuration(&queue);
+      }
       proxy_maintain_queue_attachments(&queue);
-      (void)laghu_runtime_import_chrome_analysis(queue.rum, options->service.chrome_analysis_output, (uint64_t)time(NULL),
-                                                 options->service.rum_ttl);
+      {
+        const laghu_proxy_options *current = proxy_current_options(&queue);
+        (void)laghu_runtime_import_chrome_analysis(queue.rum, current->service.chrome_analysis_output, (uint64_t)time(NULL),
+                                                   current->service.rum_ttl);
+      }
       if (proxy_listener_ready(listener)) {
         proxy_connection connection;
         memset(&connection, 0, sizeof(connection));
@@ -368,6 +510,8 @@ cleanup:
   if (listener != LAGHU_INVALID_SOCKET) laghu_close(listener);
   SSL_CTX_free(queue.tls_context);
   SSL_CTX_free(queue.downstream_tls_context);
+  if (pid_created) (void)unlink(options->pid_file);
+  proxy_reload_snapshots_dispose(&queue);
   if (drained_condition) pthread_cond_destroy(&queue.drained);
   if (ready_condition) pthread_cond_destroy(&queue.ready);
   if (lock_ready) pthread_mutex_destroy(&queue.lock);
@@ -375,5 +519,47 @@ cleanup:
   free(workers);
   free(queue.items);
   free(queue.origins);
+  return result;
+}
+
+int laghu_proxy_run(const laghu_proxy_options *options) { return laghu_proxy_run_with_config(options, NULL); }
+
+int laghu_proxy_reload(const char *config_path, char *error, size_t error_size) {
+  laghu_proxy_options options;
+  struct stat status;
+  char value[32U];
+  char *end = NULL;
+  ssize_t length;
+  long process;
+  int file;
+  int result = 2;
+  if (error_size != 0U) error[0] = '\0';
+  laghu_proxy_options_init(&options);
+  if (config_path == NULL || config_path[0] != '/' ||
+      laghu_proxy_load_yaml(config_path, &options, error, error_size) != LAGHU_PROXY_PARSE_OK || options.pid_file[0] == '\0') {
+    if (error_size != 0U && error[0] == '\0') (void)snprintf(error, error_size, "reload requires runtime.pid_file");
+    goto done;
+  }
+  if (lstat(options.pid_file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != getuid() ||
+      (status.st_mode & (S_IWGRP | S_IWOTH)) != 0U || (file = open(options.pid_file, O_RDONLY | O_NOFOLLOW)) < 0) {
+    if (error_size != 0U) (void)snprintf(error, error_size, "invalid pid file");
+    goto done;
+  }
+  length = read(file, value, sizeof(value) - 1U);
+  (void)close(file);
+  if (length <= 0 || (size_t)length >= sizeof(value)) {
+    if (error_size != 0U) (void)snprintf(error, error_size, "invalid pid file");
+    goto done;
+  }
+  value[length] = '\0';
+  errno = 0;
+  process = strtol(value, &end, 10);
+  if (errno != 0 || end == value || (*end != '\n' && *end != '\0') || process <= 1 || kill((pid_t)process, SIGHUP) != 0) {
+    if (error_size != 0U) (void)snprintf(error, error_size, "unable to signal running laghu");
+    goto done;
+  }
+  result = 0;
+done:
+  laghu_proxy_options_dispose(&options);
   return result;
 }

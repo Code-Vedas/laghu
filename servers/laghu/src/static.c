@@ -45,19 +45,6 @@ static bool static_target_safe(const char *target, char path[LAGHU_RUNTIME_PATH_
   return true;
 }
 
-static const laghu_proxy_site *static_site(const laghu_proxy_options *options, const proxy_request *request) {
-  proxy_header *host = proxy_find((proxy_header *)request->headers, request->header_count, "Host");
-  size_t index;
-  if (host == NULL) return NULL;
-  for (index = 0U; index < options->site_count; ++index) {
-    size_t length = strlen(options->sites[index].host);
-    if (!strncasecmp(host->value, options->sites[index].host, length) &&
-        (host->value[length] == '\0' || host->value[length] == ':'))
-      return &options->sites[index];
-  }
-  return NULL;
-}
-
 static bool static_range(const char *value, size_t total, size_t *start, size_t *length) {
   unsigned long long first, last;
   char *end = NULL;
@@ -152,7 +139,8 @@ bool proxy_static_serve(const laghu_proxy_options *options, const proxy_request 
   const char *index_file;
   unsigned char buffer[16384];
   {
-    const laghu_proxy_site *site = static_site(options, request);
+    size_t site_index = proxy_site_index(options, request);
+    const laghu_proxy_site *site = site_index == LAGHU_PROXY_SITE_GLOBAL ? NULL : &options->sites[site_index];
     document_root = site == NULL ? options->document_root : site->document_root;
     index_file = site == NULL ? options->index_file : site->index_file;
   }

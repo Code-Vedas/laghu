@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "server_internal.h"
 
@@ -66,19 +67,74 @@ SSL_CTX *proxy_tls_context(const laghu_proxy_options *options) {
   return context;
 }
 
-SSL_CTX *proxy_downstream_tls_context(const laghu_proxy_options *options) {
+static SSL_CTX *proxy_downstream_tls_context_files(const char *certificate, const char *private_key) {
   SSL_CTX *context;
-  if (!options->downstream_tls) return NULL;
   context = SSL_CTX_new(TLS_server_method());
   if (context == NULL) return NULL;
   if (!SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) ||
-      SSL_CTX_use_certificate_chain_file(context, options->tls_certificate) != 1 ||
-      SSL_CTX_use_PrivateKey_file(context, options->tls_private_key, SSL_FILETYPE_PEM) != 1 ||
+      SSL_CTX_use_certificate_chain_file(context, certificate) != 1 || SSL_CTX_use_PrivateKey_file(context, private_key, SSL_FILETYPE_PEM) != 1 ||
       SSL_CTX_check_private_key(context) != 1) {
     SSL_CTX_free(context);
     return NULL;
   }
   SSL_CTX_set_options(context, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
+  return context;
+}
+
+static int proxy_downstream_sni(SSL *tls, int *alert, void *argument) {
+  proxy_queue *queue = argument;
+  const char *name;
+  const laghu_proxy_options *options;
+  size_t index;
+  (void)alert;
+  if (queue == NULL || (name = SSL_get_servername(tls, TLSEXT_NAMETYPE_host_name)) == NULL || name[0] == '\0') return SSL_TLSEXT_ERR_OK;
+  proxy_queue_lock(queue);
+  options = queue->options;
+  for (index = 0U; options != NULL && index < options->site_count; ++index) {
+    const laghu_proxy_site *site = &options->sites[index];
+    if (site->downstream_tls_context != NULL && !strcasecmp(name, site->host)) {
+      (void)SSL_set_SSL_CTX(tls, site->downstream_tls_context);
+      break;
+    }
+  }
+  proxy_queue_unlock(queue);
+  return SSL_TLSEXT_ERR_OK;
+}
+
+SSL_CTX *proxy_downstream_tls_context(proxy_queue *queue) {
+  SSL_CTX *context;
+  const laghu_proxy_options *options = queue == NULL ? NULL : queue->options;
+  const char *certificate = options == NULL ? NULL : options->tls_certificate;
+  const char *private_key = options == NULL ? NULL : options->tls_private_key;
+  size_t index;
+  if (options == NULL || !options->downstream_tls) return NULL;
+  if (certificate[0] == '\0') {
+    for (index = 0U; index < options->site_count; ++index) {
+      if (options->sites[index].tls_certificate[0] != '\0') {
+        certificate = options->sites[index].tls_certificate;
+        private_key = options->sites[index].tls_private_key;
+        break;
+      }
+    }
+  }
+  context = certificate[0] == '\0' || private_key[0] == '\0' ? NULL : proxy_downstream_tls_context_files(certificate, private_key);
+  if (context == NULL) return NULL;
+  for (index = 0U; index < options->site_count; ++index) {
+    laghu_proxy_site *site = (laghu_proxy_site *)&options->sites[index];
+    if (site->tls_certificate[0] == '\0') continue;
+    site->downstream_tls_context = proxy_downstream_tls_context_files(site->tls_certificate, site->tls_private_key);
+    if (site->downstream_tls_context == NULL) {
+      SSL_CTX_free(context);
+      while (index != 0U) {
+        --index;
+        SSL_CTX_free(options->sites[index].downstream_tls_context);
+        ((laghu_proxy_site *)&options->sites[index])->downstream_tls_context = NULL;
+      }
+      return NULL;
+    }
+  }
+  SSL_CTX_set_tlsext_servername_callback(context, proxy_downstream_sni);
+  SSL_CTX_set_tlsext_servername_arg(context, queue);
   return context;
 }
 
@@ -273,7 +329,7 @@ static bool proxy_origin_idle_alive(laghu_socket socket) {
 bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, const char *host, const char *port,
                           const char *authority, bool origin_tls, bool *timed_out) {
   proxy_queue *queue = worker->queue;
-  const laghu_proxy_options *options = queue->options;
+  const laghu_proxy_options *options = proxy_current_options(queue);
   uint64_t now = proxy_monotonic_ms();
   unsigned int index = 0U;
   memset(origin, 0, sizeof(*origin));
@@ -315,14 +371,15 @@ bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin,
 
 void proxy_origin_release(proxy_worker *worker, proxy_origin_connection *origin, bool reusable) {
   proxy_queue *queue = worker->queue;
+  const laghu_proxy_options *options = proxy_current_options(queue);
   proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
-  if (!reusable || queue->options->origin_pool_size == 0U || proxy_is_forcing(queue)) {
+  if (!reusable || options->origin_pool_size == 0U || proxy_is_forcing(queue)) {
     proxy_origin_dispose(origin);
     return;
   }
   origin->idle_since_ms = proxy_monotonic_ms();
   proxy_queue_lock(queue);
-  if (queue->origin_count < queue->options->origin_pool_size) {
+  if (queue->origin_count < options->origin_pool_size) {
     queue->origins[queue->origin_count++] = *origin;
     origin->socket = LAGHU_INVALID_SOCKET;
     origin->tls = NULL;

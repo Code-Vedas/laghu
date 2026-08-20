@@ -134,6 +134,69 @@ static bool yaml_runtime(const yaml_document_t *document, laghu_yaml_arguments *
   return true;
 }
 
+/* Scoped settings deliberately use the shared setting parsers.  That keeps
+ * validation and inheritance semantics identical to the native adapters,
+ * while YAML only owns shape validation. */
+static bool yaml_scope_value(const yaml_document_t *document, const char *key, yaml_node_t *value, laghu_config *core,
+                             laghu_service_config *service) {
+  laghu_config_setting core_setting = laghu_config_setting_find(key);
+  laghu_service_setting service_setting = laghu_service_setting_find(key);
+  laghu_service_diagnostic service_error = {0};
+  char core_error[160U];
+  yaml_node_item_t *item;
+  size_t count;
+  if (!strcmp(key, "mode")) {
+    const char *mode = value->type == YAML_SCALAR_NODE ? (const char *)value->data.scalar.value : NULL;
+    if (mode == NULL || core->mode != LAGHU_MODE_UNSET || (strcmp(mode, "on") != 0 && strcmp(mode, "off") != 0)) return false;
+    core->mode = strcmp(mode, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
+    return true;
+  }
+  if ((core_setting == LAGHU_CONFIG_SETTING_UNKNOWN && service_setting == LAGHU_SERVICE_SETTING_UNKNOWN) ||
+      (core_setting != LAGHU_CONFIG_SETTING_UNKNOWN && service_setting != LAGHU_SERVICE_SETTING_UNKNOWN))
+    return false;
+  if (value->type == YAML_SCALAR_NODE) {
+    const char *scalar = (const char *)value->data.scalar.value;
+    if (core_setting != LAGHU_CONFIG_SETTING_UNKNOWN)
+      return laghu_config_setting_apply(core, core_setting, scalar, core_error, sizeof(core_error));
+    return laghu_service_config_apply(service, service_setting, scalar, &service_error);
+  }
+  if (value->type != YAML_SEQUENCE_NODE) return false;
+  count = (size_t)(value->data.sequence.items.top - value->data.sequence.items.start);
+  if (count == 0U) return false;
+  if (core_setting == LAGHU_CONFIG_SETTING_MAP_REWRITE_DOMAIN || core_setting == LAGHU_CONFIG_SETTING_MAP_PROXY_DOMAIN ||
+      core_setting == LAGHU_CONFIG_SETTING_SHARD_DOMAIN || service_setting == LAGHU_SERVICE_SETTING_FILE_SOURCE_MAP) {
+    const char *first;
+    const char *second;
+    if (count != 2U) return false;
+    first = yaml_scalar(document, value->data.sequence.items.start[0]);
+    second = yaml_scalar(document, value->data.sequence.items.start[1]);
+    if (first == NULL || second == NULL) return false;
+    return core_setting != LAGHU_CONFIG_SETTING_UNKNOWN
+               ? laghu_config_setting_apply_pair(core, core_setting, first, second, core_error, sizeof(core_error))
+               : laghu_service_config_apply_pair(service, service_setting, first, second, &service_error);
+  }
+  for (item = value->data.sequence.items.start; item < value->data.sequence.items.top; ++item) {
+    const char *scalar = yaml_scalar(document, *item);
+    if (scalar == NULL ||
+        (core_setting != LAGHU_CONFIG_SETTING_UNKNOWN
+             ? !laghu_config_setting_apply(core, core_setting, scalar, core_error, sizeof(core_error))
+             : !laghu_service_config_apply(service, service_setting, scalar, &service_error)))
+      return false;
+  }
+  return true;
+}
+
+static bool yaml_scope(const yaml_document_t *document, yaml_node_t *mapping, laghu_config *core, laghu_service_config *service) {
+  yaml_node_pair_t *pair;
+  if (mapping == NULL || mapping->type != YAML_MAPPING_NODE) return false;
+  for (pair = mapping->data.mapping.pairs.start; pair < mapping->data.mapping.pairs.top; ++pair) {
+    const char *key = yaml_scalar(document, pair->key);
+    yaml_node_t *value = yaml_document_get_node((yaml_document_t *)document, pair->value);
+    if (key == NULL || value == NULL || !yaml_scope_value(document, key, value, core, service)) return false;
+  }
+  return true;
+}
+
 static bool yaml_site_scalar(const yaml_document_t *document, yaml_node_pair_t *pair, const char *name, char *output, size_t capacity) {
   const char *key = yaml_scalar(document, pair->key);
   const char *value = yaml_scalar(document, pair->value);
@@ -145,6 +208,8 @@ static bool yaml_site_scalar(const yaml_document_t *document, yaml_node_pair_t *
   return true;
 }
 
+static bool yaml_routes(const yaml_document_t *document, laghu_proxy_options *options, yaml_node_t *sequence, size_t site_index);
+
 static bool yaml_sites(const yaml_document_t *document, laghu_proxy_options *options, yaml_node_t *sequence) {
   yaml_node_item_t *item;
   if (sequence->type != YAML_SEQUENCE_NODE || options->site_count != 0U) return false;
@@ -152,11 +217,13 @@ static bool yaml_sites(const yaml_document_t *document, laghu_proxy_options *opt
     yaml_node_t *mapping = yaml_document_get_node((yaml_document_t *)document, *item);
     yaml_node_pair_t *pair;
     laghu_proxy_site *site;
-    bool host_seen = false, root_seen = false, index_seen = false;
+    bool host_seen = false, root_seen = false, index_seen = false, certificate_seen = false, key_seen = false;
+    bool laghu_seen = false, service_seen = false, routes_seen = false;
     if (mapping == NULL || mapping->type != YAML_MAPPING_NODE || options->site_count == LAGHU_PROXY_MAX_SITES) return false;
     site = &options->sites[options->site_count];
     for (pair = mapping->data.mapping.pairs.start; pair < mapping->data.mapping.pairs.top; ++pair) {
       const char *key = yaml_scalar(document, pair->key);
+      yaml_node_t *value = yaml_document_get_node((yaml_document_t *)document, pair->value);
       if (key == NULL) return false;
       if (!strcmp(key, "host")) {
         if (host_seen || !yaml_site_scalar(document, pair, "host", site->host, sizeof(site->host))) return false;
@@ -171,34 +238,72 @@ static bool yaml_sites(const yaml_document_t *document, laghu_proxy_options *opt
             strchr(site->index_file, '/') != NULL || strstr(site->index_file, "..") != NULL)
           return false;
         index_seen = true;
+      } else if (!strcmp(key, "tls_certificate")) {
+        if (certificate_seen || !yaml_site_scalar(document, pair, "tls_certificate", site->tls_certificate, sizeof(site->tls_certificate)) ||
+            site->tls_certificate[0] != '/')
+          return false;
+        certificate_seen = true;
+      } else if (!strcmp(key, "tls_private_key")) {
+        if (key_seen || !yaml_site_scalar(document, pair, "tls_private_key", site->tls_private_key, sizeof(site->tls_private_key)) ||
+            site->tls_private_key[0] != '/')
+          return false;
+        key_seen = true;
+      } else if (!strcmp(key, "laghu")) {
+        if (laghu_seen || !yaml_scope(document, value, &site->config, &site->service)) return false;
+        laghu_seen = true;
+      } else if (!strcmp(key, "service")) {
+        if (service_seen || !yaml_scope(document, value, &site->config, &site->service)) return false;
+        service_seen = true;
+      } else if (!strcmp(key, "routes")) {
+        if (routes_seen || !yaml_routes(document, options, value, options->site_count)) return false;
+        routes_seen = true;
       } else {
         return false;
       }
     }
-    if (!host_seen || !root_seen) return false;
+    if (!host_seen || !root_seen || certificate_seen != key_seen || strpbrk(site->host, " \t\r\n:/\\")) return false;
+    {
+      size_t previous;
+      for (previous = 0U; previous < options->site_count; ++previous)
+        if (!strcasecmp(site->host, options->sites[previous].host)) return false;
+    }
     if (!index_seen) (void)snprintf(site->index_file, sizeof(site->index_file), "%s", "index.html");
     ++options->site_count;
   }
   return options->site_count != 0U;
 }
 
-static bool yaml_routes(const yaml_document_t *document, laghu_proxy_options *options, yaml_node_t *sequence) {
+static bool yaml_routes(const yaml_document_t *document, laghu_proxy_options *options, yaml_node_t *sequence, size_t site_index) {
   yaml_node_item_t *item;
-  if (sequence->type != YAML_SEQUENCE_NODE || options->route_count != 0U) return false;
+  if (sequence->type != YAML_SEQUENCE_NODE || (site_index == LAGHU_PROXY_SITE_GLOBAL && options->global_routes_seen)) return false;
   for (item = sequence->data.sequence.items.start; item < sequence->data.sequence.items.top; ++item) {
     yaml_node_t *mapping = yaml_document_get_node((yaml_document_t *)document, *item);
     yaml_node_pair_t *pair;
     laghu_proxy_route *route;
     bool match_seen = false, pattern_seen = false, redirect_seen = false, rewrite_seen = false, proxy_seen = false, status_seen = false;
+    bool laghu_seen = false, service_seen = false;
     if (mapping == NULL || mapping->type != YAML_MAPPING_NODE || options->route_count == LAGHU_PROXY_MAX_ROUTES) return false;
     route = &options->routes[options->route_count];
     route->status = 302U;
+    route->site_index = site_index;
     for (pair = mapping->data.mapping.pairs.start; pair < mapping->data.mapping.pairs.top; ++pair) {
       const char *key = yaml_scalar(document, pair->key);
+      yaml_node_t *node = yaml_document_get_node((yaml_document_t *)document, pair->value);
       const char *value = yaml_scalar(document, pair->value);
       char *end = NULL;
       unsigned long parsed;
-      if (key == NULL || value == NULL) return false;
+      if (key == NULL || node == NULL) return false;
+      if (!strcmp(key, "laghu")) {
+        if (laghu_seen || !yaml_scope(document, node, &route->config, &route->service)) return false;
+        laghu_seen = true;
+        continue;
+      }
+      if (!strcmp(key, "service")) {
+        if (service_seen || !yaml_scope(document, node, &route->config, &route->service)) return false;
+        service_seen = true;
+        continue;
+      }
+      if (value == NULL) return false;
       if (!strcmp(key, "match")) {
         if (match_seen) return false;
         if (!strcmp(value, "exact")) route->match = LAGHU_PROXY_ROUTE_EXACT;
@@ -265,6 +370,7 @@ static bool yaml_routes(const yaml_document_t *document, laghu_proxy_options *op
     }
     ++options->route_count;
   }
+  if (site_index == LAGHU_PROXY_SITE_GLOBAL) options->global_routes_seen = true;
   return options->route_count != 0U;
 }
 
@@ -312,7 +418,7 @@ static bool yaml_load_file(const char *path, laghu_yaml_arguments *arguments, la
       if (sites_seen || !yaml_sites(&document, options, value)) goto document_done;
       sites_seen = true;
     } else if (!strcmp(key, "routes")) {
-      if (routes_seen || !yaml_routes(&document, options, value)) goto document_done;
+      if (routes_seen || !yaml_routes(&document, options, value, LAGHU_PROXY_SITE_GLOBAL)) goto document_done;
       routes_seen = true;
     } else {
       goto document_done;
@@ -357,6 +463,62 @@ static bool yaml_load_fragments(const char *path, laghu_yaml_arguments *argument
   return true;
 }
 
+static bool yaml_finalize_scope(const laghu_config *parent_core, const laghu_service_config *parent_service, laghu_config *core,
+                                laghu_service_config *service, char *error, size_t error_size) {
+  laghu_config merged_core;
+  laghu_service_config merged_service;
+  laghu_service_diagnostic diagnostic = {0};
+  laghu_policy policy;
+  char policy_error[160U] = {0};
+  laghu_service_finalize_options finalize_options = {.native_file_loading = false,
+                                                     .require_cache = true,
+                                                     .require_worker_queue = true,
+                                                     .require_admin_authorization = true};
+  if (!laghu_resource_rules_merge_valid(parent_core, core) || !laghu_domain_policy_merge_valid(&parent_core->domain_policy, &core->domain_policy)) {
+    (void)yaml_error(error, error_size, "invalid inherited Laghu policy");
+    return false;
+  }
+  laghu_config_merge(&merged_core, parent_core, core);
+  finalize_options.respect_x_forwarded_proto = merged_core.respect_x_forwarded_proto == LAGHU_MODE_ON;
+  if (!laghu_service_config_merge(&merged_service, parent_service, service, &diagnostic)) {
+    (void)yaml_error(error, error_size, diagnostic.message);
+    return false;
+  }
+  if (!laghu_resolve_config_policy_with_error(&merged_core, &policy, policy_error, sizeof(policy_error)) ||
+      !laghu_service_config_finalize(&merged_service, &finalize_options, &diagnostic)) {
+    laghu_service_config_dispose(&merged_service);
+    (void)yaml_error(error, error_size, policy_error[0] != '\0' ? policy_error : diagnostic.message);
+    return false;
+  }
+  laghu_service_config_dispose(service);
+  *core = merged_core;
+  *service = merged_service;
+  return true;
+}
+
+static bool yaml_finalize_scopes(laghu_proxy_options *options, char *error, size_t error_size) {
+  size_t index;
+  for (index = 0U; index < options->site_count; ++index)
+    if (!yaml_finalize_scope(&options->config, &options->service, &options->sites[index].config, &options->sites[index].service, error,
+                             error_size))
+      return false;
+  for (index = 0U; index < options->route_count; ++index) {
+    const laghu_config *parent_core = &options->config;
+    const laghu_service_config *parent_service = &options->service;
+    if (options->routes[index].site_index != LAGHU_PROXY_SITE_GLOBAL) {
+      if (options->routes[index].site_index >= options->site_count) return false;
+      parent_core = &options->sites[options->routes[index].site_index].config;
+      parent_service = &options->sites[options->routes[index].site_index].service;
+    }
+    if (!yaml_finalize_scope(parent_core, parent_service, &options->routes[index].config, &options->routes[index].service, error,
+                             error_size))
+      return false;
+  }
+  for (index = 0U; index < options->site_count; ++index)
+    if (options->sites[index].tls_certificate[0] != '\0') options->downstream_tls = true;
+  return true;
+}
+
 laghu_proxy_parse_result laghu_proxy_load_yaml(const char *path, laghu_proxy_options *options, char *error, size_t error_size) {
   laghu_yaml_arguments arguments = {0};
   laghu_proxy_parse_result result = LAGHU_PROXY_PARSE_ERROR;
@@ -366,6 +528,7 @@ laghu_proxy_parse_result laghu_proxy_load_yaml(const char *path, laghu_proxy_opt
     goto done;
   }
   result = laghu_proxy_parse_options((int)arguments.count, arguments.values, options, error, error_size);
+  if (result == LAGHU_PROXY_PARSE_OK && !yaml_finalize_scopes(options, error, error_size)) result = LAGHU_PROXY_PARSE_ERROR;
 done:
   yaml_arguments_dispose(&arguments);
   if (result != LAGHU_PROXY_PARSE_OK && error_size != 0U && error[0] == '\0') (void)snprintf(error, error_size, "invalid YAML configuration");

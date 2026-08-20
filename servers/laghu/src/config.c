@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdint.h>
+#include <openssl/ssl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -125,10 +126,30 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
   (void)snprintf(options->index_file, sizeof(options->index_file), "%s", "index.html");
   laghu_service_config_init(&options->service);
+  {
+    size_t index;
+    for (index = 0U; index < LAGHU_PROXY_MAX_SITES; ++index) {
+      laghu_config_init(&options->sites[index].config);
+      laghu_service_config_init(&options->sites[index].service);
+    }
+    for (index = 0U; index < LAGHU_PROXY_MAX_ROUTES; ++index) {
+      options->routes[index].site_index = LAGHU_PROXY_SITE_GLOBAL;
+      laghu_config_init(&options->routes[index].config);
+      laghu_service_config_init(&options->routes[index].service);
+    }
+  }
 }
 
 void laghu_proxy_options_dispose(laghu_proxy_options *options) {
-  if (options != NULL) laghu_service_config_dispose(&options->service);
+  size_t index;
+  if (options == NULL) return;
+  laghu_service_config_dispose(&options->service);
+  for (index = 0U; index < options->site_count; ++index) {
+    SSL_CTX_free(options->sites[index].downstream_tls_context);
+    options->sites[index].downstream_tls_context = NULL;
+    laghu_service_config_dispose(&options->sites[index].service);
+  }
+  for (index = 0U; index < options->route_count; ++index) laghu_service_config_dispose(&options->routes[index].service);
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity, const char *message) {
@@ -145,7 +166,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
-  bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, forwarded_seen = false;
+  bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, pid_file_seen = false, forwarded_seen = false;
   bool document_root_seen = false, index_seen = false;
   bool directory_listing_seen = false;
   bool static_cache_control_seen = false;
@@ -416,6 +437,11 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (*seen || !proxy_absolute_path(value) || !proxy_copy(target, capacity, value))
         return proxy_error(error, error_size, "invalid or duplicate downstream TLS file");
       *seen = true;
+    } else if (strcmp(name, "--pid-file") == 0) {
+      NEED_VALUE();
+      if (pid_file_seen || !proxy_absolute_path(value) || !proxy_copy(options->pid_file, sizeof(options->pid_file), value))
+        return proxy_error(error, error_size, "invalid or duplicate --pid-file");
+      pid_file_seen = true;
     } else if (strcmp(name, "--forwarded-headers") == 0) {
       NEED_VALUE();
       if (forwarded_seen) return proxy_error(error, error_size, "duplicate --forwarded-headers");

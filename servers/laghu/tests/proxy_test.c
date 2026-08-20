@@ -58,6 +58,16 @@ static bool write_yaml_fixture(char path[])
       "sites:\n"
       "  - host: static.example.test\n"
       "    document_root: /srv/static\n"
+      "    laghu:\n"
+      "      preset: safe\n"
+      "    service:\n"
+      "      javascript_target: defaults\n"
+      "    routes:\n"
+      "      - match: exact\n"
+      "        pattern: /site-policy\n"
+      "        redirect: /site-result\n"
+      "        laghu:\n"
+      "          mode: off\n"
       "routes:\n"
       "  - match: ordered_regex\n"
       "    pattern: ^/old/[0-9]+$\n"
@@ -366,8 +376,21 @@ int main(void) {
   CHECK(options.service.trusted_proxy_count == 1U);
   CHECK(options.response_header_count == 2U && !strcmp(options.response_headers[0].name, "X-Static-Policy"));
   CHECK(options.site_count == 1U && !strcmp(options.sites[0].host, "static.example.test"));
-  CHECK(options.route_count == 1U && options.routes[0].match == LAGHU_PROXY_ROUTE_ORDERED_REGEX);
-  CHECK(!strcmp(options.routes[0].upstream_host, "127.0.0.1") && !strcmp(options.routes[0].upstream_port, "9000"));
+  CHECK(options.sites[0].config.preset == LAGHU_PRESET_SAFE && !strcmp(options.sites[0].service.javascript_target, "defaults"));
+  CHECK(options.route_count == 2U && options.routes[1].match == LAGHU_PROXY_ROUTE_ORDERED_REGEX);
+  CHECK(!strcmp(options.routes[1].upstream_host, "127.0.0.1") && !strcmp(options.routes[1].upstream_port, "9000"));
+  {
+    proxy_request request = {0};
+    laghu_proxy_options resolved;
+    const laghu_config *core;
+    const laghu_service_config *service;
+    (void)snprintf(request.target, sizeof(request.target), "%s", "/site-policy");
+    request.headers[request.header_count++] = (proxy_header){"Host", "static.example.test"};
+    proxy_scope_for_request(&options, &request, &core, &service);
+    CHECK(core == &options.routes[0].config && service == &options.routes[0].service);
+    proxy_options_for_request(&options, &request, &resolved);
+    CHECK(resolved.config.mode == LAGHU_MODE_OFF && !strcmp(resolved.service.javascript_target, "defaults"));
+  }
   CHECK(unlink(yaml_path) == 0);
   CHECK(write_yaml_fragment_fixture(yaml_directory, yaml_root, yaml_fragment));
   laghu_proxy_options_init(&options);

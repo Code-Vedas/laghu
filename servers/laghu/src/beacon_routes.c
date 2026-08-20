@@ -50,8 +50,8 @@ static bool proxy_beacon_request_valid(proxy_request *request, size_t request_bo
 }
 
 bool proxy_handle_beacon_routes(const proxy_connection *connection, proxy_worker *worker, proxy_request *request_value,
-                                const unsigned char *request_body, size_t request_body_length, proxy_access_log *access_value) {
-  const laghu_proxy_options *options = worker->queue->options;
+                                const unsigned char *request_body, size_t request_body_length, const laghu_config *core,
+                                const laghu_service_config *service, proxy_access_log *access_value) {
   laghu_socket client = connection->socket;
   SSL *tls = connection->tls;
   if (!strcmp(request_value->target, "/.laghu/health")) {
@@ -69,8 +69,8 @@ bool proxy_handle_beacon_routes(const proxy_connection *connection, proxy_worker
     return true;
   }
   {
-    laghu_http_beacon_options beacon_options = {options->config.image_beacon == LAGHU_MODE_ON, options->config.critical_css_beacon == LAGHU_MODE_ON,
-                                                options->config.instrumentation_beacon == LAGHU_MODE_ON};
+    laghu_http_beacon_options beacon_options = {core->image_beacon == LAGHU_MODE_ON, core->critical_css_beacon == LAGHU_MODE_ON,
+                                                core->instrumentation_beacon == LAGHU_MODE_ON};
     laghu_http_beacon_plan plan;
     laghu_buffer method = {(const unsigned char *)request_value->method, strlen(request_value->method)};
     laghu_buffer target = {(const unsigned char *)request_value->target, strlen(request_value->target)};
@@ -114,23 +114,22 @@ bool proxy_handle_beacon_routes(const proxy_connection *connection, proxy_worker
         laghu_policy policy;
         char policy_key[LAGHU_RUNTIME_KEY_SIZE];
         applied = laghu_runtime_parse_image_beacon((laghu_buffer){request_body, request_body_length}, &beacon) &&
-                  laghu_resolve_config_policy(&options->config, &policy) && laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
+                  laghu_resolve_config_policy(core, &policy) && laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
                   runtime_queue != NULL && laghu_runtime_queue_snapshot_get(runtime_queue, &queue_snapshot) &&
-                  laghu_catalog_apply_beacon(worker->queue->rum, options->service.image_cache, policy_key, queue_snapshot.capabilities, now,
-                                             options->config.image_metadata_ttl, &beacon);
+                  laghu_catalog_apply_beacon(worker->queue->rum, service->image_cache, policy_key, queue_snapshot.capabilities, now,
+                                             core->image_metadata_ttl, &beacon);
       } else if (plan.route == LAGHU_HTTP_BEACON_ROUTE_CRITICAL_CSS_REPORT) {
         laghu_critical_css_beacon beacon;
         laghu_policy policy;
         char policy_key[LAGHU_RUNTIME_KEY_SIZE];
         applied = laghu_runtime_parse_critical_css_beacon((laghu_buffer){request_body, request_body_length}, &beacon) &&
-                  laghu_resolve_config_policy(&options->config, &policy) && laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
-                  laghu_critical_css_apply_beacon(worker->queue->rum, options->service.image_cache, policy_key, now,
-                                                  options->config.image_metadata_ttl, &beacon);
+                  laghu_resolve_config_policy(core, &policy) && laghu_variant_key((laghu_buffer){NULL, 0U}, &policy, policy_key) &&
+                  laghu_critical_css_apply_beacon(worker->queue->rum, service->image_cache, policy_key, now, core->image_metadata_ttl, &beacon);
       } else if (plan.route == LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_REPORT) {
         laghu_instrumentation_beacon beacon;
         applied =
             laghu_runtime_parse_instrumentation_beacon((laghu_buffer){request_body, request_body_length}, &beacon) &&
-            laghu_instrumentation_apply_beacon(worker->queue->rum, options->service.image_cache, now, options->config.image_metadata_ttl, &beacon);
+            laghu_instrumentation_apply_beacon(worker->queue->rum, service->image_cache, now, core->image_metadata_ttl, &beacon);
       }
       if (!applied) {
         proxy_beacon_fail(client, tls, access_value, 400U, "Bad Request", "worker");

@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "laghu/config.h"
 #include "laghu/http.h"
@@ -32,6 +33,7 @@ extern "C" {
 #define LAGHU_PROXY_MAX_SITES 32U
 #define LAGHU_PROXY_MAX_ROUTES 64U
 #define LAGHU_PROXY_MAX_RESPONSE_HEADERS 16U
+#define LAGHU_PROXY_SITE_GLOBAL SIZE_MAX
 
 typedef enum { LAGHU_PROXY_ROUTE_EXACT = 0, LAGHU_PROXY_ROUTE_PREFIX, LAGHU_PROXY_ROUTE_ORDERED_REGEX } laghu_proxy_route_match;
 
@@ -47,12 +49,23 @@ typedef struct {
   unsigned int status;
   char response_header_name[128];
   char response_header_value[512];
+  /* A route is global unless it was declared under one sites entry. */
+  size_t site_index;
+  /* Resolved once while loading configuration.  Request paths borrow these
+   * immutable values and never merge or load configuration. */
+  laghu_config config;
+  laghu_service_config service;
 } laghu_proxy_route;
 
 typedef struct {
   char host[256];
   char document_root[LAGHU_RUNTIME_PATH_SIZE];
   char index_file[128];
+  char tls_certificate[LAGHU_RUNTIME_PATH_SIZE];
+  char tls_private_key[LAGHU_RUNTIME_PATH_SIZE];
+  struct ssl_ctx_st *downstream_tls_context;
+  laghu_config config;
+  laghu_service_config service;
 } laghu_proxy_site;
 
 typedef struct {
@@ -76,6 +89,7 @@ typedef struct {
   char origin_ca_file[LAGHU_RUNTIME_PATH_SIZE];
   char tls_certificate[LAGHU_RUNTIME_PATH_SIZE];
   char tls_private_key[LAGHU_RUNTIME_PATH_SIZE];
+  char pid_file[LAGHU_RUNTIME_PATH_SIZE];
   char document_root[LAGHU_RUNTIME_PATH_SIZE];
   char index_file[128];
   char static_cache_control[256];
@@ -83,6 +97,7 @@ typedef struct {
   size_t site_count;
   laghu_proxy_route routes[LAGHU_PROXY_MAX_ROUTES];
   size_t route_count;
+  bool global_routes_seen;
   laghu_proxy_response_header response_headers[LAGHU_PROXY_MAX_RESPONSE_HEADERS];
   size_t response_header_count;
   laghu_config config;
@@ -108,6 +123,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
 laghu_proxy_parse_result laghu_proxy_load_yaml(const char *path, laghu_proxy_options *options, char *error, size_t error_size);
 bool laghu_proxy_decode_chunked(laghu_buffer encoded, unsigned char *decoded, size_t capacity, size_t *decoded_length);
 int laghu_proxy_run(const laghu_proxy_options *options);
+int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *config_path);
+int laghu_proxy_reload(const char *config_path, char *error, size_t error_size);
 
 #ifdef __cplusplus
 }

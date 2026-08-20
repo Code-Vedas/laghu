@@ -34,6 +34,7 @@ static void usage(FILE *stream) {
       "  --variants-per-source 1..64\n"
       "  --origin-ca-file PATH\n"
       "  --tls-certificate PATH --tls-private-key PATH\n"
+      "  --pid-file PATH\n"
       "  --font-fetch-queue PATH\n"
       "  --font-provider-config PATH\n"
       "  --javascript-queue PATH\n"
@@ -75,12 +76,14 @@ static void usage(FILE *stream) {
       "PATH] [--json]\n"
       "  laghu bench URL [--requests N] [--timeout SECONDS] [--ca-file PATH] "
       "[--json]\n"
+      "  laghu reload [--config PATH]\n"
       "  laghu migrate [FILE]\n",
       stream);
 }
 
 int main(int argc, char **argv) {
   laghu_proxy_options options;
+  const char *config_path = NULL;
   char error[256];
   laghu_proxy_parse_result parsed;
   if (argc > 1 && strcmp(argv[1], "status") == 0) return laghu_status_run(argc - 1, argv + 1);
@@ -88,13 +91,24 @@ int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "purge") == 0) return laghu_purge_run(argc - 1, argv + 1);
   if (argc > 1 && strcmp(argv[1], "explain") == 0) return laghu_explain_run(argc - 1, argv + 1);
   if (argc > 1 && strcmp(argv[1], "bench") == 0) return laghu_bench_run(argc - 1, argv + 1);
+  if (argc == 2 && strcmp(argv[1], "reload") == 0) {
+    int result = laghu_proxy_reload(LAGHU_PROXY_DEFAULT_CONFIG_PATH, error, sizeof(error));
+    if (result != 0) fprintf(stderr, "laghu reload: %s\n", error);
+    return result;
+  }
+  if (argc == 4 && strcmp(argv[1], "reload") == 0 && strcmp(argv[2], "--config") == 0) {
+    int result = laghu_proxy_reload(argv[3], error, sizeof(error));
+    if (result != 0) fprintf(stderr, "laghu reload: %s\n", error);
+    return result;
+  }
   if (argc > 1 && strcmp(argv[1], "migrate") == 0) return laghu_migrate_run(argc - 1, argv + 1);
   laghu_proxy_options_init(&options);
   if (argc == 1) {
-    const char *path = LAGHU_PROXY_DEFAULT_CONFIG_PATH;
-    parsed = laghu_proxy_load_yaml(path, &options, error, sizeof(error));
+    config_path = LAGHU_PROXY_DEFAULT_CONFIG_PATH;
+    parsed = laghu_proxy_load_yaml(config_path, &options, error, sizeof(error));
   } else if (argc == 3 && strcmp(argv[1], "--config") == 0) {
-    parsed = laghu_proxy_load_yaml(argv[2], &options, error, sizeof(error));
+    config_path = argv[2];
+    parsed = laghu_proxy_load_yaml(config_path, &options, error, sizeof(error));
   } else if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "--version") == 0)) {
     parsed = laghu_proxy_parse_options(argc, argv, &options, error, sizeof(error));
   } else {
@@ -118,7 +132,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   {
-    int result = laghu_proxy_run(&options);
+    int result = laghu_proxy_run_with_config(&options, config_path);
     laghu_proxy_options_dispose(&options);
     return result;
   }

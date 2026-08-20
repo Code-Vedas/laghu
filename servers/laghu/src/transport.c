@@ -22,10 +22,11 @@ void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, co
 void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char *failure) {
   unsigned char discarded[4096U];
   proxy_access_log access;
+  const laghu_proxy_options *options = proxy_current_options(queue);
   proxy_access_init(&access, queue);
   access.status = 503U;
   access.failure = failure;
-  if (!queue->options->downstream_tls) proxy_error_response(client, NULL, 503U, "Service Unavailable");
+  if (!options->downstream_tls) proxy_error_response(client, NULL, 503U, "Service Unavailable");
   (void)shutdown(client, LAGHU_SHUT_WRITE);
   while (recv(client, discarded, sizeof(discarded), MSG_DONTWAIT) > 0) {
   }

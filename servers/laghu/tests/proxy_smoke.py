@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -999,18 +1000,46 @@ def create_tls_certificate(root):
     return ca_file, server_file, server_key
 
 
+def create_dns_tls_certificate(root, name, prefix):
+    ca_file = root / "ca.pem"
+    ca_key = root / "ca.key"
+    server_key = root / f"{prefix}.key"
+    request_file = root / f"{prefix}.csr"
+    server_file = root / f"{prefix}.pem"
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        raise AssertionError("OpenSSL executable is required for TLS fixtures")
+    quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    subprocess.run(
+        [
+            openssl, "req", "-newkey", "rsa:2048", "-nodes", "-keyout",
+            str(server_key), "-out", str(request_file), "-subj", f"/CN={name}",
+            "-addext", f"subjectAltName=DNS:{name}",
+        ], check=True, **quiet
+    )
+    subprocess.run(
+        [
+            openssl, "x509", "-req", "-in", str(request_file), "-CA",
+            str(ca_file), "-CAkey", str(ca_key), "-CAcreateserial", "-out",
+            str(server_file), "-days", "1", "-copy_extensions", "copy",
+        ], check=True, **quiet
+    )
+    return server_file, server_key
+
+
 def request(port, path, method="GET", headers=None, body=b"", timeout=10,
-            include_interim=False, tls_context=None):
+            include_interim=False, tls_context=None, server_hostname="127.0.0.1",
+            host="example.test"):
     sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     if tls_context is not None:
-        sock = tls_context.wrap_socket(sock, server_hostname="127.0.0.1")
+        sock = tls_context.wrap_socket(sock, server_hostname=server_hostname)
     extra = ""
     for name, value in (headers or {}).items():
         extra += f"{name}: {value}\r\n"
     if body:
         extra += f"Content-Length: {len(body)}\r\n"
     sock.sendall(
-        f"{method} {path} HTTP/1.1\r\nHost: example.test\r\n{extra}Connection: close\r\n\r\n".encode()
+        f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra}Connection: close\r\n\r\n".encode()
         + body
     )
     if tls_context is None:
@@ -1150,20 +1179,24 @@ def main():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        tls_started = False
+        tls_error = None
         try:
             for _ in range(warm_attempts):
                 try:
                     tls_head, tls_body = request(tls_proxy_port, "/api/data")
+                    tls_started = True
                     break
-                except OSError:
+                except OSError as error:
+                    tls_error = error
                     time.sleep(0.05)
-            else:
-                raise AssertionError("TLS proxy did not start")
         finally:
             request_shutdown(tls_process)
             tls_process.wait(timeout=5)
             tls_logs = tls_process.stderr.read().decode()
             tls_process.stderr.close()
+        if not tls_started:
+            raise AssertionError(f"TLS proxy did not start ({tls_process.returncode}): {tls_error}: {tls_logs}")
         assert b" 200 " in tls_head.split(b"\r\n", 1)[0], (tls_head, tls_logs)
         assert tls_body == b'{"ok":true}'
         downstream_tls_port = free_port()
@@ -1216,6 +1249,119 @@ def main():
             downstream_tls_logs = downstream_tls_process.stderr.read().decode()
             downstream_tls_process.stderr.close()
         assert downstream_tls_process.returncode == 0, downstream_tls_logs
+        one_certificate, one_key = create_dns_tls_certificate(root, "one.example.test", "one")
+        two_certificate, two_key = create_dns_tls_certificate(root, "two.example.test", "two")
+        one_root = root / "one-site"
+        two_root = root / "two-site"
+        one_root.mkdir()
+        two_root.mkdir()
+        (one_root / "index.html").write_text("one site")
+        (two_root / "index.html").write_text("two site")
+        sni_port = free_port()
+        sni_config = root / "sni-reload.yaml"
+        sni_pid = root / "sni-reload.pid"
+
+        def write_sni_config(redirect):
+            sni_config.write_text(
+                "schema: 1\n"
+                "runtime:\n"
+                f"  listen: 127.0.0.1:{sni_port}\n"
+                f"  origin: http://127.0.0.1:{origin_port}\n"
+                f"  cache: {root / 'cache'}\n"
+                f"  worker_queue: {root / 'missing.queue'}\n"
+                f"  pid_file: {sni_pid}\n"
+                "sites:\n"
+                "  - host: one.example.test\n"
+                f"    document_root: {one_root}\n"
+                f"    tls_certificate: {one_certificate}\n"
+                f"    tls_private_key: {one_key}\n"
+                "    laghu:\n"
+                "      preset: safe\n"
+                "    service:\n"
+                "      javascript_target: defaults\n"
+                "    routes:\n"
+                "      - match: exact\n"
+                "        pattern: /route\n"
+                f"        redirect: {redirect}\n"
+                "        laghu:\n"
+                "          mode: off\n"
+                "  - host: two.example.test\n"
+                f"    document_root: {two_root}\n"
+                f"    tls_certificate: {two_certificate}\n"
+                f"    tls_private_key: {two_key}\n"
+            )
+
+        write_sni_config("/before")
+        sni_process = subprocess.Popen(
+            [str(executable), "--config", str(sni_config)], stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        sni_context = ssl.create_default_context(cafile=ca_file)
+        try:
+            for _ in range(warm_attempts):
+                try:
+                    one_head, one_body = request(
+                        sni_port, "/", tls_context=sni_context,
+                        server_hostname="one.example.test", host="one.example.test"
+                    )
+                    two_head, two_body = request(
+                        sni_port, "/", tls_context=sni_context,
+                        server_hostname="two.example.test", host="two.example.test"
+                    )
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                raise AssertionError("SNI virtual hosts did not start")
+            assert b" 200 " in one_head.split(b"\r\n", 1)[0] and one_body == b"one site"
+            assert b" 200 " in two_head.split(b"\r\n", 1)[0] and two_body == b"two site"
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /before" in route_head
+            write_sni_config("/after")
+            reload_result = subprocess.run(
+                [str(executable), "reload", "--config", str(sni_config)],
+                capture_output=True, text=True,
+            )
+            assert reload_result.returncode == 0, reload_result.stderr
+            for _ in range(warm_attempts):
+                route_head, _ = request(
+                    sni_port, "/route", tls_context=sni_context,
+                    server_hostname="one.example.test", host="one.example.test"
+                )
+                if b"location: /after" in route_head:
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("reload did not atomically publish the replacement")
+            sni_config.write_text("schema: 1\nruntime: invalid\n")
+            invalid_reload = subprocess.run(
+                [str(executable), "reload", "--config", str(sni_config)],
+                capture_output=True, text=True,
+            )
+            assert invalid_reload.returncode != 0
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /after" in route_head
+            os.kill(sni_process.pid, signal.SIGHUP)
+            time.sleep(0.1)
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /after" in route_head
+        finally:
+            request_shutdown(sni_process)
+            sni_process.wait(timeout=5)
+            sni_logs = sni_process.stderr.read().decode()
+            sni_process.stderr.close()
+        assert sni_process.returncode == 0, sni_logs
+        assert '"state":"applied"' in sni_logs
+        assert '"state":"retained"' in sni_logs
         invalid_arguments, invalid_config = yaml_runtime_arguments(
             [
                 str(executable), "--listen", f"127.0.0.1:{free_port()}",

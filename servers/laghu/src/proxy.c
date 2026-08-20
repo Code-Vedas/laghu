@@ -24,6 +24,14 @@ void proxy_queue_lock(proxy_queue *queue) { pthread_mutex_lock(&queue->lock); }
 
 void proxy_queue_unlock(proxy_queue *queue) { pthread_mutex_unlock(&queue->lock); }
 
+const laghu_proxy_options *proxy_current_options(proxy_queue *queue) {
+  const laghu_proxy_options *options;
+  proxy_queue_lock(queue);
+  options = queue->options;
+  proxy_queue_unlock(queue);
+  return options;
+}
+
 static uint32_t proxy_runtime_queue_capabilities(proxy_worker *worker) {
   laghu_runtime_queue_snapshot snapshot;
   laghu_runtime_queue *queue = proxy_runtime_queue(worker);
@@ -48,9 +56,9 @@ bool proxy_is_forcing(proxy_queue *queue) {
   return forcing;
 }
 
-static bool proxy_html_cache_request_eligible(const laghu_proxy_options *options, const proxy_request *request) {
-  return options != NULL && request != NULL && options->config.mode == LAGHU_MODE_ON &&
-         options->config.html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET && options->config.html_cache_origin[0] != '\0' &&
+static bool proxy_html_cache_request_eligible(const laghu_config *config, const proxy_request *request) {
+  return config != NULL && request != NULL && config->mode == LAGHU_MODE_ON && config->html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET &&
+         config->html_cache_origin[0] != '\0' &&
          strcmp(request->method, "GET") == 0 && request->target[0] == '/' && strncmp(request->target, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
          proxy_find((proxy_header *)request->headers, request->header_count, "Authorization") == NULL &&
          proxy_find((proxy_header *)request->headers, request->header_count, "Cookie") == NULL;
@@ -136,11 +144,11 @@ static bool proxy_html_cache_content_type(const char *value) {
           value[sizeof("text/html") - 1U] == '\t');
 }
 
-static bool proxy_html_cache_response_eligible(const laghu_proxy_options *options, const proxy_request *request, const proxy_response *response,
+static bool proxy_html_cache_response_eligible(const laghu_config *config, const proxy_request *request, const proxy_response *response,
                                                size_t body_length) {
   size_t index;
   proxy_header *content_type;
-  if (!proxy_html_cache_request_eligible(options, request) || response == NULL || response->status != 200U || body_length == 0U ||
+  if (!proxy_html_cache_request_eligible(config, request) || response == NULL || response->status != 200U || body_length == 0U ||
       proxy_find((proxy_header *)response->headers, response->header_count, "Set-Cookie") != NULL ||
       proxy_find((proxy_header *)response->headers, response->header_count, "Vary") != NULL ||
       proxy_find((proxy_header *)response->headers, response->header_count, "Content-Encoding") != NULL) {
@@ -156,13 +164,14 @@ static bool proxy_html_cache_response_eligible(const laghu_proxy_options *option
   return true;
 }
 
-static void proxy_html_cache_enqueue_refresh(proxy_worker *worker, const char *request_path, const laghu_html_cache_record *record) {
+static void proxy_html_cache_enqueue_refresh(proxy_worker *worker, const laghu_config *config, const char *request_path,
+                                             const laghu_html_cache_record *record) {
   laghu_runtime_job job = {0};
   proxy_queue *queue;
   uint64_t now;
   unsigned int index, candidate = 0U;
   if (worker == NULL || request_path == NULL || record == NULL || strlen(request_path) >= sizeof(job.request_path) ||
-      !laghu_html_cache_key(worker->queue->options->config.html_cache_origin, request_path, job.index_key)) {
+      !laghu_html_cache_key(config->html_cache_origin, request_path, job.index_key)) {
     return;
   }
   job.kind = LAGHU_RUNTIME_JOB_HTML_REFRESH;
@@ -193,7 +202,9 @@ static void proxy_html_cache_enqueue_refresh(proxy_worker *worker, const char *r
 void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   laghu_socket client = connection->socket;
   SSL *client_tls = connection->tls;
-  const laghu_proxy_options *options = worker->queue->options;
+  const laghu_proxy_options *options = proxy_current_options(worker->queue);
+  const laghu_config *config = &options->config;
+  const laghu_service_config *service = &options->service;
   proxy_request request;
   proxy_response response;
   unsigned char *initial;
@@ -251,9 +262,11 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     access.path[length] = '\0';
   }
   access.input_bytes = header_length + request.content_length;
+  proxy_scope_for_request(options, &request, &config, &service);
   request_host = proxy_find(request.headers, request.header_count, "Host");
   (void)proxy_route_rewrite(options, &request);
-  proxy_poll_flush_file(options);
+  if (service->cache_flush_file[0] != '\0')
+    (void)laghu_cache_flush_file_poll(service->image_cache, service->cache_flush_file, (uint64_t)time(NULL), NULL);
   if (!strcmp(request.method, "CONNECT") || !strcmp(request.method, "TRACE")) {
     PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
     goto done;
@@ -279,11 +292,11 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
-  if (proxy_handle_administrative_routes(connection, worker, &request, &access)) goto done;
+  if (proxy_handle_administrative_routes(connection, worker, &request, service, &access)) goto done;
   if (proxy_route_serve(options, &request, client, client_tls, &access)) goto done;
   if (proxy_static_serve(options, &request, client, client_tls, &access)) goto done;
   if (!strncmp(request.target, "/.laghu/", 8U)) {
-    if (proxy_handle_beacon_routes(connection, worker, &request, request_body, request_body_length, &access)) goto done;
+    if (proxy_handle_beacon_routes(connection, worker, &request, request_body, request_body_length, config, service, &access)) goto done;
     if (strcmp(request.method, "GET") != 0 && strcmp(request.method, "HEAD") != 0) {
       PROXY_FAIL(405U, "Method Not Allowed", "request_limit");
       goto done;
@@ -292,7 +305,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     memset(&normalized_response, 0, sizeof(normalized_response));
     memset(&environment, 0, sizeof(environment));
     {
-      const char *scheme = proxy_effective_scheme(options, connection, &request);
+      const char *scheme = proxy_effective_scheme(config, service, connection, &request);
       normalized_request = (laghu_http_request){LAGHU_HTTP_ABI_VERSION,
                                                 sizeof(normalized_request),
                                                 {(const unsigned char *)request.method, strlen(request.method)},
@@ -312,23 +325,23 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     environment = (laghu_http_environment){
         .version = LAGHU_HTTP_ABI_VERSION,
         .struct_size = sizeof(environment),
-        .config = options->config,
-        .cache_path = options->service.image_cache,
-        .asset_offload = options->service.asset_offload,
+        .config = *config,
+        .cache_path = service->image_cache,
+        .asset_offload = service->asset_offload,
         .rum = worker->queue->rum,
         .queue = proxy_runtime_queue(worker),
         .queue_capabilities = proxy_runtime_queue_capabilities(worker),
-        .font_fetch_queue = options->service.font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
-        .font_providers = options->service.font_providers,
-        .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
-        .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
-        .otel_trace_queue = options->service.otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
-        .otel_sampling_rate = options->service.otel_sampling_rate,
-        .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
-        .javascript_target = options->service.javascript_target,
-        .javascript_observations = options->service.javascript_observations,
-        .javascript_defer = options->service.javascript_defer,
-        .layout_reservations = options->service.layout_reservations,
+        .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
+        .font_providers = service->font_providers,
+        .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
+        .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+        .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+        .otel_sampling_rate = service->otel_sampling_rate,
+        .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
+        .javascript_target = service->javascript_target,
+        .javascript_observations = service->javascript_observations,
+        .javascript_defer = service->javascript_defer,
+        .layout_reservations = service->layout_reservations,
         .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared) &&
@@ -343,10 +356,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     laghu_http_transaction_result_release(&prepared);
     goto done;
   }
-  if (proxy_html_cache_request_eligible(options, &request)) {
+  if (proxy_html_cache_request_eligible(config, &request)) {
     laghu_html_cache_record record;
-    if (laghu_html_cache_lookup(options->service.image_cache, options->config.html_cache_origin, request.target, (uint64_t)time(NULL),
-                                options->config.html_cache_ttl, options->config.html_cache_stale_ttl, &record) &&
+    if (laghu_html_cache_lookup(service->image_cache, config->html_cache_origin, request.target, (uint64_t)time(NULL), config->html_cache_ttl,
+                                config->html_cache_stale_ttl, &record) &&
         record.state != LAGHU_HTML_CACHE_MISS && record.entry.length != 0U && record.entry.length <= LAGHU_PROXY_MAX_BODY &&
         (cached_body = malloc(record.entry.length)) != NULL && laghu_runtime_cache_read(&record.entry, cached_body, record.entry.length)) {
       memset(&normalized_request, 0, sizeof(normalized_request));
@@ -368,7 +381,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         response_headers[index] = (laghu_http_header){{(unsigned char *)response.headers[index].name, strlen(response.headers[index].name)},
                                                       {(unsigned char *)response.headers[index].value, strlen(response.headers[index].value)}};
       {
-        const char *scheme = proxy_effective_scheme(options, connection, &request);
+        const char *scheme = proxy_effective_scheme(config, service, connection, &request);
         proxy_header *host = proxy_find(request.headers, request.header_count, "Host");
         normalized_request = (laghu_http_request){
             LAGHU_HTTP_ABI_VERSION,
@@ -393,27 +406,27 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       environment = (laghu_http_environment){
           .version = LAGHU_HTTP_ABI_VERSION,
           .struct_size = sizeof(environment),
-          .config = options->config,
-          .cache_path = options->service.image_cache,
-          .asset_offload = options->service.asset_offload,
+          .config = *config,
+          .cache_path = service->image_cache,
+          .asset_offload = service->asset_offload,
           .rum = worker->queue->rum,
           .queue = proxy_runtime_queue(worker),
           .queue_capabilities = proxy_runtime_queue_capabilities(worker),
-          .font_fetch_queue = options->service.font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
-          .font_providers = options->service.font_providers,
-          .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
-          .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
-          .otel_trace_queue = options->service.otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
-          .otel_sampling_rate = options->service.otel_sampling_rate,
-          .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
-          .javascript_target = options->service.javascript_target,
-          .javascript_observations = options->service.javascript_observations,
-          .javascript_defer = options->service.javascript_defer,
-          .layout_reservations = options->service.layout_reservations,
+          .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
+          .font_providers = service->font_providers,
+          .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
+          .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+          .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+          .otel_sampling_rate = service->otel_sampling_rate,
+          .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
+          .javascript_target = service->javascript_target,
+          .javascript_observations = service->javascript_observations,
+          .javascript_defer = service->javascript_defer,
+          .layout_reservations = service->layout_reservations,
           .now = (uint64_t)time(NULL)};
       laghu_http_transaction_init(&transaction);
       prepared_ok = laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared);
-      if (prepared_ok && record.state == LAGHU_HTML_CACHE_STALE) proxy_html_cache_enqueue_refresh(worker, request.target, &record);
+      if (prepared_ok && record.state == LAGHU_HTML_CACHE_STALE) proxy_html_cache_enqueue_refresh(worker, config, request.target, &record);
       if (prepared_ok && prepared.action == LAGHU_HTTP_ACTION_BYPASS) {
         (void)proxy_html_cache_mark_hit(&prepared);
         if (!proxy_send_result(client, client_tls, &response, &prepared, (laghu_buffer){cached_body, record.entry.length}))
@@ -479,7 +492,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     outbound_length += (size_t)n;
   }
   if (request_host == NULL ||
-      !proxy_append_forwarding(options, connection, &request, request_host->value, outbound, sizeof(outbound), &outbound_length)) {
+      !proxy_append_forwarding(options->forwarded_mode, config, service, connection, &request, request_host->value, outbound, sizeof(outbound),
+                               &outbound_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
@@ -506,7 +520,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     response_headers[index] = (laghu_http_header){{(unsigned char *)response.headers[index].name, strlen(response.headers[index].name)},
                                                   {(unsigned char *)response.headers[index].value, strlen(response.headers[index].value)}};
   {
-    const char *scheme = proxy_effective_scheme(options, connection, &request);
+    const char *scheme = proxy_effective_scheme(config, service, connection, &request);
     normalized_request = (laghu_http_request){LAGHU_HTTP_ABI_VERSION,
                                               sizeof(normalized_request),
                                               {(unsigned char *)request.method, strlen(request.method)},
@@ -534,23 +548,23 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   environment = (laghu_http_environment){
       .version = LAGHU_HTTP_ABI_VERSION,
       .struct_size = sizeof(environment),
-      .config = options->config,
-      .cache_path = options->service.image_cache,
-      .asset_offload = options->service.asset_offload,
+      .config = *config,
+      .cache_path = service->image_cache,
+      .asset_offload = service->asset_offload,
       .rum = worker->queue->rum,
       .queue = proxy_runtime_queue(worker),
       .queue_capabilities = proxy_runtime_queue_capabilities(worker),
-      .font_fetch_queue = options->service.font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
-      .font_providers = options->service.font_providers,
-      .javascript_queue = options->service.javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
-      .chrome_analysis_queue = options->service.chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
-      .otel_trace_queue = options->service.otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
-      .otel_sampling_rate = options->service.otel_sampling_rate,
-      .chrome_analysis_timeout_ms = options->service.chrome_analysis_timeout_ms,
-      .javascript_target = options->service.javascript_target,
-      .javascript_observations = options->service.javascript_observations,
-      .javascript_defer = options->service.javascript_defer,
-      .layout_reservations = options->service.layout_reservations,
+      .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
+      .font_providers = service->font_providers,
+      .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
+      .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+      .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+      .otel_sampling_rate = service->otel_sampling_rate,
+      .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
+      .javascript_target = service->javascript_target,
+      .javascript_observations = service->javascript_observations,
+      .javascript_defer = service->javascript_defer,
+      .layout_reservations = service->layout_reservations,
       .now = (uint64_t)time(NULL)};
   if (!response.chunked) {
     bool bodyless =
@@ -607,7 +621,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     decoded = NULL;
     origin_body_length = decoded_length;
   }
-  html_cache_response = proxy_html_cache_response_eligible(options, &request, &response, origin_body_length);
+  html_cache_response = proxy_html_cache_response_eligible(config, &request, &response, origin_body_length);
   if (!prepared_ok) {
     normalized_response.declared_length = origin_body_length;
     normalized_response.has_declared_length = true;
@@ -639,7 +653,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     if (html_cache_response) {
       proxy_header *validator = proxy_find(response.headers, response.header_count, "ETag");
       laghu_html_cache_record record;
-      (void)laghu_html_cache_publish(options->service.image_cache, options->config.html_cache_origin, request.target,
+      (void)laghu_html_cache_publish(service->image_cache, config->html_cache_origin, request.target,
                                      validator == NULL ? "" : validator->value, finalized.selected, (uint64_t)time(NULL), &record);
     }
     if ((!finalized.not_modified && !proxy_send_early_hints(client, client_tls, request.version, &finalized)) ||

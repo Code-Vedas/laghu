@@ -304,9 +304,9 @@
 
 ## 7. Laghu standalone NGINX/Apache parity
 
-- [ ] `laghu reload [--config PATH]`: validate an immutable replacement, atomically swap it, and retain the last valid configuration.
-- [ ] Real site inheritance: per-site/per-route Laghu policy and service settings.
-- [ ] TLS/SNI virtual hosts.
+- [x] `laghu reload [--config PATH]`: validate an immutable replacement, atomically swap it, and retain the last valid configuration.
+- [x] Real site inheritance: per-site/per-route Laghu policy and service settings.
+- [x] TLS/SNI virtual hosts.
 - [ ] Static gaps: SPA fallback, compression, configurable limits, CIDR allow/deny, Basic-auth, and rate limits; static responses must enter Laghu transforms.
 - [ ] Upstreams: HTTPS route targets, health checks/failover, FastCGI, uWSGI, and SCGI.
 - [ ] Full access-logging semantics across new routes.

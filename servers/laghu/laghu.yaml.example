@@ -7,6 +7,7 @@ runtime:
   origin: http://127.0.0.1:8000
   file_cache_backend: file:///var/cache/laghu/images
   worker_queue: /run/laghu/jobs.queue
+  pid_file: /run/laghu/laghu.pid
   preset: balanced
   workers: 4
   connection_queue: 64
@@ -20,3 +21,20 @@ routes:
   - match: prefix
     pattern: /api/
     proxy_pass: http://127.0.0.1:9000
+
+# Site policy and service settings inherit from runtime, then a nested route
+# may narrow them further. Add paired tls_certificate/tls_private_key paths to
+# a site to terminate a matching SNI hostname.
+sites:
+  - host: shop.example.test
+    document_root: /srv/laghu/shop
+    laghu:
+      preset: safe
+    service:
+      javascript_target: defaults
+    routes:
+      - match: exact
+        pattern: /legacy
+        redirect: /modern
+        laghu:
+          mode: off

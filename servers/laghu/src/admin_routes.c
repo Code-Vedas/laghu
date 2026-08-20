@@ -19,12 +19,11 @@ static void proxy_admin_fail(laghu_socket client, SSL *tls, proxy_access_log *ac
 }
 
 bool proxy_handle_administrative_routes(const proxy_connection *connection, proxy_worker *worker, proxy_request *request_value,
-                                        proxy_access_log *access_value) {
-  const laghu_proxy_options *options = worker->queue->options;
+                                        const laghu_service_config *service, proxy_access_log *access_value) {
   laghu_socket client = connection->socket;
   SSL *tls = connection->tls;
-  laghu_http_administrative_options admin_options = {options->service.metrics,      options->service.readiness,   options->service.statistics,
-                                                     options->service.purge_method, options->service.purge_query, true};
+  laghu_http_administrative_options admin_options = {service->metrics, service->readiness, service->statistics, service->purge_method,
+                                                     service->purge_query, true};
   laghu_http_administrative_plan plan;
   laghu_buffer method = {(const unsigned char *)request_value->method, strlen(request_value->method)};
   laghu_buffer target = {(const unsigned char *)request_value->target, strlen(request_value->target)};
@@ -38,7 +37,7 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
   }
   bool head = strcmp(request_value->method, "HEAD") == 0;
   bool authorized =
-      proxy_peer_in_cidrs(connection, options->service.purge_allow, options->service.purge_allow_count) && proxy_admin_token(options, request_value);
+      proxy_peer_in_cidrs(connection, service->purge_allow, service->purge_allow_count) && proxy_admin_token(service, request_value);
   if (!authorized) {
     proxy_send_admin_json(client, tls, 403U, "Forbidden", "{\"status\":\"forbidden\"}", head);
     access_value->status = 403U;
@@ -66,10 +65,10 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
       access_value->failure = "runtime";
     } else {
       bool cache_ready = plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_METRICS ||
-                         (proxy_cache_probe(options->service.image_cache) && laghu_cache_backend_health_path(options->service.image_cache, &stats));
+                         (proxy_cache_probe(service->image_cache) && laghu_cache_backend_health_path(service->image_cache, &stats));
       if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_READINESS) laghu_operational_registry_cache(&worker->queue->operational, &stats);
       if (!laghu_http_administrative_render_operational(&plan, &operational->snapshot, (uint64_t)time(NULL),
-                                                        proxy_state(worker->queue) == PROXY_RUNNING, cache_ready, options->service.readiness_strict,
+                                                        proxy_state(worker->queue) == PROXY_RUNNING, cache_ready, service->readiness_strict,
                                                         operational->output, sizeof(operational->output), &response)) {
         proxy_send_admin_json(client, tls, 503U, "Service Unavailable", "{\"status\":\"unavailable\"}", head);
         access_value->status = 503U;
@@ -90,11 +89,11 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
     laghu_cache_stats stats = {0};
     laghu_http_administrative_response response;
     char json[1536];
-    if (!laghu_cache_backend_health_path(options->service.image_cache, &stats)) {
+    if (!laghu_cache_backend_health_path(service->image_cache, &stats)) {
       proxy_send_admin_json(client, tls, 503U, "Service Unavailable", "{\"status\":\"unavailable\"}", head);
       access_value->status = 503U;
       access_value->failure = "cache";
-    } else if (!laghu_http_administrative_render_stats(&options->service.cache_limits, &stats, json, sizeof(json), &response)) {
+    } else if (!laghu_http_administrative_render_stats(&service->cache_limits, &stats, json, sizeof(json), &response)) {
       proxy_send_admin_json(client, tls, 503U, "Service Unavailable", "{\"status\":\"unavailable\"}", head);
       access_value->status = 503U;
       access_value->failure = "runtime";
@@ -117,14 +116,14 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
       return true;
     }
     if (plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE || plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN) {
-      if (!proxy_cache_probe(options->service.image_cache) || !laghu_cache_backend_health_path(options->service.image_cache, &stats)) {
+      if (!proxy_cache_probe(service->image_cache) || !laghu_cache_backend_health_path(service->image_cache, &stats)) {
         proxy_admin_fail(client, tls, access_value, 503U, "Service Unavailable", "runtime");
         free(html);
         return true;
       }
       cache_ready = true;
     } else {
-      if (proxy_cache_probe(options->service.image_cache) && laghu_cache_backend_health_path(options->service.image_cache, &stats)) {
+      if (proxy_cache_probe(service->image_cache) && laghu_cache_backend_health_path(service->image_cache, &stats)) {
         cache_ready = true;
       } else {
         cache_ready = false;
@@ -132,7 +131,7 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
     }
     if (!laghu_operational_registry_snapshot(&worker->queue->operational, &snapshot) ||
         !laghu_operational_readiness_evaluate(&snapshot, (uint64_t)time(NULL), proxy_state(worker->queue) == PROXY_RUNNING, cache_ready,
-                                              options->service.readiness_strict, &readiness) ||
+                                              service->readiness_strict, &readiness) ||
         !laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &page) ||
         !laghu_http_administrative_render_console_page(&plan, &page, html, LAGHU_OPERATIONAL_RENDER_SIZE, &response)) {
       proxy_admin_fail(client, tls, access_value, 503U, "Service Unavailable", "runtime");
@@ -154,7 +153,7 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
   } else {
     uint64_t matched = 0U;
     const char *purge_target = plan.purge_target[0] != '\0' ? plan.purge_target : plan.normalized_path;
-    laghu_cache_purge_result purged = laghu_cache_backend_purge_url_path(options->service.image_cache, purge_target, (uint64_t)time(NULL), &matched);
+    laghu_cache_purge_result purged = laghu_cache_backend_purge_url_path(service->image_cache, purge_target, (uint64_t)time(NULL), &matched);
     laghu_http_administrative_response response;
     char json[192];
     if (!laghu_http_administrative_render_purge(purged, matched, json, sizeof(json), &response)) {

@@ -12,7 +12,7 @@
 #include "laghu/cache.h"
 #include "server_internal.h"
 
-bool proxy_peer_trusted(const laghu_proxy_options *options, const proxy_connection *connection) {
+bool proxy_peer_trusted(const laghu_service_config *service, const proxy_connection *connection) {
   const unsigned char *peer;
   size_t index;
   unsigned int family;
@@ -25,16 +25,17 @@ bool proxy_peer_trusted(const laghu_proxy_options *options, const proxy_connecti
   } else {
     return false;
   }
-  for (index = 0U; index < options->service.trusted_proxy_count; ++index)
-    if (laghu_service_cidr_matches(&options->service.trusted_proxies[index], peer, family)) return true;
+  for (index = 0U; index < service->trusted_proxy_count; ++index)
+    if (laghu_service_cidr_matches(&service->trusted_proxies[index], peer, family)) return true;
   return false;
 }
 
-const char *proxy_effective_scheme(const laghu_proxy_options *options, const proxy_connection *connection, const proxy_request *request) {
+const char *proxy_effective_scheme(const laghu_config *core, const laghu_service_config *service, const proxy_connection *connection,
+                                   const proxy_request *request) {
   const proxy_header *header = NULL;
   size_t index;
   if (connection->tls != NULL) return "https";
-  if (options->config.respect_x_forwarded_proto != LAGHU_MODE_ON || !proxy_peer_trusted(options, connection)) return "http";
+  if (core->respect_x_forwarded_proto != LAGHU_MODE_ON || !proxy_peer_trusted(service, connection)) return "http";
   for (index = 0U; index < request->header_count; ++index)
     if (proxy_name_equal(request->headers[index].name, "X-Forwarded-Proto")) {
       if (header != NULL) return "http";
@@ -63,18 +64,18 @@ bool proxy_peer_in_cidrs(const proxy_connection *connection, const laghu_service
   return false;
 }
 
-bool proxy_admin_token(const laghu_proxy_options *options, const proxy_request *request) {
+bool proxy_admin_token(const laghu_service_config *service, const proxy_request *request) {
   proxy_header *provided = proxy_find((proxy_header *)request->headers, request->header_count, "X-Laghu-Purge-Token");
   unsigned char expected[257U];
   size_t length, provided_length, index, maximum;
   unsigned char difference = 0U;
   FILE *file;
   struct stat status;
-  if (lstat(options->service.purge_token_file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
+  if (lstat(service->purge_token_file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
       (status.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
     return false;
   if (provided == NULL) return false;
-  file = fopen(options->service.purge_token_file, "rb");
+  file = fopen(service->purge_token_file, "rb");
   if (file == NULL) return false;
   length = fread(expected, 1U, sizeof(expected), file);
   if (fclose(file) != 0 || length == 0U || length == sizeof(expected)) return false;
@@ -185,19 +186,20 @@ bool proxy_append_line(char *output, size_t capacity, size_t *length, const char
   return true;
 }
 
-bool proxy_append_forwarding(const laghu_proxy_options *options, const proxy_connection *connection, const proxy_request *request, const char *host,
-                             char *output, size_t capacity, size_t *length) {
-  bool trusted = proxy_peer_trusted(options, connection);
+bool proxy_append_forwarding(laghu_proxy_forwarded_mode forwarded_mode, const laghu_config *core, const laghu_service_config *service,
+                             const proxy_connection *connection, const proxy_request *request, const char *host, char *output, size_t capacity,
+                             size_t *length) {
+  bool trusted = proxy_peer_trusted(service, connection);
   char peer[INET6_ADDRSTRLEN + 4U];
-  const char *scheme = proxy_effective_scheme(options, connection, request);
+  const char *scheme = proxy_effective_scheme(core, service, connection, request);
   const char *existing;
   size_t host_index;
-  if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF) return true;
+  if (forwarded_mode == LAGHU_PROXY_FORWARDED_OFF) return true;
   for (host_index = 0U; host[host_index] != '\0'; ++host_index)
     if (!isalnum((unsigned char)host[host_index]) && host[host_index] != '.' && host[host_index] != '-' && host[host_index] != ':' &&
         host[host_index] != '[' && host[host_index] != ']')
       return false;
-  if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_STANDARD || options->forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
+  if (forwarded_mode == LAGHU_PROXY_FORWARDED_STANDARD || forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
     char standard[INET6_ADDRSTRLEN + 300U];
     if (!proxy_peer_text(connection, peer, sizeof(peer), true) ||
         snprintf(standard, sizeof(standard), "for=%s;proto=%s;host=\"%s\"", peer, scheme, host) <= 0)
@@ -206,7 +208,7 @@ bool proxy_append_forwarding(const laghu_proxy_options *options, const proxy_con
     if (existing != NULL && !proxy_forwarded_value_valid(existing)) existing = NULL;
     if (!proxy_append_line(output, capacity, length, "Forwarded", existing, standard)) return false;
   }
-  if (options->forwarded_mode == LAGHU_PROXY_FORWARDED_X || options->forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
+  if (forwarded_mode == LAGHU_PROXY_FORWARDED_X || forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH) {
     if (!proxy_peer_text(connection, peer, sizeof(peer), false)) return false;
     existing = trusted ? proxy_single_header(request, "X-Forwarded-For") : NULL;
     if (existing != NULL && !proxy_xff_value_valid(existing)) existing = NULL;
