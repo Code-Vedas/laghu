@@ -381,8 +381,8 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
       }
       context->selected_length = prepared.selected.length;
       if (!prepared.cached_file ||
-          apr_file_open(&context->cached_file, prepared.cached_entry.variant_path, APR_READ | APR_BINARY, APR_OS_DEFAULT,
-                        request->pool) != APR_SUCCESS ||
+          apr_file_open(&context->cached_file, prepared.cached_entry.variant_path, APR_READ | APR_BINARY, APR_OS_DEFAULT, request->pool) !=
+              APR_SUCCESS ||
           apr_file_info_get(&info, APR_FINFO_SIZE, context->cached_file) != APR_SUCCESS || info.size != (apr_off_t)prepared.selected.length) {
         context->cached_file = NULL;
         prepared.owned_body = malloc(prepared.selected.length);
@@ -429,8 +429,8 @@ apr_status_t laghu_apache_transaction_filter(ap_filter_t *filter, apr_bucket_bri
       return ap_pass_brigade(filter->next, brigade);
     }
     if (context->cached_file != NULL) {
-      APR_BRIGADE_INSERT_TAIL(replacement, apr_bucket_file_create(context->cached_file, 0, context->selected_length, request->pool,
-                                                                   request->connection->bucket_alloc));
+      APR_BRIGADE_INSERT_TAIL(
+          replacement, apr_bucket_file_create(context->cached_file, 0, context->selected_length, request->pool, request->connection->bucket_alloc));
     } else {
       APR_BRIGADE_INSERT_TAIL(replacement, apr_bucket_pool_create((const char *)context->selected_body, context->selected_length, request->pool,
                                                                   request->connection->bucket_alloc));

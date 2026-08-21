@@ -16,6 +16,10 @@ requires_header() {
   base=${path##*/}
 
   case "${path}" in
+    # Vendored sources retain their upstream copyright and license notices.
+    third_party/*)
+      return 1
+      ;;
     *.c|*.h|*.py|*.conf|*.yml|*.yaml|*.html|*.scss|*.svg)
       return 0
       ;;

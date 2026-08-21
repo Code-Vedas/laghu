@@ -78,14 +78,17 @@ vips pngsave "${work}/source.v" "${work}/source.png" --compression 0
 "${service}" --submit "${queue}" "${work}/source.png" /source.png '"launchd-1"'
 
 attempt=0
-while [ "${attempt}" -lt 100 ] &&
-    ! find "${cache}" -name '*.meta' -type f 2>/dev/null | grep -q .; do
+while [ "${attempt}" -lt 100 ]; do
+  if find "${cache}" -name '*.meta' -type f 2>/dev/null | grep -q . &&
+      grep -q '"event":"job"' "${work}/service.log"; then
+    break
+  fi
   attempt=$((attempt + 1))
   sleep 0.1
 done
 [ "${attempt}" -lt 100 ] || {
   cat "${work}/service.log" >&2 || true
-  echo "launchd service did not process a queued image." >&2
+  echo "launchd service did not process and log a queued image." >&2
   exit 1
 }
 

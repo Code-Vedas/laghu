@@ -104,7 +104,7 @@ tmp/build/servers/laghu/laghu --config /tmp/laghu-conf/laghu.yaml
 Runtime settings belong only in strict YAML. Like NGINX, `laghu` starts from its fixed main configuration,
 `/etc/laghu/laghu.yaml`, then reads sibling `conf.d/*.yaml` fragments in lexical order. `--config PATH` is only
 an administrative override for an alternate main configuration; it retains the same sibling fragment convention.
-The origin may use verified HTTPS. `origin_ca_file` adds a private CA to system trust; certificate and hostname verification cannot be disabled.
+The origin and per-route `https://` targets use verified HTTPS. `origin_ca_file` adds a private CA to system trust; certificate and hostname verification cannot be disabled. Routes also support bounded health-aware HTTP failover plus FastCGI, uWSGI, and SCGI upstreams. Static delivery applies the same normalized Laghu transaction contract as proxied responses, with scoped gzip, SPA fallback, limits, CIDR access rules, Basic authentication, and rate limits resolved before requests are accepted.
 The proxy exposes local health and readiness JSON beneath `/.laghu/`, drains active requests on shutdown, and emits privacy-bounded JSON Lines to standard error.
 
 Server modules are architecture- and ABI-specific. Build each module against the target server ABI.

@@ -16,11 +16,19 @@ runtime:
   drain_timeout: 30
 
 # Ordered routes run before static or the global origin. Exactly one of
-# redirect or proxy_pass is required for each route.
+# redirect or proxy_pass is required for each route. proxy_pass accepts
+# http://, https://, fastcgi://, uwsgi://, and scgi:// targets.
 routes:
   - match: prefix
     pattern: /api/
-    proxy_pass: http://127.0.0.1:9000
+    proxy_pass: https://api.internal.example:8443
+    health_check: /healthz
+    health_interval: 5
+    failover:
+      - https://api-backup.internal.example:8443
+  - match: prefix
+    pattern: /php/
+    proxy_pass: fastcgi://127.0.0.1:9000
 
 # Site policy and service settings inherit from runtime, then a nested route
 # may narrow them further. Add paired tls_certificate/tls_private_key paths to
@@ -30,6 +38,20 @@ sites:
     document_root: /srv/laghu/shop
     laghu:
       preset: safe
+      # Static responses, including ranges and directory listings, pass through
+      # the Laghu transaction contract before delivery. gzip applies only to
+      # eligible full responses from clients that advertise it.
+      compression: gzip
+      spa_fallback: /index.html
+      request_header_limit: 32k
+      request_body_limit: 1m
+      static_max_bytes: 16m
+      allow:
+        - 10.0.0.0/8
+      basic_auth_file: /etc/laghu/shop.basic-auth
+      basic_auth_realm: Shop administration
+      rate_limit: 20
+      rate_burst: 40
     service:
       javascript_target: defaults
     routes:

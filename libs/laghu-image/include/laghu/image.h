@@ -92,11 +92,7 @@ typedef enum {
   LAGHU_IMAGE_CONTENT_FLAT_COLOR
 } laghu_image_content_class;
 
-typedef enum {
-  LAGHU_IMAGE_VIEWPORT_MOBILE = 0,
-  LAGHU_IMAGE_VIEWPORT_TABLET,
-  LAGHU_IMAGE_VIEWPORT_DESKTOP
-} laghu_image_viewport_bucket;
+typedef enum { LAGHU_IMAGE_VIEWPORT_MOBILE = 0, LAGHU_IMAGE_VIEWPORT_TABLET, LAGHU_IMAGE_VIEWPORT_DESKTOP } laghu_image_viewport_bucket;
 
 enum {
   LAGHU_IMAGE_CAP_JPEG_LOAD = UINT32_C(1) << 0,

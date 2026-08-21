@@ -36,9 +36,7 @@ uint32_t ngx_http_laghu_image_queue_capabilities(const ngx_http_laghu_loc_conf_t
 }
 
 laghu_runtime_queue *ngx_http_laghu_font_queue(ngx_http_laghu_loc_conf_t *conf) {
-  return conf != NULL && conf->font_fetch_runtime_queue_attached && conf->service.font_providers != NULL
-             ? &conf->font_fetch_runtime_queue
-             : NULL;
+  return conf != NULL && conf->font_fetch_runtime_queue_attached && conf->service.font_providers != NULL ? &conf->font_fetch_runtime_queue : NULL;
 }
 
 laghu_runtime_queue *ngx_http_laghu_javascript_queue(ngx_http_laghu_loc_conf_t *conf) {
@@ -82,9 +80,7 @@ ngx_module_t ngx_http_laghu_module = {NGX_MODULE_V1,
                                       NULL,
                                       NGX_MODULE_V1_PADDING};
 
-bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf) {
-  return ngx_http_laghu_image_queue_capabilities(conf) != 0U;
-}
+bool ngx_http_laghu_queue_refresh(ngx_http_laghu_loc_conf_t *conf) { return ngx_http_laghu_image_queue_capabilities(conf) != 0U; }
 
 static ngx_int_t ngx_http_laghu_filter_init(ngx_conf_t *configuration) {
   ngx_http_core_main_conf_t *core;

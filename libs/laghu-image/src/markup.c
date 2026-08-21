@@ -156,8 +156,7 @@ static bool laghu_svg_well_formed(laghu_buffer input) {
       if (quote != 0U || end == input.length) return false;
     }
     if (closing) {
-      if (depth == 0U || stack[depth - 1U].length != name_length ||
-          memcmp(stack[depth - 1U].name, input.data + name_start, name_length) != 0)
+      if (depth == 0U || stack[depth - 1U].length != name_length || memcmp(stack[depth - 1U].name, input.data + name_start, name_length) != 0)
         return false;
       --depth;
     } else {
@@ -185,12 +184,11 @@ bool laghu_image_optimize_svg(laghu_buffer input, laghu_image_markup_result *res
   if (result == NULL || input.data == NULL || input.length == 0U || input.length > LAGHU_IMAGE_MAX_INPUT_BYTES) return false;
   memset(result, 0, sizeof(*result));
   if (!laghu_svg_well_formed(input)) return false;
-  if (laghu_svg_contains(input, "<script") || laghu_svg_contains(input, "<foreignobject") ||
-      laghu_svg_contains(input, "<!doctype") || laghu_svg_contains(input, "<!entity") ||
-      laghu_svg_contains(input, "javascript:") || laghu_svg_contains(input, "data:") || laghu_svg_contains(input, "url(") ||
-      laghu_svg_contains(input, " onload=") || laghu_svg_contains(input, " onclick=") ||
-      laghu_svg_contains(input, " onerror=") || laghu_svg_contains(input, " onbegin=") ||
-      laghu_svg_contains(input, "xlink:href") || laghu_svg_contains(input, "href="))
+  if (laghu_svg_contains(input, "<script") || laghu_svg_contains(input, "<foreignobject") || laghu_svg_contains(input, "<!doctype") ||
+      laghu_svg_contains(input, "<!entity") || laghu_svg_contains(input, "javascript:") || laghu_svg_contains(input, "data:") ||
+      laghu_svg_contains(input, "url(") || laghu_svg_contains(input, " onload=") || laghu_svg_contains(input, " onclick=") ||
+      laghu_svg_contains(input, " onerror=") || laghu_svg_contains(input, " onbegin=") || laghu_svg_contains(input, "xlink:href") ||
+      laghu_svg_contains(input, "href="))
     return false;
   while (index < input.length) {
     if (index + 4U <= input.length && memcmp(input.data + index, "<!--", 4U) == 0) {
@@ -205,9 +203,7 @@ bool laghu_image_optimize_svg(laghu_buffer input, laghu_image_markup_result *res
       index = (size_t)(end - input.data) + 11U;
       continue;
     }
-    if (input.data[index] == '<' && index + 4U <= input.length &&
-        laghu_svg_find(input, index, "<svg", true) == input.data + index)
-      root = true;
+    if (input.data[index] == '<' && index + 4U <= input.length && laghu_svg_find(input, index, "<svg", true) == input.data + index) root = true;
     if (input.data[index] == '<') {
       if (!laghu_svg_append_tag(&builder, input, &index)) goto failed;
       continue;
@@ -217,8 +213,7 @@ bool laghu_image_optimize_svg(laghu_buffer input, laghu_image_markup_result *res
     }
     ++index;
   }
-  if (!root || !laghu_svg_contains((laghu_buffer){builder.data, builder.length}, "</svg>") || builder.length >= input.length)
-    goto failed;
+  if (!root || !laghu_svg_contains((laghu_buffer){builder.data, builder.length}, "</svg>") || builder.length >= input.length) goto failed;
   result->data = builder.data;
   result->length = builder.length;
   return true;
@@ -400,7 +395,9 @@ static bool laghu_rewrite_img_tag(laghu_markup_builder *builder, const unsigned 
     const unsigned char *alt = NULL;
     size_t alt_length = 0U;
     (void)laghu_attribute(tag, tag_length, "alt", &alt, &alt_length);
-    if (!laghu_builder_format(builder, "<video autoplay muted loop playsinline preload=\"metadata\" width=\"%u\" height=\"%u\"><source src=\"%s\" type=\"video/webm\"><source src=\"%s\" type=\"video/mp4\"><img src=\"",
+    if (!laghu_builder_format(builder,
+                              "<video autoplay muted loop playsinline preload=\"metadata\" width=\"%u\" height=\"%u\"><source src=\"%s\" "
+                              "type=\"video/webm\"><source src=\"%s\" type=\"video/mp4\"><img src=\"",
                               resource->declared_width != 0U ? resource->declared_width : resource->width,
                               resource->declared_height != 0U ? resource->declared_height : resource->height, resource->video_webm_url,
                               resource->video_mp4_url) ||

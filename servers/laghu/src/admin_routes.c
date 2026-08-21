@@ -11,8 +11,7 @@
 #include "laghu/cache.h"
 #include "server_internal.h"
 
-static void proxy_admin_fail(laghu_socket client, SSL *tls, proxy_access_log *access, unsigned int status, const char *reason,
-                             const char *failure) {
+static void proxy_admin_fail(laghu_socket client, SSL *tls, proxy_access_log *access, unsigned int status, const char *reason, const char *failure) {
   proxy_error_response(client, tls, status, reason);
   access->status = status;
   access->failure = failure;
@@ -22,8 +21,8 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
                                         const laghu_service_config *service, proxy_access_log *access_value) {
   laghu_socket client = connection->socket;
   SSL *tls = connection->tls;
-  laghu_http_administrative_options admin_options = {service->metrics, service->readiness, service->statistics, service->purge_method,
-                                                     service->purge_query, true};
+  laghu_http_administrative_options admin_options = {service->metrics,      service->readiness,   service->statistics,
+                                                     service->purge_method, service->purge_query, true};
   laghu_http_administrative_plan plan;
   laghu_buffer method = {(const unsigned char *)request_value->method, strlen(request_value->method)};
   laghu_buffer target = {(const unsigned char *)request_value->target, strlen(request_value->target)};
@@ -36,8 +35,7 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
     return true;
   }
   bool head = strcmp(request_value->method, "HEAD") == 0;
-  bool authorized =
-      proxy_peer_in_cidrs(connection, service->purge_allow, service->purge_allow_count) && proxy_admin_token(service, request_value);
+  bool authorized = proxy_peer_in_cidrs(connection, service->purge_allow, service->purge_allow_count) && proxy_admin_token(service, request_value);
   if (!authorized) {
     proxy_send_admin_json(client, tls, 403U, "Forbidden", "{\"status\":\"forbidden\"}", head);
     access_value->status = 403U;

@@ -281,7 +281,7 @@ static laghu_image_filter_mask laghu_http_image_filters(const laghu_policy *poli
 }
 
 static bool laghu_http_backend_supports(const char *content_type, laghu_image_filter_mask filters, uint32_t capabilities, bool allow_lossy,
-                                       bool accept_jxl) {
+                                        bool accept_jxl) {
   if (laghu_http_content_type_is(content_type, "image/jpeg")) {
     return allow_lossy && (capabilities & LAGHU_IMAGE_CAP_JPEG_LOAD) != 0U &&
            (((capabilities & LAGHU_IMAGE_CAP_JPEG_SAVE) != 0U && (filters & (LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_JPEG |
@@ -926,12 +926,12 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
         }
       }
     }
-    if (!laghu_runtime_index_key_variant(transaction->path, transaction->validator, transaction->policy_key, transaction->accept_webp,
-                                         transaction->accept_avif, transaction->accept_jxl,
-                                         transaction->client_hint_variant ? transaction->target_width[0] : 0U,
-                                         transaction->client_hint_variant ? transaction->target_height[0] : 0U,
-                                         (unsigned int)laghu_image_viewport_bucket_for_width(transaction->viewport_width) |
-                                             (transaction->save_data ? 4U : 0U), transaction->cache_key)) {
+    if (!laghu_runtime_index_key_variant(
+            transaction->path, transaction->validator, transaction->policy_key, transaction->accept_webp, transaction->accept_avif,
+            transaction->accept_jxl, transaction->client_hint_variant ? transaction->target_width[0] : 0U,
+            transaction->client_hint_variant ? transaction->target_height[0] : 0U,
+            (unsigned int)laghu_image_viewport_bucket_for_width(transaction->viewport_width) | (transaction->save_data ? 4U : 0U),
+            transaction->cache_key)) {
       return laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
     }
     if (image_class_known && !laghu_runtime_index_key_content_class(transaction->cache_key, image_content_class, transaction->cache_key)) {
@@ -939,7 +939,10 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
     }
     transaction->index_key_content_classified = image_class_known;
     memcpy(result->cache_key, transaction->cache_key, sizeof(result->cache_key));
-    if (transaction->validator[0] != '\0' &&
+    /* A warm source artifact cannot publish responsive targets discovered by a
+     * later HTML pass. Capture it once more so the worker can fill those
+     * catalog slots; request paths still never wait for that work. */
+    if ((transaction->target_count == 0U || transaction->client_hint_variant) && transaction->validator[0] != '\0' &&
         laghu_runtime_cache_lookup_readonly(environment->cache_path, transaction->cache_key, transaction->validator, &cache_entry) &&
         cache_entry.length != 0U && cache_entry.length <= LAGHU_IMAGE_MAX_INPUT_BYTES) {
       if (laghu_http_copy_cached_result(result, &cache_entry) && laghu_http_finish_cached_headers(transaction, result, &cache_entry) &&
@@ -963,8 +966,8 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
       transaction->action = LAGHU_HTTP_ACTION_CAPTURE_IMAGE;
       result->capture_limit = LAGHU_IMAGE_MAX_INPUT_BYTES;
     } else if (transaction->image_filters == 0U || environment->queue == NULL ||
-        !laghu_http_backend_supports(transaction->content_type, transaction->image_filters, transaction->capability_mask,
-                                     transaction->policy.allow_lossy, transaction->accept_jxl)) {
+               !laghu_http_backend_supports(transaction->content_type, transaction->image_filters, transaction->capability_mask,
+                                            transaction->policy.allow_lossy, transaction->accept_jxl)) {
       if (transaction->asset_allowed || ((transaction->policy.filter_families & (LAGHU_FILTER_CACHE_MEDIA | LAGHU_FILTER_CACHE_EXTENSION)) != 0U &&
                                          laghu_mime_type_allowed(transaction->policy.cache_mime_types, transaction->content_type))) {
         transaction->action = LAGHU_HTTP_ACTION_CAPTURE_RESOURCE;

@@ -83,8 +83,8 @@ bool laghu_runtime_add_instrumentation(laghu_rum_engine *rum, const char *cache_
                                        laghu_runtime_html_result *result);
 /* Inserts the supplied, already-created template id into the served document.
  * This keeps post-rewrite markup associated with the pre-rewrite RUM record. */
-bool laghu_runtime_insert_instrumentation_template(laghu_buffer html, const char *template_key, unsigned int sample_rate,
-                                                   const laghu_csp_policy *csp, laghu_runtime_html_result *result);
+bool laghu_runtime_insert_instrumentation_template(laghu_buffer html, const char *template_key, unsigned int sample_rate, const laghu_csp_policy *csp,
+                                                   laghu_runtime_html_result *result);
 bool laghu_runtime_instrumentation_template_key(laghu_rum_engine *rum, const char *cache_path, const laghu_javascript_observation_set *providers,
                                                 laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key,
                                                 uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,

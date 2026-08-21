@@ -99,13 +99,13 @@ static bool laghu_libvips_ffmpeg(const char *input, const char *output, bool web
   if (child < 0) return false;
   if (child == 0) {
     if (webm) {
-      char *const arguments[] = {"ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "gif", "-i", (char *)input,
-                                 "-an", "-c:v", "libvpx-vp9", "-crf", "36", "-b:v", "0", "-f", "webm", (char *)output, NULL};
+      char *const arguments[] = {"ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "gif",  "-i",           (char *)input, "-an",
+                                 "-c:v",   "libvpx-vp9",   "-crf",      "36",    "-b:v",     "0",  "-f", "webm", (char *)output, NULL};
       execvp(arguments[0], arguments);
     } else {
-      char *const arguments[] = {"ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "gif", "-i", (char *)input,
-                                 "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p", "-movflags",
-                                 "+faststart", "-f", "mp4", (char *)output, NULL};
+      char *const arguments[] = {"ffmpeg",      "-hide_banner", "-loglevel",  "error",   "-nostdin", "-y",           "-f",   "gif", "-i",
+                                 (char *)input, "-an",          "-c:v",       "libx264", "-preset",  "veryfast",     "-crf", "28",  "-pix_fmt",
+                                 "yuv420p",     "-movflags",    "+faststart", "-f",      "mp4",      (char *)output, NULL};
       execvp(arguments[0], arguments);
     }
     _exit(127);
@@ -113,8 +113,8 @@ static bool laghu_libvips_ffmpeg(const char *input, const char *output, bool web
   return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static bool laghu_libvips_gif_video(const laghu_runtime_job *job, const char *cache_path, const char *source_hash,
-                                    const laghu_image_backend *backend, laghu_catalog_record *catalog) {
+static bool laghu_libvips_gif_video(const laghu_runtime_job *job, const char *cache_path, const char *source_hash, const laghu_image_backend *backend,
+                                    laghu_catalog_record *catalog) {
   char input[] = "/tmp/laghu-gif-XXXXXX";
   char mp4[] = "/tmp/laghu-mp4-XXXXXX";
   char webm[] = "/tmp/laghu-webm-XXXXXX";
@@ -134,23 +134,27 @@ static bool laghu_libvips_gif_video(const laghu_runtime_job *job, const char *ca
   mp4_fd = mkstemp(mp4);
   webm_fd = mkstemp(webm);
   if (input_fd < 0 || mp4_fd < 0 || webm_fd < 0 || !laghu_libvips_write_all(input_fd, job->payload)) goto done;
-  (void)close(input_fd); input_fd = -1;
-  (void)close(mp4_fd); mp4_fd = -1;
-  (void)close(webm_fd); webm_fd = -1;
-  if (!laghu_libvips_ffmpeg(input, mp4, false) || !laghu_libvips_ffmpeg(input, webm, true) ||
-      !laghu_libvips_read_path(mp4, &mp4_data, &mp4_length) || !laghu_libvips_read_path(webm, &webm_data, &webm_length) ||
-      mp4_length >= job->payload.length || webm_length >= job->payload.length)
+  (void)close(input_fd);
+  input_fd = -1;
+  (void)close(mp4_fd);
+  mp4_fd = -1;
+  (void)close(webm_fd);
+  webm_fd = -1;
+  if (!laghu_libvips_ffmpeg(input, mp4, false) || !laghu_libvips_ffmpeg(input, webm, true) || !laghu_libvips_read_path(mp4, &mp4_data, &mp4_length) ||
+      !laghu_libvips_read_path(webm, &webm_data, &webm_length) || mp4_length >= job->payload.length || webm_length >= job->payload.length)
     goto done;
   material_length = snprintf(material, sizeof(material), "gif-video-v1\\n%s\\n%s\\nmp4", source_hash, job->policy_key);
   if (material_length < 0 || (size_t)material_length >= sizeof(material) ||
-      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, catalog->gif_video_mp4_key)) goto done;
+      !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, catalog->gif_video_mp4_key))
+    goto done;
   material_length = snprintf(material, sizeof(material), "gif-video-v1\\n%s\\n%s\\nwebm", source_hash, job->policy_key);
   if (material_length < 0 || (size_t)material_length >= sizeof(material) ||
       !laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, catalog->gif_video_webm_key) ||
       !laghu_libvips_cache_publish(cache_path, catalog->gif_video_mp4_key, catalog->gif_video_mp4_key, job->validator, "video/mp4",
                                    backend->backend_id, (laghu_buffer){mp4_data, mp4_length}, &mp4_entry) ||
       !laghu_libvips_cache_publish(cache_path, catalog->gif_video_webm_key, catalog->gif_video_webm_key, job->validator, "video/webm",
-                                   backend->backend_id, (laghu_buffer){webm_data, webm_length}, &webm_entry)) goto done;
+                                   backend->backend_id, (laghu_buffer){webm_data, webm_length}, &webm_entry))
+    goto done;
   catalog->gif_video_mp4_length = mp4_length;
   catalog->gif_video_webm_length = webm_length;
   catalog->gif_video_ready = true;
@@ -160,8 +164,11 @@ done:
   if (input_fd >= 0) (void)close(input_fd);
   if (mp4_fd >= 0) (void)close(mp4_fd);
   if (webm_fd >= 0) (void)close(webm_fd);
-  (void)unlink(input); (void)unlink(mp4); (void)unlink(webm);
-  free(mp4_data); free(webm_data);
+  (void)unlink(input);
+  (void)unlink(mp4);
+  (void)unlink(webm);
+  free(mp4_data);
+  free(webm_data);
   return true; /* transcoder absence/failure is always fail-open. */
 }
 
@@ -200,8 +207,11 @@ static void laghu_libvips_log_lifecycle(const char *state, const char *failure) 
 
 static void laghu_libvips_log_job(const laghu_runtime_job *job, int status, uint64_t elapsed) {
   char line[LAGHU_LOG_LINE_SIZE];
-  laghu_log_job record = {.common = {.timestamp = (time_t)time(NULL), .surface = "worker", .component = "libvips",
-                                    .trace_id = job->trace.trace_id, .span_id = job->trace.span_id},
+  laghu_log_job record = {.common = {.timestamp = (time_t)time(NULL),
+                                     .surface = "worker",
+                                     .component = "libvips",
+                                     .trace_id = job->trace.trace_id,
+                                     .span_id = job->trace.span_id},
                           .job_kind = job->kind == LAGHU_RUNTIME_JOB_SPRITE ? "sprite" : "image",
                           .outcome = status == 0   ? "success"
                                      : status == 4 ? "preserved"

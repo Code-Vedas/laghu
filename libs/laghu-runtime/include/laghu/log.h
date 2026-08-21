@@ -40,6 +40,16 @@ typedef struct {
   const char *cache;
   bool job_published;
   const char *failure;
+  /* Routing metadata intentionally excludes request headers and credentials. */
+  const char *route;
+  const char *upstream;
+  const char *upstream_protocol;
+  const char *access;
+  unsigned int failovers;
+  bool static_response;
+  bool spa_fallback;
+  bool compressed;
+  bool rate_limited;
 } laghu_log_transaction;
 
 typedef struct {

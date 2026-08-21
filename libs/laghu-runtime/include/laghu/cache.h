@@ -72,8 +72,7 @@ typedef struct laghu_cache_backend laghu_cache_backend;
 
 typedef struct {
   bool (*lookup)(laghu_cache_backend *backend, const char *index_key, const char *validator, laghu_runtime_cache_entry *entry);
-  bool (*lookup_readonly)(laghu_cache_backend *backend, const char *index_key, const char *validator,
-                          laghu_runtime_cache_entry *entry);
+  bool (*lookup_readonly)(laghu_cache_backend *backend, const char *index_key, const char *validator, laghu_runtime_cache_entry *entry);
   bool (*lookup_variant)(laghu_cache_backend *backend, const char *variant_key, laghu_runtime_cache_entry *entry);
   bool (*read)(laghu_cache_backend *backend, const laghu_runtime_cache_entry *entry, unsigned char *output, size_t output_capacity);
   bool (*publish)(laghu_cache_backend *backend, const char *index_key, const char *variant_key, const char *validator, const char *content_type,
@@ -93,19 +92,16 @@ struct laghu_cache_backend {
   void *implementation;
 };
 bool laghu_runtime_index_key(const char *request_path, const char *validator, const char *policy_key, bool accept_webp, bool accept_avif,
-                             bool accept_jxl,
-                             unsigned int target_width, unsigned int target_height, char output[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_runtime_index_key_variant(const char *request_path, const char *validator, const char *policy_key, bool accept_webp,
-                                     bool accept_avif, bool accept_jxl, unsigned int target_width, unsigned int target_height, unsigned int policy_variant,
+                             bool accept_jxl, unsigned int target_width, unsigned int target_height, char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_runtime_index_key_variant(const char *request_path, const char *validator, const char *policy_key, bool accept_webp, bool accept_avif,
+                                     bool accept_jxl, unsigned int target_width, unsigned int target_height, unsigned int policy_variant,
                                      char output[LAGHU_RUNTIME_KEY_SIZE]);
-bool laghu_runtime_index_key_content_class(const char *base_key, laghu_image_content_class content,
-                                           char output[LAGHU_RUNTIME_KEY_SIZE]);
+bool laghu_runtime_index_key_content_class(const char *base_key, laghu_image_content_class content, char output[LAGHU_RUNTIME_KEY_SIZE]);
 bool laghu_runtime_cache_publish(const char *cache_path, const char *index_key, const char *variant_key, const char *validator,
                                  const char *content_type, const char *backend_id, laghu_buffer payload, laghu_runtime_cache_entry *entry);
 bool laghu_runtime_cache_lookup(const char *cache_path, const char *index_key, const char *validator, laghu_runtime_cache_entry *entry);
 /* Reads a published artifact without mutating shared cache accounting. */
-bool laghu_runtime_cache_lookup_readonly(const char *cache_path, const char *index_key, const char *validator,
-                                        laghu_runtime_cache_entry *entry);
+bool laghu_runtime_cache_lookup_readonly(const char *cache_path, const char *index_key, const char *validator, laghu_runtime_cache_entry *entry);
 bool laghu_runtime_cache_lookup_variant(const char *cache_path, const char *variant_key, laghu_runtime_cache_entry *entry);
 bool laghu_runtime_cache_read(const laghu_runtime_cache_entry *entry, unsigned char *output, size_t output_capacity);
 bool laghu_runtime_file_cache_publish(const char *cache_path, const char *index_key, const char *variant_key, const char *validator,
@@ -127,7 +123,7 @@ bool laghu_cache_backend_maintain_path(const char *path, uint64_t now);
 void laghu_cache_backend_close(laghu_cache_backend *backend);
 bool laghu_cache_backend_lookup(laghu_cache_backend *backend, const char *index_key, const char *validator, laghu_runtime_cache_entry *entry);
 bool laghu_cache_backend_lookup_readonly(laghu_cache_backend *backend, const char *index_key, const char *validator,
-                                        laghu_runtime_cache_entry *entry);
+                                         laghu_runtime_cache_entry *entry);
 bool laghu_cache_backend_lookup_variant(laghu_cache_backend *backend, const char *variant_key, laghu_runtime_cache_entry *entry);
 bool laghu_cache_backend_read(laghu_cache_backend *backend, const laghu_runtime_cache_entry *entry, unsigned char *output, size_t output_capacity);
 bool laghu_cache_backend_publish(laghu_cache_backend *backend, const char *index_key, const char *variant_key, const char *validator,

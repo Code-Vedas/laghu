@@ -98,7 +98,11 @@ if [ "${clang_format}" != "" ]; then
     "${REPO_ROOT}"/libs/laghu-http/tests/http_test.c \
     "${REPO_ROOT}"/servers/laghu/include/laghu/proxy.h \
     "${REPO_ROOT}"/servers/laghu/src/proxy.c \
+    "${REPO_ROOT}"/servers/laghu/src/upstream.c \
     "${REPO_ROOT}"/servers/laghu/src/request.c \
+    "${REPO_ROOT}"/servers/laghu/src/yaml.c \
+    "${REPO_ROOT}"/servers/laghu/src/static.c \
+    "${REPO_ROOT}"/servers/laghu/src/routes.c \
     "${REPO_ROOT}"/servers/laghu/src/administrative.c \
     "${REPO_ROOT}"/servers/laghu/src/admin_routes.c \
     "${REPO_ROOT}"/servers/laghu/src/beacon_routes.c \

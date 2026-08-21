@@ -3,10 +3,19 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
+
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "laghu/profile.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -74,11 +83,12 @@ int main(void) {
   record.media_count = 1U;
   assert(laghu_rum_engine_publish(rum, LAGHU_RUM_RECORD_INSTRUMENTATION, key, 200U, &record, sizeof(record), NULL));
   assert(laghu_runtime_apply_chrome_analysis(
-      rum, (laghu_buffer){(const unsigned char *)"{\"version\":1,\"viewport\":{\"width\":1440},\"lcp_ordinal\":0,\"template\":\""
-                                                  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}",
-                          sizeof("{\"version\":1,\"viewport\":{\"width\":1440},\"lcp_ordinal\":0,\"template\":\""
-                                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}") -
-                              1U},
+      rum,
+      (laghu_buffer){(const unsigned char *)"{\"version\":1,\"viewport\":{\"width\":1440},\"lcp_ordinal\":0,\"template\":\""
+                                            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}",
+                     sizeof("{\"version\":1,\"viewport\":{\"width\":1440},\"lcp_ordinal\":0,\"template\":\""
+                            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}") -
+                         1U},
       201U, 60U));
   assert(laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_INSTRUMENTATION, key, 201U, &record, sizeof(record), NULL));
   assert(record.lcp_observations[2] == 1U && record.lcp_candidates[2][0] == 1U && record.observations[1] == 0U);

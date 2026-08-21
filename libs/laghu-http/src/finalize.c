@@ -595,6 +595,8 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
       if (length > 0 && (size_t)length < sizeof(material))
         (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, dependency);
     }
+    if (javascript.dependencies_pending) result->dependencies_pending = true;
+    result->job_published |= javascript.job_published;
     if (javascript.javascript_defer_recommended) {
       result->javascript_defer_recommended = true;
       memcpy(result->javascript_defer_path, javascript.javascript_defer_path, sizeof(result->javascript_defer_path));
@@ -685,7 +687,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
     return false;
   }
   if (hinted.invalid || hinted.dependencies_pending || finalized.invalid || finalized.dependencies_pending) {
-    result->dependencies_pending = hinted.dependencies_pending || finalized.dependencies_pending;
+    result->dependencies_pending |= hinted.dependencies_pending || finalized.dependencies_pending;
     base_rewritten = false;
   } else {
     char material[LAGHU_RUNTIME_KEY_SIZE * 3U + 4U];

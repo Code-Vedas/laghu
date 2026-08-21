@@ -53,9 +53,7 @@
 #define WRITE_BREAK(emitter,string)                                             \
     (FLUSH(emitter)                                                             \
      && (CHECK(string,'\n') ?                                                   \
-         (PUT_BREAK(emitter),                                                   \
-          string.pointer ++,                                                    \
-          1) :                                                                  \
+         (PUT_BREAK(emitter) && (string.pointer ++, 1)) :                       \
          (COPY(emitter->buffer,string),                                         \
           emitter->column = 0,                                                  \
           emitter->line ++,                                                     \

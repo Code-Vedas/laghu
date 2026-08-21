@@ -80,6 +80,7 @@ standalone|laghu_standalone_config.c|servers/laghu/src/config.c
 standalone|laghu_standalone_yaml.c|servers/laghu/src/yaml.c
 standalone|laghu_standalone_static.c|servers/laghu/src/static.c
 standalone|laghu_standalone_routes.c|servers/laghu/src/routes.c
+standalone|laghu_standalone_upstream.c|servers/laghu/src/upstream.c
 standalone|laghu_standalone_protocol.c|servers/laghu/src/protocol.c
 standalone|laghu_standalone_origin.c|servers/laghu/src/origin.c
 standalone|laghu_standalone_transport.c|servers/laghu/src/transport.c

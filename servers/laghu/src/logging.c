@@ -53,6 +53,8 @@ void proxy_access_init(proxy_access_log *access, proxy_queue *queue) {
   access->decision = LAGHU_DECISION_BYPASS_ERROR;
   access->cache_state = "none";
   access->failure = "none";
+  access->upstream_protocol = "none";
+  access->access = "none";
   proxy_queue_lock(queue);
   access->request_id = queue->request_prefix + ++queue->request_counter;
   proxy_queue_unlock(queue);
@@ -87,7 +89,16 @@ void proxy_access_write(proxy_queue *queue, const proxy_access_log *access) {
                                     .duration_ms = elapsed,
                                     .cache = access->cache_state,
                                     .job_published = access->job_published,
-                                    .failure = access->failure};
+                                    .failure = access->failure,
+                                    .route = access->route[0] == '\0' ? "none" : access->route,
+                                    .upstream = access->upstream[0] == '\0' ? "none" : access->upstream,
+                                    .upstream_protocol = access->upstream_protocol,
+                                    .access = access->access,
+                                    .failovers = access->failovers,
+                                    .static_response = access->static_response,
+                                    .spa_fallback = access->spa_fallback,
+                                    .compressed = access->compressed,
+                                    .rate_limited = access->rate_limited};
     if (laghu_log_render_transaction(&record, line, sizeof(line))) proxy_log_line(queue, line);
   }
 }

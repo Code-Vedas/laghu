@@ -10,6 +10,31 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
 APXS=${APXS:-}
 HTTPD=${HTTPD:-}
+CURL_BIN=${LAGHU_CURL:-curl}
+
+laghu_apache_curl_supports_brotli() {
+  "$1" -V 2>/dev/null | grep -qi 'brotli'
+}
+
+if ! command -v "${CURL_BIN}" >/dev/null 2>&1; then
+  echo "curl executable is unavailable: ${CURL_BIN}" >&2
+  exit 127
+fi
+if ! laghu_apache_curl_supports_brotli "${CURL_BIN}" && [ -z "${LAGHU_CURL:-}" ]; then
+  for candidate in /opt/homebrew/opt/curl/bin/curl /usr/local/opt/curl/bin/curl; do
+    if [ -x "${candidate}" ] && laghu_apache_curl_supports_brotli "${candidate}"; then
+      CURL_BIN=${candidate}
+      break
+    fi
+  done
+fi
+if ! laghu_apache_curl_supports_brotli "${CURL_BIN}"; then
+  echo "Apache smoke requires a curl build with Brotli support; set LAGHU_CURL." >&2
+  exit 127
+fi
+curl() {
+  "${CURL_BIN}" "$@"
+}
 
 if [ -z "${APXS}" ]; then
   APXS=$(command -v apxs 2>/dev/null || command -v apxs2 2>/dev/null || true)
@@ -218,7 +243,7 @@ load_first_mpm() {
   printf '<Location "/import-page.html">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<LocationMatch "^/(heads-page|move-page|missing-head-page)\\.html$">\nLaghu RewriteLevel all\n</LocationMatch>\n'
   printf '<Location "/no-cross-page.html">\nLaghu RewriteLevel core\n</Location>\n'
-  printf '<LocationMatch "^/(minify-page|compression-page|h3-minify-page)\\.html$">\nLaghu RewriteLevel bandwidth\n</LocationMatch>\n'
+  printf '<LocationMatch "^/(minify-page|compression-page|h3-minify-page)\\.html$">\nLaghu RewriteLevel bandwidth\nLaghu DisableFilter javascript_minify\n</LocationMatch>\n'
   printf '<Location "/hints-page.html">\nLaghu RewriteLevel core\nHeader always add Link "<https://origin.example.test>; rel=preload"\n</Location>\n'
   printf '<Location "/app.js">\nLaghu RewriteLevel all\n</Location>\n'
   printf '<Location "/javascript-inline.html">\nLaghu RewriteLevel all\n</Location>\n'
@@ -305,6 +330,7 @@ origin_pid=$!
 if [ -x "${service}" ] && command -v vips >/dev/null 2>&1; then
   vips black "${work}/source.v" 512 512 --bands 3
   vips pngsave "${work}/source.v" "${work}/htdocs/image.png" --compression 0
+  cp "${work}/htdocs/image.png" "${work}/htdocs/quality-image.png"
   printf '%s\n' '<!doctype html><img src="/image.png" width="320"><img src="/image.png" width="320">' \
     >"${work}/htdocs/image-page.html"
   rm -f "${work}/source.v"
@@ -993,11 +1019,13 @@ if [ "${service_pid}" != "" ]; then
     echo "Apache did not serve a client-hint image variant." >&2
     exit 1
   }
-  grep -i '^Vary: Accept, Sec-CH-DPR, Sec-CH-Viewport-Width' "${work}/image-client-hint.headers" >/dev/null
+  grep -i -E '^Vary: Accept,[[:space:]]*Sec-CH-DPR,[[:space:]]*Sec-CH-Viewport-Width' \
+    "${work}/image-client-hint.headers" >/dev/null
   [ "$(vipsheader -f width "${work}/image-client-hint.png")" = 256 ]
   curl --fail --silent --show-error http://127.0.0.1:18081/image-page.html \
     >"${work}/image-page-targets.html"
-  curl --fail --silent --show-error http://127.0.0.1:18081/image.png \
+  curl --fail --silent --show-error --header 'Accept: image/webp' \
+    http://127.0.0.1:18081/image.png \
     >"${work}/image-target.png"
   attempt=0
   while [ "${attempt}" -lt 100 ]; do
@@ -1019,7 +1047,8 @@ if [ "${service_pid}" != "" ]; then
     # Discovery and queue publication are deliberately try-only. A catalog
     # writer may be contended, so revisit the source between page attempts to
     # submit any targets published by the latest discovery pass.
-    curl --fail --silent --show-error http://127.0.0.1:18081/image.png \
+    curl --fail --silent --show-error --header 'Accept: image/webp' \
+      http://127.0.0.1:18081/image.png \
       >"${work}/image-target.png"
     attempt=$((attempt + 1))
     sleep 0.1

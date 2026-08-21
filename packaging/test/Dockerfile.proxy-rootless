@@ -6,20 +6,25 @@
 FROM ubuntu:24.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake libssl-dev openssl python3 && \
+    build-essential ca-certificates cmake libbrotli-dev libssl-dev openssl pkgconf python3 rustup zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 COPY . /workspace
-RUN cmake -S . -B /build -DLAGHU_WITH_VIPS=OFF -DLAGHU_BUILD_TESTS=ON && \
+ENV PATH=/root/.cargo/bin:${PATH}
+RUN mkdir -p /root/.cargo/bin && \
+    for tool in cargo rustc rustdoc rustfmt rustup; do ln -s /usr/bin/rustup /root/.cargo/bin/${tool}; done && \
+    rustup toolchain install 1.88.0 --profile minimal && \
+    rustup default 1.88.0 && \
+    cmake -S . -B /build -DLAGHU_WITH_VIPS=OFF -DLAGHU_BUILD_TESTS=ON && \
     cmake --build /build --parallel
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3t64 openssl python3 && \
+    ca-certificates libbrotli1 libssl3t64 openssl python3 zlib1g && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /build /opt/laghu-build
 COPY --from=build /workspace/servers/laghu/tests/proxy_smoke.py \
     /workspace/servers/laghu/tests/proxy_smoke.py
 USER 65532:65532
-ENTRYPOINT ["python3", "/workspace/servers/laghu/tests/proxy_smoke.py", "/opt/laghu-build/servers/laghu/laghu", "/opt/laghu-build/libs/laghu-runtime/laghu_runtime_cache_fixture"]
+ENTRYPOINT ["python3", "/workspace/servers/laghu/tests/proxy_smoke.py", "/opt/laghu-build/servers/laghu/laghu", "/opt/laghu-build/libs/laghu-runtime/laghu_runtime_cache_fixture", "/opt/laghu-build/workers/laghu-js-optimize/cargo/release/laghu-js-optimize"]

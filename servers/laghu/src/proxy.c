@@ -32,12 +32,12 @@ const laghu_proxy_options *proxy_current_options(proxy_queue *queue) {
   return options;
 }
 
-static uint32_t proxy_runtime_queue_capabilities(proxy_worker *worker) {
+uint32_t proxy_runtime_queue_capabilities(proxy_worker *worker) {
   laghu_runtime_queue_snapshot snapshot;
   laghu_runtime_queue *queue = proxy_runtime_queue(worker);
   uint64_t now = (uint64_t)time(NULL);
-  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot) || snapshot.capabilities == 0U ||
-      snapshot.worker_heartbeat == 0U || snapshot.worker_heartbeat > now || now - snapshot.worker_heartbeat > 45U)
+  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot) || snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U ||
+      snapshot.worker_heartbeat > now || now - snapshot.worker_heartbeat > 45U)
     return 0U;
   return snapshot.capabilities;
 }
@@ -58,8 +58,8 @@ bool proxy_is_forcing(proxy_queue *queue) {
 
 static bool proxy_html_cache_request_eligible(const laghu_config *config, const proxy_request *request) {
   return config != NULL && request != NULL && config->mode == LAGHU_MODE_ON && config->html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET &&
-         config->html_cache_origin[0] != '\0' &&
-         strcmp(request->method, "GET") == 0 && request->target[0] == '/' && strncmp(request->target, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
+         config->html_cache_origin[0] != '\0' && strcmp(request->method, "GET") == 0 && request->target[0] == '/' &&
+         strncmp(request->target, "/.laghu/", sizeof("/.laghu/") - 1U) != 0 &&
          proxy_find((proxy_header *)request->headers, request->header_count, "Authorization") == NULL &&
          proxy_find((proxy_header *)request->headers, request->header_count, "Cookie") == NULL;
 }
@@ -91,7 +91,7 @@ static bool proxy_html_cache_mark_hit(laghu_http_transaction_result *result) {
   return true;
 }
 
-static bool proxy_materialize_cached_result(laghu_http_transaction_result *result) {
+bool proxy_materialize_cached_result(laghu_http_transaction_result *result) {
   unsigned char *body;
   if (result == NULL || result->action != LAGHU_HTTP_ACTION_SERVE_CACHED || result->selected.data != NULL) return true;
   if (!result->cached_file || result->selected.length == 0U) return false;
@@ -205,6 +205,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   const laghu_proxy_options *options = proxy_current_options(worker->queue);
   const laghu_config *config = &options->config;
   const laghu_service_config *service = &options->service;
+  const laghu_proxy_rules *rules = &options->rules;
   proxy_request request;
   proxy_response response;
   unsigned char *initial;
@@ -234,6 +235,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   const char *origin_port;
   const char *origin_authority;
   bool selected_origin_tls;
+  const laghu_proxy_route *matched_route = NULL;
+  laghu_proxy_upstream_target selected_target = {0};
+  bool gateway_buffered = false;
+  bool retryable_route = false;
   char cached_content_type[LAGHU_RUNTIME_TYPE_SIZE];
   char cached_validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
   memset(&request, 0, sizeof(request));
@@ -241,10 +246,10 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   memset(&prepared, 0, sizeof(prepared));
   memset(&finalized, 0, sizeof(finalized));
   proxy_access_init(&access, worker->queue);
-#define PROXY_FAIL(code, reason, category)        \
-  do {                                            \
-    access.status = (code);                       \
-    access.failure = (category);                  \
+#define PROXY_FAIL(code, reason, category)                    \
+  do {                                                        \
+    access.status = (code);                                   \
+    access.failure = (category);                              \
     proxy_error_response(client, client_tls, (code), reason); \
   } while (0)
   proxy_timeout(client, options->io_timeout);
@@ -263,6 +268,42 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   }
   access.input_bytes = header_length + request.content_length;
   proxy_scope_for_request(options, &request, &config, &service);
+  rules = proxy_rules_for_request(options, &request);
+  matched_route = proxy_route_for_request(options, &request);
+  if (matched_route != NULL) {
+    (void)snprintf(access.route, sizeof(access.route), "%s",
+                   matched_route->redirect[0] != '\0'  ? "redirect"
+                   : matched_route->rewrite[0] != '\0' ? "rewrite"
+                                                       : "upstream");
+  }
+  if (header_length > rules->header_limit) {
+    PROXY_FAIL(431U, "Request Header Fields Too Large", "request_limit");
+    goto done;
+  }
+  {
+    const char *access_failure = "none";
+    if (!proxy_request_access_allowed(worker->queue, connection, &request, rules, &access_failure)) {
+      access.access = access_failure;
+      if (!strcmp(access_failure, "basic_auth")) {
+        const char *realm = rules->basic_auth_realm[0] == '\0' ? "Laghu" : rules->basic_auth_realm;
+        char response[384U];
+        int response_length = snprintf(response, sizeof(response),
+                                       "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"%s\"\r\nContent-Length: 0\r\nConnection: "
+                                       "close\r\nX-Laghu: bypass-error\r\n\r\n",
+                                       realm);
+        if (response_length > 0 && (size_t)response_length < sizeof(response))
+          (void)proxy_client_send_all(client, client_tls, response, (size_t)response_length);
+        access.status = 401U;
+        access.failure = "basic_auth";
+      } else if (!strcmp(access_failure, "rate_limit")) {
+        access.rate_limited = true;
+        PROXY_FAIL(429U, "Too Many Requests", "rate_limit");
+      } else {
+        PROXY_FAIL(403U, "Forbidden", access_failure);
+      }
+      goto done;
+    }
+  }
   request_host = proxy_find(request.headers, request.header_count, "Host");
   (void)proxy_route_rewrite(options, &request);
   if (service->cache_flush_file[0] != '\0')
@@ -283,7 +324,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     PROXY_FAIL(501U, "Not Implemented", "request_limit");
     goto done;
   }
-  if (request.content_length > LAGHU_PROXY_REQUEST_BODY_BYTES) {
+  if (request.content_length > rules->body_limit) {
     PROXY_FAIL(413U, "Payload Too Large", "request_limit");
     goto done;
   }
@@ -294,7 +335,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   }
   if (proxy_handle_administrative_routes(connection, worker, &request, service, &access)) goto done;
   if (proxy_route_serve(options, &request, client, client_tls, &access)) goto done;
-  if (proxy_static_serve(options, &request, client, client_tls, &access)) goto done;
+  if (proxy_static_serve_with_context(options, connection, worker, &request, config, service, rules, client, client_tls, &access)) goto done;
   if (!strncmp(request.target, "/.laghu/", 8U)) {
     if (proxy_handle_beacon_routes(connection, worker, &request, request_body, request_body_length, config, service, &access)) goto done;
     if (strcmp(request.method, "GET") != 0 && strcmp(request.method, "HEAD") != 0) {
@@ -322,27 +363,27 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     }
     normalized_response =
         (laghu_http_response){LAGHU_HTTP_ABI_VERSION, sizeof(normalized_response), 200U, NULL, 0U, 0U, false, true, false, {NULL, 0U}};
-    environment = (laghu_http_environment){
-        .version = LAGHU_HTTP_ABI_VERSION,
-        .struct_size = sizeof(environment),
-        .config = *config,
-        .cache_path = service->image_cache,
-        .asset_offload = service->asset_offload,
-        .rum = worker->queue->rum,
-        .queue = proxy_runtime_queue(worker),
-        .queue_capabilities = proxy_runtime_queue_capabilities(worker),
-        .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
-        .font_providers = service->font_providers,
-        .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
-        .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
-        .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
-        .otel_sampling_rate = service->otel_sampling_rate,
-        .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
-        .javascript_target = service->javascript_target,
-        .javascript_observations = service->javascript_observations,
-        .javascript_defer = service->javascript_defer,
-        .layout_reservations = service->layout_reservations,
-        .now = (uint64_t)time(NULL)};
+    environment =
+        (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
+                                 .struct_size = sizeof(environment),
+                                 .config = *config,
+                                 .cache_path = service->image_cache,
+                                 .asset_offload = service->asset_offload,
+                                 .rum = worker->queue->rum,
+                                 .queue = proxy_runtime_queue(worker),
+                                 .queue_capabilities = proxy_runtime_queue_capabilities(worker),
+                                 .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
+                                 .font_providers = service->font_providers,
+                                 .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
+                                 .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+                                 .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+                                 .otel_sampling_rate = service->otel_sampling_rate,
+                                 .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
+                                 .javascript_target = service->javascript_target,
+                                 .javascript_observations = service->javascript_observations,
+                                 .javascript_defer = service->javascript_defer,
+                                 .layout_reservations = service->layout_reservations,
+                                 .now = (uint64_t)time(NULL)};
     laghu_http_transaction_init(&transaction);
     if (laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared) &&
         prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED && proxy_materialize_cached_result(&prepared)) {
@@ -403,27 +444,27 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
                                                   true,
                                                   false,
                                                   {NULL, 0U}};
-      environment = (laghu_http_environment){
-          .version = LAGHU_HTTP_ABI_VERSION,
-          .struct_size = sizeof(environment),
-          .config = *config,
-          .cache_path = service->image_cache,
-          .asset_offload = service->asset_offload,
-          .rum = worker->queue->rum,
-          .queue = proxy_runtime_queue(worker),
-          .queue_capabilities = proxy_runtime_queue_capabilities(worker),
-          .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
-          .font_providers = service->font_providers,
-          .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
-          .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
-          .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
-          .otel_sampling_rate = service->otel_sampling_rate,
-          .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
-          .javascript_target = service->javascript_target,
-          .javascript_observations = service->javascript_observations,
-          .javascript_defer = service->javascript_defer,
-          .layout_reservations = service->layout_reservations,
-          .now = (uint64_t)time(NULL)};
+      environment =
+          (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
+                                   .struct_size = sizeof(environment),
+                                   .config = *config,
+                                   .cache_path = service->image_cache,
+                                   .asset_offload = service->asset_offload,
+                                   .rum = worker->queue->rum,
+                                   .queue = proxy_runtime_queue(worker),
+                                   .queue_capabilities = proxy_runtime_queue_capabilities(worker),
+                                   .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
+                                   .font_providers = service->font_providers,
+                                   .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
+                                   .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+                                   .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+                                   .otel_sampling_rate = service->otel_sampling_rate,
+                                   .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
+                                   .javascript_target = service->javascript_target,
+                                   .javascript_observations = service->javascript_observations,
+                                   .javascript_defer = service->javascript_defer,
+                                   .layout_reservations = service->layout_reservations,
+                                   .now = (uint64_t)time(NULL)};
       laghu_http_transaction_init(&transaction);
       prepared_ok = laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared);
       if (prepared_ok && record.state == LAGHU_HTML_CACHE_STALE) proxy_html_cache_enqueue_refresh(worker, config, request.target, &record);
@@ -468,10 +509,40 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   origin_port = upstream_route == NULL ? options->origin_port : upstream_route->upstream_port;
   origin_authority = upstream_route == NULL ? options->origin_authority : upstream_route->upstream_authority;
   selected_origin_tls = upstream_route == NULL ? options->origin_tls : upstream_route->upstream_tls;
-  if (origin_host[0] == '\0' ||
-      !proxy_origin_acquire(worker, &upstream, origin_host, origin_port, origin_authority, selected_origin_tls, &tls_timed_out)) {
-    PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : (options->origin_tls ? "origin_tls" : "origin_connect"));
+  retryable_route =
+      upstream_route != NULL && (!strcmp(request.method, "GET") || !strcmp(request.method, "HEAD") || !strcmp(request.method, "OPTIONS"));
+  if (upstream_route != NULL) {
+    access.upstream_protocol = proxy_upstream_protocol_name(upstream_route->upstream_protocol);
+    (void)snprintf(access.upstream, sizeof(access.upstream), "%s", upstream_route->upstream_authority);
+    if (upstream_route->upstream_protocol != LAGHU_PROXY_UPSTREAM_HTTP) {
+      if (!proxy_route_gateway_fetch(worker, options, upstream_route, &request, request_body, request_body_length, &response, &origin_body,
+                                     &origin_body_length, &selected_target, &access.failovers, &tls_timed_out)) {
+        PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : "upstream_protocol");
+        goto done;
+      }
+      (void)snprintf(access.upstream, sizeof(access.upstream), "%s", selected_target.authority);
+      gateway_buffered = true;
+      goto origin_response_ready;
+    }
+  }
+route_origin_acquire: {
+  unsigned int acquired_failovers = 0U;
+  bool acquired = origin_host[0] != '\0' &&
+                  (upstream_route != NULL
+                       ? proxy_route_acquire(worker, options, upstream_route, &upstream, &selected_target, &acquired_failovers, &tls_timed_out)
+                       : proxy_origin_acquire(worker, &upstream, origin_host, origin_port, origin_authority, selected_origin_tls, &tls_timed_out));
+  access.failovers += acquired_failovers;
+  if (!acquired) {
+    PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : (selected_origin_tls ? "origin_tls" : "origin_connect"));
     goto done;
+  }
+}
+  if (upstream_route != NULL) {
+    origin_host = selected_target.host;
+    origin_port = selected_target.port;
+    origin_authority = selected_target.authority;
+    selected_origin_tls = selected_target.tls;
+    (void)snprintf(access.upstream, sizeof(access.upstream), "%s", origin_authority);
   }
   origin = upstream.socket;
   origin_tls = upstream.tls;
@@ -481,6 +552,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     int n;
     if (proxy_hop(request.headers[index].name) || proxy_connection_nominates(request.headers, request.header_count, request.headers[index].name) ||
         proxy_forwarding_name(request.headers[index].name) || proxy_name_equal(request.headers[index].name, "Host") ||
+        ((rules->present & LAGHU_PROXY_RULE_BASIC_AUTH) != 0U && proxy_name_equal(request.headers[index].name, "Authorization")) ||
         proxy_name_equal(request.headers[index].name, "Content-Length"))
       continue;
     n = snprintf(outbound + outbound_length, sizeof(outbound) - outbound_length, "%s: %s\r\n", request.headers[index].name,
@@ -491,9 +563,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     }
     outbound_length += (size_t)n;
   }
-  if (request_host == NULL ||
-      !proxy_append_forwarding(options->forwarded_mode, config, service, connection, &request, request_host->value, outbound, sizeof(outbound),
-                               &outbound_length)) {
+  if (request_host == NULL || !proxy_append_forwarding(options->forwarded_mode, config, service, connection, &request, request_host->value, outbound,
+                                                       sizeof(outbound), &outbound_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
@@ -510,9 +581,18 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       (request_body_length && !proxy_origin_send_all(origin, origin_tls, request_body, request_body_length)) ||
       !proxy_read_headers(origin, response.storage, origin_tls, &header_length, &initial, &initial_length) ||
       !proxy_parse_response(&response, header_length)) {
+    if (upstream_route != NULL) proxy_route_mark_unhealthy(worker, options, upstream_route, &selected_target);
+    if (retryable_route && access.failovers < upstream_route->failover_count) {
+      proxy_origin_release(worker, &upstream, false);
+      origin = LAGHU_INVALID_SOCKET;
+      origin_tls = NULL;
+      memset(&response, 0, sizeof(response));
+      goto route_origin_acquire;
+    }
     PROXY_FAIL(502U, "Bad Gateway", proxy_socket_timed_out() ? "origin_timeout" : (origin_tls != NULL ? "origin_tls" : "origin_protocol"));
     goto done;
   }
+origin_response_ready:
   for (index = 0U; index < request.header_count; ++index)
     request_headers[index] = (laghu_http_header){{(unsigned char *)request.headers[index].name, strlen(request.headers[index].name)},
                                                  {(unsigned char *)request.headers[index].value, strlen(request.headers[index].value)}};
@@ -545,28 +625,28 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
                                               true,
                                               response.status == 206U || proxy_find(response.headers, response.header_count, "Content-Range") != NULL,
                                               {NULL, 0U}};
-  environment = (laghu_http_environment){
-      .version = LAGHU_HTTP_ABI_VERSION,
-      .struct_size = sizeof(environment),
-      .config = *config,
-      .cache_path = service->image_cache,
-      .asset_offload = service->asset_offload,
-      .rum = worker->queue->rum,
-      .queue = proxy_runtime_queue(worker),
-      .queue_capabilities = proxy_runtime_queue_capabilities(worker),
-      .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
-      .font_providers = service->font_providers,
-      .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
-      .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
-      .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
-      .otel_sampling_rate = service->otel_sampling_rate,
-      .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
-      .javascript_target = service->javascript_target,
-      .javascript_observations = service->javascript_observations,
-      .javascript_defer = service->javascript_defer,
-      .layout_reservations = service->layout_reservations,
-      .now = (uint64_t)time(NULL)};
-  if (!response.chunked) {
+  environment =
+      (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
+                               .struct_size = sizeof(environment),
+                               .config = *config,
+                               .cache_path = service->image_cache,
+                               .asset_offload = service->asset_offload,
+                               .rum = worker->queue->rum,
+                               .queue = proxy_runtime_queue(worker),
+                               .queue_capabilities = proxy_runtime_queue_capabilities(worker),
+                               .font_fetch_queue = service->font_providers != NULL ? proxy_font_fetch_queue(worker) : NULL,
+                               .font_providers = service->font_providers,
+                               .javascript_queue = service->javascript_queue[0] != '\0' ? proxy_javascript_queue(worker) : NULL,
+                               .chrome_analysis_queue = service->chrome_analysis_queue[0] != '\0' ? proxy_chrome_analysis_queue(worker) : NULL,
+                               .otel_trace_queue = service->otel_trace_queue[0] != '\0' ? proxy_otel_trace_queue(worker) : NULL,
+                               .otel_sampling_rate = service->otel_sampling_rate,
+                               .chrome_analysis_timeout_ms = service->chrome_analysis_timeout_ms,
+                               .javascript_target = service->javascript_target,
+                               .javascript_observations = service->javascript_observations,
+                               .javascript_defer = service->javascript_defer,
+                               .layout_reservations = service->layout_reservations,
+                               .now = (uint64_t)time(NULL)};
+  if (!gateway_buffered && !response.chunked) {
     bool bodyless =
         !strcmp(request.method, "HEAD") || (response.status >= 100U && response.status < 200U) || response.status == 204U || response.status == 304U;
     laghu_http_transaction_init(&transaction);
@@ -600,12 +680,14 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   {
     bool bodyless =
         !strcmp(request.method, "HEAD") || (response.status >= 100U && response.status < 200U) || response.status == 204U || response.status == 304U;
-    if (!proxy_read_body(origin, origin_tls, initial, initial_length, bodyless ? 0U : (response.has_content_length ? response.content_length : 0U),
+    if (!gateway_buffered &&
+        !proxy_read_body(origin, origin_tls, initial, initial_length, bodyless ? 0U : (response.has_content_length ? response.content_length : 0U),
                          !bodyless && !response.has_content_length, &origin_body, &origin_body_length)) {
       PROXY_FAIL(502U, "Bad Gateway", proxy_socket_timed_out() ? "origin_timeout" : (origin_tls != NULL ? "origin_tls" : "origin_protocol"));
       goto done;
     }
-    origin_reusable = !strcmp(response.version, "HTTP/1.1") && !proxy_connection_nominates(response.headers, response.header_count, "close") &&
+    origin_reusable = !gateway_buffered && !strcmp(response.version, "HTTP/1.1") &&
+                      !proxy_connection_nominates(response.headers, response.header_count, "close") &&
                       (bodyless ? initial_length == 0U : response.has_content_length || response.chunked);
   }
   if (response.chunked) {
@@ -653,8 +735,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     if (html_cache_response) {
       proxy_header *validator = proxy_find(response.headers, response.header_count, "ETag");
       laghu_html_cache_record record;
-      (void)laghu_html_cache_publish(service->image_cache, config->html_cache_origin, request.target,
-                                     validator == NULL ? "" : validator->value, finalized.selected, (uint64_t)time(NULL), &record);
+      (void)laghu_html_cache_publish(service->image_cache, config->html_cache_origin, request.target, validator == NULL ? "" : validator->value,
+                                     finalized.selected, (uint64_t)time(NULL), &record);
     }
     if ((!finalized.not_modified && !proxy_send_early_hints(client, client_tls, request.version, &finalized)) ||
         !proxy_send_result(client, client_tls, &response, &finalized, finalized.selected))

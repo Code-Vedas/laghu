@@ -12,8 +12,7 @@
 #include "laghu/instrumentation.h"
 #include "server_internal.h"
 
-static void proxy_beacon_fail(laghu_socket client, SSL *tls, proxy_access_log *access, unsigned int status, const char *reason,
-                              const char *failure) {
+static void proxy_beacon_fail(laghu_socket client, SSL *tls, proxy_access_log *access, unsigned int status, const char *reason, const char *failure) {
   proxy_error_response(client, tls, status, reason);
   access->status = status;
   access->failure = failure;
@@ -127,9 +126,8 @@ bool proxy_handle_beacon_routes(const proxy_connection *connection, proxy_worker
                   laghu_critical_css_apply_beacon(worker->queue->rum, service->image_cache, policy_key, now, core->image_metadata_ttl, &beacon);
       } else if (plan.route == LAGHU_HTTP_BEACON_ROUTE_INSTRUMENTATION_REPORT) {
         laghu_instrumentation_beacon beacon;
-        applied =
-            laghu_runtime_parse_instrumentation_beacon((laghu_buffer){request_body, request_body_length}, &beacon) &&
-            laghu_instrumentation_apply_beacon(worker->queue->rum, service->image_cache, now, core->image_metadata_ttl, &beacon);
+        applied = laghu_runtime_parse_instrumentation_beacon((laghu_buffer){request_body, request_body_length}, &beacon) &&
+                  laghu_instrumentation_apply_beacon(worker->queue->rum, service->image_cache, now, core->image_metadata_ttl, &beacon);
       }
       if (!applied) {
         proxy_beacon_fail(client, tls, access_value, 400U, "Bad Request", "worker");

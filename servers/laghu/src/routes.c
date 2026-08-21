@@ -3,10 +3,10 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+#include <regex.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
-#include <regex.h>
 
 #include "server_internal.h"
 
@@ -33,7 +33,8 @@ static bool route_matches(const laghu_proxy_route *route, const char *target) {
 size_t proxy_site_index(const laghu_proxy_options *options, const proxy_request *request) {
   proxy_header *host;
   size_t index;
-  if (options == NULL || request == NULL || (host = proxy_find((proxy_header *)request->headers, request->header_count, "Host")) == NULL) return LAGHU_PROXY_SITE_GLOBAL;
+  if (options == NULL || request == NULL || (host = proxy_find((proxy_header *)request->headers, request->header_count, "Host")) == NULL)
+    return LAGHU_PROXY_SITE_GLOBAL;
   for (index = 0U; index < options->site_count; ++index) {
     size_t length = strlen(options->sites[index].host);
     if (!strncasecmp(host->value, options->sites[index].host, length) && (host->value[length] == '\0' || host->value[length] == ':')) return index;
@@ -78,11 +79,34 @@ void proxy_scope_for_request(const laghu_proxy_options *options, const proxy_req
   }
 }
 
+const laghu_proxy_rules *proxy_rules_for_request(const laghu_proxy_options *options, const proxy_request *request) {
+  size_t index;
+  size_t site_index;
+  const laghu_proxy_rules *rules;
+  if (options == NULL) return NULL;
+  rules = &options->rules;
+  if (request == NULL) return rules;
+  site_index = proxy_site_index(options, request);
+  if (site_index != LAGHU_PROXY_SITE_GLOBAL) rules = &options->sites[site_index].rules;
+  for (index = 0U; index < options->route_count; ++index)
+    if (route_visible(options, &options->routes[index], request) && route_matches(&options->routes[index], request->target))
+      return &options->routes[index].rules;
+  return rules;
+}
+
 const laghu_proxy_route *proxy_route_upstream(const laghu_proxy_options *options, const proxy_request *request) {
   size_t index;
   for (index = 0U; index < options->route_count; ++index)
     if (options->routes[index].upstream_host[0] != '\0' && route_visible(options, &options->routes[index], request) &&
         route_matches(&options->routes[index], request->target))
+      return &options->routes[index];
+  return NULL;
+}
+
+const laghu_proxy_route *proxy_route_for_request(const laghu_proxy_options *options, const proxy_request *request) {
+  size_t index;
+  for (index = 0U; index < options->route_count; ++index)
+    if (route_visible(options, &options->routes[index], request) && route_matches(&options->routes[index], request->target))
       return &options->routes[index];
   return NULL;
 }
@@ -98,8 +122,7 @@ bool proxy_route_rewrite(const laghu_proxy_options *options, proxy_request *requ
   return false;
 }
 
-bool proxy_route_serve(const laghu_proxy_options *options, const proxy_request *request, laghu_socket client, SSL *tls,
-                       proxy_access_log *access) {
+bool proxy_route_serve(const laghu_proxy_options *options, const proxy_request *request, laghu_socket client, SSL *tls, proxy_access_log *access) {
   size_t index;
   for (index = 0U; index < options->route_count; ++index) {
     const laghu_proxy_route *route = &options->routes[index];
@@ -112,11 +135,10 @@ bool proxy_route_serve(const laghu_proxy_options *options, const proxy_request *
       access->status = 405U;
       return true;
     }
-    written = snprintf(output, sizeof(output), "HTTP/1.1 %u Redirect\r\nLocation: %s\r\n%s%s%s%sContent-Length: 0\r\n\r\n", route->status,
-                       route->redirect, route->response_header_name[0] == '\0' ? "" : route->response_header_name,
-                       route->response_header_name[0] == '\0' ? "" : ": ",
-                       route->response_header_name[0] == '\0' ? "" : route->response_header_value,
-                       route->response_header_name[0] == '\0' ? "" : "\r\n");
+    written =
+        snprintf(output, sizeof(output), "HTTP/1.1 %u Redirect\r\nLocation: %s\r\n%s%s%s%sContent-Length: 0\r\n\r\n", route->status, route->redirect,
+                 route->response_header_name[0] == '\0' ? "" : route->response_header_name, route->response_header_name[0] == '\0' ? "" : ": ",
+                 route->response_header_name[0] == '\0' ? "" : route->response_header_value, route->response_header_name[0] == '\0' ? "" : "\r\n");
     if (written > 0 && (size_t)written < sizeof(output)) (void)proxy_client_send_all(client, tls, output, (size_t)written);
     access->status = route->status;
     return true;

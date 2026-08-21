@@ -15,8 +15,8 @@ class LaghuLibvips < Formula
 
   depends_on "cmake" => :build
   depends_on "pkgconf" => :build
-  depends_on "vips"
   depends_on "ffmpeg"
+  depends_on "vips"
 
   def install
     system "cmake", "-S", ".", "-B", "build",

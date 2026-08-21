@@ -20,7 +20,7 @@ class ModLaghu < Formula
   depends_on "laghu-resource-fetch"
 
   def install
-    (share/"laghu").install "packaging/javascript-observation.conf", "packaging/javascript-defer.conf"
+    (share/"laghu-apache").install "packaging/javascript-observation.conf", "packaging/javascript-defer.conf"
     ENV["APXS"] = formula_opt_bin("httpd")/"apxs"
     ENV["APACHE_BUILD_DIR"] = buildpath/"apache-module"
     system "scripts/build-apache-module"
@@ -52,9 +52,9 @@ class ModLaghu < Formula
     (var/"lib/laghu/rum").mkpath
     observation_config = etc/"laghu/javascript-observation.conf"
     observation_config.dirname.mkpath
-    observation_config.write((share/"laghu/javascript-observation.conf").read) unless observation_config.exist?
+    observation_config.write((share/"laghu-apache/javascript-observation.conf").read) unless observation_config.exist?
     defer_config = etc/"laghu/javascript-defer.conf"
-    defer_config.write((share/"laghu/javascript-defer.conf").read) unless defer_config.exist?
+    defer_config.write((share/"laghu-apache/javascript-defer.conf").read) unless defer_config.exist?
     config = etc/"httpd/httpd.conf"
     laghu_config = etc/"httpd/extra/mod-laghu.conf"
     laghu_config.dirname.mkpath

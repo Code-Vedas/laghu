@@ -4,6 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import http.server
+import gzip
+import hashlib
 import json
 import os
 import pathlib
@@ -103,6 +105,8 @@ class Origin(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     connections = 0
     connections_lock = threading.Lock()
+    paths = []
+    post_paths = []
 
     def setup(self):
         super().setup()
@@ -111,6 +115,7 @@ class Origin(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         request_path = urllib.parse.urlsplit(self.path).path
+        self.__class__.paths.append(request_path)
         if request_path == "/headers":
             body = json.dumps(
                 {
@@ -272,6 +277,7 @@ class Origin(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
+        self.__class__.post_paths.append(urllib.parse.urlsplit(self.path).path)
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
@@ -1129,6 +1135,306 @@ def read_open_socket(sock):
     return b"".join(chunks).lower()
 
 
+def gateway_server(protocol):
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve():
+        def receive_exact(connection, length):
+            received = bytearray()
+            while len(received) < length:
+                chunk = connection.recv(length - len(received))
+                if not chunk:
+                    raise AssertionError(f"short {protocol} request")
+                received.extend(chunk)
+            return bytes(received)
+
+        connection = None
+        try:
+            connection, _ = listener.accept()
+            if protocol == "fastcgi":
+                stdin_complete = False
+                while not stdin_complete:
+                    header = receive_exact(connection, 8)
+                    assert header[0] == 1 and header[2:4] == b"\x00\x01"
+                    length = int.from_bytes(header[4:6], "big")
+                    receive_exact(connection, length + header[6])
+                    stdin_complete = header[1] == 5 and length == 0
+            elif protocol == "uwsgi":
+                header = receive_exact(connection, 4)
+                assert header[0] == 0 and header[3] == 0
+                receive_exact(connection, int.from_bytes(header[1:3], "little"))
+            else:
+                prefix = bytearray()
+                while not prefix.endswith(b":"):
+                    assert len(prefix) < 8
+                    prefix.extend(receive_exact(connection, 1))
+                receive_exact(connection, int(prefix[:-1]))
+                assert receive_exact(connection, 1) == b","
+            cgi = b"Status: 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 7\r\n\r\ngateway"
+            if protocol == "fastcgi":
+                def record(kind, payload):
+                    return b"\x01" + bytes([kind]) + b"\x00\x01" + len(payload).to_bytes(2, "big") + b"\x00\x00" + payload
+                connection.sendall(record(6, cgi) + record(3, b"\x00" * 8))
+            else:
+                connection.sendall(cgi)
+        finally:
+            if connection is not None:
+                connection.close()
+            listener.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return port
+
+
+def reentry_health_server():
+    class HealthOrigin(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        healthy = False
+        probes = 0
+
+        def do_GET(self):
+            if self.path == "/health":
+                self.__class__.probes += 1
+                status, body = (200, b"ready") if self.__class__.healthy else (503, b"unhealthy")
+            elif self.__class__.healthy:
+                status, body = 200, b"reentered"
+            else:
+                status, body = 503, b"unhealthy"
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
+
+        def log_message(self, *_args):
+            pass
+
+    server = QuietThreadingHTTPServer(("127.0.0.1", 0), HealthOrigin)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, HealthOrigin
+
+
+def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_file):
+    static_root = root / "standalone-static"
+    static_root.mkdir()
+    (static_root / "listed").mkdir()
+    static_body = (b"<!doctype html><html><head><!-- remove --></head><body>static body " + b"x" * 512 + b"</body></html>")
+    (static_root / "index.html").write_bytes(static_body)
+    (static_root / "large.txt").write_bytes(b"x" * 1025)
+    auth = root / "standalone-auth"
+    auth.write_text("operator:sha256:" + hashlib.sha256(b"correct horse").hexdigest() + "\n")
+    auth.chmod(0o600)
+    static_port = free_port()
+    static_config = root / "standalone-static.yaml"
+    static_config.write_text(
+        "schema: 1\n"
+        "runtime:\n"
+        f"  listen: 127.0.0.1:{static_port}\n"
+        f"  cache: {root / 'cache'}\n"
+        f"  worker_queue: {root / 'missing.queue'}\n"
+        "  directory_listing: on\n"
+        "sites:\n"
+        "  - host: open.static.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        "      compression: gzip\n"
+        "  - host: secure.static.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        "      spa_fallback: /index.html\n"
+        "      request_body_limit: 4\n"
+        "      request_header_limit: 1024\n"
+        "      static_max_bytes: 1024\n"
+        "      allow:\n"
+        "        - 127.0.0.1/32\n"
+        f"      basic_auth_file: {auth}\n"
+        "      basic_auth_realm: Standalone\n"
+        "      rate_limit: 1\n"
+        "      rate_burst: 5\n"
+        "  - host: denied.static.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        "      deny:\n"
+        "        - 127.0.0.1/32\n"
+    )
+    static_log = (root / "standalone-static.log").open("w+b")
+    static_process = subprocess.Popen([str(executable), "--config", str(static_config)], stdout=subprocess.DEVNULL, stderr=static_log)
+    basic = "Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ=="
+    try:
+        for _ in range(100):
+            try:
+                open_head, open_body = request(static_port, "/", headers={"Accept-Encoding": "gzip"}, host="open.static.test")
+                break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            static_log.flush()
+            static_log.seek(0)
+            raise AssertionError(f"static proxy did not start ({static_process.poll()}): " + static_log.read().decode())
+        assert b"content-encoding: gzip" in open_head
+        assert b"static body" in gzip.decompress(open_body)
+        gzip_disabled_head, _ = request(static_port, "/", headers={"Accept-Encoding": "gzip;q=0"}, host="open.static.test")
+        assert b"content-encoding:" not in gzip_disabled_head
+        range_head, range_body = request(static_port, "/", headers={"Range": "bytes=0-15"}, host="open.static.test")
+        assert range_head.startswith(b"http/1.1 206 ") and range_body == static_body[:16] and b"x-laghu:" in range_head
+        listed_head, _ = request(static_port, "/listed/", host="open.static.test")
+        assert listed_head.startswith(b"http/1.1 200 ") and b"x-laghu:" in listed_head
+        unauth_head, _ = request(static_port, "/", host="secure.static.test")
+        assert unauth_head.startswith(b"http/1.1 401 ") and b'www-authenticate: basic realm="standalone"' in unauth_head
+        malformed_auth_head, _ = request(static_port, "/", headers={"Authorization": "Basic a==="}, host="secure.static.test")
+        assert malformed_auth_head.startswith(b"http/1.1 401 ")
+        secure_head, secure_body = request(static_port, "/missing", headers={"Authorization": basic}, host="secure.static.test")
+        assert secure_head.startswith(b"http/1.1 200 ") and b"static body" in secure_body
+        large_head, _ = request(static_port, "/large.txt", headers={"Authorization": basic}, host="secure.static.test")
+        assert large_head.startswith(b"http/1.1 413 ")
+        body_limit = raw_request(static_port, b"POST / HTTP/1.1\r\nHost: secure.static.test\r\nAuthorization: Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ==\r\nContent-Length: 5\r\n\r\nhello")
+        assert body_limit.startswith(b"http/1.1 413 ")
+        second_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        assert second_head.startswith(b"http/1.1 200 ")
+        third_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        assert third_head.startswith(b"http/1.1 200 ")
+        rate_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        assert rate_head.startswith(b"http/1.1 429 ")
+        denied_head, _ = request(static_port, "/", host="denied.static.test")
+        assert denied_head.startswith(b"http/1.1 403 ")
+        header_limit = raw_request(static_port, b"GET / HTTP/1.1\r\nHost: secure.static.test\r\nX-Limit: " + b"x" * 1100 + b"\r\n\r\n")
+        assert header_limit.startswith(b"http/1.1 431 ")
+    finally:
+        request_shutdown(static_process)
+        static_process.wait(timeout=5)
+        static_log.flush()
+        static_log.seek(0)
+        logs = static_log.read().decode()
+        static_log.close()
+    assert static_process.returncode == 0, logs
+    assert '"static":true' in logs and '"spa_fallback":true' in logs
+    assert '"access":"basic_auth"' in logs and '"access":"cidr_deny"' in logs and '"rate_limited":true' in logs
+    assert "correct horse" not in logs
+
+    fastcgi_port = gateway_server("fastcgi")
+    uwsgi_port = gateway_server("uwsgi")
+    scgi_port = gateway_server("scgi")
+    failed_primary = free_port()
+    post_primary = one_shot_tcp_server()
+    gateway_post_primary = free_port()
+    reentry_server, reentry_handler = reentry_health_server()
+    upstream_port = free_port()
+    upstream_config = root / "standalone-upstreams.yaml"
+    upstream_config.write_text(
+        "schema: 1\n"
+        "runtime:\n"
+        f"  listen: 127.0.0.1:{upstream_port}\n"
+        f"  origin: http://127.0.0.1:{origin_port}\n"
+        f"  origin_ca_file: {ca_file}\n"
+        f"  cache: {root / 'cache'}\n"
+        f"  worker_queue: {root / 'missing.queue'}\n"
+        "routes:\n"
+        "  - match: exact\n"
+        "    pattern: /https\n"
+        f"    proxy_pass: https://127.0.0.1:{tls_origin_port}\n"
+        "  - match: exact\n"
+        "    pattern: /failover\n"
+        f"    proxy_pass: http://127.0.0.1:{failed_primary}\n"
+        "    failover:\n"
+        f"      - http://127.0.0.1:{origin_port}\n"
+        "  - match: exact\n"
+        "    pattern: /health\n"
+        f"    proxy_pass: http://127.0.0.1:{origin_port}\n"
+        "    health_check: /api/data\n"
+        "    health_interval: 1\n"
+        "  - match: exact\n"
+        "    pattern: /reentry\n"
+        f"    proxy_pass: http://127.0.0.1:{reentry_server.server_port}\n"
+        "    failover:\n"
+        f"      - http://127.0.0.1:{origin_port}\n"
+        "    health_check: /health\n"
+        "    health_interval: 1\n"
+        "  - match: exact\n"
+        "    pattern: /post-no-retry\n"
+        f"    proxy_pass: http://127.0.0.1:{post_primary}\n"
+        "    failover:\n"
+        f"      - http://127.0.0.1:{origin_port}\n"
+        "  - match: exact\n"
+        "    pattern: /fastcgi-post-no-retry\n"
+        f"    proxy_pass: fastcgi://127.0.0.1:{gateway_post_primary}\n"
+        "    failover:\n"
+        f"      - fastcgi://127.0.0.1:{fastcgi_port}\n"
+        "  - match: exact\n"
+        "    pattern: /fastcgi\n"
+        f"    proxy_pass: fastcgi://127.0.0.1:{fastcgi_port}\n"
+        "  - match: exact\n"
+        "    pattern: /uwsgi\n"
+        f"    proxy_pass: uwsgi://127.0.0.1:{uwsgi_port}\n"
+        "  - match: exact\n"
+        "    pattern: /scgi\n"
+        f"    proxy_pass: scgi://127.0.0.1:{scgi_port}\n"
+    )
+    upstream_log = (root / "standalone-upstreams.log").open("w+b")
+    Origin.paths.clear()
+    upstream_process = subprocess.Popen([str(executable), "--config", str(upstream_config)], stdout=subprocess.DEVNULL, stderr=upstream_log)
+    try:
+        for _ in range(100):
+            try:
+                https_head, https_body = request(upstream_port, "/https")
+                break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            raise AssertionError("upstream parity proxy did not start")
+        assert https_head.startswith(b"http/1.1 200 ") and b"hello" in https_body
+        for _ in range(100):
+            if "/api/data" in Origin.paths:
+                break
+            time.sleep(0.03)
+        assert "/api/data" in Origin.paths
+        failover_head, failover_body = request(upstream_port, "/failover")
+        assert failover_head.startswith(b"http/1.1 200 ") and b"hello" in failover_body
+        for _ in range(100):
+            if reentry_handler.probes != 0:
+                break
+            time.sleep(0.03)
+        assert reentry_handler.probes != 0
+        reentry_head, reentry_body = request(upstream_port, "/reentry")
+        assert reentry_head.startswith(b"http/1.1 200 ") and b"hello" in reentry_body
+        reentry_handler.healthy = True
+        for _ in range(100):
+            time.sleep(0.03)
+            reentry_head, reentry_body = request(upstream_port, "/reentry")
+            if reentry_head.startswith(b"http/1.1 200 ") and reentry_body == b"reentered":
+                break
+        assert reentry_head.startswith(b"http/1.1 200 ") and reentry_body == b"reentered"
+        Origin.post_paths.clear()
+        post_head, _ = request(upstream_port, "/post-no-retry", method="POST", body=b"x")
+        assert post_head.startswith(b"http/1.1 502 ") and "/post-no-retry" not in Origin.post_paths
+        gateway_post_head, _ = request(upstream_port, "/fastcgi-post-no-retry", method="POST", body=b"x")
+        assert gateway_post_head.startswith(b"http/1.1 502 ")
+        for path in ("/fastcgi", "/uwsgi", "/scgi"):
+            gateway_head, gateway_body = request(upstream_port, path)
+            assert gateway_head.startswith(b"http/1.1 200 ") and gateway_body == b"gateway", (path, gateway_head, gateway_body)
+    finally:
+        request_shutdown(upstream_process)
+        upstream_process.wait(timeout=5)
+        upstream_log.flush()
+        upstream_log.seek(0)
+        logs = upstream_log.read().decode()
+        upstream_log.close()
+        reentry_server.shutdown()
+        reentry_server.server_close()
+    assert upstream_process.returncode == 0, logs
+    assert '"upstream_protocol":"http"' in logs and '"failovers":1' in logs
+    assert '"path":"/post-no-retry"' in logs and '"failure":"origin_protocol"' in logs
+    assert '"path":"/fastcgi-post-no-retry"' in logs and '"upstream_protocol":"fastcgi"' in logs and '"failovers":0' in logs
+    for protocol in ("fastcgi", "uwsgi", "scgi"):
+        assert f'"upstream_protocol":"{protocol}"' in logs
+
+
 def main():
     executable = pathlib.Path(sys.argv[1]).resolve()
     cache_fixture = pathlib.Path(sys.argv[2]).resolve()
@@ -1168,6 +1474,7 @@ def main():
         tls_origin.socket = tls_context.wrap_socket(tls_origin.socket, server_side=True)
         tls_thread = threading.Thread(target=tls_origin.serve_forever, daemon=True)
         tls_thread.start()
+        standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_file)
         tls_proxy_port = free_port()
         tls_process = start_process(
             [
@@ -1259,10 +1566,11 @@ def main():
         (two_root / "index.html").write_text("two site")
         sni_port = free_port()
         sni_config = root / "sni-reload.yaml"
+        sni_replacement = root / "sni-replacement.yaml"
         sni_pid = root / "sni-reload.pid"
 
-        def write_sni_config(redirect):
-            sni_config.write_text(
+        def write_sni_config(path, redirect):
+            path.write_text(
                 "schema: 1\n"
                 "runtime:\n"
                 f"  listen: 127.0.0.1:{sni_port}\n"
@@ -1291,7 +1599,9 @@ def main():
                 f"    tls_private_key: {two_key}\n"
             )
 
-        write_sni_config("/before")
+        write_sni_config(sni_config, "/before")
+        write_sni_config(sni_replacement, "/after")
+        pathlib.Path(f"{sni_pid}.reload").write_bytes(str(sni_replacement).encode() + b"\0")
         sni_process = subprocess.Popen(
             [str(executable), "--config", str(sni_config)], stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -1320,9 +1630,15 @@ def main():
                 server_hostname="one.example.test", host="one.example.test"
             )
             assert b"location: /before" in route_head
-            write_sni_config("/after")
+            os.kill(sni_process.pid, signal.SIGHUP)
+            time.sleep(0.1)
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /before" in route_head
             reload_result = subprocess.run(
-                [str(executable), "reload", "--config", str(sni_config)],
+                [str(executable), "reload", "--config", str(sni_replacement)],
                 capture_output=True, text=True,
             )
             assert reload_result.returncode == 0, reload_result.stderr
@@ -1336,9 +1652,9 @@ def main():
                 time.sleep(0.05)
             else:
                 raise AssertionError("reload did not atomically publish the replacement")
-            sni_config.write_text("schema: 1\nruntime: invalid\n")
+            sni_replacement.write_text("schema: 1\nruntime: invalid\n")
             invalid_reload = subprocess.run(
-                [str(executable), "reload", "--config", str(sni_config)],
+                [str(executable), "reload", "--config", str(sni_replacement)],
                 capture_output=True, text=True,
             )
             assert invalid_reload.returncode != 0
@@ -1347,6 +1663,7 @@ def main():
                 server_hostname="one.example.test", host="one.example.test"
             )
             assert b"location: /after" in route_head
+            write_sni_config(sni_replacement, "/after")
             os.kill(sni_process.pid, signal.SIGHUP)
             time.sleep(0.1)
             route_head, _ = request(
@@ -1354,6 +1671,26 @@ def main():
                 server_hostname="one.example.test", host="one.example.test"
             )
             assert b"location: /after" in route_head
+            reload_request = pathlib.Path(f"{sni_pid}.reload")
+            reload_request.write_bytes(str(sni_config).encode() + b"\0")
+            reload_request.chmod(0o644)
+            os.kill(sni_process.pid, signal.SIGHUP)
+            time.sleep(0.1)
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /after" in route_head
+            assert not reload_request.exists()
+            os.symlink(sni_config, reload_request)
+            os.kill(sni_process.pid, signal.SIGHUP)
+            time.sleep(0.1)
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /after" in route_head
+            assert not reload_request.exists()
         finally:
             request_shutdown(sni_process)
             sni_process.wait(timeout=5)

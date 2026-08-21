@@ -131,7 +131,18 @@ bool laghu_log_render_transaction(const laghu_log_transaction *record, char *out
          laghu_log_number(&builder, record->duration_ms) && laghu_log_append(&builder, ",\"cache\":") &&
          laghu_log_string(&builder, record->cache, 16U, NULL) && laghu_log_append(&builder, ",\"job_published\":") &&
          laghu_log_append(&builder, record->job_published ? "true" : "false") && laghu_log_append(&builder, ",\"failure\":") &&
-         laghu_log_string(&builder, record->failure, 64U, NULL) && laghu_log_append(&builder, "}");
+         laghu_log_string(&builder, record->failure, 64U, NULL) && laghu_log_append(&builder, ",\"route\":") &&
+         laghu_log_string(&builder, record->route == NULL ? "none" : record->route, 32U, NULL) && laghu_log_append(&builder, ",\"upstream\":") &&
+         laghu_log_string(&builder, record->upstream == NULL ? "none" : record->upstream, 264U, NULL) &&
+         laghu_log_append(&builder, ",\"upstream_protocol\":") &&
+         laghu_log_string(&builder, record->upstream_protocol == NULL ? "none" : record->upstream_protocol, 16U, NULL) &&
+         laghu_log_append(&builder, ",\"access\":") && laghu_log_string(&builder, record->access == NULL ? "none" : record->access, 16U, NULL) &&
+         laghu_log_append(&builder, ",\"failovers\":") && laghu_log_number(&builder, record->failovers) &&
+         laghu_log_append(&builder, ",\"static\":") && laghu_log_append(&builder, record->static_response ? "true" : "false") &&
+         laghu_log_append(&builder, ",\"spa_fallback\":") && laghu_log_append(&builder, record->spa_fallback ? "true" : "false") &&
+         laghu_log_append(&builder, ",\"compressed\":") && laghu_log_append(&builder, record->compressed ? "true" : "false") &&
+         laghu_log_append(&builder, ",\"rate_limited\":") && laghu_log_append(&builder, record->rate_limited ? "true" : "false") &&
+         laghu_log_append(&builder, "}");
 }
 
 bool laghu_log_render_lifecycle(const laghu_log_lifecycle *record, char *output, size_t capacity) {

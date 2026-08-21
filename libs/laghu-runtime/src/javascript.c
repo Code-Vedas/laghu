@@ -1087,7 +1087,7 @@ bool laghu_runtime_rewrite_javascript_html(laghu_runtime_queue *queue, const cha
             (inline_record.flags & LAGHU_JAVASCRIPT_FLAG_URL_INDEPENDENT) != 0U &&
             laghu_runtime_cache_lookup_variant(cache_path, inline_record.variant, &entry) && entry.length == inline_record.derived_length) {
           char source_attribute[LAGHU_RUNTIME_KEY_SIZE + 32U];
-          int source_attribute_length = snprintf(source_attribute, sizeof(source_attribute), " src=\"/.laghu/js/%s\"", inline_record.variant);
+          int source_attribute_length = snprintf(source_attribute, sizeof(source_attribute), " src=\"/.laghu/js/%s\">", inline_record.variant);
           size_t prefix = (size_t)(open_end - html.data);
           size_t suffix = html.length - (size_t)(close - html.data);
           if (source_attribute_length > 0 && (size_t)source_attribute_length < sizeof(source_attribute)) {
@@ -1132,7 +1132,12 @@ bool laghu_runtime_rewrite_javascript_html(laghu_runtime_queue *queue, const cha
         cursor = html.data + prefix + javascript.length;
         end = html.data + html.length;
       } else {
-        result->dependencies_pending |= javascript.published;
+        /* A rejected try-publish still leaves this document dependent on a
+         * future transform. Do not let an adapter cache that provisional
+         * origin body; a later request may publish the job once contention
+         * clears. */
+        result->dependencies_pending = true;
+        result->job_published |= javascript.published;
         cursor = close + 8U;
       }
       laghu_runtime_javascript_result_release(&javascript);

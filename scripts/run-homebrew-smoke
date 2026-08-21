@@ -121,6 +121,7 @@ for formula in "${formula_dir}"/*.rb; do
 done
 
 brew style "${formula_dir}"/*.rb
+brew audit --strict "${tap}/laghu-libvips"
 brew install --build-from-source "${tap}/laghu-libvips"
 brew test laghu-libvips
 brew install --build-from-source "${tap}/laghu-chrome-analyze"

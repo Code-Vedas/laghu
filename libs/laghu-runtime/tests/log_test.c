@@ -16,11 +16,27 @@ int main(void) {
                                   .status = 200U,
                                   .decision = "pass",
                                   .cache = "cold",
-                                  .failure = "none"};
+                                  .failure = "none",
+                                  .route = "static",
+                                  .upstream = "127.0.0.1:9000",
+                                  .upstream_protocol = "fastcgi",
+                                  .access = "basic_auth",
+                                  .failovers = 1U,
+                                  .static_response = true,
+                                  .spa_fallback = true,
+                                  .compressed = true,
+                                  .rate_limited = true};
   assert(laghu_log_render_transaction(&record, output, sizeof(output)));
   assert(strstr(output, "laghu-log-v1") != NULL);
   assert(strstr(output, "token=secret") == NULL);
   assert(strstr(output, "\"path\":\"/safe\"") != NULL);
+  assert(strstr(output, "\"route\":\"static\"") != NULL);
+  assert(strstr(output, "\"upstream\":\"127.0.0.1:9000\"") != NULL);
+  assert(strstr(output, "\"upstream_protocol\":\"fastcgi\"") != NULL);
+  assert(strstr(output, "\"access\":\"basic_auth\"") != NULL);
+  assert(strstr(output, "\"failovers\":1") != NULL);
+  assert(strstr(output, "\"static\":true") != NULL && strstr(output, "\"spa_fallback\":true") != NULL &&
+         strstr(output, "\"compressed\":true") != NULL && strstr(output, "\"rate_limited\":true") != NULL);
 
   record.common.trace_id = "0123456789abcdef0123456789abcdef";
   record.common.span_id = "0123456789abcdef";

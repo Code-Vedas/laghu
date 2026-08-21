@@ -16,13 +16,13 @@
 #include "laghu/fonts.h"
 #include "laghu/html.h"
 #include "laghu/javascript.h"
-#include "laghu/lcp.h"
 #include "laghu/layout.h"
+#include "laghu/lcp.h"
 #include "laghu/operational.h"
 #include "laghu/queue.h"
 #include "laghu/rum.h"
-#include "laghu/types.h"
 #include "laghu/trace.h"
+#include "laghu/types.h"
 
 #ifdef __cplusplus
 extern "C" {

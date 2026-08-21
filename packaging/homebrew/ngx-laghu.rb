@@ -23,14 +23,14 @@ class NgxLaghu < Formula
   depends_on "nginx"
 
   resource "nginx" do
-    url "https://nginx.org/download/nginx-1.31.3.tar.gz"
-    sha256 "a7657c50811c2d92d9895395e8b873ef60398142c4db21eb647811c38f6dd525"
+    url "https://nginx.org/download/nginx-1.31.4.tar.gz"
+    sha256 "e6f20b644a17a643f059ae6467a1971fe2811587d025e071068753a1f1e3b3c3"
   end
 
   def install
-    (share/"laghu").install "packaging/javascript-observation.conf", "packaging/javascript-defer.conf"
+    (share/"laghu-nginx").install "packaging/javascript-observation.conf", "packaging/javascript-defer.conf"
     nginx_version = Formula["nginx"].version
-    odie "ngx-laghu must be updated for nginx #{nginx_version}" if nginx_version != Version.new("1.31.3")
+    odie "ngx-laghu must be updated for nginx #{nginx_version}" if nginx_version != Version.new("1.31.4")
     _stdout, nginx_build, status = Open3.capture3(formula_opt_bin("nginx")/"nginx", "-V")
     odie "cannot inspect the Homebrew nginx build" unless status.success?
     configure_line = nginx_build[/configure arguments: (.*)$/, 1]
@@ -70,9 +70,9 @@ class NgxLaghu < Formula
     (var/"lib/laghu/rum").mkpath
     observation_config = etc/"laghu/javascript-observation.conf"
     observation_config.dirname.mkpath
-    observation_config.write((share/"laghu/javascript-observation.conf").read) unless observation_config.exist?
+    observation_config.write((share/"laghu-nginx/javascript-observation.conf").read) unless observation_config.exist?
     defer_config = etc/"laghu/javascript-defer.conf"
-    defer_config.write((share/"laghu/javascript-defer.conf").read) unless defer_config.exist?
+    defer_config.write((share/"laghu-nginx/javascript-defer.conf").read) unless defer_config.exist?
     config = etc/"nginx/nginx.conf"
     loader = "load_module #{opt_libexec}/ngx_http_laghu_module.so;"
     inreplace(config) { |s| s.sub!(/\A/, "#{loader}\n") } unless config.read.include?(loader)

@@ -149,8 +149,7 @@ static void test_cache_maintenance_integrity(const laghu_test_workspace *workspa
   assert(laghu_test_workspace_write(workspace, "maintenance-cache/.keep", NULL, 0U));
   assert(remove(placeholder) == 0);
   assert(laghu_cache_backend_open_path(&backend, cache_path, &limits));
-  assert(laghu_cache_backend_publish(&backend, index_key, policy_key, "etag", "text/plain", "test",
-                                     (laghu_buffer){payload, payload_length}, &entry));
+  assert(laghu_cache_backend_publish(&backend, index_key, policy_key, "etag", "text/plain", "test", (laghu_buffer){payload, payload_length}, &entry));
   file = fopen(entry.variant_path, "r+b");
   assert(file != NULL && fwrite(&corrupted, 1U, 1U, file) == 1U && fclose(file) == 0);
   assert(laghu_cache_backend_maintain(&backend, 100U));

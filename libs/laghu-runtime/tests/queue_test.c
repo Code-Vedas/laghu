@@ -79,8 +79,7 @@ int main(void) {
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT && taken.payload.length == sizeof(payload) - 1U && taken.accept_avif && taken.accept_jxl &&
          taken.save_data && taken.index_key_content_classified && memcmp(output, payload, taken.payload.length) == 0 &&
-         strcmp(taken.trace.trace_id, job.trace.trace_id) == 0 &&
-         taken.trace.sampled);
+         strcmp(taken.trace.trace_id, job.trace.trace_id) == 0 && taken.trace.sampled);
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_SPRITE;

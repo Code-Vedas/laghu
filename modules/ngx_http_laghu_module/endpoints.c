@@ -128,11 +128,10 @@ static ngx_int_t ngx_http_laghu_html_cache_handler(ngx_http_request_t *request, 
   if (conf->core.origin_shield == LAGHU_MODE_ON && conf->core.html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET) {
     shield_policy = ngx_pnalloc(request->pool, 96U);
     if (shield_policy == NULL) return NGX_DECLINED;
-    shield_policy_length = (size_t)(ngx_snprintf(shield_policy, 96U, "public, s-maxage=%ui, stale-while-revalidate=%ui", conf->core.html_cache_ttl,
-                                                  conf->core.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET
-                                                      ? 0U
-                                                      : conf->core.html_cache_stale_ttl) -
-                                    shield_policy);
+    shield_policy_length =
+        (size_t)(ngx_snprintf(shield_policy, 96U, "public, s-maxage=%ui, stale-while-revalidate=%ui", conf->core.html_cache_ttl,
+                              conf->core.html_cache_stale_ttl == LAGHU_HTML_CACHE_STALE_TTL_UNSET ? 0U : conf->core.html_cache_stale_ttl) -
+                 shield_policy);
     for (unsigned int shield_index = 0U; shield_index < 2U; ++shield_index) {
       header = ngx_list_push(&request->headers_out.headers);
       if (header == NULL) return NGX_DECLINED;

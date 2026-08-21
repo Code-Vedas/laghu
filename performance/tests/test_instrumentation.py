@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 import unittest
 
 from performance.instrumentation import cwv_metrics, histogram_delta, lighthouse_metrics, prometheus_snapshot, resource_delta, ssimulacra2_score

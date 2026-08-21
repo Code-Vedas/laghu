@@ -54,7 +54,7 @@ bool proxy_client_send_all(laghu_socket socket, SSL *tls, const void *data, size
 
 SSL_CTX *proxy_tls_context(const laghu_proxy_options *options) {
   SSL_CTX *context;
-  if (!options->origin_tls) return NULL;
+  if (options == NULL) return NULL;
   context = SSL_CTX_new(TLS_client_method());
   if (context == NULL) return NULL;
   if (!SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) || !SSL_CTX_set_default_verify_paths(context) ||
@@ -71,9 +71,8 @@ static SSL_CTX *proxy_downstream_tls_context_files(const char *certificate, cons
   SSL_CTX *context;
   context = SSL_CTX_new(TLS_server_method());
   if (context == NULL) return NULL;
-  if (!SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) ||
-      SSL_CTX_use_certificate_chain_file(context, certificate) != 1 || SSL_CTX_use_PrivateKey_file(context, private_key, SSL_FILETYPE_PEM) != 1 ||
-      SSL_CTX_check_private_key(context) != 1) {
+  if (!SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) || SSL_CTX_use_certificate_chain_file(context, certificate) != 1 ||
+      SSL_CTX_use_PrivateKey_file(context, private_key, SSL_FILETYPE_PEM) != 1 || SSL_CTX_check_private_key(context) != 1) {
     SSL_CTX_free(context);
     return NULL;
   }
@@ -326,8 +325,8 @@ static bool proxy_origin_idle_alive(laghu_socket socket) {
   return recv(socket, &byte, 1U, MSG_PEEK | MSG_DONTWAIT) > 0 ? false : errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
-bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, const char *host, const char *port,
-                          const char *authority, bool origin_tls, bool *timed_out) {
+bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, const char *host, const char *port, const char *authority,
+                          bool origin_tls, bool *timed_out) {
   proxy_queue *queue = worker->queue;
   const laghu_proxy_options *options = proxy_current_options(queue);
   uint64_t now = proxy_monotonic_ms();

@@ -55,6 +55,14 @@ static void publish_javascript_fixture(const char *cache_path, const char *url, 
   assert(fclose(file) == 0);
 }
 
+static const unsigned char *javascript_find(const unsigned char *data, size_t length, const char *needle) {
+  size_t index, needle_length = strlen(needle);
+  if (data == NULL || needle_length == 0U || needle_length > length) return NULL;
+  for (index = 0U; index <= length - needle_length; ++index)
+    if (memcmp(data + index, needle, needle_length) == 0) return data + index;
+  return NULL;
+}
+
 static void test_javascript_defer(const laghu_test_workspace *workspace) {
   static const char config[] =
       "# administrator approvals\n"
@@ -119,11 +127,11 @@ static void test_javascript_yield(void) {
   assert(laghu_csp_policy_add(&csp, "script-src 'nonce-yieldNonce-1'", strlen("script-src 'nonce-yieldNonce-1'")));
   assert(laghu_runtime_add_javascript_yield((laghu_buffer){cooperative, sizeof(cooperative) - 1U}, &csp, true, &result));
   assert(result.rewritten && result.length > sizeof(cooperative) - 1U);
-  assert(strstr((const char *)result.data, "nonce=\"yieldNonce-1\"") != NULL);
-  assert(strstr((const char *)result.data, "scheduler.postTask") != NULL);
-  assert(strstr((const char *)result.data, "requestIdleCallback") != NULL);
-  assert(strstr((const char *)result.data, "g.setTimeout(d,0)") != NULL);
-  assert(strstr((const char *)result.data, "data-laghu-yield=\"cooperative\"") != NULL);
+  assert(javascript_find(result.data, result.length, "nonce=\"yieldNonce-1\"") != NULL);
+  assert(javascript_find(result.data, result.length, "scheduler.postTask") != NULL);
+  assert(javascript_find(result.data, result.length, "requestIdleCallback") != NULL);
+  assert(javascript_find(result.data, result.length, "g.setTimeout(d,0)") != NULL);
+  assert(javascript_find(result.data, result.length, "data-laghu-yield=\"cooperative\"") != NULL);
   laghu_runtime_html_result_release(&result);
 
   assert(laghu_runtime_add_javascript_yield((laghu_buffer){unmarked, sizeof(unmarked) - 1U}, &csp, true, &result));
@@ -143,11 +151,11 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
   laghu_rum_options rum_options;
   laghu_rum_engine *rum_engine;
   laghu_runtime_job taken;
-  unsigned char received[64];
+  unsigned char received[1024U];
   char javascript_target[LAGHU_JAVASCRIPT_TARGET_SIZE];
   static const unsigned char payload[] = "runtime payload";
 
-  assert(laghu_test_queue_pair_open(&pair, workspace, "jobs.queue", 1U, 64U));
+  assert(laghu_test_queue_pair_open(&pair, workspace, "jobs.queue", 1U, 1024U));
   assert(laghu_javascript_target_normalize("  Defaults   AND supports ES6-module and not dead  ", javascript_target));
   assert(strcmp(javascript_target, "defaults and supports es6-module and not dead") == 0);
   assert(!laghu_javascript_target_normalize("extends ../browser", javascript_target));
@@ -174,7 +182,7 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
     assert(laghu_runtime_rewrite_javascript_html(&pair.producer, workspace->path, (laghu_buffer){html, sizeof(html) - 1U}, "/inline", policy_key,
                                                  "last 2 chrome versions", NULL, 100U, 60U, NULL, NULL, NULL, 1U, NULL, false, false, false, false,
                                                  false, false, 2048U, 8192U, &javascript_page));
-    assert(!javascript_page.rewritten && javascript_page.dependencies_pending);
+    assert(!javascript_page.rewritten && javascript_page.dependencies_pending && javascript_page.job_published);
     laghu_runtime_html_result_release(&javascript_page);
     assert(laghu_runtime_queue_try_take(&pair.consumer, &taken, received, sizeof(received)));
     assert(taken.kind == LAGHU_RUNTIME_JOB_JAVASCRIPT);
@@ -185,8 +193,40 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
                                                  "last 2 chrome versions", NULL, 101U, 60U, NULL, NULL, NULL, 1U, NULL, false, false, false, false,
                                                  false, false, 2048U, 8192U, &javascript_page));
     assert(javascript_page.rewritten && javascript_page.length < sizeof(html) - 1U);
-    assert(strstr((const char *)javascript_page.data, "function publicName(n){return n+1}") != NULL);
+    assert(!javascript_page.job_published);
+    assert(javascript_find(javascript_page.data, javascript_page.length, "function publicName(n){return n+1}") != NULL);
     laghu_runtime_html_result_release(&javascript_page);
+  }
+  {
+    static const char source[] =
+        "function outlinedPublic(veryLongLocal){return veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+"
+        "veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+"
+        "veryLongLocal;}";
+    static const char derived[] = "function outlinedPublic(n){return n+n+n+n+n+n+n+n+n+n+n+n+n+n+n+n}";
+    static const unsigned char html[] =
+        "<html><body><script>function outlinedPublic(veryLongLocal){return veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+"
+        "veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+veryLongLocal+"
+        "veryLongLocal+veryLongLocal+veryLongLocal;}</script></body></html>";
+    laghu_runtime_html_result page;
+    laghu_runtime_cache_entry entry;
+    char variant[LAGHU_RUNTIME_KEY_SIZE];
+    char expected[LAGHU_RUNTIME_KEY_SIZE + 32U];
+    assert(laghu_runtime_rewrite_javascript_html(&pair.producer, workspace->path, (laghu_buffer){html, sizeof(html) - 1U}, "/outline", policy_key,
+                                                 "last 2 chrome versions", NULL, 100U, 60U, NULL, NULL, NULL, 1U, NULL, false, false, false, false,
+                                                 true, false, 2048U, 1U, &page));
+    assert(!page.rewritten && page.dependencies_pending && page.job_published);
+    laghu_runtime_html_result_release(&page);
+    assert(laghu_runtime_queue_try_take(&pair.consumer, &taken, received, sizeof(received)));
+    publish_javascript_fixture(workspace->path, "/outline#script-1", policy_key, "last 2 chrome versions", source, derived, 2U, 100U, variant);
+    assert(laghu_runtime_cache_publish(workspace->path, taken.index_key, variant, taken.validator, "application/javascript", "swc-test",
+                                       (laghu_buffer){(const unsigned char *)derived, sizeof(derived) - 1U}, &entry));
+    assert(laghu_runtime_rewrite_javascript_html(&pair.producer, workspace->path, (laghu_buffer){html, sizeof(html) - 1U}, "/outline", policy_key,
+                                                 "last 2 chrome versions", NULL, 101U, 60U, NULL, NULL, NULL, 1U, NULL, false, false, false, false,
+                                                 true, false, 2048U, 1U, &page));
+    assert(page.rewritten);
+    assert(snprintf(expected, sizeof(expected), "src=\"/.laghu/js/%s\"></script>", variant) > 0);
+    assert(javascript_find(page.data, page.length, expected) != NULL);
+    laghu_runtime_html_result_release(&page);
   }
   {
     static const unsigned char html[] =
@@ -211,16 +251,18 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
                                                  "last 2 chrome versions", &csp, 101U, 60U, NULL, NULL, NULL, 1U, &interaction, true, false, false,
                                                  false, false, false, 2048U, 8192U, &page));
     assert(page.rewritten);
-    assert(strstr((const char *)page.data, "type=\"application/x-laghu-interaction\"") != NULL);
-    assert(strstr((const char *)page.data,
-                  "data-laghu-interaction-src=\"https://cdn.example.test/"
-                  "analytics.js\"") != NULL);
-    assert(strstr((const char *)page.data,
-                  "data-laghu-interaction-src=\"https://cdn.example.test/"
-                  "chat.js\"") != NULL);
-    assert(strstr((const char *)page.data, "data-laghu-interaction-loader") != NULL);
-    assert(strstr(strstr((const char *)page.data, "data-laghu-interaction-loader") + 1U, "data-laghu-interaction-loader") != NULL);
-    assert(strstr((const char *)page.data, "nonce=\"abc_DEF-123=\"") != NULL);
+    const unsigned char *loader;
+    assert(javascript_find(page.data, page.length, "type=\"application/x-laghu-interaction\"") != NULL);
+    assert(javascript_find(page.data, page.length,
+                           "data-laghu-interaction-src=\"https://cdn.example.test/"
+                           "analytics.js\"") != NULL);
+    assert(javascript_find(page.data, page.length,
+                           "data-laghu-interaction-src=\"https://cdn.example.test/"
+                           "chat.js\"") != NULL);
+    loader = javascript_find(page.data, page.length, "data-laghu-interaction-loader");
+    assert(loader != NULL);
+    assert(javascript_find(loader + 1U, page.length - (size_t)(loader + 1U - page.data), "data-laghu-interaction-loader") != NULL);
+    assert(javascript_find(page.data, page.length, "nonce=\"abc_DEF-123=\"") != NULL);
     laghu_runtime_html_result_release(&page);
   }
   {
@@ -271,8 +313,8 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
                                                  policy_key, "last 2 chrome versions", NULL, 101U, 60U, NULL, NULL, NULL, 1U, NULL, false, false,
                                                  false, true, false, false, 2048U, 8192U, &page));
     assert(page.rewritten);
-    assert(strstr((const char *)page.data, "src=") == NULL);
-    assert(strstr((const char *)page.data, derived) != NULL);
+    assert(javascript_find(page.data, page.length, "src=") == NULL);
+    assert(javascript_find(page.data, page.length, derived) != NULL);
     laghu_runtime_html_result_release(&page);
   }
   {
@@ -299,7 +341,8 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
     laghu_runtime_html_result page;
     laghu_runtime_cache_entry bundle_entry, map_entry;
     unsigned char bundle[1024U], map[2048U];
-    const char *route, *map_route;
+    const unsigned char *route;
+    const char *map_route;
     char bundle_key[LAGHU_RUNTIME_KEY_SIZE];
     char map_key[LAGHU_RUNTIME_KEY_SIZE];
     char fixture_variant[LAGHU_RUNTIME_KEY_SIZE];
@@ -319,9 +362,9 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
                                                  "last 2 chrome versions", NULL, 101U, 60U, NULL, NULL, NULL, 1U, NULL, false, false, true, false,
                                                  false, true, 2048U, 8192U, &page));
     assert(page.rewritten);
-    assert(strstr((const char *)page.data, "/.laghu/js/") != NULL);
-    assert(strstr((const char *)page.data, "data-laghu-combine=\"application-main\"") != NULL);
-    route = strstr((const char *)page.data, "/.laghu/js/");
+    assert(javascript_find(page.data, page.length, "/.laghu/js/") != NULL);
+    assert(javascript_find(page.data, page.length, "data-laghu-combine=\"application-main\"") != NULL);
+    route = javascript_find(page.data, page.length, "/.laghu/js/");
     assert(route != NULL);
     memcpy(bundle_key, route + 11U, LAGHU_SHA256_HEX_LENGTH);
     bundle_key[LAGHU_SHA256_HEX_LENGTH] = '\0';
@@ -377,7 +420,7 @@ static void test_javascript_rewrite(const laghu_test_workspace *workspace, const
     assert(laghu_runtime_rewrite_javascript_html(&pair.producer, workspace->path, (laghu_buffer){html, sizeof(html) - 1U}, "/page", policy_key,
                                                  "last 2 chrome versions", NULL, 101U, 60U, rum_engine, template_key, "https://example.test", 1U,
                                                  &defer, true, true, false, false, false, false, 2048U, 8192U, &page));
-    assert(page.rewritten && strstr((const char *)page.data, "src=\"/assets/deferred.js\" defer") != NULL);
+    assert(page.rewritten && javascript_find(page.data, page.length, "src=\"/assets/deferred.js\" defer") != NULL);
     laghu_runtime_html_result_release(&page);
   }
   laghu_rum_engine_destroy(rum_engine);

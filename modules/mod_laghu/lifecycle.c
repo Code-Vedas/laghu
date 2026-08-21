@@ -67,8 +67,7 @@ bool laghu_apache_queue_registry_add(const laghu_apache_config *parent, const la
         strcmp(existing->html_refresh_queue_path, service->html_refresh_queue) == 0 &&
         strcmp(existing->chrome_analysis_queue_path, service->chrome_analysis_queue) == 0 &&
         strcmp(existing->otel_trace_queue_path, service->otel_trace_queue) == 0 &&
-        strcmp(existing->chrome_analysis_output, service->chrome_analysis_output) == 0 &&
-        existing->rum_ttl == service->rum_ttl &&
+        strcmp(existing->chrome_analysis_output, service->chrome_analysis_output) == 0 && existing->rum_ttl == service->rum_ttl &&
         (!existing->font_enabled || strcmp(existing->font_queue_path, service->font_fetch_queue) == 0))
       return true;
   }
@@ -106,8 +105,7 @@ laghu_apache_queue_binding *laghu_apache_queue_binding_find_service(const laghu_
         strcmp(binding->html_refresh_queue_path, service->html_refresh_queue) == 0 &&
         strcmp(binding->chrome_analysis_queue_path, service->chrome_analysis_queue) == 0 &&
         strcmp(binding->otel_trace_queue_path, service->otel_trace_queue) == 0 &&
-        strcmp(binding->chrome_analysis_output, service->chrome_analysis_output) == 0 &&
-        binding->rum_ttl == service->rum_ttl &&
+        strcmp(binding->chrome_analysis_output, service->chrome_analysis_output) == 0 && binding->rum_ttl == service->rum_ttl &&
         (!font_enabled || strcmp(binding->font_queue_path, service->font_fetch_queue) == 0))
       return binding;
   }

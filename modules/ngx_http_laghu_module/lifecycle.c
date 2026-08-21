@@ -26,8 +26,8 @@ static void ngx_http_laghu_open_operational_registry(ngx_cycle_t *cycle) {
   cache_path = conf != NULL && conf->operational_cache.len != 0U ? (const char *)conf->operational_cache.data : LAGHU_NGINX_LIFECYCLE_CACHE;
   laghu_operational_registry_close(&ngx_http_laghu_operational);
   laghu_operational_registry_init(&ngx_http_laghu_operational);
-  (void)laghu_operational_registry_open(&ngx_http_laghu_operational, cache_path, LAGHU_OPERATIONAL_SURFACE_NGINX,
-                                        LAGHU_OPERATIONAL_PROCESS_ADAPTER, true, (uint64_t)ngx_time());
+  (void)laghu_operational_registry_open(&ngx_http_laghu_operational, cache_path, LAGHU_OPERATIONAL_SURFACE_NGINX, LAGHU_OPERATIONAL_PROCESS_ADAPTER,
+                                        true, (uint64_t)ngx_time());
 }
 
 static bool ngx_http_laghu_attach_queue(laghu_runtime_queue *queue, bool *attached, const char *path) {
@@ -48,8 +48,7 @@ static void ngx_http_laghu_refresh_runtime_queue_snapshot(ngx_http_laghu_loc_con
   conf->runtime_queue_capabilities = 0U;
   conf->runtime_queue_snapshot_ready = false;
   if (!conf->runtime_queue_attached || !laghu_runtime_queue_snapshot_get(&conf->runtime_queue, &snapshot)) return;
-  if (snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U || snapshot.worker_heartbeat > now ||
-      now - snapshot.worker_heartbeat > 45U)
+  if (snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U || snapshot.worker_heartbeat > now || now - snapshot.worker_heartbeat > 45U)
     return;
   conf->runtime_queue_capabilities = snapshot.capabilities;
   conf->runtime_queue_snapshot_ready = true;

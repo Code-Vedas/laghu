@@ -83,8 +83,8 @@ static const laghu_service_descriptor_entry laghu_service_descriptors[] = {
      {"oteltracequeue", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_OTEL_SAMPLING_RATE, "otel_sampling_rate", LAGHU_SERVICE_VALUE_UNSIGNED, LAGHU_SERVICE_INHERIT_SCALAR, 0U, 100U, false},
      {"otelsamplingrate", NULL, NULL}},
-    {{LAGHU_SERVICE_SETTING_OTEL_CA_FILE, "otel_ca_file", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
-      LAGHU_RUNTIME_PATH_SIZE - 1U, false},
+    {{LAGHU_SERVICE_SETTING_OTEL_CA_FILE, "otel_ca_file", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U, LAGHU_RUNTIME_PATH_SIZE - 1U,
+      false},
      {"otelcafile", NULL, NULL}},
     {{LAGHU_SERVICE_SETTING_ASSET_OFFLOAD_CONFIG, "asset_offload_config", LAGHU_SERVICE_VALUE_STRING, LAGHU_SERVICE_INHERIT_SCALAR, 1U,
       LAGHU_RUNTIME_PATH_SIZE - 1U, false},
@@ -501,7 +501,8 @@ bool laghu_service_config_apply(laghu_service_config *config, laghu_service_sett
       config->owned_layout_reservations = NULL;
       break;
     case LAGHU_SERVICE_SETTING_OTEL_ENDPOINT:
-      if (strncmp(value, "https://", 8U) != 0 || strchr(value, '?') != NULL || !laghu_service_copy(config->otel_endpoint, sizeof(config->otel_endpoint), value))
+      if (strncmp(value, "https://", 8U) != 0 || strchr(value, '?') != NULL ||
+          !laghu_service_copy(config->otel_endpoint, sizeof(config->otel_endpoint), value))
         goto format;
       break;
     case LAGHU_SERVICE_SETTING_OTEL_TRACE_QUEUE:

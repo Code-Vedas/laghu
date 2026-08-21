@@ -32,7 +32,8 @@ runtime:
 ```
 
 `sites` selects a host-specific static document root. `routes` are ordered and use `exact`, `prefix`, or `ordered_regex` matching;
-each route declares either a local `redirect` or an HTTP `proxy_pass`. Optional `response_header_name` and
+each route declares either a local `redirect` or a `proxy_pass`. Route targets are `http://`, verified `https://`, `fastcgi://`,
+`uwsgi://`, or `scgi://`; targets cannot contain a path, query, userinfo, or fragment. Optional `response_header_name` and
 `response_header_value` add one validated response header to a redirect. A site can contain its own `routes` list, which only
 matches that site's `Host` value. Global routes apply to every host.
 
@@ -61,7 +62,46 @@ Lifecycle-owned service resources (cache backend, queues, TLS contexts, RUM engi
 running process. Keep their topology global; scoped values are validated and resolved, and request behavior receives the matching
 resolved service settings.
 
-Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lifecycle changes. Transaction paths exclude the complete query string; headers, bodies, credentials, tokens, hosts, and cache keys are never emitted. Worker services use the same schema on stderr for lifecycle and job events.
+## Static and edge policy
+
+The following keys are accepted in `runtime:` for global policy and inside a `laghu:` mapping at site or route scope. They resolve
+once as global → site → route, with a child scalar replacing its parent. `allow` and `deny` are replacement lists; a matching deny
+always wins. A child may change either rate field and inherits the other field from its parent.
+
+| Key | Accepted value | Effect |
+| --- | --- | --- |
+| `spa_fallback` | absolute local URL path | Serves this static path when a static lookup misses; it cannot contain `..`, a query, or a fragment. |
+| `request_header_limit` | `1k..64k` | Bounds complete HTTP request headers before body reads. |
+| `request_body_limit` | `0..64m` | Bounds declared request bodies before body reads. |
+| `static_max_bytes` | `1..64m` | Bounds a regular static file before it is read or transformed. |
+| `compression` | `off` or `gzip` | Enables gzip only for eligible full static responses when the client advertises `gzip`; ranges remain byte-exact. |
+| `allow`, `deny` | CIDR sequence | Enforces direct-peer IPv4 or IPv6 access policy. |
+| `basic_auth_file` | absolute owner-only regular file | Loads Basic-auth records at configuration load or reload. |
+| `basic_auth_realm` | printable text without `"`, CR, or LF | Sets the `401` Basic realm; requires an inherited or local auth file. |
+| `rate_limit`, `rate_burst` | `1..100000` | Per direct-peer, per-resolved-scope token bucket in requests/second and maximum burst. |
+
+An auth file is not read on a request path. It must be owned by the Laghu service account, must not grant any group or other
+permission, and contains one `username:sha256:64-lower-or-upper-hex-digest` record per line. User names cannot contain whitespace
+or `:`. Laghu compares the SHA-256 password digest in constant time and never logs the authorization header, password, or digest.
+
+Every successful static response—including SPA fallback, byte ranges, and directory listings—enters the shared Laghu transaction
+contract. A partial response remains partial and is not recompressed or substituted from cache. Limit, CIDR, auth, and rate
+rejections are generated before origin or static body I/O.
+
+## Upstream health and failover
+
+An HTTP route can supply `health_check: /absolute-path` and an optional `health_interval: 1..3600` (default `5`). Lifecycle
+maintenance performs bounded `GET` probes for every primary and failover target; only `2xx` and `3xx` responses are healthy.
+Connection, TLS, write, framing, and pre-header read failures also mark a selected target unhealthy immediately. A later successful
+active probe returns it to service.
+
+Routes try each configured target at most once. If a `GET`, `HEAD`, or `OPTIONS` request loses its selected target before response
+headers, Laghu can retry the next healthy target. Requests with other methods—including `POST`—are never replayed. FastCGI, uWSGI,
+and SCGI use their native bounded request framing and CGI-style response headers. Active `health_check` applies to HTTP and HTTPS
+routes; gateway protocols use the same idempotent-method failover rule, and only after bounded connection or protocol failures.
+Credentials are not supported in any upstream target.
+
+Laghu Server writes laghu-log-v1 JSON records to stderr for transactions and lifecycle changes. Transaction paths exclude the complete query string; headers, bodies, credentials, tokens, hosts, and cache keys are never emitted. Transaction records also contain bounded route kind, upstream authority, upstream protocol, access outcome, failover count, and static/SPA/compression/rate flags. They are fixed metadata, not copied request headers. Worker services use the same schema on stderr for lifecycle and job events.
 
 | YAML key (former option) | Accepted value | Default | Effect |
 | --- | --- | --- | --- |
@@ -161,10 +201,12 @@ The proxy itself defaults enabled with `balanced`, unlike the disabled-by-defaul
 ## Reload
 
 Set `runtime.pid_file` and run `laghu reload --config /etc/laghu/laghu.yaml`. The command first performs the same strict YAML,
-policy, service, and path validation as startup, then signals the running process. The process constructs a separate
-immutable replacement and atomically publishes it only after validation and compatibility checks. Invalid or incompatible input
-leaves the last valid configuration live and emits a `reload` `retained` lifecycle record; a successful swap emits `reload`
-`applied`.
+policy, service, and path validation as startup, then atomically publishes that absolute candidate path beside the PID file before
+signaling the running process. The PID directory must be owned by the running user and not group- or world-writable. The daemon
+claims the owner-only, no-follow request file, removes it before loading, and constructs a separate immutable replacement from that
+exact path. It atomically publishes only a validated compatible snapshot. Startup removes stale request state, and every consumed
+request is removed before validation, so an invalid request cannot replay later. Invalid or incompatible input leaves the last valid
+configuration live and emits a `reload` `retained` lifecycle record; a successful swap emits `reload` `applied`.
 
 Reload changes request-policy, route, and static-site settings without stopping workers. Listener, worker, connection-pool,
 cache/queue/RUM/source, PID-file, and TLS/SNI topology are lifecycle-owned, so changes to them require a normal restart and are

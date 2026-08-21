@@ -16,8 +16,8 @@ bool laghu_precompressed_text_type(const char *content_type);
 bool laghu_precompressed_publish(const char *cache_path, laghu_buffer body, const char *content_type, const char *validator);
 bool laghu_precompressed_select(const char *cache_path, laghu_buffer body, const char *accept_encoding, laghu_runtime_cache_entry *entry,
                                 laghu_precompressed_coding *coding);
-bool laghu_precompressed_select_hash(const char *cache_path, const char *payload_hash, const char *accept_encoding,
-                                     laghu_runtime_cache_entry *entry, laghu_precompressed_coding *coding);
+bool laghu_precompressed_select_hash(const char *cache_path, const char *payload_hash, const char *accept_encoding, laghu_runtime_cache_entry *entry,
+                                     laghu_precompressed_coding *coding);
 const char *laghu_precompressed_coding_name(laghu_precompressed_coding coding);
 
 #endif

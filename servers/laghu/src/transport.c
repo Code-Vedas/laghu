@@ -114,17 +114,19 @@ bool proxy_send_headers(laghu_socket client, SSL *client_tls, const proxy_respon
   if (count <= 0 || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
   for (index = 0U; index < origin->header_count; ++index) {
     if (proxy_hop(origin->headers[index].name) || proxy_connection_nominates(origin->headers, origin->header_count, origin->headers[index].name) ||
-        proxy_name_equal(origin->headers[index].name, "Content-Length") || proxy_operation_removes(result, origin->headers[index].name))
+        proxy_name_equal(origin->headers[index].name, "Content-Length") ||
+        (result != NULL && proxy_operation_removes(result, origin->headers[index].name)))
       continue;
     count = snprintf(line, sizeof(line), "%s: %s\r\n", origin->headers[index].name, origin->headers[index].value);
     if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
   }
-  for (index = 0U; index < result->header_operation_count; ++index) {
-    const laghu_http_header_operation *operation = &result->header_operations[index];
-    if (operation->kind == LAGHU_HTTP_HEADER_REMOVE || proxy_name_equal(operation->name, "Content-Length")) continue;
-    count = snprintf(line, sizeof(line), "%s: %s\r\n", operation->name, operation->value == NULL ? "" : operation->value);
-    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
-  }
+  if (result != NULL)
+    for (index = 0U; index < result->header_operation_count; ++index) {
+      const laghu_http_header_operation *operation = &result->header_operations[index];
+      if (operation->kind == LAGHU_HTTP_HEADER_REMOVE || proxy_name_equal(operation->name, "Content-Length")) continue;
+      count = snprintf(line, sizeof(line), "%s: %s\r\n", operation->name, operation->value == NULL ? "" : operation->value);
+      if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
+    }
   count = has_content_length ? snprintf(line, sizeof(line), "Content-Length: %zu\r\nConnection: close\r\n\r\n", content_length)
                              : snprintf(line, sizeof(line), "Connection: close\r\n\r\n");
   return count > 0 && proxy_client_send_all(client, client_tls, line, (size_t)count);

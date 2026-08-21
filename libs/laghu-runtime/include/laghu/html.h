@@ -56,6 +56,7 @@ typedef struct {
   bool invalid;
   bool rewritten;
   bool dependencies_pending;
+  bool job_published;
   bool javascript_defer_recommended;
   char javascript_defer_path[LAGHU_RUNTIME_PATH_SIZE];
   char javascript_defer_template[LAGHU_RUNTIME_KEY_SIZE];

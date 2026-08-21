@@ -4,10 +4,10 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <inttypes.h>
-#include <stdlib.h>
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <stdlib.h>
 
 #include "laghu/html_cache.h"
 #include "ngx_http_laghu_internal.h"
@@ -249,8 +249,7 @@ ngx_int_t ngx_http_laghu_transaction_header_filter(ngx_http_request_t *request) 
   context->html_capture = result.action == LAGHU_HTTP_ACTION_CAPTURE_HTML;
   context->css_capture = result.action == LAGHU_HTTP_ACTION_CAPTURE_CSS;
   context->header_deferred = context->html_capture || context->css_capture || result.action == LAGHU_HTTP_ACTION_CAPTURE_JAVASCRIPT ||
-                             (result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE &&
-                              strcmp(context->transaction.content_type, "image/svg+xml") == 0);
+                             (result.action == LAGHU_HTTP_ACTION_CAPTURE_IMAGE && strcmp(context->transaction.content_type, "image/svg+xml") == 0);
   request->filter_need_in_memory = 1U;
   ngx_http_set_ctx(request, context, ngx_http_laghu_module);
   laghu_http_transaction_result_release(&result);

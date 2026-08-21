@@ -69,8 +69,8 @@ static bool laghu_queue_browser_analysis_valid(const laghu_runtime_job *job) {
 }
 
 static bool laghu_queue_trace_valid(const laghu_runtime_job *job) {
-  if (job->kind != LAGHU_RUNTIME_JOB_TRACE_EXPORT) return job->trace.trace_id[0] == '\0' ||
-      (laghu_trace_context_traceparent(&job->trace, (char[56U]){0}));
+  if (job->kind != LAGHU_RUNTIME_JOB_TRACE_EXPORT)
+    return job->trace.trace_id[0] == '\0' || (laghu_trace_context_traceparent(&job->trace, (char[56U]){0}));
   return job->payload.length > 0U && job->payload.length <= 65536U && job->trace.sampled &&
          laghu_trace_context_traceparent(&job->trace, (char[56U]){0});
 }
@@ -85,8 +85,7 @@ static bool laghu_queue_job_valid(const laghu_runtime_job *job, size_t payload_l
          laghu_wire_string_valid((const unsigned char *)job->validator, sizeof(job->validator)) &&
          laghu_wire_string_valid((const unsigned char *)job->content_type, sizeof(job->content_type)) && laghu_queue_sprite_valid(job) &&
          laghu_queue_font_valid(job) && laghu_queue_javascript_valid(job) && laghu_queue_browser_analysis_valid(job) &&
-         laghu_queue_trace_valid(job) &&
-         job->payload.length <= payload_limit && (job->payload.data != NULL || job->payload.length == 0U);
+         laghu_queue_trace_valid(job) && job->payload.length <= payload_limit && (job->payload.data != NULL || job->payload.length == 0U);
 }
 
 static bool laghu_queue_size(unsigned int slots, size_t payload, size_t *result) {

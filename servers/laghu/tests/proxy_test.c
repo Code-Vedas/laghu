@@ -4,15 +4,16 @@
 // LICENSE file in the root directory of this source tree.
 
 #include "laghu/proxy.h"
-#include "server_internal.h"
 
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+#include "server_internal.h"
 
 #define CHECK(value)                                          \
   do {                                                        \
@@ -39,8 +40,16 @@ static bool service_finalize(laghu_service_config *config) {
   return laghu_service_config_finalize(config, &options, &diagnostic);
 }
 
-static bool write_yaml_fixture(char path[])
-{
+static bool proxy_test_path_join(char *target, size_t target_size, const char *base, const char *suffix) {
+  size_t base_length = strlen(base);
+  size_t suffix_length = strlen(suffix);
+  if (base_length >= target_size || suffix_length >= target_size - base_length) return false;
+  memcpy(target, base, base_length);
+  memcpy(target + base_length, suffix, suffix_length + 1U);
+  return true;
+}
+
+static bool write_yaml_fixture(char path[]) {
   static const char fixture[] =
       "schema: 1\n"
       "runtime:\n"
@@ -71,13 +80,68 @@ static bool write_yaml_fixture(char path[])
       "routes:\n"
       "  - match: ordered_regex\n"
       "    pattern: ^/old/[0-9]+$\n"
-      "    proxy_pass: http://127.0.0.1:9000\n";
+      "    proxy_pass: https://127.0.0.1:9000\n"
+      "    health_check: /healthz\n"
+      "    health_interval: 9\n"
+      "    failover:\n"
+      "      - https://127.0.0.1:9001\n";
   int file = mkstemp(path);
   return file >= 0 && write(file, fixture, sizeof(fixture) - 1U) == (ssize_t)(sizeof(fixture) - 1U) && close(file) == 0;
 }
 
-static bool write_yaml_fragment_fixture(char directory[], char root[], char fragment[])
-{
+static bool gateway_health_rejected_test(void) {
+  static const char fixture[] =
+      "schema: 1\n"
+      "runtime:\n"
+      "  listen: 127.0.0.1:8080\n"
+      "  origin: http://127.0.0.1:8000\n"
+      "  cache: /tmp/cache\n"
+      "  worker_queue: /tmp/jobs\n"
+      "routes:\n"
+      "  - match: exact\n"
+      "    pattern: /app\n"
+      "    proxy_pass: fastcgi://127.0.0.1:9000\n"
+      "    health_check: /healthz\n";
+  char path[] = "/tmp/laghu-gateway-health-XXXXXX";
+  laghu_proxy_options options;
+  char error[128U];
+  int file = mkstemp(path);
+  bool rejected;
+  if (file < 0 || write(file, fixture, sizeof(fixture) - 1U) != (ssize_t)(sizeof(fixture) - 1U) || close(file) != 0) return false;
+  laghu_proxy_options_init(&options);
+  rejected = laghu_proxy_load_yaml(path, &options, error, sizeof(error)) != LAGHU_PROXY_PARSE_OK;
+  laghu_proxy_options_dispose(&options);
+  (void)unlink(path);
+  return rejected;
+}
+
+static bool health_interval_requires_check_test(void) {
+  static const char fixture[] =
+      "schema: 1\n"
+      "runtime:\n"
+      "  listen: 127.0.0.1:8080\n"
+      "  origin: http://127.0.0.1:8000\n"
+      "  cache: /tmp/cache\n"
+      "  worker_queue: /tmp/jobs\n"
+      "routes:\n"
+      "  - match: exact\n"
+      "    pattern: /app\n"
+      "    proxy_pass: http://127.0.0.1:9000\n"
+      "    health_interval: 1\n";
+  char path[] = "/tmp/laghu-health-interval-XXXXXX";
+  laghu_proxy_options options;
+  char error[128U];
+  int file = mkstemp(path);
+  bool rejected;
+  if (file < 0 || write(file, fixture, sizeof(fixture) - 1U) != (ssize_t)(sizeof(fixture) - 1U) || close(file) != 0) return false;
+  laghu_proxy_options_init(&options);
+  rejected = laghu_proxy_load_yaml(path, &options, error, sizeof(error)) != LAGHU_PROXY_PARSE_OK;
+  laghu_proxy_options_dispose(&options);
+  (void)unlink(path);
+  return rejected;
+}
+
+static bool write_yaml_fragment_fixture(char directory[], char root[], char fragment[]) {
   static const char root_contents[] =
       "schema: 1\n"
       "runtime:\n"
@@ -94,9 +158,10 @@ static bool write_yaml_fragment_fixture(char directory[], char root[], char frag
   char fragments[LAGHU_RUNTIME_PATH_SIZE];
   FILE *file;
   if (mkdtemp(directory) == NULL) return false;
-  (void)snprintf(root, LAGHU_RUNTIME_PATH_SIZE, "%s/laghu.yaml", directory);
-  (void)snprintf(fragments, sizeof(fragments), "%s/conf.d", directory);
-  (void)snprintf(fragment, LAGHU_RUNTIME_PATH_SIZE, "%s/10-forwarding.yaml", fragments);
+  if (!proxy_test_path_join(root, LAGHU_RUNTIME_PATH_SIZE, directory, "/laghu.yaml") ||
+      !proxy_test_path_join(fragments, sizeof(fragments), directory, "/conf.d") ||
+      !proxy_test_path_join(fragment, LAGHU_RUNTIME_PATH_SIZE, fragments, "/10-forwarding.yaml"))
+    return false;
   if (mkdir(fragments, 0700) != 0) return false;
   file = fopen(root, "wb");
   if (file == NULL || fputs(root_contents, file) < 0 || fclose(file) != 0) return false;
@@ -136,8 +201,8 @@ static bool static_response_test(void) {
   close(sockets[1]);
   if (received <= 0) return false;
   output[received] = '\0';
-  if (access.status != 200U || strstr(output, "Content-Type: text/html") == NULL ||
-      strstr(output, "X-Static-Policy: enabled") == NULL || strstr(output, "\r\n\r\nhello") == NULL)
+  if (access.status != 200U || strstr(output, "Content-Type: text/html") == NULL || strstr(output, "X-Static-Policy: enabled") == NULL ||
+      strstr(output, "\r\n\r\nhello") == NULL)
     return false;
   (void)snprintf(listed, sizeof(listed), "%s/listed", directory);
   if (mkdir(listed, 0700) != 0 || socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) return false;
@@ -168,6 +233,51 @@ static bool route_rewrite_test(void) {
   (void)snprintf(options.routes[0].rewrite, sizeof(options.routes[0].rewrite), "%s", "/index.html");
   (void)snprintf(request.target, sizeof(request.target), "%s", "/legacy/page?keep=ignored");
   return proxy_route_rewrite(&options, &request) && !strcmp(request.target, "/index.html");
+}
+
+static bool scoped_rules_test(void) {
+  static const char auth_contents[] = "operator:sha256:0000000000000000000000000000000000000000000000000000000000000000\n";
+  char auth_path[] = "/tmp/laghu-basic-auth-XXXXXX";
+  char auth_link[] = "/tmp/laghu-basic-auth-link-XXXXXX";
+  char error[128U];
+  laghu_proxy_rules global;
+  laghu_proxy_rules site;
+  laghu_proxy_rules route;
+  laghu_proxy_rules merged;
+  int file = mkstemp(auth_path);
+  bool result;
+  if (file < 0 || write(file, auth_contents, sizeof(auth_contents) - 1U) != (ssize_t)(sizeof(auth_contents) - 1U) || close(file) != 0) return false;
+  laghu_proxy_rules_init(&global);
+  laghu_proxy_rules_init(&site);
+  laghu_proxy_rules_init(&route);
+  result = laghu_proxy_rules_apply(&global, "compression", "gzip", error, sizeof(error)) &&
+           laghu_proxy_rules_apply(&global, "rate_limit", "10", error, sizeof(error)) &&
+           laghu_proxy_rules_apply(&global, "rate_burst", "8", error, sizeof(error)) &&
+           laghu_proxy_rules_apply(&global, "allow", "127.0.0.1/32", error, sizeof(error)) &&
+           laghu_proxy_rules_apply(&site, "basic_auth_file", auth_path, error, sizeof(error)) &&
+           laghu_proxy_rules_apply(&site, "basic_auth_realm", "Private", error, sizeof(error)) &&
+           laghu_proxy_rules_apply(&route, "rate_limit", "2", error, sizeof(error)) &&
+           laghu_proxy_rules_merge(&merged, &global, &site, error, sizeof(error)) &&
+           laghu_proxy_rules_merge(&merged, &merged, &route, error, sizeof(error));
+  if (result)
+    result = merged.compression == LAGHU_PROXY_COMPRESSION_GZIP && merged.rate_per_second == 2U && merged.rate_burst == 8U &&
+             merged.allow_count == 1U && merged.basic_auth_user_count == 1U && !strcmp(merged.basic_auth_realm, "Private") &&
+             !laghu_proxy_rules_apply(&route, "request_header_limit", "1023", error, sizeof(error));
+  if (chmod(auth_path, 0644) != 0) result = false;
+  laghu_proxy_rules_init(&route);
+  if (result) result = !laghu_proxy_rules_apply(&route, "basic_auth_file", auth_path, error, sizeof(error));
+  {
+    int link_file = mkstemp(auth_link);
+    if (link_file < 0 || close(link_file) != 0 || unlink(auth_link) != 0 || symlink(auth_path, auth_link) != 0)
+      result = false;
+    else {
+      laghu_proxy_rules_init(&route);
+      if (result) result = !laghu_proxy_rules_apply(&route, "basic_auth_file", auth_link, error, sizeof(error));
+    }
+  }
+  (void)unlink(auth_link);
+  (void)unlink(auth_path);
+  return result;
 }
 
 int main(void) {
@@ -219,8 +329,8 @@ int main(void) {
                      "1m",
                      "--worker-queue",
                      "/tmp/jobs"};
-  char *static_only[] = {"laghu", "--listen", "127.0.0.1:8080", "--document-root", "/srv/static", "--cache", "/tmp/cache",
-                         "--worker-queue", "/tmp/jobs"};
+  char *static_only[] = {"laghu",   "--listen",   "127.0.0.1:8080", "--document-root", "/srv/static",
+                         "--cache", "/tmp/cache", "--worker-queue", "/tmp/jobs"};
   char *backend_conflict[] = {"laghu",    "--listen",   "127.0.0.1:8080",       "--origin",          "http://127.0.0.1:8000",
                               "--cache",  "/tmp/cache", "--file-cache-backend", "file:///tmp/cache", "--worker-queue",
                               "/tmp/jobs"};
@@ -243,8 +353,8 @@ int main(void) {
                       "--worker-queue", "/tmp/jobs", "--preset",       "safe",     "--rewrite-level",       "core"};
   char *bad_drain[] = {"laghu",          "--listen",  "127.0.0.1:8080",  "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                        "--worker-queue", "/tmp/jobs", "--drain-timeout", "0"};
-  char *pool[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
-                  "--worker-queue", "/tmp/jobs", "--origin-pool-size", "1", "--origin-idle-timeout", "9"};
+  char *pool[] = {"laghu",          "--listen",  "127.0.0.1:8080",     "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
+                  "--worker-queue", "/tmp/jobs", "--origin-pool-size", "1",        "--origin-idle-timeout", "9"};
   char *filters[] = {"laghu",           "--listen",         "127.0.0.1:8080", "--origin",        "http://127.0.0.1:8000",
                      "--cache",         "/tmp/cache",       "--worker-queue", "/tmp/jobs",       "--enable-filter",
                      "resource_inline", "--disable-filter", "html_minify",    "--forbid-filter", "javascript_defer"};
@@ -289,11 +399,11 @@ int main(void) {
   char *secure[] = {"laghu",      "--listen",        "127.0.0.1:8080", "--origin",         "https://example.test", "--cache",
                     "/tmp/cache", "--worker-queue",  "/tmp/jobs",      "--origin-ca-file", "/tmp/ca.pem",          "--forwarded-headers",
                     "both",       "--trusted-proxy", "127.0.0.0/8",    "--trusted-proxy",  "2001:db8::/32"};
-  char *downstream_tls[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache",
-                            "/tmp/cache", "--worker-queue", "/tmp/jobs", "--tls-certificate", "/tmp/server.pem",
-                            "--tls-private-key", "/tmp/server.key"};
-  char *incomplete_downstream_tls[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache",
-                                       "/tmp/cache", "--worker-queue", "/tmp/jobs", "--tls-certificate", "/tmp/server.pem"};
+  char *downstream_tls[] = {"laghu",           "--listen",          "127.0.0.1:8080", "--origin",  "http://127.0.0.1:8000",
+                            "--cache",         "/tmp/cache",        "--worker-queue", "/tmp/jobs", "--tls-certificate",
+                            "/tmp/server.pem", "--tls-private-key", "/tmp/server.key"};
+  char *incomplete_downstream_tls[] = {"laghu",      "--listen",       "127.0.0.1:8080", "--origin",          "http://127.0.0.1:8000", "--cache",
+                                       "/tmp/cache", "--worker-queue", "/tmp/jobs",      "--tls-certificate", "/tmp/server.pem"};
   char *bad_cidr[] = {"laghu",          "--listen",  "127.0.0.1:8080",  "--origin",   "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                       "--worker-queue", "/tmp/jobs", "--trusted-proxy", "127.0.0.1/8"};
   char *bad_rum[] = {"laghu",      "--listen",       "127.0.0.1:8080", "--origin",    "http://127.0.0.1:8000",      "--cache",
@@ -378,7 +488,8 @@ int main(void) {
   CHECK(options.site_count == 1U && !strcmp(options.sites[0].host, "static.example.test"));
   CHECK(options.sites[0].config.preset == LAGHU_PRESET_SAFE && !strcmp(options.sites[0].service.javascript_target, "defaults"));
   CHECK(options.route_count == 2U && options.routes[1].match == LAGHU_PROXY_ROUTE_ORDERED_REGEX);
-  CHECK(!strcmp(options.routes[1].upstream_host, "127.0.0.1") && !strcmp(options.routes[1].upstream_port, "9000"));
+  CHECK(!strcmp(options.routes[1].upstream_host, "127.0.0.1") && !strcmp(options.routes[1].upstream_port, "9000") && options.routes[1].upstream_tls &&
+        options.routes[1].failover_count == 1U && options.routes[1].failovers[0].tls && options.routes[1].health_interval == 9U);
   {
     proxy_request request = {0};
     laghu_proxy_options resolved;
@@ -408,6 +519,9 @@ int main(void) {
   CHECK(rmdir(yaml_directory) == 0);
   CHECK(static_response_test());
   CHECK(route_rewrite_test());
+  CHECK(scoped_rules_test());
+  CHECK(gateway_health_rejected_test());
+  CHECK(health_interval_requires_check_test());
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.service.purge_method && options.service.purge_query && options.service.statistics && options.service.purge_allow_count == 1U);
@@ -471,8 +585,7 @@ int main(void) {
   CHECK(options.service.trusted_proxy_count == 2U);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, downstream_tls, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
-  CHECK(options.downstream_tls && !strcmp(options.tls_certificate, "/tmp/server.pem") &&
-        !strcmp(options.tls_private_key, "/tmp/server.key"));
+  CHECK(options.downstream_tls && !strcmp(options.tls_certificate, "/tmp/server.pem") && !strcmp(options.tls_private_key, "/tmp/server.key"));
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(11, incomplete_downstream_tls, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   laghu_service_config_init(&expected_service);

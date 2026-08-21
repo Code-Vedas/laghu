@@ -76,10 +76,14 @@ bool laghu_image_classify(laghu_buffer input, laghu_image_content_class *output)
   g_object_unref(thumbnail);
   /* The bounded thumbnail avoids source-size-dependent work. Low variance is
    * flat-color; high variance with few source pixels is screenshot-like. */
-  if (deviation < 8.0) *output = LAGHU_IMAGE_CONTENT_FLAT_COLOR;
-  else if (input.length < 65536U && deviation > 45.0) *output = LAGHU_IMAGE_CONTENT_SCREENSHOT;
-  else if (deviation < 24.0) *output = LAGHU_IMAGE_CONTENT_ILLUSTRATION;
-  else *output = LAGHU_IMAGE_CONTENT_PHOTO;
+  if (deviation < 8.0)
+    *output = LAGHU_IMAGE_CONTENT_FLAT_COLOR;
+  else if (input.length < 65536U && deviation > 45.0)
+    *output = LAGHU_IMAGE_CONTENT_SCREENSHOT;
+  else if (deviation < 24.0)
+    *output = LAGHU_IMAGE_CONTENT_ILLUSTRATION;
+  else
+    *output = LAGHU_IMAGE_CONTENT_PHOTO;
   return true;
 #else
   (void)input;
@@ -323,14 +327,13 @@ bool laghu_image_variant_key(const laghu_image_backend *backend, const laghu_ima
     }
     return false;
   }
-  length =
-      snprintf(canonical, sizeof(canonical),
-               "laghu-image\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
-               "016llx\n%d\n%d\n%d\n%d\n%d",
-               source_hash, policy_key, LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
-               (unsigned long long)(request->filters & LAGHU_IMAGE_FILTER_ALL), request->quality, request->target_width, request->target_height,
-               (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0, request->accept_webp ? 1 : 0, request->accept_avif ? 1 : 0,
-               request->accept_jxl ? 1 : 0, request->denoise ? 1 : 0);
+  length = snprintf(canonical, sizeof(canonical),
+                    "laghu-image\n%s\n%s\n%s\n%s\n%08x\n%016llx\n%u\n%u\n%u\n%"
+                    "016llx\n%d\n%d\n%d\n%d\n%d",
+                    source_hash, policy_key, LAGHU_IMAGE_ENCODER_OPTIONS, backend->backend_id, backend->capabilities,
+                    (unsigned long long)(request->filters & LAGHU_IMAGE_FILTER_ALL), request->quality, request->target_width, request->target_height,
+                    (unsigned long long)request->resize_filter, request->allow_lossy ? 1 : 0, request->accept_webp ? 1 : 0,
+                    request->accept_avif ? 1 : 0, request->accept_jxl ? 1 : 0, request->denoise ? 1 : 0);
   if (length <= 0 || (size_t)length >= sizeof(canonical)) {
     output[0] = '\0';
     return false;
@@ -420,8 +423,7 @@ static bool laghu_vips_probe_avif(void) {
   size_t encoded_length = 0U;
   bool available = false;
   if (!laghu_vips_has_operation("heifsave_buffer") || !laghu_vips_has_operation("heifload_buffer") ||
-      vips_black(&source, 2, 2, "bands", 3, NULL) != 0 ||
-      vips_copy(source, &rgb, "interpretation", VIPS_INTERPRETATION_sRGB, NULL) != 0 ||
+      vips_black(&source, 2, 2, "bands", 3, NULL) != 0 || vips_copy(source, &rgb, "interpretation", VIPS_INTERPRETATION_sRGB, NULL) != 0 ||
       vips_image_write_to_buffer(rgb, ".avif", &encoded, &encoded_length, NULL) != 0 ||
       (decoded = vips_image_new_from_buffer(encoded, encoded_length, "", NULL)) == NULL) {
     vips_error_clear();
@@ -967,7 +969,7 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
     if (laghu_image_save(candidate_source, target_format, request, lossless_value, (effective & LAGHU_IMAGE_JPEG_PROGRESSIVE) != 0U,     \
                          (effective & LAGHU_IMAGE_JPEG_SAMPLING) != 0U, &candidate_bytes, &candidate_length) == 0) {                     \
       laghu_image_consider(result, candidate_bytes, candidate_length, target_format, prepared_filters | (filter_bits), candidate_source, \
-                           lossless_value, width, height, frames,                                                                         \
+                           lossless_value, width, height, frames,                                                                        \
                            (target_format == LAGHU_IMAGE_FORMAT_JXL && request->accept_jxl) ||                                           \
                                (target_format == LAGHU_IMAGE_FORMAT_AVIF && request->accept_avif &&                                      \
                                 (!request->accept_jxl || result->output_format != LAGHU_IMAGE_FORMAT_JXL)) ||                            \
@@ -1056,7 +1058,7 @@ bool laghu_image_optimize(const laghu_image_backend *backend, const laghu_image_
       if ((effective & (LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_WEBP)) != 0U) {
         bool lossless = (effective & LAGHU_IMAGE_RECOMPRESS_IMAGES) != 0U || !request->allow_lossy;
         LAGHU_TRY_SAVE(LAGHU_IMAGE_FORMAT_WEBP, lossless,
-                        effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_WEBP |
+                       effective & (LAGHU_IMAGE_REWRITE_IMAGES | LAGHU_IMAGE_RECOMPRESS_IMAGES | LAGHU_IMAGE_RECOMPRESS_WEBP |
                                     LAGHU_IMAGE_STRIP_METADATA | LAGHU_IMAGE_STRIP_COLOR_PROFILE | LAGHU_IMAGE_IN_PLACE_BROWSER));
       }
       if (request->accept_jxl && request->allow_lossy && (backend->capabilities & LAGHU_IMAGE_CAP_JXL_SAVE) != 0U) {

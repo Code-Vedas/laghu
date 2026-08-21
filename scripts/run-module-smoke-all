@@ -241,6 +241,7 @@ ${HTTP2_DIRECTIVE}
     laghu javascript_inline_limit 2048;
     laghu javascript_outline_threshold 8192;
     laghu file_cache_backend file://${SMOKE_DIR}/cache;
+    laghu file_cache_clean_interval 1s;
     laghu purge_method PURGE;
     laghu purge_query on;
     laghu purge_token_file ${SMOKE_DIR}/purge.token;
@@ -357,6 +358,7 @@ ${HTTP2_DIRECTIVE}
 
     location = /minify-page.html {
       laghu rewrite_level bandwidth;
+      laghu disable_filter javascript_minify;
       laghu html_cache_origin https://h3-cache.example.test;
       laghu html_cache_ttl 60;
       laghu origin_shield on;
@@ -389,9 +391,9 @@ ${HTTP2_DIRECTIVE}
       alias ${SMOKE_DIR}/html/image.png;
     }
 
-    location = /unsupported.svg {
-      default_type image/svg+xml;
-      return 200 '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    location = /unsupported.tiff {
+      default_type image/tiff;
+      return 200 'unsupported image fixture';
     }
 
     location = /private {
@@ -1039,13 +1041,36 @@ if [ "${image_smoke}" -eq 1 ]; then
       --dump-header "${SMOKE_DIR}/image-page-warm-headers" \
       --output "${SMOKE_DIR}/image-page-warm" \
       "http://127.0.0.1:${PORT}/image-page.html"
-    if grep 'srcset=' "${SMOKE_DIR}/image-page-warm" >/dev/null; then
+    if grep 'srcset=' "${SMOKE_DIR}/image-page-warm" >/dev/null &&
+        grep ' 320w' "${SMOKE_DIR}/image-page-warm" >/dev/null &&
+        grep ' 512w' "${SMOKE_DIR}/image-page-warm" >/dev/null &&
+        grep 'loading=lazy' "${SMOKE_DIR}/image-page-warm" >/dev/null &&
+        grep '/.laghu/beacon/images.js' "${SMOKE_DIR}/image-page-warm" >/dev/null &&
+        tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
+          grep -i -E -x 'ETag: "laghu-html-[0-9a-f]{64}"' >/dev/null &&
+        tr -d '\r' <"${SMOKE_DIR}/image-page-warm-headers" | \
+          grep -i -E -x 'Link: </.laghu/image/[0-9a-f]{64}>; rel=preload; as=image(; type="image/[a-z0-9.+-]+")?' >/dev/null; then
       break
     fi
+    # Discovery and queue publication are deliberately try-only. Revisit the
+    # source between page attempts so a contended catalog publication can
+    # enqueue targets discovered by the most recent pass.
+    curl --fail --silent --show-error --header 'Accept: image/webp' \
+      --output "${SMOKE_DIR}/image-target-body" \
+      "http://127.0.0.1:${PORT}/image.png"
     attempt=$((attempt + 1))
     sleep 0.1
   done
-  [ "${attempt}" -lt 100 ]
+  [ "${attempt}" -lt 100 ] || {
+    echo 'Laghu did not serve the complete warm responsive image markup.' >&2
+    echo 'Last response headers:' >&2
+    cat "${SMOKE_DIR}/image-page-warm-headers" >&2
+    echo 'Last response body:' >&2
+    cat "${SMOKE_DIR}/image-page-warm" >&2
+    echo 'Published catalog metadata:' >&2
+    find "${SMOKE_DIR}/cache" -name '*.meta' -type f -print >&2
+    exit 1
+  }
   grep ' 320w' "${SMOKE_DIR}/image-page-warm" >/dev/null
   grep ' 512w' "${SMOKE_DIR}/image-page-warm" >/dev/null
   grep 'loading=lazy' "${SMOKE_DIR}/image-page-warm" >/dev/null
@@ -1127,6 +1152,21 @@ if [ "${image_smoke}" -eq 1 ]; then
     printf '\377' | dd of="${variant_file}" bs=1 count=1 conv=notrunc \
       2>/dev/null
   done
+  attempt=0
+  while [ "${attempt}" -lt 30 ]; do
+    curl --fail --silent --show-error \
+      --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+      "http://127.0.0.1:${PORT}/.laghu/stats" >"${SMOKE_DIR}/corrupt-cache-stats"
+    if grep -E '"corrupt_removals":[1-9][0-9]*' "${SMOKE_DIR}/corrupt-cache-stats" >/dev/null; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  [ "${attempt}" -lt 30 ] || {
+    echo 'Laghu cache maintenance did not reclaim corrupted artifacts.' >&2
+    exit 1
+  }
   curl --fail --silent --show-error \
     --header 'Accept: image/webp' \
     --output "${SMOKE_DIR}/image-corrupt-body" \
@@ -1147,7 +1187,7 @@ if [ "${image_smoke}" -eq 1 ]; then
   curl --fail --silent --show-error \
     --output "${SMOKE_DIR}/unsupported-image-body" \
     --dump-header "${SMOKE_DIR}/unsupported-image-headers" \
-    "http://127.0.0.1:${PORT}/unsupported.svg"
+    "http://127.0.0.1:${PORT}/unsupported.tiff"
   tr -d '\r' <"${SMOKE_DIR}/unsupported-image-headers" | \
     grep -i -x 'X-Laghu: bypass-image-backend' >/dev/null
 fi
@@ -1359,8 +1399,16 @@ for name in a b c; do
     "http://127.0.0.1:${PORT}/combine-${name}.css"
   cmp "${SMOKE_DIR}/html/combine-${name}.css" \
     "${SMOKE_DIR}/combine-${name}-cold"
-  curl --fail --silent --output "${SMOKE_DIR}/combine-${name}-warm" \
-    "http://127.0.0.1:${PORT}/combine-${name}.css"
+  attempt=0
+  while [ "${attempt}" -lt 50 ]; do
+    curl --fail --silent --dump-header "${SMOKE_DIR}/combine-${name}-warm.headers" \
+      --output "${SMOKE_DIR}/combine-${name}-warm" \
+      "http://127.0.0.1:${PORT}/combine-${name}.css"
+    grep -i '^ETag: "laghu-css-' "${SMOKE_DIR}/combine-${name}-warm.headers" >/dev/null && break
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  test "${attempt}" -lt 50
 done
 for phase in cold settle warm; do
   curl --fail --silent --output "${SMOKE_DIR}/combine-page-${phase}" \

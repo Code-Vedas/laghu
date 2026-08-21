@@ -7,11 +7,15 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <stdint.h>
+#include <fcntl.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "laghu/proxy.h"
 #include "laghu/types.h"
@@ -35,6 +39,241 @@ static bool proxy_copy(char *output, size_t capacity, const char *value) {
 }
 
 static bool proxy_absolute_path(const char *value) { return value != NULL && value[0] == '/'; }
+
+static bool proxy_has_tls_target(const laghu_proxy_options *options) {
+  size_t route_index;
+  if (options == NULL) return false;
+  if (options->origin_tls) return true;
+  for (route_index = 0U; route_index < options->route_count; ++route_index) {
+    size_t failover_index;
+    if (options->routes[route_index].upstream_tls) return true;
+    for (failover_index = 0U; failover_index < options->routes[route_index].failover_count; ++failover_index)
+      if (options->routes[route_index].failovers[failover_index].tls) return true;
+  }
+  return false;
+}
+
+static bool proxy_rule_name_equal(const char *left, const char *right) {
+  if (left == NULL || right == NULL) return false;
+  if (left[0] == '-' && left[1] == '-') left += 2U;
+  while (*left != '\0' && *right != '\0') {
+    if ((*left == '-' ? '_' : *left) != *right) return false;
+    ++left;
+    ++right;
+  }
+  return *left == '\0' && *right == '\0';
+}
+
+static bool proxy_rule_uint(const char *value, uint64_t minimum, uint64_t maximum, size_t *output) {
+  uint64_t parsed = 0U;
+  unsigned int multiplier = 1U;
+  char *end = NULL;
+  if (value == NULL || value[0] == '\0') return false;
+  errno = 0;
+  parsed = strtoull(value, &end, 10);
+  if (errno != 0 || end == value) return false;
+  if (*end != '\0') {
+    if ((end[1] != '\0') || (*end != 'k' && *end != 'K' && *end != 'm' && *end != 'M' && *end != 'g' && *end != 'G')) return false;
+    multiplier = *end == 'k' || *end == 'K' ? 1024U : (*end == 'm' || *end == 'M' ? 1024U * 1024U : 1024U * 1024U * 1024U);
+  }
+  if (parsed > UINT64_MAX / multiplier) return false;
+  parsed *= multiplier;
+  if (parsed < minimum || parsed > maximum || parsed > SIZE_MAX) return false;
+  *output = (size_t)parsed;
+  return true;
+}
+
+static bool proxy_rule_cidr_add(laghu_service_cidr *values, size_t *count, const char *value) {
+  laghu_service_cidr parsed;
+  size_t index;
+  if (*count >= LAGHU_SERVICE_CONFIG_MAX_CIDRS || !laghu_service_cidr_parse(value, &parsed)) return false;
+  for (index = 0U; index < *count; ++index)
+    if (laghu_service_cidr_equal(&values[index], &parsed)) return false;
+  values[(*count)++] = parsed;
+  return true;
+}
+
+static bool proxy_rule_hex(const char *value, unsigned char output[32U]) {
+  size_t index;
+  if (value == NULL || strlen(value) != 64U) return false;
+  for (index = 0U; index < 32U; ++index) {
+    int high = isdigit((unsigned char)value[index * 2U])              ? value[index * 2U] - '0'
+               : value[index * 2U] >= 'a' && value[index * 2U] <= 'f' ? value[index * 2U] - 'a' + 10
+               : value[index * 2U] >= 'A' && value[index * 2U] <= 'F' ? value[index * 2U] - 'A' + 10
+                                                                      : -1;
+    int low = isdigit((unsigned char)value[index * 2U + 1U])                   ? value[index * 2U + 1U] - '0'
+              : value[index * 2U + 1U] >= 'a' && value[index * 2U + 1U] <= 'f' ? value[index * 2U + 1U] - 'a' + 10
+              : value[index * 2U + 1U] >= 'A' && value[index * 2U + 1U] <= 'F' ? value[index * 2U + 1U] - 'A' + 10
+                                                                               : -1;
+    if (high < 0 || low < 0) return false;
+    output[index] = (unsigned char)((high << 4U) | low);
+  }
+  return true;
+}
+
+static bool proxy_rule_auth_load(laghu_proxy_rules *rules, const char *path) {
+  struct stat listed;
+  struct stat status;
+  FILE *file = NULL;
+  char line[512U];
+  size_t count = 0U;
+  int descriptor;
+  if (!proxy_absolute_path(path) || lstat(path, &listed) != 0 || !S_ISREG(listed.st_mode) || listed.st_uid != geteuid() ||
+      (listed.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
+    return false;
+  descriptor = open(path, O_RDONLY);
+  if (descriptor < 0) return false;
+  if (fstat(descriptor, &status) != 0 || status.st_dev != listed.st_dev || status.st_ino != listed.st_ino || !S_ISREG(status.st_mode) ||
+      status.st_uid != geteuid() || (status.st_mode & (S_IRWXG | S_IRWXO)) != 0U) {
+    (void)close(descriptor);
+    return false;
+  }
+  file = fdopen(descriptor, "rb");
+  if (file == NULL) {
+    (void)close(descriptor);
+    return false;
+  }
+  while (fgets(line, sizeof(line), file) != NULL) {
+    char *separator;
+    char *hash;
+    size_t length;
+    size_t index;
+    size_t username_length;
+    if (count == LAGHU_PROXY_MAX_AUTH_USERS) goto failed;
+    length = strlen(line);
+    while (length != 0U && (line[length - 1U] == '\n' || line[length - 1U] == '\r')) line[--length] = '\0';
+    if (length == 0U || line[0] == '#') continue;
+    separator = strchr(line, ':');
+    if (separator == NULL || separator == line || strncmp(separator + 1U, "sha256:", 7U) != 0) goto failed;
+    *separator = '\0';
+    hash = separator + 8U;
+    username_length = strlen(line);
+    if (username_length >= sizeof(rules->basic_auth_users[0].username) || !proxy_rule_hex(hash, rules->basic_auth_users[count].password_hash))
+      goto failed;
+    for (index = 0U; line[index] != '\0'; ++index)
+      if ((unsigned char)line[index] <= 32U || line[index] == ':') goto failed;
+    for (index = 0U; index < count; ++index)
+      if (strcmp(rules->basic_auth_users[index].username, line) == 0) goto failed;
+    memcpy(rules->basic_auth_users[count].username, line, username_length + 1U);
+    ++count;
+  }
+  {
+    bool read_failed = ferror(file) != 0;
+    bool close_failed = fclose(file) != 0;
+    if (read_failed || close_failed || count == 0U) return false;
+  }
+  rules->basic_auth_user_count = count;
+  return true;
+failed:
+  (void)fclose(file);
+  memset(rules->basic_auth_users, 0, sizeof(rules->basic_auth_users));
+  rules->basic_auth_user_count = 0U;
+  return false;
+}
+
+void laghu_proxy_rules_init(laghu_proxy_rules *rules) {
+  if (rules == NULL) return;
+  memset(rules, 0, sizeof(*rules));
+  rules->header_limit = LAGHU_PROXY_HEADER_BYTES;
+  rules->body_limit = LAGHU_PROXY_REQUEST_BODY_BYTES;
+  rules->static_max_bytes = 64U * 1024U * 1024U;
+  rules->compression = LAGHU_PROXY_COMPRESSION_OFF;
+}
+
+bool laghu_proxy_rules_apply(laghu_proxy_rules *rules, const char *name, const char *value, char *error, size_t error_size) {
+  size_t parsed;
+  if (error_size != 0U) error[0] = '\0';
+  if (rules == NULL || name == NULL || value == NULL) goto invalid;
+  if (proxy_rule_name_equal(name, "spa_fallback")) {
+    if (!proxy_absolute_path(value) || strchr(value, '?') != NULL || strchr(value, '#') != NULL || strstr(value, "..") != NULL ||
+        !proxy_copy(rules->spa_fallback, sizeof(rules->spa_fallback), value))
+      goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_SPA_FALLBACK;
+  } else if (proxy_rule_name_equal(name, "request_header_limit")) {
+    if (!proxy_rule_uint(value, 1024U, LAGHU_PROXY_HEADER_BYTES, &rules->header_limit)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_HEADER_LIMIT;
+  } else if (proxy_rule_name_equal(name, "request_body_limit")) {
+    if (!proxy_rule_uint(value, 0U, 64U * 1024U * 1024U, &rules->body_limit)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_BODY_LIMIT;
+  } else if (proxy_rule_name_equal(name, "static_max_bytes")) {
+    if (!proxy_rule_uint(value, 1U, 64U * 1024U * 1024U, &rules->static_max_bytes)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_STATIC_MAX;
+  } else if (proxy_rule_name_equal(name, "compression")) {
+    if (strcmp(value, "off") == 0)
+      rules->compression = LAGHU_PROXY_COMPRESSION_OFF;
+    else if (strcmp(value, "gzip") == 0)
+      rules->compression = LAGHU_PROXY_COMPRESSION_GZIP;
+    else
+      goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_COMPRESSION;
+  } else if (proxy_rule_name_equal(name, "allow")) {
+    if ((rules->present & LAGHU_PROXY_RULE_ALLOW) == 0U) rules->allow_count = 0U;
+    if (!proxy_rule_cidr_add(rules->allow, &rules->allow_count, value)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_ALLOW;
+  } else if (proxy_rule_name_equal(name, "deny")) {
+    if ((rules->present & LAGHU_PROXY_RULE_DENY) == 0U) rules->deny_count = 0U;
+    if (!proxy_rule_cidr_add(rules->deny, &rules->deny_count, value)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_DENY;
+  } else if (proxy_rule_name_equal(name, "basic_auth_file")) {
+    if (!proxy_copy(rules->basic_auth_file, sizeof(rules->basic_auth_file), value) || !proxy_rule_auth_load(rules, value)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_BASIC_AUTH;
+  } else if (proxy_rule_name_equal(name, "basic_auth_realm")) {
+    if (strpbrk(value, "\r\n\"") != NULL || !proxy_copy(rules->basic_auth_realm, sizeof(rules->basic_auth_realm), value)) goto invalid;
+    rules->present |= LAGHU_PROXY_RULE_BASIC_AUTH_REALM;
+  } else if (proxy_rule_name_equal(name, "rate_limit")) {
+    if (!proxy_rule_uint(value, 1U, 100000U, &parsed)) goto invalid;
+    rules->rate_per_second = (unsigned int)parsed;
+    rules->present |= LAGHU_PROXY_RULE_RATE;
+  } else if (proxy_rule_name_equal(name, "rate_burst")) {
+    if (!proxy_rule_uint(value, 1U, 100000U, &parsed)) goto invalid;
+    rules->rate_burst = (unsigned int)parsed;
+    rules->present |= LAGHU_PROXY_RULE_RATE;
+  } else {
+    return false;
+  }
+  return true;
+invalid:
+  if (error_size != 0U) (void)snprintf(error, error_size, "invalid standalone route rule");
+  return false;
+}
+
+bool laghu_proxy_rules_merge(laghu_proxy_rules *merged, const laghu_proxy_rules *parent, const laghu_proxy_rules *child, char *error,
+                             size_t error_size) {
+  if (merged == NULL || parent == NULL || child == NULL) return false;
+  *merged = *parent;
+  if ((child->present & LAGHU_PROXY_RULE_SPA_FALLBACK) != 0U) memcpy(merged->spa_fallback, child->spa_fallback, sizeof(merged->spa_fallback));
+  if ((child->present & LAGHU_PROXY_RULE_HEADER_LIMIT) != 0U) merged->header_limit = child->header_limit;
+  if ((child->present & LAGHU_PROXY_RULE_BODY_LIMIT) != 0U) merged->body_limit = child->body_limit;
+  if ((child->present & LAGHU_PROXY_RULE_STATIC_MAX) != 0U) merged->static_max_bytes = child->static_max_bytes;
+  if ((child->present & LAGHU_PROXY_RULE_COMPRESSION) != 0U) merged->compression = child->compression;
+  if ((child->present & LAGHU_PROXY_RULE_ALLOW) != 0U) {
+    memcpy(merged->allow, child->allow, sizeof(merged->allow));
+    merged->allow_count = child->allow_count;
+  }
+  if ((child->present & LAGHU_PROXY_RULE_DENY) != 0U) {
+    memcpy(merged->deny, child->deny, sizeof(merged->deny));
+    merged->deny_count = child->deny_count;
+  }
+  if ((child->present & LAGHU_PROXY_RULE_BASIC_AUTH) != 0U) {
+    memcpy(merged->basic_auth_file, child->basic_auth_file, sizeof(merged->basic_auth_file));
+    memcpy(merged->basic_auth_users, child->basic_auth_users, sizeof(merged->basic_auth_users));
+    merged->basic_auth_user_count = child->basic_auth_user_count;
+  }
+  if ((child->present & LAGHU_PROXY_RULE_BASIC_AUTH_REALM) != 0U)
+    memcpy(merged->basic_auth_realm, child->basic_auth_realm, sizeof(merged->basic_auth_realm));
+  if ((child->present & LAGHU_PROXY_RULE_RATE) != 0U) {
+    if (child->rate_per_second != 0U) merged->rate_per_second = child->rate_per_second;
+    if (child->rate_burst != 0U) merged->rate_burst = child->rate_burst;
+  }
+  merged->present = parent->present | child->present;
+  merged->scope_id = child->scope_id;
+  if ((merged->present & LAGHU_PROXY_RULE_BASIC_AUTH_REALM) != 0U && (merged->present & LAGHU_PROXY_RULE_BASIC_AUTH) == 0U) goto invalid;
+  if ((merged->present & LAGHU_PROXY_RULE_RATE) != 0U && (merged->rate_per_second == 0U || merged->rate_burst == 0U)) goto invalid;
+  return true;
+invalid:
+  if (error_size != 0U) (void)snprintf(error, error_size, "invalid inherited standalone route rule");
+  return false;
+}
 
 static bool proxy_endpoint(const char *value, char *host, size_t host_capacity, char port[6]) {
   const char *separator;
@@ -126,16 +365,19 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
   (void)snprintf(options->index_file, sizeof(options->index_file), "%s", "index.html");
   laghu_service_config_init(&options->service);
+  laghu_proxy_rules_init(&options->rules);
   {
     size_t index;
     for (index = 0U; index < LAGHU_PROXY_MAX_SITES; ++index) {
       laghu_config_init(&options->sites[index].config);
       laghu_service_config_init(&options->sites[index].service);
+      laghu_proxy_rules_init(&options->sites[index].rules);
     }
     for (index = 0U; index < LAGHU_PROXY_MAX_ROUTES; ++index) {
       options->routes[index].site_index = LAGHU_PROXY_SITE_GLOBAL;
       laghu_config_init(&options->routes[index].config);
       laghu_service_config_init(&options->routes[index].service);
+      laghu_proxy_rules_init(&options->routes[index].rules);
     }
   }
 }
@@ -248,7 +490,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       const char *second = index + 2 < argc ? argv[index + 2] : NULL;
       laghu_proxy_response_header *header;
       size_t name_length;
-      if (second == NULL || value == NULL || value[0] == '-' || second[0] == '-' || options->response_header_count == LAGHU_PROXY_MAX_RESPONSE_HEADERS)
+      if (second == NULL || value == NULL || value[0] == '-' || second[0] == '-' ||
+          options->response_header_count == LAGHU_PROXY_MAX_RESPONSE_HEADERS)
         return proxy_error(error, error_size, "invalid or excessive --add-header");
       name_length = strlen(value);
       if (name_length == 0U || name_length >= sizeof(header->name) || strpbrk(value, " \t\r\n:") || strlen(second) >= sizeof(header->value) ||
@@ -284,6 +527,13 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
         return proxy_error(error, error_size, "invalid or duplicate --static-cache-control");
       (void)snprintf(options->static_cache_control, sizeof(options->static_cache_control), "%s", value);
       static_cache_control_seen = true;
+    } else if (strcmp(name, "--spa-fallback") == 0 || strcmp(name, "--request-header-limit") == 0 || strcmp(name, "--request-body-limit") == 0 ||
+               strcmp(name, "--static-max-bytes") == 0 || strcmp(name, "--compression") == 0 || strcmp(name, "--allow") == 0 ||
+               strcmp(name, "--deny") == 0 || strcmp(name, "--basic-auth-file") == 0 || strcmp(name, "--basic-auth-realm") == 0 ||
+               strcmp(name, "--rate-limit") == 0 || strcmp(name, "--rate-burst") == 0) {
+      NEED_VALUE();
+      if (!laghu_proxy_rules_apply(&options->rules, name, value, error, error_size))
+        return error[0] == '\0' ? proxy_error(error, error_size, "invalid standalone route rule") : LAGHU_PROXY_PARSE_ERROR;
     } else if (strcmp(name, "--javascript-inline-limit") == 0) {
       char *end = NULL;
       unsigned long limit;
@@ -373,12 +623,10 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (strcmp(value, "on") != 0 && strcmp(value, "off") != 0)
         return proxy_error(error, error_size, "profile and JavaScript toggles expect on or off");
       if (strcmp(name, "--optimization-profiles") == 0) {
-        if (options->config.optimization_profiles != LAGHU_MODE_UNSET)
-          return proxy_error(error, error_size, "duplicate --optimization-profiles");
+        if (options->config.optimization_profiles != LAGHU_MODE_UNSET) return proxy_error(error, error_size, "duplicate --optimization-profiles");
         options->config.optimization_profiles = strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
       } else {
-        if (javascript_defer_suggestions_seen)
-          return proxy_error(error, error_size, "invalid --javascript-defer-suggestions");
+        if (javascript_defer_suggestions_seen) return proxy_error(error, error_size, "invalid --javascript-defer-suggestions");
         options->config.javascript_defer_suggestions = strcmp(value, "on") == 0 ? LAGHU_MODE_ON : LAGHU_MODE_OFF;
         javascript_defer_suggestions_seen = true;
       }
@@ -476,9 +724,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
     if (!laghu_service_config_finalize(&options->service, &finalize_options, &diagnostic)) return proxy_error(error, error_size, diagnostic.message);
   }
   if (!listen_seen || (!origin_seen && options->document_root[0] == '\0' && options->site_count == 0U))
-    return proxy_error(error, error_size,
-                       "--listen, a static document root or --origin, a file cache backend, and --worker-queue are required");
-  if (ca_seen && !options->origin_tls) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
+    return proxy_error(error, error_size, "--listen, a static document root or --origin, a file cache backend, and --worker-queue are required");
+  if (ca_seen && !proxy_has_tls_target(options)) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
   if (tls_certificate_seen != tls_private_key_seen)
     return proxy_error(error, error_size, "--tls-certificate and --tls-private-key are required together");
   options->downstream_tls = tls_certificate_seen;
@@ -490,6 +737,14 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
     char policy_error[160U];
     if (!laghu_resolve_config_policy_with_error(&options->config, &policy, policy_error, sizeof(policy_error)))
       return proxy_error(error, error_size, policy_error);
+  }
+  {
+    laghu_proxy_rules empty;
+    laghu_proxy_rules resolved;
+    laghu_proxy_rules_init(&empty);
+    if (!laghu_proxy_rules_merge(&resolved, &options->rules, &empty, error, error_size))
+      return error[0] == '\0' ? proxy_error(error, error_size, "invalid standalone route rule") : LAGHU_PROXY_PARSE_ERROR;
+    options->rules = resolved;
   }
   return LAGHU_PROXY_PARSE_OK;
 }

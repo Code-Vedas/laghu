@@ -148,9 +148,7 @@ static void conformance_c_job_to_rust(const char *worker) {
   char cache_path[LAGHU_RUNTIME_PATH_SIZE];
   char index[LAGHU_RUNTIME_KEY_SIZE], validator[LAGHU_RUNTIME_VALIDATOR_SIZE];
   char policy[LAGHU_RUNTIME_KEY_SIZE];
-  unsigned char source[] =
-      "function publicName(longLocal){const repeatedValue=longLocal+1;return "
-      "repeatedValue+repeatedValue+repeatedValue;}";
+  unsigned char source[] = "function inlinePublic(longLocal) { return longLocal + 1; }";
   unsigned char *result;
   const size_t result_capacity = 2U * 1024U * 1024U;
   laghu_runtime_queue queue;
@@ -169,10 +167,13 @@ static void conformance_c_job_to_rust(const char *worker) {
   job.kind = LAGHU_RUNTIME_JOB_JAVASCRIPT;
   memcpy(job.index_key, index, sizeof(job.index_key));
   memcpy(job.policy_key, policy, sizeof(job.policy_key));
-  strcpy(job.request_path, "/cross-language.js");
+  strcpy(job.request_path, "/javascript-inline.html#script-1");
   strcpy(job.validator, validator);
   strcpy(job.content_type, "application/javascript");
   strcpy(job.javascript_target, "last 2 chrome versions");
+  /* Exercise the worker's no-map fallback when a source-map reference would
+   * make the optimized asset larger than its source. */
+  job.filters = UINT64_C(2);
   job.payload = (laghu_buffer){source, sizeof(source) - 1U};
   laghu_runtime_queue_init(&queue);
   assert(laghu_runtime_queue_create(&queue, queue_path, 2U, result_capacity));
@@ -181,7 +182,7 @@ static void conformance_c_job_to_rust(const char *worker) {
   assert(laghu_runtime_cache_lookup(cache_path, index, validator, &entry));
   assert(strcmp(entry.content_type, "application/javascript") == 0 && entry.length < sizeof(source) - 1U);
   assert(laghu_runtime_cache_read(&entry, result, result_capacity));
-  assert(conformance_contains(result, entry.length, "publicName"));
+  assert(conformance_contains(result, entry.length, "inlinePublic"));
   laghu_runtime_queue_close(&queue);
   free(result);
 }
