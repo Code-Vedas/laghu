@@ -15,7 +15,7 @@ case "${PACKAGE_FAMILY}" in
       libssl-dev nginx nginx-dev pkgconf ruby-dev rustc \
       shellcheck zlib1g-dev
     if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
-      apt-get install --no-install-recommends -y libvips-dev libvips-tools
+      apt-get install --no-install-recommends -y libheif-plugin-aomenc libvips-dev libvips-tools
     fi
     if [ "${LAGHU_WITH_CHROME}" = ON ]; then
       apt-get install --no-install-recommends -y chromium

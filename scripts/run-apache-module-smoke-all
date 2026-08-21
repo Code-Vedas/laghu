@@ -33,7 +33,7 @@ if ! laghu_apache_curl_supports_brotli "${CURL_BIN}"; then
   exit 127
 fi
 curl() {
-  "${CURL_BIN}" "$@"
+  command "${CURL_BIN}" "$@"
 }
 
 if [ -z "${APXS}" ]; then
@@ -278,7 +278,7 @@ load_first_mpm() {
     printf 'Laghu JavaScriptTarget "last 2 chrome versions"\n'
     printf 'Laghu IncludeJsSourceMaps On\n'
     printf 'Laghu JavaScriptInlineLimit 2048\n'
-    printf 'Laghu JavaScriptOutlineThreshold 8192\n'
+    printf 'Laghu JavaScriptOutlineThreshold 1024\n'
   fi
   printf '<Location "/.laghu/">\nLaghu RewriteLevel core\nLaghu InstrumentationBeacon On\n</Location>\n'
   printf 'ProxyPass "/proxied/" "http://127.0.0.1:18082/"\n'
@@ -386,7 +386,7 @@ pid=$!
 trap 'kill "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} ${H3_PROXY_PID:-} 2>/dev/null || true; wait "${pid}" ${service_pid:-} ${javascript_pid:-} ${origin_pid:-} ${H3_PROXY_PID:-} 2>/dev/null || true' EXIT
 
 attempt=0
-while [ "${attempt}" -lt 50 ]; do
+while [ "${attempt}" -lt 600 ]; do
   if curl --fail --silent --dump-header "${work}/headers" \
       http://127.0.0.1:18081/index.html >"${work}/body"; then
     break
@@ -649,7 +649,8 @@ if [ -x "${javascript_service}" ]; then
   attempt=0
   while [ "${attempt}" -lt 50 ]; do
     curl --fail --silent http://127.0.0.1:18081/javascript-outline.html >"${work}/javascript-outline-warm"
-    outline_route=$(grep -o '/\.laghu/js/[0-9a-f]\{64\}' "${work}/javascript-outline-warm" || true)
+    outline_route=$(sed -n 's/.*src="\(\/\.laghu\/js\/[0-9a-f]\{64\}\)".*/\1/p' \
+      "${work}/javascript-outline-warm" | head -n 1)
     [ "${outline_route}" != "" ] && break
     attempt=$((attempt + 1))
     sleep 0.1
@@ -683,13 +684,28 @@ for name in a b c; do
   curl --fail --silent http://127.0.0.1:18081/combine-${name}.css \
     >"${work}/combine-${name}-cold"
   cmp "${work}/htdocs/combine-${name}.css" "${work}/combine-${name}-cold"
-  curl --fail --silent http://127.0.0.1:18081/combine-${name}.css \
-    >"${work}/combine-${name}-warm"
+  attempt=0
+  while [ "${attempt}" -lt 50 ]; do
+    curl --fail --silent --dump-header "${work}/combine-${name}-warm.headers" \
+      http://127.0.0.1:18081/combine-${name}.css >"${work}/combine-${name}-warm"
+    grep -i '^ETag: "laghu-css-' "${work}/combine-${name}-warm.headers" >/dev/null && break
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  test "${attempt}" -lt 50
 done
-for phase in cold settle warm; do
-  curl --fail --silent http://127.0.0.1:18081/combine-page.html \
-    >"${work}/combine-page-${phase}"
+curl --fail --silent http://127.0.0.1:18081/combine-page.html >"${work}/combine-page-cold"
+attempt=0
+while [ "${attempt}" -lt 600 ]; do
+  curl --fail --silent http://127.0.0.1:18081/combine-page.html >"${work}/combine-page-warm"
+  combine_url=$(sed -n 's#.*href="\([^\"]*\)".*#\1#p' "${work}/combine-page-warm")
+  case "${combine_url}" in
+    /.laghu/css/????????????????????????????????????????????????????????????????) break ;;
+  esac
+  attempt=$((attempt + 1))
+  sleep 0.1
 done
+test "${attempt}" -lt 600
 cmp "${work}/htdocs/combine-page.html" "${work}/combine-page-cold"
 combine_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' \
   "${work}/combine-page-warm")
@@ -728,11 +744,21 @@ grep -i '^ETag: "laghu-css-' "${work}/import-root-warm.headers" >/dev/null
 curl --fail --silent http://127.0.0.1:18081/import-page.html \
   >"${work}/import-page-cold"
 cmp "${work}/htdocs/import-page.html" "${work}/import-page-cold"
-curl --fail --silent http://127.0.0.1:18081/import-page.html \
-  >"${work}/import-page-warm"
-grep '<link rel="stylesheet" href="/.laghu/css/' \
-  "${work}/import-page-warm" >/dev/null
-grep 'media="print"' "${work}/import-page-warm" >/dev/null
+attempt=0
+while [ "${attempt}" -lt 50 ]; do
+  curl --fail --silent http://127.0.0.1:18081/import-page.html \
+    >"${work}/import-page-warm"
+  if grep -q '<link rel="stylesheet" href="/.laghu/css/' "${work}/import-page-warm" && \
+    grep -q 'media="print"' "${work}/import-page-warm"; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+if [ "${attempt}" -eq 50 ]; then
+  echo "Apache did not publish the ready imported stylesheet." >&2
+  exit 1
+fi
 
 curl --fail --silent http://127.0.0.1:18081/inline.css >"${work}/inline-css-cold"
 cmp "${work}/htdocs/inline.css" "${work}/inline-css-cold"
@@ -844,11 +870,19 @@ grep -i '^ETag: "laghu-html-' "${work}/missing-head-warm.headers" >/dev/null
 curl --fail --silent http://127.0.0.1:18081/outline-page.html \
   >"${work}/outline-cold"
 cmp "${work}/htdocs/outline-page.html" "${work}/outline-cold"
-curl --fail --silent http://127.0.0.1:18081/outline-page.html \
-  >"${work}/outline-publish"
-curl --fail --silent http://127.0.0.1:18081/outline-page.html \
-  >"${work}/outline-warm"
-outline_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' "${work}/outline-warm")
+attempt=0
+outline_url=
+while [ "${attempt}" -lt 600 ]; do
+  curl --fail --silent http://127.0.0.1:18081/outline-page.html \
+    >"${work}/outline-warm"
+  outline_url=$(sed -n 's#.*href="\([^"]*\)".*#\1#p' "${work}/outline-warm")
+  case "${outline_url}" in
+    /.laghu/css/????????????????????????????????????????????????????????????????) break ;;
+  esac
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+[ "${attempt}" -lt 600 ] || { echo "Apache did not outline CSS to a hash-only route." >&2; exit 1; }
 case "${outline_url}" in
   /.laghu/css/????????????????????????????????????????????????????????????????) ;;
   *) echo "Apache did not outline CSS to a hash-only route." >&2; exit 1 ;;

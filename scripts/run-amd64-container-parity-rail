@@ -1,0 +1,29 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+OUTPUT=${LAGHU_RAIL_OUTPUT:-"${REPO_ROOT}/tmp/execution-rail/linux-amd64"}
+
+command -v docker >/dev/null 2>&1 || {
+  echo 'Docker is required for AMD64 container parity validation.' >&2
+  exit 127
+}
+case "$(docker version --format '{{.Server.Arch}}')" in
+  amd64|x86_64) ;;
+  *)
+    echo 'AMD64 container parity requires a native AMD64 Docker daemon; emulation is not accepted.' >&2
+    exit 2
+    ;;
+esac
+
+exec python3 "${REPO_ROOT}/servers/laghu/tests/execution_rail.py" \
+  --contract "${REPO_ROOT}/servers/laghu/tests/parity-contract-v1.json" --output "${OUTPUT}" \
+  --architecture linux/amd64 \
+  --laghu-command "'${SCRIPT_DIR}/run-in-docker' --target ubuntu-standalone --architectures amd64" \
+  --nginx-command "'${SCRIPT_DIR}/run-in-docker' --target ubuntu-nginx --architectures amd64" \
+  --apache-command "'${SCRIPT_DIR}/run-in-docker' --target ubuntu-apache-event --architectures amd64"

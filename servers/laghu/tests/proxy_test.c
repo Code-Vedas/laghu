@@ -164,9 +164,9 @@ static bool write_yaml_fragment_fixture(char directory[], char root[], char frag
     return false;
   if (mkdir(fragments, 0700) != 0) return false;
   file = fopen(root, "wb");
-  if (file == NULL || fputs(root_contents, file) < 0 || fclose(file) != 0) return false;
+  if (file == NULL || fputs(root_contents, file) < 0 || fclose(file) != 0 || chmod(root, 0600) != 0) return false;
   file = fopen(fragment, "wb");
-  return file != NULL && fputs(fragment_contents, file) >= 0 && fclose(file) == 0;
+  return file != NULL && fputs(fragment_contents, file) >= 0 && fclose(file) == 0 && chmod(fragment, 0600) == 0;
 }
 
 static bool static_response_test(void) {
@@ -281,7 +281,8 @@ static bool scoped_rules_test(void) {
 }
 
 int main(void) {
-  laghu_proxy_options options;
+  laghu_proxy_options *options_storage;
+#define options (*options_storage)
   proxy_queue queue;
   proxy_worker worker;
   laghu_service_config expected_service;
@@ -479,6 +480,8 @@ int main(void) {
   unsigned char marker;
   int first[2], second[2];
   size_t decoded_length = 0U;
+  options_storage = calloc(1U, sizeof(*options_storage));
+  CHECK(options_storage != NULL);
   laghu_proxy_options_init(&options);
   CHECK(write_yaml_fixture(yaml_path));
   CHECK(laghu_proxy_load_yaml(yaml_path, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
@@ -492,15 +495,18 @@ int main(void) {
         options.routes[1].failover_count == 1U && options.routes[1].failovers[0].tls && options.routes[1].health_interval == 9U);
   {
     proxy_request request = {0};
-    laghu_proxy_options resolved;
+    laghu_proxy_options *resolved = calloc(1U, sizeof(*resolved));
     const laghu_config *core;
     const laghu_service_config *service;
+    CHECK(resolved != NULL);
     (void)snprintf(request.target, sizeof(request.target), "%s", "/site-policy");
     request.headers[request.header_count++] = (proxy_header){"Host", "static.example.test"};
     proxy_scope_for_request(&options, &request, &core, &service);
     CHECK(core == &options.routes[0].config && service == &options.routes[0].service);
-    proxy_options_for_request(&options, &request, &resolved);
-    CHECK(resolved.config.mode == LAGHU_MODE_OFF && !strcmp(resolved.service.javascript_target, "defaults"));
+    proxy_options_for_request(&options, &request, resolved);
+    CHECK(resolved->config.mode == LAGHU_MODE_OFF && !strcmp(resolved->service.javascript_target, "defaults"));
+    laghu_proxy_options_dispose(resolved);
+    free(resolved);
   }
   CHECK(unlink(yaml_path) == 0);
   CHECK(write_yaml_fragment_fixture(yaml_directory, yaml_root, yaml_fragment));
@@ -541,7 +547,9 @@ int main(void) {
   CHECK(laghu_proxy_parse_options(13, pool, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.origin_pool_size == 1U && options.origin_idle_timeout == 9U);
   memset(&queue, 0, sizeof(queue));
-  queue.options = &options;
+#undef options
+  queue.options = options_storage;
+#define options (*options_storage)
   queue.origins = calloc(options.origin_pool_size, sizeof(*queue.origins));
   CHECK(queue.origins != NULL);
   CHECK(pthread_mutex_init(&queue.lock, NULL) == 0);
@@ -665,6 +673,9 @@ int main(void) {
   CHECK(laghu_proxy_decode_chunked((laghu_buffer){chunked, sizeof(chunked) - 1U}, decoded, sizeof(decoded), &decoded_length));
   CHECK(decoded_length == 9U && !memcmp(decoded, "Wikipedia", 9U));
   CHECK(!laghu_proxy_decode_chunked((laghu_buffer){(const unsigned char *)"3\r\nab", 5U}, decoded, sizeof(decoded), &decoded_length));
+  laghu_proxy_options_dispose(&options);
+  free(options_storage);
   puts("laghu proxy tests passed");
+#undef options
   return 0;
 }

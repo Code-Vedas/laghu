@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -88,7 +89,62 @@ typedef struct {
   laghu_cache_index_slot *slots;
   laghu_cache_tombstone *tombstones;
   uint32_t slot_count;
+  _Atomic uint64_t last_health[18U];
+  _Atomic bool last_health_valid;
 } laghu_file_cache_state;
+
+static void laghu_cache_health_snapshot_store(laghu_file_cache_state *state, const laghu_cache_stats *stats) {
+  const uint64_t values[18U] = {stats->bytes,
+                                stats->files,
+                                stats->hits,
+                                stats->misses,
+                                stats->rejected_publications,
+                                stats->variant_occupancy,
+                                stats->evictions,
+                                stats->corrupt_removals,
+                                stats->publications,
+                                stats->url_purges,
+                                stats->full_purges,
+                                stats->invalidated_artifacts,
+                                stats->invalidated_bytes,
+                                stats->cache_generation,
+                                stats->last_purge,
+                                stats->last_cleanup,
+                                stats->cleaner_active ? 1U : 0U,
+                                stats->rebuilding ? 1U : 0U};
+  size_t index;
+  if (state == NULL || stats == NULL) return;
+  for (index = 0U; index < sizeof(values) / sizeof(values[0]); ++index)
+    atomic_store_explicit(&state->last_health[index], values[index], memory_order_relaxed);
+  atomic_store_explicit(&state->last_health_valid, true, memory_order_release);
+}
+
+static bool laghu_cache_health_snapshot_load(const laghu_file_cache_state *state, laghu_cache_stats *stats) {
+  uint64_t values[18U];
+  size_t index;
+  if (state == NULL || stats == NULL || !atomic_load_explicit(&state->last_health_valid, memory_order_acquire)) return false;
+  for (index = 0U; index < sizeof(values) / sizeof(values[0]); ++index)
+    values[index] = atomic_load_explicit(&state->last_health[index], memory_order_relaxed);
+  stats->bytes = values[0U];
+  stats->files = values[1U];
+  stats->hits = values[2U];
+  stats->misses = values[3U];
+  stats->rejected_publications = values[4U];
+  stats->variant_occupancy = values[5U];
+  stats->evictions = values[6U];
+  stats->corrupt_removals = values[7U];
+  stats->publications = values[8U];
+  stats->url_purges = values[9U];
+  stats->full_purges = values[10U];
+  stats->invalidated_artifacts = values[11U];
+  stats->invalidated_bytes = values[12U];
+  stats->cache_generation = values[13U];
+  stats->last_purge = values[14U];
+  stats->last_cleanup = values[15U];
+  stats->cleaner_active = values[16U] != 0U;
+  stats->rebuilding = values[17U] != 0U;
+  return true;
+}
 
 static bool laghu_cache_index_valid(laghu_cache_backend *backend, laghu_file_cache_state *state) {
   return state->header->magic == LAGHU_CACHE_INDEX_MAGIC && state->header->version == LAGHU_CACHE_INDEX_VERSION &&
@@ -195,13 +251,13 @@ static bool laghu_cache_metadata_open(laghu_cache_backend *backend) {
   size_t slots;
   int written;
   bool initialize;
+  bool locked;
   if (backend == NULL || !laghu_runtime_directory_exists(backend->path)) return false;
   state = calloc(1U, sizeof(*state));
   if (state == NULL) return false;
   laghu_runtime_shared_mapping_init(&state->mapping);
   written = laghu_cache_metadata_path(path, sizeof(path), backend->path) ? 1 : 0;
-  if (written == 0 || !laghu_runtime_shared_mapping_open(&state->mapping, path, backend->limits.metadata_size) ||
-      !laghu_runtime_shared_mapping_try_lock(&state->mapping)) {
+  if (written == 0 || !laghu_runtime_shared_mapping_open(&state->mapping, path, backend->limits.metadata_size)) {
     laghu_runtime_shared_mapping_close(&state->mapping);
     free(state);
     return false;
@@ -218,6 +274,13 @@ static bool laghu_cache_metadata_open(laghu_cache_backend *backend) {
       (state->mapping.mapping_length - sizeof(*state->header) - sizeof(laghu_cache_tombstone) * LAGHU_CACHE_TOMBSTONE_COUNT) / sizeof(*state->slots);
   state->slots = (laghu_cache_index_slot *)(void *)(state->tombstones + LAGHU_CACHE_TOMBSTONE_COUNT);
   state->slot_count = (uint32_t)slots;
+  locked = laghu_runtime_shared_mapping_try_lock(&state->mapping);
+  if (!locked) {
+    laghu_cache_stats empty = {0};
+    laghu_cache_health_snapshot_store(state, &empty);
+    backend->implementation = state;
+    return true;
+  }
   initialize = state->header->magic == 0U && state->header->version == 0U;
   if (initialize) {
     memset(state->mapping.mapping, 0, state->mapping.mapping_length);
@@ -478,7 +541,7 @@ static bool laghu_cache_file_health(laghu_cache_backend *backend, laghu_cache_st
   laghu_file_cache_state *state;
   if (backend == NULL || stats == NULL || backend->implementation == NULL) return false;
   state = backend->implementation;
-  if (!laghu_runtime_shared_mapping_try_lock(&state->mapping)) return false;
+  if (!laghu_runtime_shared_mapping_try_lock(&state->mapping)) return laghu_cache_health_snapshot_load(state, stats);
   if (!laghu_cache_index_valid(backend, state)) laghu_cache_index_recover(backend, state);
   stats->bytes = state->header->bytes;
   stats->files = state->header->files;
@@ -504,6 +567,7 @@ static bool laghu_cache_file_health(laghu_cache_backend *backend, laghu_cache_st
   stats->last_cleanup = state->header->last_cleanup;
   stats->cleaner_active = state->header->cleaner_lease_until != 0U;
   stats->rebuilding = state->header->rebuilding != 0U;
+  laghu_cache_health_snapshot_store(state, stats);
   laghu_runtime_shared_mapping_unlock(&state->mapping);
   return true;
 }

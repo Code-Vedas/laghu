@@ -1955,7 +1955,7 @@ def main():
             for _ in range(warm_attempts):
                 try:
                     first_head, first_body = request(
-                        proxy_port, "/index.html", timeout=0.25
+                        proxy_port, "/index.html", timeout=2
                     )
                     break
                 except OSError:

@@ -4,9 +4,13 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "laghu/cache.h"
 #include "laghu/catalog.h"
@@ -35,6 +39,50 @@ static void test_cache_backend_uri(const laghu_test_workspace *workspace) {
   assert(laghu_cache_backend_open_path(backend, workspace->path, &limits));
   laghu_cache_backend_close(backend);
   free(backend);
+}
+
+static void test_cache_health_uses_snapshot_when_metadata_is_busy(const laghu_test_workspace *workspace) {
+  laghu_cache_backend backend = {0};
+  laghu_cache_limits limits;
+  laghu_cache_stats expected;
+  laghu_cache_stats observed;
+  char cache_path[LAGHU_RUNTIME_PATH_SIZE];
+  char metadata_path[LAGHU_RUNTIME_PATH_SIZE];
+  int ready[2];
+  int release[2];
+  pid_t child;
+  char signal;
+
+  laghu_cache_limits_init(&limits);
+  limits.metadata_size = 16384U;
+  assert(laghu_test_workspace_path(workspace, "snapshot-cache", cache_path, sizeof(cache_path)));
+  assert(laghu_test_workspace_write(workspace, "snapshot-cache/.keep", NULL, 0U));
+  assert(laghu_cache_backend_open_path(&backend, cache_path, &limits));
+  assert(laghu_cache_backend_health(&backend, &expected));
+  assert(snprintf(metadata_path, sizeof(metadata_path), "%s.laghu-metadata", cache_path) > 0);
+  assert(pipe(ready) == 0 && pipe(release) == 0);
+  child = fork();
+  assert(child >= 0);
+  if (child == 0) {
+    int metadata = open(metadata_path, O_RDWR);
+    close(ready[0]);
+    close(release[1]);
+    if (metadata < 0 || flock(metadata, LOCK_EX) != 0) _exit(EXIT_FAILURE);
+    if (write(ready[1], "1", 1U) != 1U || read(release[0], &signal, 1U) != 1U) _exit(EXIT_FAILURE);
+    close(metadata);
+    _exit(EXIT_SUCCESS);
+  }
+  close(ready[1]);
+  close(release[0]);
+  assert(read(ready[0], &signal, 1U) == 1U);
+  assert(laghu_cache_backend_health(&backend, &observed));
+  assert(observed.bytes == expected.bytes && observed.files == expected.files && observed.hits == expected.hits &&
+         observed.misses == expected.misses && observed.cache_generation == expected.cache_generation);
+  assert(write(release[1], "1", 1U) == 1U);
+  assert(waitpid(child, NULL, 0) == child);
+  close(ready[0]);
+  close(release[1]);
+  laghu_cache_backend_close(&backend);
 }
 
 static void test_cache_backend_governance(const laghu_test_workspace *workspace, const unsigned char *payload, size_t payload_length,
@@ -293,6 +341,7 @@ int main(void) {
   assert(laghu_runtime_index_key("/image.png", "etag", policy_key, true, false, true, 0U, 0U, no_webp_index_key));
   assert(strcmp(index_key, no_webp_index_key) != 0);
   test_cache_backend_uri(&workspace);
+  test_cache_health_uses_snapshot_when_metadata_is_busy(&workspace);
   test_cache_backend_governance(&workspace, payload, sizeof(payload) - 1U, index_key, no_webp_index_key, policy_key);
   test_cache_maintenance_integrity(&workspace, payload, sizeof(payload) - 1U, index_key, policy_key);
   test_catalog_learning(workspace.path, index_key, policy_key);

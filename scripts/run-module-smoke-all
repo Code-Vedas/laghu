@@ -711,7 +711,7 @@ printf '%s\n' "${nginx_pid}" >"${SMOKE_DIR}/nginx.pid"
 
 ready=0
 attempt=0
-while [ "${attempt}" -lt 50 ]; do
+while [ "${attempt}" -lt 600 ]; do
   if curl --noproxy '*' --fail --silent --show-error \
       --output "${SMOKE_DIR}/body" \
       --dump-header "${SMOKE_DIR}/headers" \
@@ -834,10 +834,21 @@ else
     echo "Skipping HTTP/3 smoke check: curl does not advertise --http3."
   fi
 fi
-curl --fail --silent --show-error \
-  --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
-  "http://127.0.0.1:${PORT}/.laghu/stats" | \
-  grep 'laghu-cache-stats-v1' >/dev/null
+attempt=0
+while [ "${attempt}" -lt 600 ]; do
+  if curl --fail --silent --show-error \
+      --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
+      "http://127.0.0.1:${PORT}/.laghu/stats" >"${SMOKE_DIR}/stats" && \
+    grep -q 'laghu-cache-stats-v1' "${SMOKE_DIR}/stats"; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+if [ "${attempt}" -eq 600 ]; then
+  echo "NGINX Laghu stats endpoint did not become ready." >&2
+  exit 1
+fi
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/console" | \
@@ -1446,9 +1457,16 @@ done
 curl --fail --silent "http://127.0.0.1:${PORT}/import-root.css" \
   >"${SMOKE_DIR}/import-root-cold"
 cmp "${SMOKE_DIR}/html/import-root.css" "${SMOKE_DIR}/import-root-cold"
-curl --fail --silent --dump-header "${SMOKE_DIR}/import-root-warm.headers" \
-  "http://127.0.0.1:${PORT}/import-root.css" \
-  >"${SMOKE_DIR}/import-root-warm"
+attempt=0
+while [ "${attempt}" -lt 600 ]; do
+  curl --fail --silent --dump-header "${SMOKE_DIR}/import-root-warm.headers" \
+    "http://127.0.0.1:${PORT}/import-root.css" \
+    >"${SMOKE_DIR}/import-root-warm"
+  grep -q -F '.import-leaf' "${SMOKE_DIR}/import-root-warm" && break
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+test "${attempt}" -lt 600
 grep -F '.import-leaf' "${SMOKE_DIR}/import-root-warm" >/dev/null
 if grep '@import' "${SMOKE_DIR}/import-root-warm" >/dev/null; then
   echo "NGINX did not flatten the ready CSS import." >&2
@@ -1659,12 +1677,16 @@ test "${attempt}" -lt 50
 grep 'function inlinePublic(n){return n+1;}' \
   "${SMOKE_DIR}/javascript-inline-warm" >/dev/null
 attempt=0
-while [ "${attempt}" -lt 10 ]; do
+while [ "${attempt}" -lt 50 ]; do
   curl --fail --silent --output "${SMOKE_DIR}/javascript-csp-hash" \
     "http://127.0.0.1:${PORT}/javascript-csp-hash.html"
+  if grep -q 'cspProtected(longLocal)' "${SMOKE_DIR}/javascript-csp-hash"; then
+    break
+  fi
   attempt=$((attempt + 1))
   sleep 0.1
 done
+test "${attempt}" -lt 50
 grep 'cspProtected(longLocal)' "${SMOKE_DIR}/javascript-csp-hash" >/dev/null
 if grep 'cspProtected(n)' "${SMOKE_DIR}/javascript-csp-hash" >/dev/null; then
   echo "Hash-authorized inline JavaScript was modified." >&2

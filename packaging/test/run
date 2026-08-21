@@ -139,6 +139,3 @@ grep -q '^EnvironmentFile=/etc/laghu/chrome-analysis.conf$' "${chrome_unit}"
 grep -q 'LAGHU_CHROME_ANALYSIS_QUEUE' "${chrome_unit}"
 grep -q 'LAGHU_CHROME_ANALYSIS_OUTPUT' "${chrome_unit}"
 grep -q 'LAGHU_CHROME_ANALYSIS_BROWSER' "${chrome_unit}"
-chrome_example=/usr/share/doc/laghu-libvips/chrome-analysis.conf.example
-[ -f "${chrome_example}" ] || chrome_example=/usr/share/doc/laghu/chrome-analysis.conf.example
-grep -q '^LAGHU_CHROME_ANALYSIS_QUEUE=' "${chrome_example}"

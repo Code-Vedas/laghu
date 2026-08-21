@@ -1,0 +1,19 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+BUILD_DIR=${LAGHU_RAIL_BUILD_DIR:-"${REPO_ROOT}/tmp/build"}
+OUTPUT=${LAGHU_RAIL_OUTPUT:-"${REPO_ROOT}/tmp/execution-rail/native"}
+cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" -DLAGHU_BUILD_TESTS=ON
+cmake --build "${BUILD_DIR}" --target laghu laghu_runtime_cache_fixture laghu-js-optimize
+exec python3 "${REPO_ROOT}/servers/laghu/tests/execution_rail.py" \
+  --contract "${REPO_ROOT}/servers/laghu/tests/parity-contract-v1.json" --output "${OUTPUT}" \
+  --architecture native \
+  --laghu-command "ctest --test-dir '${BUILD_DIR}' --output-on-failure -R '^laghu_proxy_smoke$'" \
+  --nginx-command "LAGHU_CORE_BUILD_DIR='${BUILD_DIR}' '${SCRIPT_DIR}/run-module-smoke-all'" \
+  --apache-command "LAGHU_CORE_BUILD_DIR='${BUILD_DIR}' '${SCRIPT_DIR}/run-apache-module-smoke-all'"

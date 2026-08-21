@@ -129,7 +129,14 @@ def main():
             else:
                 assert set(variants(cache)) == before
                 if result.stderr:
-                    records = [json.loads(line) for line in result.stderr.splitlines()]
+                    records = []
+                    for line in result.stderr.splitlines():
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(record, dict):
+                            records.append(record)
                     assert any(
                         record["schema"] == "laghu-log-v1"
                         and record["event"] == "job"

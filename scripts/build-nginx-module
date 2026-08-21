@@ -75,6 +75,7 @@ mkdir -p "${BUILD_DIR}"
   set -- ./configure \
     --builddir="${BUILD_DIR}" \
     --with-compat \
+    --with-cc-opt=-D_GNU_SOURCE \
     --with-http_v2_module \
     --add-dynamic-module="${MODULE_DIR}"
   if [ "${NGINX_HTTP3}" = 1 ]; then

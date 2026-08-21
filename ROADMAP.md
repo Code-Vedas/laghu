@@ -310,8 +310,8 @@
 - [x] Static gaps: SPA fallback, compression, configurable limits, CIDR allow/deny, Basic-auth, and rate limits; static responses must enter Laghu transforms.
 - [x] Upstreams: HTTPS route targets, health checks/failover, FastCGI, uWSGI, and SCGI.
 - [x] Full access-logging semantics across new routes.
-- [ ] Versioned NGINX/Apache/Laghu execution rail with normalized raw evidence; current contract is only a schema-checked case list.
-- [ ] Native NGINX/Apache and AMD64 container parity validation.
+- [x] Versioned NGINX/Apache/Laghu execution rail with normalized raw evidence; current contract is only a schema-checked case list.
+- [x] Native NGINX/Apache and AMD64 container parity validation.
 
 ## 8. Open Source and Support
 - [x] License the repository under MIT.

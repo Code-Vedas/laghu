@@ -18,9 +18,13 @@ REQUIRED = {
 
 def main():
     contract = json.loads(pathlib.Path(sys.argv[1]).read_text())
-    assert contract["schema"] == 1
-    assert contract["contract"] == "laghu-standalone-parity-v1"
-    assert set(contract["cases"]) == REQUIRED
+    assert contract["schema"] == 2
+    assert contract["contract"] == "laghu-execution-rail-v1"
+    assert contract["surfaces"] == ["laghu", "nginx", "apache"]
+    assert contract["architectures"] == ["native", "linux/amd64"]
+    assert {case["id"] for case in contract["cases"]} == REQUIRED
+    assert len(contract["cases"]) == len(REQUIRED)
+    assert all(set(case) == {"id", "rail"} for case in contract["cases"])
     assert contract["baselines"]["nginx"] == "1.30.4"
 
 

@@ -27,6 +27,8 @@ run_cmd python-syntax env PYTHONPYCACHEPREFIX="${REPO_ROOT}/tmp/pycache" \
   "${REPO_ROOT}/workers/laghu-chrome-analyze/tests/analysis_test.py" \
   "${REPO_ROOT}/workers/laghu-libvips/tests/worker_test.py" \
   "${REPO_ROOT}/workers/laghu-html-refresh/tests/refresh_test.py" \
+  "${REPO_ROOT}/servers/laghu/tests/execution_rail.py" \
+  "${REPO_ROOT}/servers/laghu/tests/execution_rail_test.py" \
   "${REPO_ROOT}/scripts/run-standalone-container-smoke"
 
 if has_command shellcheck; then
