@@ -8,6 +8,11 @@ ancestor: Use Laghu
 
 Use `/.laghu/ready` for readiness and `/.laghu/stats` for cache statistics, then inspect server and worker logs. Preserve timestamps before changing state. Set `laghu on;` in the intended scope after the queue and cache are ready.
 
+~~~sh
+curl -fsS http://127.0.0.1/.laghu/ready
+curl -fsS http://127.0.0.1/.laghu/stats
+~~~
+
 ## Verify
 
 ~~~sh
