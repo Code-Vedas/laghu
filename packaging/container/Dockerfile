@@ -4,7 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 ARG NGINX_VERSION=1.30.4
-ARG LAGHU_VERSION=0.1.0
+ARG LAGHU_BUILD_REVISION=0.1.0
 
 FROM ubuntu:24.04 AS build
 
@@ -58,13 +58,13 @@ RUN curl --fail --location --retry 3 \
 FROM ubuntu:24.04
 
 ARG NGINX_VERSION
-ARG LAGHU_VERSION
+ARG LAGHU_BUILD_REVISION
 
 LABEL org.opencontainers.image.title="ngx-laghu" \
       org.opencontainers.image.description="NGINX with the native ngx-laghu adapter" \
       org.opencontainers.image.url="https://laghu.codevedas.com" \
       org.opencontainers.image.source="https://github.com/Code-Vedas/laghu" \
-      org.opencontainers.image.version="${LAGHU_VERSION}" \
+      org.opencontainers.image.version="${LAGHU_BUILD_REVISION}" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="docker.io/library/ubuntu:24.04" \
       org.codevedas.laghu.nginx.version="${NGINX_VERSION}"

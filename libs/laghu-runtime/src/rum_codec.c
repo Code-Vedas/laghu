@@ -90,7 +90,6 @@ static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record, lag
   if (type == LAGHU_RUM_RECORD_IMAGE) {
     laghu_rum_image_record *r = record;
     unsigned char flag = r->above_fold ? 1U : 0U;
-    U32(r->version);
     BYTES(r->identity);
     U64(r->updated_at);
     U32(r->width);

@@ -51,7 +51,7 @@ static bool proxy_test_path_join(char *target, size_t target_size, const char *b
 
 static bool write_yaml_fixture(char path[]) {
   static const char fixture[] =
-      "schema: 1\n"
+      ""
       "runtime:\n"
       "  listen: 127.0.0.1:8080\n"
       "  origin: http://127.0.0.1:8000\n"
@@ -91,7 +91,7 @@ static bool write_yaml_fixture(char path[]) {
 
 static bool gateway_health_rejected_test(void) {
   static const char fixture[] =
-      "schema: 1\n"
+      ""
       "runtime:\n"
       "  listen: 127.0.0.1:8080\n"
       "  origin: http://127.0.0.1:8000\n"
@@ -117,7 +117,7 @@ static bool gateway_health_rejected_test(void) {
 
 static bool health_interval_requires_check_test(void) {
   static const char fixture[] =
-      "schema: 1\n"
+      ""
       "runtime:\n"
       "  listen: 127.0.0.1:8080\n"
       "  origin: http://127.0.0.1:8000\n"
@@ -143,14 +143,14 @@ static bool health_interval_requires_check_test(void) {
 
 static bool write_yaml_fragment_fixture(char directory[], char root[], char fragment[]) {
   static const char root_contents[] =
-      "schema: 1\n"
+      ""
       "runtime:\n"
       "  listen: 127.0.0.1:8080\n"
       "  origin: http://127.0.0.1:8000\n"
       "  cache: /tmp/cache\n"
       "  worker_queue: /tmp/jobs\n";
   static const char fragment_contents[] =
-      "schema: 1\n"
+      ""
       "runtime:\n"
       "  forwarded_headers: both\n"
       "  trusted_proxy:\n"

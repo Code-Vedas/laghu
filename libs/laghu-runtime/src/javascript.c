@@ -460,7 +460,7 @@ static bool laghu_javascript_external_lookup(const char *cache_path, const char 
   int length;
   bool read_success;
   laghu_runtime_cache_entry entry;
-  length = snprintf(canonical, sizeof(canonical), "laghu-js-url-v1\n%s\n%s\n%s\n%s", url, policy_key, target, module ? "module" : "classic");
+  length = snprintf(canonical, sizeof(canonical), "laghu-js-url\n%s\n%s\n%s\n%s", url, policy_key, target, module ? "module" : "classic");
   if (length <= 0 || (size_t)length >= sizeof(canonical) ||
       !laghu_sha256_hex((laghu_buffer){(const unsigned char *)canonical, (size_t)length}, key) ||
       (length = snprintf(path, sizeof(path), "%s/javascript-%s.meta", cache_path, key)) <= 0 || (size_t)length >= sizeof(path))
@@ -611,7 +611,7 @@ static bool laghu_javascript_combine_key(const laghu_javascript_combine_script *
                                          char output[LAGHU_RUNTIME_KEY_SIZE]) {
   laghu_javascript_builder material = {0};
   size_t index;
-  static const char prefix[] = "laghu-js-combine-v1\n";
+  static const char prefix[] = "laghu-js-combine\n";
   bool success = laghu_javascript_append(&material, prefix, sizeof(prefix) - 1U);
   for (index = 0U; success && index < count; ++index) {
     success = laghu_javascript_append(&material, scripts[index].record.variant, strlen(scripts[index].record.variant)) &&
@@ -747,7 +747,7 @@ static bool laghu_javascript_combine(const char *cache_path, laghu_buffer html, 
         char directive[LAGHU_RUNTIME_KEY_SIZE + 48U];
         int directive_length;
         if (!laghu_javascript_append(&indexed, "]}", 2U) || !laghu_sha256_hex((laghu_buffer){indexed.data, indexed.length}, map_key) ||
-            !laghu_runtime_cache_publish(cache_path, map_key, map_key, map_key, "application/json", "laghu-js-indexed-map-v1",
+            !laghu_runtime_cache_publish(cache_path, map_key, map_key, map_key, "application/json", "laghu-js-indexed-map",
                                          (laghu_buffer){indexed.data, indexed.length}, &map_entry) ||
             (directive_length = snprintf(directive, sizeof(directive), "\n//# sourceMappingURL=/.laghu/js/%s.map", map_key)) <= 0 ||
             (size_t)directive_length >= sizeof(directive) || !laghu_javascript_append(&combined, directive, (size_t)directive_length))
@@ -757,7 +757,7 @@ static bool laghu_javascript_combine(const char *cache_path, laghu_buffer html, 
     }
     if (ready && (!laghu_javascript_combine_key(scripts, count, policy_key, target, key) ||
                   (!laghu_runtime_cache_lookup_variant(cache_path, key, &entry) &&
-                   !laghu_runtime_cache_publish(cache_path, key, key, key, "application/javascript", "laghu-js-combine-v1",
+                   !laghu_runtime_cache_publish(cache_path, key, key, key, "application/javascript", "laghu-js-combine",
                                                 (laghu_buffer){combined.data, combined.length}, &entry))))
       ready = false;
     if (ready) {

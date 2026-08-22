@@ -262,7 +262,7 @@ def main() -> None:
         raise SystemExit("This frozen ngx_pagespeed comparison is AMD64-only.")
     args.output.mkdir(parents=True, exist_ok=True)
     results: dict[str, Any] = {
-        "schema": "laghu-benchmark-v1",
+        "schema": "laghu-benchmark",
         "machine": {"platform": platform.platform(), "machine": platform.machine()},
         "cells": [],
         "targets": {

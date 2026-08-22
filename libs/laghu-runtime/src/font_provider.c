@@ -380,7 +380,7 @@ bool laghu_font_stylesheet_publish(const char *cache_path, const laghu_font_styl
   char key[LAGHU_RUNTIME_KEY_SIZE];
   laghu_runtime_cache_entry entry;
   if (record == NULL || !laghu_font_stylesheet_key(record->normalized_url, record->provider_digest, key)) return false;
-  return laghu_runtime_cache_publish(cache_path, key, key, key, "application/x-laghu-font-catalog", "laghu-font-catalog-v1",
+  return laghu_runtime_cache_publish(cache_path, key, key, key, "application/x-laghu-font-catalog", "laghu-font-catalog",
                                      (laghu_buffer){(const unsigned char *)record, sizeof(*record)}, &entry);
 }
 

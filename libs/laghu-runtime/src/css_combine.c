@@ -453,7 +453,7 @@ bool laghu_runtime_combine_css_markup(const char *cache_path, laghu_buffer html,
       continue;
     }
     if (!laghu_runtime_cache_lookup_variant(cache_path, key, &entry)) {
-      if (!laghu_runtime_cache_publish(cache_path, key, key, key, "text/css", "laghu-css-combine-v1", (laghu_buffer){combined.data, combined.length},
+      if (!laghu_runtime_cache_publish(cache_path, key, key, key, "text/css", "laghu-css-combine", (laghu_buffer){combined.data, combined.length},
                                        &entry)) {
         for (index = 0U; index < count; ++index) {
           free(links[index].css);

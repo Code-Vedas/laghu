@@ -407,7 +407,7 @@ grep -i '^X-Laghu-Cache: bypass' "${work}/headers"
 grep -i '^X-Laghu-Transform: pass' "${work}/headers"
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/.laghu/stats | grep 'laghu-cache-stats-v1' >/dev/null
+  http://127.0.0.1:18081/.laghu/stats | grep 'laghu-cache-stats' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/.laghu/console | grep '<h1>Laghu console</h1>' >/dev/null
@@ -419,22 +419,22 @@ curl --fail --silent \
   http://127.0.0.1:18081/.laghu/history | grep '<h2>Laghu history</h2>' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  'http://127.0.0.1:18081/.laghu/history?format=json' | grep '"schema":"laghu-history-v1"' >/dev/null
+  'http://127.0.0.1:18081/.laghu/history?format=json' | grep '"schema":"laghu-history"' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/pagespeed_statistics | grep 'laghu-cache-stats-v1' >/dev/null
+  http://127.0.0.1:18081/pagespeed_statistics | grep 'laghu-cache-stats' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   'http://127.0.0.1:18081/.laghu/explain?path=/' | grep '<h2>Laghu explain</h2>' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  'http://127.0.0.1:18081/.laghu/explain?path=/&format=json' | grep '"schema":"laghu-explain-v1"' >/dev/null
+  'http://127.0.0.1:18081/.laghu/explain?path=/&format=json' | grep '"schema":"laghu-explain"' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/.laghu/purge?path=/ | grep '"status":"accepted"' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
-  http://127.0.0.1:18081/pagespeed_stats | grep 'laghu-cache-stats-v1' >/dev/null
+  http://127.0.0.1:18081/pagespeed_stats | grep 'laghu-cache-stats' >/dev/null
 curl --fail --silent \
   -H 'X-Laghu-Purge-Token: apache-purge-token-0123456789' \
   http://127.0.0.1:18081/pagespeed_console | grep 'laghu_requests_total' >/dev/null
@@ -444,10 +444,10 @@ if [ ! -x "${status_bin}" ]; then
 fi
 "${status_bin}" status http://127.0.0.1:18081 \
   --token-file "${work}/purge.token" --json | \
-  grep '"schema":"laghu-status-v1"' >/dev/null
+  grep '"schema":"laghu-status"' >/dev/null
 "${status_bin}" doctor http://127.0.0.1:18081 \
   --token-file "${work}/purge.token" --json | \
-  grep '"schema":"laghu-doctor-v1"' >/dev/null
+  grep '"schema":"laghu-doctor"' >/dev/null
 
 if [ "${CURL_HTTP3_SUPPORT}" -eq 1 ] && [ "${APACHE_H3_PROXY_ENABLED}" -eq 1 ] && \
   command -v openssl >/dev/null 2>&1; then
@@ -502,7 +502,7 @@ fi
 
 "${status_bin}" purge http://127.0.0.1:18081/site.css \
   --token-file "${work}/purge.token" --json | \
-  grep '"schema":"laghu-purge-v1"' >/dev/null
+  grep '"schema":"laghu-purge"' >/dev/null
 curl --fail --silent --dump-header "${work}/lcp.headers" \
   http://127.0.0.1:18081/lcp.html >"${work}/lcp.html"
 grep 'fetchpriority=\("\)\?high\("\)\?' "${work}/lcp.html" >/dev/null
@@ -1179,7 +1179,7 @@ if [ "${readiness_status}" != 200 ] || \
   exit 1
 fi
 
-grep 'laghu_json={"schema":"laghu-log-v1"' "${work}/logs/error.log" >/dev/null
+grep 'laghu_json={"schema":"laghu-log"' "${work}/logs/error.log" >/dev/null
 if grep -E 'smoke-test|apache-purge-token-0123456789' "${work}/logs/error.log" >/dev/null; then
   echo "Apache structured log leaked a secret token." >&2
   exit 1

@@ -175,7 +175,6 @@ static void test_image_markup_and_headers(laghu_rum_engine *rum, const char *tem
                                      (laghu_buffer){tiny_png, sizeof(tiny_png)}, &entry));
   assert(laghu_runtime_cache_publish(temporary, index_key, second_key, "page", "image/png", "test-backend",
                                      (laghu_buffer){(const unsigned char *)"runtime payload", sizeof("runtime payload") - 1U}, &entry));
-  catalog.version = LAGHU_CATALOG_VERSION;
   strcpy(catalog.normalized_url, "/image.png");
   strcpy(catalog.source_hash, index_key);
   strcpy(catalog.policy_key, policy_key);

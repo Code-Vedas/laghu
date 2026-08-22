@@ -35,7 +35,6 @@ static void test_rum_engine(const char *directory) {
   assert(laghu_rum_engine_read(engine, LAGHU_RUM_RECORD_DECISION, key, 11U, restored, sizeof(restored), &value));
   assert(value.length == sizeof(payload) && memcmp(restored, payload, sizeof(payload)) == 0);
   assert(laghu_rum_engine_memory_used(engine) == sizeof(payload));
-  image.version = 1U;
   strcpy(image.identity, key);
   image.updated_at = 10U;
   image.width = 321U;
@@ -54,7 +53,6 @@ static void test_rum_engine(const char *directory) {
     laghu_rum_engine *peer_one, *peer_two;
     laghu_rum_image_record one = {0}, two = {0};
     laghu_rum_instrumentation_record rum_one = {0}, rum_two = {0}, rum_total;
-    one.version = two.version = 1U;
     strcpy(one.identity, key);
     strcpy(two.identity, key);
     one.updated_at = 20U;
@@ -114,7 +112,6 @@ static void test_rum_engine(const char *directory) {
   }
   {
     laghu_rum_image_record aggregate = {0}, delta = {0};
-    aggregate.version = delta.version = 1U;
     strcpy(aggregate.identity, key);
     strcpy(delta.identity, key);
     aggregate.width = 100U;
@@ -146,7 +143,6 @@ static void test_rum_redis(void) {
   one = laghu_rum_engine_create(&options, NULL, 0U);
   two = laghu_rum_engine_create(&options, NULL, 0U);
   assert(one != NULL && two != NULL);
-  first.version = second.version = 1U;
   strcpy(first.identity, key);
   strcpy(second.identity, key);
   first.updated_at = 100U;

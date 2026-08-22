@@ -171,7 +171,7 @@ pub(crate) fn publish(
 pub(crate) fn catalog_key(job: &Job) -> String {
     sha256(
         format!(
-            "laghu-js-url-v1\n{}\n{}\n{}\n{}",
+            "laghu-js-url\n{}\n{}\n{}\n{}",
             job.request_path,
             job.policy_key,
             job.target,

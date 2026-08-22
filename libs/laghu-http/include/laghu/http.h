@@ -28,7 +28,6 @@
 extern "C" {
 #endif
 
-#define LAGHU_HTTP_ABI_VERSION 7U
 #define LAGHU_HTTP_MAX_REQUEST_HEADERS 64U
 #define LAGHU_HTTP_MAX_RESPONSE_HEADERS 64U
 #define LAGHU_HTTP_MAX_HEADER_OPERATIONS 32U
@@ -237,8 +236,6 @@ typedef struct {
 } laghu_http_header;
 
 typedef struct {
-  uint32_t version;
-  size_t struct_size;
   laghu_buffer method;
   laghu_buffer scheme;
   laghu_buffer authority;
@@ -248,8 +245,6 @@ typedef struct {
 } laghu_http_request;
 
 typedef struct {
-  uint32_t version;
-  size_t struct_size;
   unsigned int status;
   const laghu_http_header *headers;
   size_t header_count;
@@ -261,8 +256,6 @@ typedef struct {
 } laghu_http_response;
 
 typedef struct {
-  uint32_t version;
-  size_t struct_size;
   laghu_config config;
   const char *cache_path;
   laghu_rum_engine *rum;
@@ -307,8 +300,6 @@ typedef enum {
 } laghu_http_action;
 
 typedef struct {
-  uint32_t version;
-  size_t struct_size;
   laghu_http_action action;
   laghu_decision decision;
   laghu_buffer original;
@@ -341,8 +332,6 @@ typedef struct {
 } laghu_http_transaction_result;
 
 typedef struct {
-  uint32_t version;
-  size_t struct_size;
   const laghu_http_request *request;
   const laghu_http_response *response;
   laghu_http_environment environment;

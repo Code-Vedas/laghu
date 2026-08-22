@@ -207,7 +207,7 @@ bool laghu_runtime_rewrite_html(laghu_rum_engine *rum, const char *cache_path, l
       laghu_rum_value value;
       if (laghu_catalog_url_identity(discovery->resources[index].source_url, policy_key, capability_mask, identity) &&
           laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_IMAGE, identity, now, &learning, sizeof(learning), &value) &&
-          value.length == sizeof(learning) && learning.version == 1U && strcmp(learning.identity, identity) == 0) {
+          value.length == sizeof(learning) && strcmp(learning.identity, identity) == 0) {
         catalog.learned_width = learning.width;
         catalog.learned_height = learning.height;
         catalog.learned_mobile_width = learning.mobile_width;

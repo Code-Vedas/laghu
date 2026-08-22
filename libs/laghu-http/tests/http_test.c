@@ -54,8 +54,6 @@ static void test_config(laghu_config *config) {
 static laghu_http_request test_request(const laghu_http_header *headers, size_t header_count, laghu_buffer path) {
   laghu_http_request request;
   memset(&request, 0, sizeof(request));
-  request.version = LAGHU_HTTP_ABI_VERSION;
-  request.struct_size = sizeof(request);
   request.method = VIEW("GET");
   request.scheme = VIEW("https");
   request.authority = VIEW("example.test");
@@ -68,8 +66,6 @@ static laghu_http_request test_request(const laghu_http_header *headers, size_t 
 static laghu_http_response test_response(const laghu_http_header *headers, size_t header_count, size_t length) {
   laghu_http_response response;
   memset(&response, 0, sizeof(response));
-  response.version = LAGHU_HTTP_ABI_VERSION;
-  response.struct_size = sizeof(response);
   response.status = 200U;
   response.headers = headers;
   response.header_count = header_count;
@@ -111,8 +107,6 @@ static unsigned int http_rollout_bucket(const laghu_http_request *request, unsig
 static laghu_http_environment test_environment(const char *cache_path, laghu_runtime_queue *queue) {
   laghu_http_environment environment;
   memset(&environment, 0, sizeof(environment));
-  environment.version = LAGHU_HTTP_ABI_VERSION;
-  environment.struct_size = sizeof(environment);
   test_config(&environment.config);
   environment.cache_path = cache_path;
   environment.rum = test_rum;
@@ -382,7 +376,6 @@ static void test_image_cold_warm_and_queue(void) {
     laghu_catalog_record catalog = {0};
     laghu_runtime_cache_entry pending_entry;
 
-    catalog.version = LAGHU_CATALOG_VERSION;
     strcpy(catalog.normalized_url, "/hero.png");
     strcpy(catalog.source_hash, transaction.policy_key);
     strcpy(catalog.policy_key, transaction.policy_key);
@@ -871,7 +864,6 @@ static void test_secure_client_hint_image_variant(void) {
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &result));
   CHECK(transaction.sec_ch_viewport_width && transaction.sec_ch_dpr);
   CHECK(transaction.viewport_width == 100U && transaction.dpr_hundredths == 200U);
-  catalog.version = LAGHU_CATALOG_VERSION;
   strcpy(catalog.normalized_url, "/client-hint.png");
   strcpy(catalog.source_hash, transaction.policy_key);
   strcpy(catalog.policy_key, transaction.policy_key);
@@ -1305,7 +1297,6 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(!plan.recognized);
 
   memset(&snapshot, 0, sizeof(snapshot));
-  snapshot.version = LAGHU_OPERATIONAL_VERSION;
   snapshot.slot_count = 1U;
   snapshot.slots[0].active = 1U;
   snapshot.slots[0].heartbeat = 100U;
@@ -1331,7 +1322,7 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(strstr(output, "/index.html") != NULL);
   CHECK(laghu_http_administrative_render_console(&stats, &readiness, true, output, sizeof(output), &plan.console_query, &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-console-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-console\"") != NULL);
   laghu_http_administrative_console_model console_model;
   CHECK(laghu_http_administrative_build_console_model(&stats, &readiness, &plan.console_query, &console_model));
   CHECK(laghu_http_administrative_render_console_model(&console_model, output, sizeof(output), &response));
@@ -1357,14 +1348,14 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &console_page_model));
   CHECK(laghu_http_administrative_render_console_page(&plan, &console_page_model, output, sizeof(output), &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-history-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-history\"") != NULL);
   CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"), VIEW("/.laghu/console?view=explain&path=/&format=json"), &options));
   CHECK(plan.action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_EXPLAIN);
   CHECK(laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &console_page_model));
   CHECK(console_page_model.has_explain);
   CHECK(laghu_http_administrative_render_console_page(&plan, &console_page_model, output, sizeof(output), &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-explain-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-explain\"") != NULL);
 
   CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"), VIEW("/.laghu/history?limit=2"), &options));
   CHECK(laghu_http_administrative_build_history_model(&snapshot, &plan.history_query, &(laghu_http_administrative_history_model){0}));
@@ -1377,13 +1368,13 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(strstr(output, "standalone") != NULL);
   CHECK(laghu_http_administrative_render_history(&history_model, true, output, sizeof(output), &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-history-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-history\"") != NULL);
   CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"), VIEW("/.laghu/history?limit=1&format=json"), &options));
   CHECK(plan.output_json);
   CHECK(laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &console_page_model));
   CHECK(laghu_http_administrative_render_console_page(&plan, &console_page_model, output, sizeof(output), &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-history-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-history\"") != NULL);
   CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"), VIEW("/.laghu/history?limit=2"), &options));
   CHECK(laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &console_page_model));
   CHECK(console_page_model.has_history);
@@ -1407,12 +1398,12 @@ static void test_administrative_plan_and_rendering(void) {
   CHECK(laghu_http_administrative_build_explain_model(&plan.explain_query, &readiness, &stats, plan.output_json, &explain_model));
   CHECK(laghu_http_administrative_render_explain(&explain_model, output, sizeof(output), &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-explain-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-explain\"") != NULL);
   CHECK(laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &console_page_model));
   CHECK(console_page_model.has_explain);
   CHECK(laghu_http_administrative_render_console_page(&plan, &console_page_model, output, sizeof(output), &response));
   CHECK(response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_JSON);
-  CHECK(strstr(output, "\"schema\":\"laghu-explain-v1\"") != NULL);
+  CHECK(strstr(output, "\"schema\":\"laghu-explain\"") != NULL);
   CHECK(laghu_http_administrative_plan_build(&plan, VIEW("GET"), VIEW("/.laghu/explain?path=/"), &options));
   CHECK(laghu_http_administrative_build_console_page_model(&plan, &stats, &readiness, &snapshot, &console_page_model));
   CHECK(console_page_model.has_explain);

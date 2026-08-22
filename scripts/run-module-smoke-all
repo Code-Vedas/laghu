@@ -839,7 +839,7 @@ while [ "${attempt}" -lt 600 ]; do
   if curl --fail --silent --show-error \
       --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
       "http://127.0.0.1:${PORT}/.laghu/stats" >"${SMOKE_DIR}/stats" && \
-    grep -q 'laghu-cache-stats-v1' "${SMOKE_DIR}/stats"; then
+    grep -q 'laghu-cache-stats' "${SMOKE_DIR}/stats"; then
     break
   fi
   attempt=$((attempt + 1))
@@ -864,15 +864,15 @@ curl --fail --silent --show-error \
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/history?format=json&limit=1" | \
-  grep '"schema":"laghu-history-v1"' >/dev/null
+  grep '"schema":"laghu-history"' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/pagespeed_statistics" | \
-  grep 'laghu-cache-stats-v1' >/dev/null
+  grep 'laghu-cache-stats' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/pagespeed_stats" | \
-  grep 'laghu-cache-stats-v1' >/dev/null
+  grep 'laghu-cache-stats' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/explain?path=/" | \
@@ -880,7 +880,7 @@ curl --fail --silent --show-error \
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/explain?path=/&format=json" | \
-  grep '"schema":"laghu-explain-v1"' >/dev/null
+  grep '"schema":"laghu-explain"' >/dev/null
 curl --fail --silent --show-error \
   --header 'X-Laghu-Purge-Token: nginx-purge-token-0123456789' \
   "http://127.0.0.1:${PORT}/.laghu/purge?path=/" | \
@@ -903,13 +903,13 @@ if [ ! -x "${STATUS_BIN}" ]; then
 fi
 "${STATUS_BIN}" status "http://127.0.0.1:${PORT}" \
   --token-file "${SMOKE_DIR}/purge.token" --json | \
-  grep '"schema":"laghu-status-v1"' >/dev/null
+  grep '"schema":"laghu-status"' >/dev/null
 "${STATUS_BIN}" doctor "http://127.0.0.1:${PORT}" \
   --token-file "${SMOKE_DIR}/purge.token" --json | \
-  grep '"schema":"laghu-doctor-v1"' >/dev/null
+  grep '"schema":"laghu-doctor"' >/dev/null
 "${STATUS_BIN}" purge "http://127.0.0.1:${PORT}/site.css" \
   --token-file "${SMOKE_DIR}/purge.token" --json | \
-  grep '"schema":"laghu-purge-v1"' >/dev/null
+  grep '"schema":"laghu-purge"' >/dev/null
 curl --fail --silent --show-error --dump-header "${SMOKE_DIR}/lcp-headers" \
   --output "${SMOKE_DIR}/lcp-body" "http://127.0.0.1:${PORT}/lcp.html"
 grep 'fetchpriority=\("\)\?high\("\)\?' "${SMOKE_DIR}/lcp-body" >/dev/null
@@ -1704,7 +1704,7 @@ done
 test "${attempt}" -lt 50
 curl --fail --silent "http://127.0.0.1:${PORT}${outline_route}" | grep 'outlinePublic' >/dev/null
 
-grep 'laghu_json={"schema":"laghu-log-v1"' "${SMOKE_DIR}/logs/error.log" >/dev/null
+grep 'laghu_json={"schema":"laghu-log"' "${SMOKE_DIR}/logs/error.log" >/dev/null
 if grep -E 'smoke-test|nginx-purge-token-0123456789' "${SMOKE_DIR}/logs/error.log" >/dev/null; then
   echo "NGINX structured log leaked a secret token." >&2
   exit 1

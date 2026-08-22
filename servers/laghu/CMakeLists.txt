@@ -38,7 +38,7 @@ if(LAGHU_BUILD_TESTS)
                    ${LAGHU_JS_BINARY})
   add_test(NAME laghu_parity_contract_test
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity_contract_test.py
-                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity-contract-v1.json)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity-contract.json)
   add_test(NAME laghu_execution_rail_test
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution_rail_test.py)
 endif()

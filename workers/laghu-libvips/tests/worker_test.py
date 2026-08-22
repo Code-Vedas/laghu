@@ -138,7 +138,7 @@ def main():
                         if isinstance(record, dict):
                             records.append(record)
                     assert any(
-                        record["schema"] == "laghu-log-v1"
+                        record["schema"] == "laghu-log"
                         and record["event"] == "job"
                         and record["outcome"] == "preserved"
                         for record in records

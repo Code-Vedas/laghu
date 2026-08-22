@@ -252,8 +252,8 @@ static bool laghu_path(const char *cache_path, char *output, size_t capacity) {
   size_t length;
   if (cache_path == NULL || output == NULL || capacity == 0U) return false;
   length = strlen(cache_path);
-  if (length == 0U || length + sizeof(".laghu-operations-v4") > capacity) return false;
-  return snprintf(output, capacity, "%s.laghu-operations-v4", cache_path) > 0;
+  if (length == 0U || length + sizeof(".laghu-operations") > capacity) return false;
+  return snprintf(output, capacity, "%s.laghu-operations", cache_path) > 0;
 }
 
 void laghu_operational_registry_init(laghu_operational_registry *registry) {
@@ -461,8 +461,7 @@ bool laghu_operational_registry_snapshot(laghu_operational_registry *registry, l
   unsigned int slot, attempt;
   if (state == NULL || snapshot == NULL || !laghu_header_valid(state)) return false;
   memset(snapshot, 0, sizeof(*snapshot));
-  snapshot->version = LAGHU_WIRE_OPERATIONAL_VERSION;
-  snapshot->slot_count = LAGHU_WIRE_OPERATIONAL_SLOT_COUNT;
+    snapshot->slot_count = LAGHU_WIRE_OPERATIONAL_SLOT_COUNT;
   snapshot->generation = laghu_load(laghu_header_generation(state->bytes));
   for (slot = 0U; slot < LAGHU_WIRE_OPERATIONAL_SLOT_COUNT; ++slot) {
     unsigned char *source = laghu_slot_at(state->bytes, slot);
@@ -523,7 +522,7 @@ bool laghu_operational_render_prometheus(const laghu_operational_snapshot *snaps
   static const char *bucket_names[] = {"0.001", "0.005", "0.010", "0.025", "0.050", "0.100", "0.250", "0.500", "1.000", "2.500", "5.000", "+Inf"};
   unsigned int index;
   size_t used = 0U;
-  if (snapshot == NULL || output == NULL || length == NULL || now == 0U || snapshot->version != LAGHU_OPERATIONAL_VERSION ||
+  if (snapshot == NULL || output == NULL || length == NULL || now == 0U ||
       snapshot->slot_count > LAGHU_OPERATIONAL_MAX_SLOTS)
     return false;
   if (!laghu_append(output, capacity, &used,
@@ -664,7 +663,7 @@ bool laghu_operational_render_prometheus(const laghu_operational_snapshot *snaps
 bool laghu_operational_readiness_evaluate(const laghu_operational_snapshot *snapshot, uint64_t now, bool runtime_ready, bool cache_ready,
                                           bool strict_workers, laghu_operational_readiness *readiness) {
   unsigned int index;
-  if (snapshot == NULL || readiness == NULL || now == 0U || snapshot->version != LAGHU_OPERATIONAL_VERSION) return false;
+  if (snapshot == NULL || readiness == NULL || now == 0U) return false;
   memset(readiness, 0, sizeof(*readiness));
   readiness->runtime_ready = runtime_ready;
   readiness->cache_ready = cache_ready;

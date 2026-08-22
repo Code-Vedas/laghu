@@ -9,7 +9,7 @@ permalink: /developer-guide/runtime-contracts/
 
 ## Queue Contracts
 
-Each queue is bounded, checksummed, capability-bearing, heartbeat-validated, and versioned independently.
+Each queue is bounded, checksummed, capability-bearing, heartbeat-validated, and with one current layout.
 
 Queue format v12 carries W3C trace context, the `Save-Data` representation bit, and content-class key state. Upgrade workers and
 adapters together, then recreate every queue file; an older mapping is rejected rather than being decoded with shifted fields.
@@ -29,7 +29,7 @@ Catalog corruption is a cache miss, not a reason to serve guessed output.
 The in-memory engine is the request-facing source of truth.
 The synchronizer rotates bounded pending deltas without holding the request mutex during backend I/O, merges returned aggregates, and publishes a portable last-known-good snapshot.
 
-Redis/Valkey executes one fixed versioned Lua merge contract through `SCRIPT LOAD` and `EVALSHA`, retries one `NOSCRIPT` reload, validates the full batch before writes, and commits the batch marker last.
+Redis/Valkey executes one fixed Lua merge contract through `SCRIPT LOAD` and `EVALSHA`, retries one `NOSCRIPT` reload, validates the full batch before writes, and commits the batch marker last.
 New record types require byte-for-byte C/Lua layout parity, saturation/max/union tests, duplicate-batch tests, concurrency convergence, wrong-type rejection, and failure/retry coverage.
 
 ## Compatibility Rule

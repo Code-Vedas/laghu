@@ -86,7 +86,7 @@ class K6RailTest(unittest.TestCase):
     def test_corpus_manifest_rejects_missing_required_fixture(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "manifest.json").write_text('{"schema":"laghu-deterministic-corpus-v2","files":[],"categories":{}}')
+            (root / "manifest.json").write_text('{"schema":"laghu-deterministic-corpus","files":[],"categories":{}}')
             with self.assertRaisesRegex(RuntimeError, "category coverage"):
                 load_corpus_manifest(root)
 

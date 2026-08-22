@@ -162,10 +162,10 @@ Workers cannot force request delivery of an invalid result because the serving p
 | --- | --- | --- | --- |
 | Response policy | Adapter/server configuration | Reloaded immutable configuration | Reject invalid startup or reload |
 | Ready variants | Content-addressed cache | Atomic publication and checksum validation | Republish from ordinary traffic |
-| Resource catalogs | `laghu-runtime` | Versioned checksummed records | Reject corruption and relearn |
+| Resource catalogs | `laghu-runtime` | Checksummed records | Reject corruption and relearn |
 | RUM observations | Per-worker memory | Monotonic bounded merge | Snapshot/backend restore and expiry |
 | Fleet RUM | Redis/Valkey | Idempotent atomic Lua batches | Retain pending deltas and retry |
-| Decisions | Memory plus snapshot/backend | Versioned by template, policy, and optimizer | Invalidate on dependency/version change |
+| Decisions | Memory plus snapshot/backend | Keyed by template, policy, and optimizer | Invalidate on dependency change |
 
 Request workers read only bounded local immutable catalogs; they never contact object storage, Redis, or Valkey to answer a request.
 A background thread restores state, rotates bounded deltas, performs backend I/O, and reconciles returned aggregates into memory.
@@ -173,7 +173,7 @@ A background thread restores state, rotates bounded deltas, performs backend I/O
 ## Security Boundaries
 
 - Native modules execute with their web-server process privileges and therefore treat all response parsing as privileged input handling.
-- Codec and SWC workers accept bounded versioned jobs and publish only validated content-addressed output.
+- Codec and SWC workers accept bounded jobs and publish only validated content-addressed output.
 - `laghu-resource-fetch` contacts configured font providers, `laghu-html-refresh` contacts one explicitly configured public HTTPS origin per queue, and `laghu-asset-upload` contacts the configured S3-compatible endpoint. They require verified HTTPS and administrator-owned configuration; neither lets a request select a network target or exposes credentials to request workers.
 - The standalone server verifies origin and downstream TLS according to administrator-owned trust configuration.
 - Beacon endpoints require same-origin bounded JSON and store opaque aggregates rather than raw browser reports.

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 
-MANIFEST_SCHEMA = "laghu-deterministic-corpus-v2"
+MANIFEST_SCHEMA = "laghu-deterministic-corpus"
 
 
 def write_text(path: Path, body: str, encoding: str = "utf-8") -> None:
@@ -1525,7 +1525,7 @@ def write_animated_gif(path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--seed", default="laghu-performance-v1")
+    parser.add_argument("--seed", default="laghu-performance")
     args = parser.parse_args()
     root = args.output
     root.mkdir(parents=True, exist_ok=True)

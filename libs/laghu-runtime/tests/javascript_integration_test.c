@@ -44,7 +44,7 @@ static void publish_javascript_fixture(const char *cache_path, const char *url, 
   memcpy(catalog + 1836U, &flags, sizeof(flags));
   assert(laghu_sha256_hex((laghu_buffer){catalog, 1840U}, checksum));
   strcpy((char *)catalog + 1840U, checksum);
-  length = snprintf(canonical, sizeof(canonical), "laghu-js-url-v1\n%s\n%s\n%s\n%s", url, policy, target, module != 0U ? "module" : "classic");
+  length = snprintf(canonical, sizeof(canonical), "laghu-js-url\n%s\n%s\n%s\n%s", url, policy, target, module != 0U ? "module" : "classic");
   assert(length > 0 && (size_t)length < sizeof(canonical));
   assert(laghu_sha256_hex((laghu_buffer){(const unsigned char *)canonical, (size_t)length}, catalog_key));
   length = snprintf(path, sizeof(path), "%s/javascript-%s.meta", cache_path, catalog_key);

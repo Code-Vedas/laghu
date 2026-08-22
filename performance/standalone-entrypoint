@@ -12,17 +12,29 @@ queue=/run/laghu/jobs.queue
 javascript_queue=/run/laghu/javascript.queue
 cache=/var/cache/laghu/images
 token=/run/laghu/benchmark.token
+config=/run/laghu/benchmark.yaml
 
 laghu-libvips --init "${queue}" "${cache}"
 laghu-js-optimize --init "${javascript_queue}" "${cache}"
 install -o laghu -g laghu -m 600 /etc/laghu/benchmark.token "${token}"
-laghu --listen 0.0.0.0:8080 --origin "${LAGHU_BENCH_ORIGIN}" \
-  --file-cache-backend "file://${cache}" --worker-queue "${queue}" \
-  --javascript-queue "${javascript_queue}" --rewrite-level "${rewrite_level}" \
-  --workers 32 --connection-queue 4096 \
-  --metrics on \
-  --purge-token-file "${token}" --purge-allow 0.0.0.0/0 \
-  --allow-resources '/*' &
+printf '%s\n' \
+  'runtime:' \
+  '  listen: 0.0.0.0:8080' \
+  "  origin: ${LAGHU_BENCH_ORIGIN}" \
+  "  file_cache_backend: file://${cache}" \
+  "  worker_queue: ${queue}" \
+  "  javascript_queue: ${javascript_queue}" \
+  "  rewrite_level: ${rewrite_level}" \
+  '  workers: 1' \
+  '  connection_queue: 4096' \
+  '  origin_pool_size: 1024' \
+  '  metrics: true' \
+  "  purge_token_file: ${token}" \
+  '  purge_allow: 0.0.0.0/0' \
+  '  allow_resources: /*' >"${config}"
+chown laghu:laghu "${config}"
+chmod 600 "${config}"
+laghu --config "${config}" &
 server=$!
 sleep 3
 kill -0 "${server}"

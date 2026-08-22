@@ -133,8 +133,6 @@ static bool laghu_http_content_type_is(const char *content_type, const char *pre
 void laghu_http_result_init(laghu_http_transaction_result *result) {
   if (result != NULL) {
     memset(result, 0, sizeof(*result));
-    result->version = LAGHU_HTTP_ABI_VERSION;
-    result->struct_size = sizeof(*result);
     result->action = LAGHU_HTTP_ACTION_BYPASS;
     result->decision = LAGHU_DECISION_BYPASS_ERROR;
   }
@@ -396,9 +394,7 @@ static bool laghu_http_accepts_image(const laghu_http_request *request, const ch
 
 static bool laghu_http_contract_valid(const laghu_http_request *request, const laghu_http_response *response,
                                       const laghu_http_environment *environment) {
-  return request != NULL && response != NULL && environment != NULL && request->version == LAGHU_HTTP_ABI_VERSION &&
-         request->struct_size == sizeof(*request) && response->version == LAGHU_HTTP_ABI_VERSION && response->struct_size == sizeof(*response) &&
-         environment->version == LAGHU_HTTP_ABI_VERSION && environment->struct_size == sizeof(*environment) &&
+  return request != NULL && response != NULL && environment != NULL &&
          laghu_http_normalized_view_valid(request->method, false) && laghu_http_normalized_view_valid(request->scheme, false) &&
          laghu_http_normalized_view_valid(request->authority, false) && laghu_http_normalized_view_valid(request->normalized_path, true) &&
          laghu_http_headers_valid(request->headers, request->header_count, LAGHU_HTTP_MAX_REQUEST_HEADERS) &&
@@ -560,8 +556,6 @@ static bool laghu_http_internal_asset_key(const char *path, char output[LAGHU_RU
 void laghu_http_transaction_init(laghu_http_transaction *transaction) {
   if (transaction != NULL) {
     memset(transaction, 0, sizeof(*transaction));
-    transaction->version = LAGHU_HTTP_ABI_VERSION;
-    transaction->struct_size = sizeof(*transaction);
     transaction->decision = LAGHU_DECISION_BYPASS_ERROR;
   }
 }
@@ -668,7 +662,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
   bool image_class_known = false;
   laghu_image_content_class image_content_class = LAGHU_IMAGE_CONTENT_PHOTO;
   laghu_http_result_init(result);
-  if (transaction == NULL || result == NULL || transaction->version != LAGHU_HTTP_ABI_VERSION || transaction->struct_size != sizeof(*transaction) ||
+  if (transaction == NULL || result == NULL ||
       !laghu_http_contract_valid(request, response, environment)) {
     return result != NULL && laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
   }

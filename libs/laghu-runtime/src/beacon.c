@@ -126,7 +126,7 @@ static bool laghu_image_merge(void *data, size_t length, void *opaque) {
   laghu_rum_image_record *record = data;
   laghu_image_merge_context *context = opaque;
   const laghu_image_beacon_record *beacon = context->beacon;
-  if (length != sizeof(*record) || record->version != 1U) return false;
+  if (length != sizeof(*record)) return false;
   if (beacon->mobile) {
     if (beacon->width > record->mobile_width) record->mobile_width = beacon->width;
     if (beacon->height > record->mobile_height) record->mobile_height = beacon->height;
@@ -154,7 +154,6 @@ bool laghu_catalog_apply_beacon(laghu_rum_engine *rum, const char *cache_path, c
     return false;
   }
   if (!laghu_rum_engine_read(rum, LAGHU_RUM_RECORD_IMAGE, identity, now, &learning, sizeof(learning), &value)) {
-    learning.version = 1U;
     strcpy(learning.identity, identity);
     learning.updated_at = catalog.learned_at != 0U ? catalog.learned_at : now;
     learning.width = catalog.learned_width;

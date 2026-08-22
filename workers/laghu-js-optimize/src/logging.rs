@@ -35,7 +35,7 @@ pub(crate) fn lifecycle(state: &str, failure: &str) {
     eprintln!(
         "{}",
         json!({
-            "schema": "laghu-log-v1",
+            "schema": "laghu-log",
             "timestamp": timestamp(),
             "surface": "worker",
             "component": "js-optimize",
@@ -50,7 +50,7 @@ pub(crate) fn job(success: bool, input_bytes: usize, output_bytes: usize, durati
     eprintln!(
         "{}",
         json!({
-            "schema": "laghu-log-v1",
+            "schema": "laghu-log",
             "timestamp": timestamp(),
             "surface": "worker",
             "component": "js-optimize",

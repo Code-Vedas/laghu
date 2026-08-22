@@ -19,8 +19,7 @@
 #include "laghu/types.h"
 #include "runtime_platform.h"
 
-#define LAGHU_CACHE_INDEX_MAGIC UINT64_C(0x4c414748554c5255)
-#define LAGHU_CACHE_INDEX_VERSION 2U
+#define LAGHU_CACHE_INDEX_MAGIC UINT64_C(0x4c41474855435552)
 #define LAGHU_CACHE_SLOT_EMPTY 0U
 #define LAGHU_CACHE_SLOT_READY 1U
 #define LAGHU_CACHE_SLOT_DELETED 2U
@@ -39,7 +38,6 @@ static LAGHU_THREAD_LOCAL unsigned int laghu_cache_scoped_variant_limit = LAGHU_
 
 typedef struct {
   uint64_t magic;
-  uint32_t version;
   uint32_t slot_count;
   uint64_t size_limit;
   uint64_t inode_limit;
@@ -147,7 +145,7 @@ static bool laghu_cache_health_snapshot_load(const laghu_file_cache_state *state
 }
 
 static bool laghu_cache_index_valid(laghu_cache_backend *backend, laghu_file_cache_state *state) {
-  return state->header->magic == LAGHU_CACHE_INDEX_MAGIC && state->header->version == LAGHU_CACHE_INDEX_VERSION &&
+  return state->header->magic == LAGHU_CACHE_INDEX_MAGIC &&
          state->header->slot_count == state->slot_count && state->header->size_limit == backend->limits.size_limit &&
          state->header->inode_limit == backend->limits.inode_limit && state->header->clean_interval == backend->limits.clean_interval;
 }
@@ -156,7 +154,6 @@ static void laghu_cache_index_recover(laghu_cache_backend *backend, laghu_file_c
   uint64_t corrupt = state->header->corrupt_removals + 1U;
   memset(state->mapping.mapping, 0, state->mapping.mapping_length);
   state->header->magic = LAGHU_CACHE_INDEX_MAGIC;
-  state->header->version = LAGHU_CACHE_INDEX_VERSION;
   state->header->slot_count = state->slot_count;
   state->header->size_limit = backend->limits.size_limit;
   state->header->inode_limit = backend->limits.inode_limit;
@@ -281,11 +278,10 @@ static bool laghu_cache_metadata_open(laghu_cache_backend *backend) {
     backend->implementation = state;
     return true;
   }
-  initialize = state->header->magic == 0U && state->header->version == 0U;
+  initialize = state->header->magic == 0U;
   if (initialize) {
     memset(state->mapping.mapping, 0, state->mapping.mapping_length);
     state->header->magic = LAGHU_CACHE_INDEX_MAGIC;
-    state->header->version = LAGHU_CACHE_INDEX_VERSION;
     state->header->slot_count = (uint32_t)slots;
     state->header->size_limit = backend->limits.size_limit;
     state->header->inode_limit = backend->limits.inode_limit;
@@ -295,7 +291,7 @@ static bool laghu_cache_metadata_open(laghu_cache_backend *backend) {
     (void)laghu_runtime_shared_mapping_sync(&state->mapping);
     state->header->rebuilding = 0U;
   } else if (!laghu_cache_index_valid(backend, state)) {
-    if (state->header->magic == LAGHU_CACHE_INDEX_MAGIC && state->header->version != LAGHU_CACHE_INDEX_VERSION) {
+    if (state->header->magic != LAGHU_CACHE_INDEX_MAGIC) {
       laghu_cache_index_recover(backend, state);
       (void)laghu_runtime_shared_mapping_sync(&state->mapping);
     } else {
@@ -741,7 +737,7 @@ bool laghu_cache_backend_register_path(const char *path, const laghu_cache_limit
         metadata_size >= 16384U && metadata_size <= SIZE_MAX && (file = fopen(metadata_path, "rb")) != NULL) {
       bool read = fread(&header, sizeof(header), 1U, file) == 1U;
       (void)fclose(file);
-      if (read && header.magic == LAGHU_CACHE_INDEX_MAGIC && header.version == LAGHU_CACHE_INDEX_VERSION && header.size_limit != 0U &&
+      if (read && header.magic == LAGHU_CACHE_INDEX_MAGIC && header.size_limit != 0U &&
           header.inode_limit != 0U && header.clean_interval != 0U) {
         expected.size_limit = header.size_limit;
         expected.inode_limit = header.inode_limit;
@@ -978,7 +974,7 @@ bool laghu_cache_flush_file_poll(const char *path, const char *flush_file, uint6
   if (line_length == 0U || line[line_length - 1U] != '\n' || fgetc(file) != EOF || fclose(file) != 0) return false;
   line[--line_length] = '\0';
   if (line_length > 0U && line[line_length - 1U] == '\r') line[--line_length] = '\0';
-  if (line_length == 0U || sscanf(line, "laghu-cache-flush-v1 %llu%c", &requested, &trailing) != 1 || requested == 0U) return false;
+  if (line_length == 0U || sscanf(line, "laghu-cache-flush %llu%c", &requested, &trailing) != 1 || requested == 0U) return false;
   return laghu_cache_backend_flush_path(path, (uint64_t)requested, now, generation);
 }
 

@@ -298,7 +298,7 @@ pub(crate) fn operational_slot_base(slot: usize) -> usize {
 }
 pub(crate) fn operational_path(cache: &Path) -> PathBuf {
     let mut path = cache.as_os_str().to_os_string();
-    path.push(".laghu-operations-v4");
+    path.push(".laghu-operations");
     PathBuf::from(path)
 }
 fn saturating_add(bytes: &mut [u8], offset: usize, increment: u64) {

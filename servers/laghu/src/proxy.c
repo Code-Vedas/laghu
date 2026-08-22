@@ -347,9 +347,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     memset(&environment, 0, sizeof(environment));
     {
       const char *scheme = proxy_effective_scheme(config, service, connection, &request);
-      normalized_request = (laghu_http_request){LAGHU_HTTP_ABI_VERSION,
-                                                sizeof(normalized_request),
-                                                {(const unsigned char *)request.method, strlen(request.method)},
+      normalized_request = (laghu_http_request){{(const unsigned char *)request.method, strlen(request.method)},
                                                 {(const unsigned char *)scheme, strlen(scheme)},
                                                 {NULL, 0U},
                                                 {(const unsigned char *)request.target, strlen(request.target)},
@@ -362,11 +360,9 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
                                                     strlen(host != NULL ? host->value : options->listen_host)};
     }
     normalized_response =
-        (laghu_http_response){LAGHU_HTTP_ABI_VERSION, sizeof(normalized_response), 200U, NULL, 0U, 0U, false, true, false, {NULL, 0U}};
+        (laghu_http_response){200U, NULL, 0U, 0U, false, true, false, {NULL, 0U}};
     environment =
-        (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
-                                 .struct_size = sizeof(environment),
-                                 .config = *config,
+        (laghu_http_environment){.config = *config,
                                  .cache_path = service->image_cache,
                                  .asset_offload = service->asset_offload,
                                  .rum = worker->queue->rum,
@@ -425,8 +421,6 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
         const char *scheme = proxy_effective_scheme(config, service, connection, &request);
         proxy_header *host = proxy_find(request.headers, request.header_count, "Host");
         normalized_request = (laghu_http_request){
-            LAGHU_HTTP_ABI_VERSION,
-            sizeof(normalized_request),
             {(unsigned char *)request.method, strlen(request.method)},
             {(unsigned char *)scheme, strlen(scheme)},
             {(unsigned char *)(host != NULL ? host->value : options->listen_host), strlen(host != NULL ? host->value : options->listen_host)},
@@ -434,9 +428,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
             request_headers,
             request.header_count};
       }
-      normalized_response = (laghu_http_response){LAGHU_HTTP_ABI_VERSION,
-                                                  sizeof(normalized_response),
-                                                  response.status,
+      normalized_response = (laghu_http_response){response.status,
                                                   response_headers,
                                                   response.header_count,
                                                   record.entry.length,
@@ -445,9 +437,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
                                                   false,
                                                   {NULL, 0U}};
       environment =
-          (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
-                                   .struct_size = sizeof(environment),
-                                   .config = *config,
+          (laghu_http_environment){.config = *config,
                                    .cache_path = service->image_cache,
                                    .asset_offload = service->asset_offload,
                                    .rum = worker->queue->rum,
@@ -601,9 +591,7 @@ origin_response_ready:
                                                   {(unsigned char *)response.headers[index].value, strlen(response.headers[index].value)}};
   {
     const char *scheme = proxy_effective_scheme(config, service, connection, &request);
-    normalized_request = (laghu_http_request){LAGHU_HTTP_ABI_VERSION,
-                                              sizeof(normalized_request),
-                                              {(unsigned char *)request.method, strlen(request.method)},
+    normalized_request = (laghu_http_request){{(unsigned char *)request.method, strlen(request.method)},
                                               {(unsigned char *)scheme, strlen(scheme)},
                                               {NULL, 0U},
                                               {(unsigned char *)request.target, strlen(request.target)},
@@ -615,9 +603,7 @@ origin_response_ready:
     normalized_request.authority = (laghu_buffer){(unsigned char *)(host != NULL ? host->value : options->listen_host),
                                                   strlen(host != NULL ? host->value : options->listen_host)};
   }
-  normalized_response = (laghu_http_response){LAGHU_HTTP_ABI_VERSION,
-                                              sizeof(normalized_response),
-                                              response.status,
+  normalized_response = (laghu_http_response){response.status,
                                               response_headers,
                                               response.header_count,
                                               response.content_length,
@@ -626,9 +612,7 @@ origin_response_ready:
                                               response.status == 206U || proxy_find(response.headers, response.header_count, "Content-Range") != NULL,
                                               {NULL, 0U}};
   environment =
-      (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
-                               .struct_size = sizeof(environment),
-                               .config = *config,
+      (laghu_http_environment){.config = *config,
                                .cache_path = service->image_cache,
                                .asset_offload = service->asset_offload,
                                .rum = worker->queue->rum,
@@ -748,13 +732,13 @@ origin_response_ready:
       access.failure = "client_disconnect";
   }
 done:
-  if (transaction.version == LAGHU_HTTP_ABI_VERSION && transaction.trace.trace_id[0] != '\0') {
+  if (transaction.trace.trace_id[0] != '\0') {
     (void)snprintf(access.trace_id, sizeof(access.trace_id), "%s", transaction.trace.trace_id);
     (void)snprintf(access.span_id, sizeof(access.span_id), "%s", transaction.trace.span_id);
   }
   if (access.status == 0U)
     access.status = (finalized.not_modified || prepared.not_modified) ? 304U : (response.status != 0U ? response.status : 200U);
-  if (finalized.version == LAGHU_HTTP_ABI_VERSION) {
+  if (finalized.selected.data != NULL || finalized.action != LAGHU_HTTP_ACTION_BYPASS) {
     access.decision = finalized.decision;
     access.job_published = finalized.job_published;
     access.output_bytes = finalized.selected.length;
@@ -765,7 +749,7 @@ done:
     (void)snprintf(access.javascript_defer_template, sizeof(access.javascript_defer_template), "%s", finalized.javascript_defer_template);
     access.javascript_defer_bucket = finalized.javascript_defer_bucket;
     access.javascript_defer_observations = finalized.javascript_defer_observations;
-  } else if (prepared.version == LAGHU_HTTP_ABI_VERSION) {
+  } else if (prepared.selected.data != NULL || prepared.action != LAGHU_HTTP_ACTION_BYPASS) {
     access.decision = prepared.decision;
     access.job_published = prepared.job_published;
     if (prepared.action == LAGHU_HTTP_ACTION_SERVE_CACHED) {

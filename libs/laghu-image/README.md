@@ -1,7 +1,5 @@
 # Laghu Image
 
-`laghu-image` is the server-independent image pipeline. With `LAGHU_WITH_VIPS=ON` it uses only explicit JPEG, PNG, GIF, and WebP libvips C load/save operations. The `OFF` build retains format, key, and markup APIs but always preserves original image bytes.
+This library provides server-independent image probing, transforms, validation, and markup decisions. It is used by all delivery surfaces and by `laghu-libvips`.
 
-The NGINX module, Apache module, and `laghu-libvips` worker consume the same APIs; no adapter owns a private image filter implementation.
-
-Every byte candidate is decoded and structurally validated before the core strictly-smaller gate can select it. Lossless candidates additionally require normalized pixel identity; animation validates frames, delays, loop count, and alpha. Markup helpers operate only on a caller-provided ready-variant catalog.
+Configure with `-DLAGHU_WITH_VIPS=ON` for libvips transforms, then build and run `ctest --test-dir build -R laghu_image_test`.

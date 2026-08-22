@@ -1,16 +1,16 @@
 ---
-title: mod-laghu
-nav_order: 4
-has_children: true
+title: Apache integration
+nav_order: 5
 permalink: /mod-laghu/
 ---
 
-# mod-laghu
+# Apache integration
 
-`mod-laghu` is the native Apache HTTP Server 2.4 output-filter product.
-It shares Laghu policy and state contracts while integrating through Apache configuration and bucket brigades.
+`mod_laghu` is the native Apache HTTP Server adapter. Load its module, enable `Laghu` in the intended Apache scope, and point it at the shared cache and worker queues.
 
-- [Install mod-laghu](/mod-laghu/install/)
-- [Configure every directive](/mod-laghu/configure/)
-- [Apply production guidance](/mod-laghu/guides/)
-- [Troubleshoot startup and runtime behavior](/mod-laghu/troubleshooting/)
+Apache retains virtual-host configuration and bucket brigades; Laghu uses the same policy and runtime as NGINX and standalone. See [Operations](/operations/) for shared worker, cache, and administrative behavior.
+
+```apache
+LoadModule laghu_module modules/mod_laghu.so
+Laghu On
+```

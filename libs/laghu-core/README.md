@@ -1,7 +1,7 @@
 # Laghu Core
 
-`laghu-core` owns optimization policy that does not depend on NGINX. It includes configuration inheritance, preset and rewrite-level policy resolution, conservative response eligibility, dependency-free SHA-256 content and variant keys, and a candidate gate that preserves a borrowed view of the caller-owned original unless validated output is strictly smaller. Version 4 keys include the resolved image quality used by the asynchronous image pipeline.
+This library owns server-independent optimization policy, configuration inheritance, response eligibility, and candidate selection. NGINX, Apache, standalone, and workers link it for shared behavior.
 
-Preset and rewrite-level selectors are mutually exclusive within one scope. Rewrite levels provide passthrough, core, bandwidth, all, and experimental policy masks.
+Build the project from the repository root, then run `ctest --test-dir build -R laghu_core`.
 
-The public C API lives in `include/laghu/core.h`. Keeping it independent from server types lets NGINX, Apache, and the workers share policy without linking transport internals into the engine.
+Its public API is in `include/laghu/core.h`.

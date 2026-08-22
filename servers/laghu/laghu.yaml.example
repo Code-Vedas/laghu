@@ -1,7 +1,6 @@
-# Strict standalone configuration schema. Files in conf.d/*.yaml are read in
+# Strict standalone configuration. Files in conf.d/*.yaml are read in
 # lexical order after this file. Keep the service account as the owner and do
 # not make configuration group- or world-writable.
-schema: 1
 runtime:
   listen: 0.0.0.0:8080
   origin: http://127.0.0.1:8000

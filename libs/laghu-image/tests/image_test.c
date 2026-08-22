@@ -307,7 +307,7 @@ static void test_backend_and_fail_open(void) {
   laghu_image_result result;
 
   assert(laghu_image_backend_probe(&backend));
-  assert(strncmp(backend.backend_id, "laghu-libvips-" LAGHU_VERSION "-", strlen("laghu-libvips-" LAGHU_VERSION "-")) == 0);
+  assert(strncmp(backend.backend_id, "laghu-libvips-" LAGHU_BUILD_REVISION "-", strlen("laghu-libvips-" LAGHU_BUILD_REVISION "-")) == 0);
   assert(backend.backend_id[0] != '\0');
   laghu_image_request_init(&request);
   request.original = (laghu_buffer){malformed, sizeof(malformed)};

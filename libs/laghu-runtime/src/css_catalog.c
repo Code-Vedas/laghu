@@ -31,7 +31,7 @@ bool laghu_stylesheet_publish(const char *cache_path, const laghu_stylesheet_rec
                             key)) {
     return false;
   }
-  return laghu_runtime_cache_publish(cache_path, key, key, record->source_hash, "application/x-laghu-stylesheet-catalog", "laghu-css-catalog-v1",
+  return laghu_runtime_cache_publish(cache_path, key, key, record->source_hash, "application/x-laghu-stylesheet-catalog", "laghu-css-catalog",
                                      (laghu_buffer){(const unsigned char *)record, sizeof(*record)}, &entry);
 }
 

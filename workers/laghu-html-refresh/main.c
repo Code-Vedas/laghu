@@ -24,7 +24,7 @@
 #include "laghu/queue.h"
 #include "laghu/source.h"
 
-#define LAGHU_HTML_REFRESH_BACKEND "laghu-html-refresh-v1"
+#define LAGHU_HTML_REFRESH_BACKEND "laghu-html-refresh"
 #define LAGHU_HTML_REFRESH_HEADER_MAX (64U * 1024U)
 #define LAGHU_HTML_REFRESH_BODY_MAX (4U * 1024U * 1024U)
 #define LAGHU_HTML_REFRESH_TIMEOUT_SECONDS 10U

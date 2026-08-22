@@ -109,7 +109,7 @@ bool laghu_catalog_publish(const char *cache_path, const char *catalog_key, cons
   bool written;
   int length;
   laghu_catalog_lock lock;
-  if (record == NULL || record->version != LAGHU_CATALOG_VERSION || record->variant_count > LAGHU_CATALOG_MAX_WIDTHS ||
+  if (record == NULL || record->variant_count > LAGHU_CATALOG_MAX_WIDTHS ||
       !laghu_catalog_paths(cache_path, catalog_key, directory, sizeof(directory), path, sizeof(path))) {
     return false;
   }
@@ -180,7 +180,7 @@ bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key, uint6
   if (fclose(file) != 0) {
     read = false;
   }
-  if (!read || stored.magic != LAGHU_CATALOG_MAGIC || stored.record.version != LAGHU_CATALOG_VERSION ||
+  if (!read || stored.magic != LAGHU_CATALOG_MAGIC ||
       stored.record.variant_count > LAGHU_CATALOG_MAX_WIDTHS || stored.record.updated_at > now || now - stored.record.updated_at > ttl_seconds ||
       !laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record, sizeof(stored.record)}, checksum) ||
       strcmp(checksum, stored.checksum) != 0) {

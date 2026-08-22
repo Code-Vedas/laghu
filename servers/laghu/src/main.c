@@ -76,8 +76,7 @@ static void usage(FILE *stream) {
       "PATH] [--json]\n"
       "  laghu bench URL [--requests N] [--timeout SECONDS] [--ca-file PATH] "
       "[--json]\n"
-      "  laghu reload [--config PATH]\n"
-      "  laghu migrate [FILE]\n",
+      "  laghu reload [--config PATH]\n",
       stream);
 }
 
@@ -101,7 +100,6 @@ int main(int argc, char **argv) {
     if (result != 0) fprintf(stderr, "laghu reload: %s\n", error);
     return result;
   }
-  if (argc > 1 && strcmp(argv[1], "migrate") == 0) return laghu_migrate_run(argc - 1, argv + 1);
   laghu_proxy_options_init(&options);
   if (argc == 1) {
     config_path = LAGHU_PROXY_DEFAULT_CONFIG_PATH;
@@ -121,7 +119,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (parsed == LAGHU_PROXY_PARSE_VERSION) {
-    puts("laghu " LAGHU_VERSION);
+    puts("laghu " LAGHU_BUILD_REVISION);
     laghu_proxy_options_dispose(&options);
     return 0;
   }

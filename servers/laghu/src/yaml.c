@@ -484,7 +484,6 @@ static bool yaml_load_file(const char *path, laghu_yaml_arguments *arguments, la
   yaml_document_t document;
   yaml_node_t *root;
   yaml_node_pair_t *pair;
-  bool schema_seen = false;
   bool runtime_seen = false;
   bool sites_seen = false;
   bool routes_seen = false;
@@ -511,11 +510,7 @@ static bool yaml_load_file(const char *path, laghu_yaml_arguments *arguments, la
     const char *key = yaml_scalar(&document, pair->key);
     yaml_node_t *value = yaml_document_get_node(&document, pair->value);
     if (key == NULL || value == NULL) goto document_done;
-    if (!strcmp(key, "schema")) {
-      const char *schema = yaml_scalar(&document, pair->value);
-      if (schema_seen || schema == NULL || strcmp(schema, "1") != 0) goto document_done;
-      schema_seen = true;
-    } else if (!strcmp(key, "runtime")) {
+    if (!strcmp(key, "runtime")) {
       if (runtime_seen || value->type != YAML_MAPPING_NODE || !yaml_runtime(&document, arguments, value)) goto document_done;
       runtime_seen = true;
     } else if (!strcmp(key, "sites")) {
@@ -528,7 +523,7 @@ static bool yaml_load_file(const char *path, laghu_yaml_arguments *arguments, la
       goto document_done;
     }
   }
-  valid = schema_seen && runtime_seen;
+  valid = runtime_seen;
 document_done:
   yaml_document_delete(&document);
 done:

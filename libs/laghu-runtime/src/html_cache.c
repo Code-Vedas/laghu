@@ -50,7 +50,7 @@ bool laghu_html_cache_publish(const char *cache_path, const char *origin, const 
   struct stat information;
   (void)now;
   if (body.data == NULL || body.length == 0U || !laghu_html_cache_key(origin, request_path, key) ||
-      !laghu_runtime_cache_publish(cache_path, key, key, validator == NULL ? "" : validator, "text/html", "laghu-html-cache-v1", body, &entry))
+      !laghu_runtime_cache_publish(cache_path, key, key, validator == NULL ? "" : validator, "text/html", "laghu-html-cache", body, &entry))
     return false;
   if (record == NULL) return true;
   memset(record, 0, sizeof(*record));

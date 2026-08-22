@@ -163,9 +163,7 @@ static bool static_gzip(laghu_buffer input, unsigned char **output, size_t *outp
 static void static_environment(laghu_http_environment *environment, proxy_worker *worker, const laghu_config *core,
                                const laghu_service_config *service) {
   *environment =
-      (laghu_http_environment){.version = LAGHU_HTTP_ABI_VERSION,
-                               .struct_size = sizeof(*environment),
-                               .config = *core,
+      (laghu_http_environment){.config = *core,
                                .cache_path = service->image_cache,
                                .asset_offload = service->asset_offload,
                                .rum = worker->queue->rum,
@@ -267,9 +265,7 @@ static bool static_send_transformed(const laghu_proxy_options *options, const pr
   for (index = 0U; index < response.header_count; ++index)
     static_response_headers[index] = (laghu_http_header){{(unsigned char *)response.headers[index].name, strlen(response.headers[index].name)},
                                                          {(unsigned char *)response.headers[index].value, strlen(response.headers[index].value)}};
-  normalized_request = (laghu_http_request){LAGHU_HTTP_ABI_VERSION,
-                                            sizeof(normalized_request),
-                                            {(unsigned char *)request->method, strlen(request->method)},
+  normalized_request = (laghu_http_request){{(unsigned char *)request->method, strlen(request->method)},
                                             {(unsigned char *)proxy_effective_scheme(core, service, connection, request),
                                              strlen(proxy_effective_scheme(core, service, connection, request))},
                                             {NULL, 0U},
@@ -281,9 +277,7 @@ static bool static_send_transformed(const laghu_proxy_options *options, const pr
     normalized_request.authority = (laghu_buffer){(unsigned char *)(host == NULL ? options->listen_host : host->value),
                                                   strlen(host == NULL ? options->listen_host : host->value)};
   }
-  normalized_response = (laghu_http_response){LAGHU_HTTP_ABI_VERSION,
-                                              sizeof(normalized_response),
-                                              response.status,
+  normalized_response = (laghu_http_response){response.status,
                                               static_response_headers,
                                               response.header_count,
                                               length,

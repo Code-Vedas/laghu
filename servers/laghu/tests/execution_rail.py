@@ -17,7 +17,7 @@ SURFACES = ("laghu", "nginx", "apache")
 
 def load_contract(path):
     contract = json.loads(path.read_text())
-    if (contract.get("schema"), contract.get("contract"), contract.get("surfaces")) != (2, "laghu-execution-rail-v1", list(SURFACES)):
+    if (contract.get("contract"), contract.get("surfaces")) != ("laghu-execution-rail", list(SURFACES)):
         raise ValueError("invalid laghu execution rail contract")
     return contract
 
@@ -41,9 +41,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     results = [run_surface(surface, getattr(args, f"{surface}_command"), args.output) for surface in SURFACES]
     evidence = {
-        "schema": 1,
         "contract": contract["contract"],
-        "contract_schema": contract["schema"],
         "architecture": args.architecture,
         "cases": contract["cases"],
         "surfaces": results,

@@ -394,7 +394,6 @@ static int laghu_libvips_process_job(const laghu_runtime_job *job, const char *c
       catalog = existing;
     }
   }
-  catalog.version = LAGHU_CATALOG_VERSION;
   (void)snprintf(catalog.normalized_url, sizeof(catalog.normalized_url), "%s", job->request_path);
   memcpy(catalog.source_hash, source_hash, sizeof(catalog.source_hash));
   memcpy(catalog.policy_key, job->policy_key, sizeof(catalog.policy_key));

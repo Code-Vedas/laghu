@@ -20,7 +20,7 @@ enum { TEST_OPERATIONAL_FILE_SIZE = LAGHU_WIRE_OPERATIONAL_HEADER_SIZE + LAGHU_W
 static bool operational_path(const char *root, char *path, size_t capacity) {
   int written;
   if (root == NULL || path == NULL || capacity == 0U) return false;
-  written = snprintf(path, capacity, "%s.laghu-operations-v4", root);
+  written = snprintf(path, capacity, "%s.laghu-operations", root);
   return written > 0 && (size_t)written < capacity;
 }
 

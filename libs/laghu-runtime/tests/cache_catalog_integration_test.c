@@ -218,7 +218,6 @@ static void test_catalog_learning(const char *temporary, const char *index_key, 
   rum_engine = laghu_rum_engine_create(&rum_options, NULL, 0U);
   assert(rum_engine != NULL);
   assert(laghu_catalog_key("/image.png", index_key, policy_key, 0x55aaU, catalog_key));
-  catalog.version = LAGHU_CATALOG_VERSION;
   strcpy(catalog.normalized_url, "/image.png");
   strcpy(catalog.source_hash, index_key);
   strcpy(catalog.policy_key, policy_key);
@@ -262,7 +261,6 @@ static void test_catalog_learning(const char *temporary, const char *index_key, 
     char lock_path[LAGHU_RUNTIME_PATH_SIZE];
     FILE *lock;
     memset(&catalog, 0, sizeof(catalog));
-    catalog.version = LAGHU_CATALOG_VERSION;
     strcpy(catalog.normalized_url, "/locked.png");
     strcpy(catalog.source_hash, index_key);
     strcpy(catalog.policy_key, policy_key);

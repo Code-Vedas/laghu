@@ -1,19 +1,16 @@
 ---
-title: ngx-laghu
-nav_order: 3
-has_children: true
+title: NGINX integration
+nav_order: 4
 permalink: /ngx-laghu/
 ---
 
-# ngx-laghu
+# NGINX integration
 
-`ngx-laghu` is the native NGINX HTTP output-filter product.
-It is the preferred deployment when the target NGINX build can load a matched dynamic module.
+`ngx-laghu` is the native NGINX adapter. Build it against the target NGINX source with `--add-dynamic-module`, load the resulting module, and enable `laghu` in the required NGINX scope.
 
-- [Install ngx-laghu](/ngx-laghu/install/)
-- [Configure every directive](/ngx-laghu/configure/)
-- [Apply production guidance](/ngx-laghu/guides/)
-- [Troubleshoot startup and runtime behavior](/ngx-laghu/troubleshooting/)
+The module uses normal NGINX inheritance and delegates policy, cache, and worker decisions to the shared engine. Configure worker queues and cache paths under the same service account as NGINX. See [Operations](/operations/) for common runtime behavior.
 
-The module owns NGINX configuration inheritance, response filtering, and fail-open delivery.
-Codec work, SWC processing, and provider network access remain in separate services.
+```sh
+./configure --with-compat --add-dynamic-module=/path/to/laghu/modules/ngx_http_laghu_module
+make modules
+```

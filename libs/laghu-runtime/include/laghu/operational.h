@@ -21,7 +21,6 @@
 extern "C" {
 #endif
 
-#define LAGHU_OPERATIONAL_VERSION 4U
 #define LAGHU_OPERATIONAL_MAX_SLOTS 64U
 #define LAGHU_OPERATIONAL_LATENCY_BUCKETS 12U
 #define LAGHU_OPERATIONAL_RENDER_SIZE 65536U
@@ -104,7 +103,6 @@ typedef struct {
 } laghu_operational_slot_snapshot;
 
 typedef struct {
-  uint32_t version;
   uint32_t slot_count;
   uint64_t generation;
   laghu_operational_slot_snapshot slots[LAGHU_OPERATIONAL_MAX_SLOTS];

@@ -5,7 +5,7 @@
 
 FROM ubuntu:24.04 AS build
 
-ARG LAGHU_VERSION=0.1.0
+ARG LAGHU_BUILD_REVISION=0.1.0
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
@@ -25,14 +25,14 @@ RUN cmake -S . -B build -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
 
 FROM ubuntu:24.04
 
-ARG LAGHU_VERSION=0.1.0
+ARG LAGHU_BUILD_REVISION=0.1.0
 ENV DEBIAN_FRONTEND=noninteractive
 
 LABEL org.opencontainers.image.title="mod-laghu" \
       org.opencontainers.image.description="Apache HTTP Server with the native mod_laghu adapter" \
       org.opencontainers.image.url="https://laghu.codevedas.com" \
       org.opencontainers.image.source="https://github.com/Code-Vedas/laghu" \
-      org.opencontainers.image.version="${LAGHU_VERSION}" \
+      org.opencontainers.image.version="${LAGHU_BUILD_REVISION}" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \

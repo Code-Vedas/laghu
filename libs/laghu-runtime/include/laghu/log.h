@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define LAGHU_LOG_SCHEMA "laghu-log-v1"
+#define LAGHU_LOG_SCHEMA "laghu-log"
 #define LAGHU_LOG_LINE_SIZE 4096U
 #define LAGHU_LOG_PATH_SIZE 1024U
 

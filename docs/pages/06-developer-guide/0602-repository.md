@@ -26,7 +26,7 @@ permalink: /developer-guide/repository/
 | `scripts` | Canonical build and validation entry points. |
 
 Adapters must not acquire codec or network dependencies.
-Worker protocols are bounded and versioned, cache publication is atomic, and all consumers validate checksums and compatibility before use.
+Worker protocols are bounded and checksummed, cache publication is atomic, and all consumers validate checksums and integrity before use.
 
 Configuration identity, types, bounds, defaults, conflicts, and semantic validation belong to `laghu-core`; native syntax and context belong to each product adapter.
 When adding a setting, update all supported surfaces, tests, examples, packages, and the three product configuration pages together.

@@ -24,7 +24,7 @@
 
 #include "laghu/queue.h"
 
-#define LAGHU_CHROME_ANALYZE_BACKEND "laghu-chrome-analyze-v1"
+#define LAGHU_CHROME_ANALYZE_BACKEND "laghu-chrome-analyze"
 #define LAGHU_CHROME_ANALYZE_SLOTS 2U
 #define LAGHU_CHROME_ANALYZE_MAX_HTML (1024U * 1024U)
 #define LAGHU_CHROME_ANALYZE_MAX_OUTPUT (128U * 1024U)

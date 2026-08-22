@@ -212,8 +212,6 @@ bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context)
   if ((validator == NULL || ap_cstr_casecmpn(validator, "W/", 2U) == 0) && request->finfo.filetype != APR_NOFILE && request->mtime > 0) {
     file_validator = apr_psprintf(request->pool, "file-%" APR_TIME_T_FMT "-%" APR_OFF_T_FMT, request->mtime, request->finfo.size);
   }
-  context->request.version = LAGHU_HTTP_ABI_VERSION;
-  context->request.struct_size = sizeof(context->request);
   context->request.method = (laghu_buffer){(const unsigned char *)request->method, strlen(request->method)};
   context->request.scheme = (laghu_buffer){(const unsigned char *)ap_http_scheme(request), strlen(ap_http_scheme(request))};
   if (context->config->core.respect_x_forwarded_proto == LAGHU_MODE_ON && context->config->service.trusted_proxy_count != 0U) {
@@ -228,8 +226,6 @@ bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context)
   context->request.normalized_path =
       (laghu_buffer){(const unsigned char *)request->unparsed_uri, request->unparsed_uri == NULL ? 0U : strlen(request->unparsed_uri)};
   context->request.headers = context->request_headers;
-  context->response.version = LAGHU_HTTP_ABI_VERSION;
-  context->response.struct_size = sizeof(context->response);
   context->response.status = (unsigned int)request->status;
   context->response.headers = context->response_headers;
   context->response.has_declared_length = request->clength >= 0;
@@ -239,8 +235,6 @@ bool laghu_apache_normalize(request_rec *request, laghu_apache_context *context)
   if (file_validator != NULL) {
     context->response.source_validator = (laghu_buffer){(const unsigned char *)file_validator, strlen(file_validator)};
   }
-  context->environment.version = LAGHU_HTTP_ABI_VERSION;
-  context->environment.struct_size = sizeof(context->environment);
   context->environment.config = context->config->core;
   context->environment.cache_path = context->config->service.image_cache;
   context->environment.rum = laghu_apache_rum;

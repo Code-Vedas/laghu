@@ -561,7 +561,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
     backend->capabilities |= LAGHU_IMAGE_CAP_ANIMATION;
   }
   backend->available = backend->capabilities != 0U;
-  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "laghu-libvips-" LAGHU_VERSION "-%d.%d.%d-cap-%08x", vips_version(0),
+  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "laghu-libvips-" LAGHU_BUILD_REVISION "-%d.%d.%d-cap-%08x", vips_version(0),
                  vips_version(1), vips_version(2), backend->capabilities);
   return true;
 }
@@ -1197,7 +1197,7 @@ bool laghu_image_backend_probe(laghu_image_backend *backend) {
     return false;
   }
   memset(backend, 0, sizeof(*backend));
-  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "laghu-libvips-" LAGHU_VERSION "-unavailable");
+  (void)snprintf(backend->backend_id, sizeof(backend->backend_id), "laghu-libvips-" LAGHU_BUILD_REVISION "-unavailable");
   return true;
 }
 

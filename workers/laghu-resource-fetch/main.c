@@ -41,7 +41,7 @@ static void laghu_sleep_ms(unsigned int value) {
 #define LAGHU_FETCH_REDIRECT_MAX 3U
 #define LAGHU_FETCH_TIMEOUT_SECONDS 10U
 #define LAGHU_FETCH_RETRY_SECONDS 60U
-#define LAGHU_FETCH_BACKEND "laghu-resource-fetch-v1"
+#define LAGHU_FETCH_BACKEND "laghu-resource-fetch"
 
 typedef struct {
   unsigned int status;

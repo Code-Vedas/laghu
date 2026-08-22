@@ -5,7 +5,7 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-project(laghu VERSION 0.1.0 LANGUAGES C)
+project(laghu LANGUAGES C)
 
 include(CTest)
 include(cmake/LaghuSources.cmake)

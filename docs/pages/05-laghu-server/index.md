@@ -1,16 +1,15 @@
 ---
-title: Laghu Server
-nav_order: 5
-has_children: true
+title: Standalone server
+nav_order: 6
 permalink: /laghu-server/
 ---
 
-# Laghu Server
+# Standalone server
 
-The `laghu` executable is a bounded standalone reverse proxy for an origin that cannot load a native module.
-It uses the same policy and transformation engine as both adapters while owning client connections and verified origin connections itself.
+Laghu standalone is a mature deployment surface for independent scaling, YAML configuration, and modern delivery capabilities. It is a peer to the NGINX and Apache integrations, not a fallback: use it where an independent optimization tier or explicit service configuration is the right operational boundary.
 
-- [Install the server](/laghu-server/install/)
-- [Configure every option](/laghu-server/configure/)
-- [Apply production guidance](/laghu-server/guides/)
-- [Troubleshoot startup and runtime behavior](/laghu-server/troubleshooting/)
+Copy `servers/laghu/laghu.yaml.example`, set the listener, origin, cache, queues, and TLS paths, then start `laghu --config /etc/laghu/laghu.yaml`. It uses the same shared policy, workers, cache, and fail-open behavior as the native adapters.
+
+```sh
+laghu --config /etc/laghu/laghu.yaml
+```

@@ -203,7 +203,7 @@
 
 ### 4.5 Observability and Operations
 - [x] Expose Prometheus metrics for cache behavior, variants, bytes saved, per-type latency, errors, and cache size.
-- [x] Emit the versioned `laghu-log-v1` schema across standalone, NGINX, Apache, and workers.
+- [x] Emit the versioned `laghu-log` schema across standalone, NGINX, Apache, and workers.
 - [x] Emit OpenTelemetry traces across the optimization path.
 - [x] Add unified health and readiness aggregation for the native adapters, standalone proxy, and optimizer worker.
 - [x] Add an opt-in RUM beacon for LCP, INP, and CLS feedback by template.

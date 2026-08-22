@@ -22,7 +22,7 @@
 #include "laghu/source.h"
 #include "laghu/worker.h"
 
-#define LAGHU_OTEL_BACKEND "laghu-otel-export-v1"
+#define LAGHU_OTEL_BACKEND "laghu-otel-export"
 #define LAGHU_OTEL_QUEUE_SLOTS 64U
 #define LAGHU_OTEL_PAYLOAD 65536U
 #define LAGHU_OTEL_TIMEOUT_SECONDS 5U

@@ -1,6 +1,5 @@
 {
-  "schema": 2,
-  "contract": "laghu-execution-rail-v1",
+  "contract": "laghu-execution-rail",
   "baselines": {
     "nginx": "1.30.4",
     "apache": "Debian package image recorded by the rail",

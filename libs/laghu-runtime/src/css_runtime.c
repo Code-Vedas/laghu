@@ -31,7 +31,7 @@ static bool laghu_runtime_sprite_key(const char *policy_key, const laghu_runtime
   size_t index;
   memset(&snapshot, 0, sizeof(snapshot));
   if (queue != NULL) (void)laghu_runtime_queue_snapshot_get(queue, &snapshot);
-  int written = snprintf(material, sizeof(material), "laghu-sprite-v1\n%s\n%s\n%u\nhorizontal\npng-lossless", policy_key, snapshot.backend_id,
+  int written = snprintf(material, sizeof(material), "laghu-sprite\n%s\n%s\n%u\nhorizontal\npng-lossless", policy_key, snapshot.backend_id,
                          snapshot.capabilities);
   if (written <= 0 || (size_t)written >= sizeof(material)) {
     return false;
@@ -138,7 +138,7 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue, const char *cache_pat
   if (resources == NULL || storage == NULL) {
     goto finished;
   }
-  if (!laghu_runtime_cache_publish(cache_path, source_hash, source_hash, source_hash, "text/css", "laghu-css-source-v1", css, &source_entry)) {
+  if (!laghu_runtime_cache_publish(cache_path, source_hash, source_hash, source_hash, "text/css", "laghu-css-source", css, &source_entry)) {
     goto finished;
   }
   stylesheet.version = LAGHU_STYLESHEET_CATALOG_VERSION;
@@ -320,7 +320,7 @@ bool laghu_runtime_rewrite_css(laghu_runtime_queue *queue, const char *cache_pat
     success = true;
     goto finished;
   }
-  if (!laghu_runtime_cache_publish(cache_path, derivation_key, derivation_key, source_hash, "text/css", "laghu-css-v1",
+  if (!laghu_runtime_cache_publish(cache_path, derivation_key, derivation_key, source_hash, "text/css", "laghu-css",
                                    (laghu_buffer){rewritten.data, rewritten.length}, &entry)) {
     laghu_image_markup_result_release(&rewritten);
     success = false;

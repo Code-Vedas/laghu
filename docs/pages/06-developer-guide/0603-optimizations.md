@@ -85,4 +85,4 @@ Cold, expired, malformed, CSP-blocked, or insufficiently observed pages remain u
 
 Each request worker reads and merges an in-process RUM engine only.
 A background synchronization thread rotates bounded pending deltas to a local snapshot or Redis/Valkey and reconciles returned aggregates into memory.
-Redis/Valkey uses one versioned atomic Lua merge contract with idempotent batch markers; backend failure retains pending deltas and the last in-memory view.
+Redis/Valkey uses one atomic Lua merge contract with idempotent batch markers; backend failure retains pending deltas and the last in-memory view.

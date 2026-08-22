@@ -737,7 +737,7 @@ bool laghu_runtime_finalize_html_headers(const char *cache_path, laghu_buffer ht
       return false;
     }
     written =
-        snprintf(material, sizeof(material), "laghu-html-hints-v1\n%s\n%s\n%08x\n%s\n%s\n", source_hash, policy_key, (unsigned int)plan,
+        snprintf(material, sizeof(material), "laghu-html-hints\n%s\n%s\n%08x\n%s\n%s\n", source_hash, policy_key, (unsigned int)plan,
                  existing_content_language == NULL ? "" : existing_content_language, existing_link_headers == NULL ? "" : existing_link_headers);
     if (written <= 0 || (size_t)written >= sizeof(material)) {
       free(builder.data);
@@ -762,7 +762,7 @@ bool laghu_runtime_finalize_html_headers(const char *cache_path, laghu_buffer ht
       return false;
     }
     if (!already_warm && !laghu_runtime_cache_lookup_variant(cache_path, result->dependency_key, &entry)) {
-      if (!laghu_runtime_cache_publish(cache_path, result->dependency_key, result->dependency_key, source_hash, "text/html", "laghu-html-hints-v1",
+      if (!laghu_runtime_cache_publish(cache_path, result->dependency_key, result->dependency_key, source_hash, "text/html", "laghu-html-hints",
                                        (laghu_buffer){builder.data, builder.length}, &entry)) {
         free(builder.data);
         laghu_runtime_html_result_release(result);

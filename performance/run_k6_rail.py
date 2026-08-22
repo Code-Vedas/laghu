@@ -236,7 +236,7 @@ def load_corpus_manifest(corpus: Path) -> dict[str, Any]:
         manifest = json.loads((corpus / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"corpus manifest unavailable: {error}") from error
-    require(manifest.get("schema") == "laghu-deterministic-corpus-v2", "unsupported corpus manifest schema")
+    require(manifest.get("schema") == "laghu-deterministic-corpus", "unsupported corpus manifest schema")
     files = manifest.get("files")
     categories = manifest.get("categories")
     require(isinstance(files, list) and isinstance(categories, dict), "corpus manifest fields missing")
@@ -785,7 +785,7 @@ def write_results(
     misses = cache_states.get("miss", 0)
     hits = cache_states.get("hit", 0)
     result = {
-        "schema": "laghu-k6-correctness-rail-v1",
+        "schema": "laghu-k6-correctness-rail",
         "targets": [asdict(item) for item in TARGETS],
         "cells": cells,
         "failures": failures,

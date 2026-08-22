@@ -19,7 +19,6 @@
 extern "C" {
 #endif
 
-#define LAGHU_CATALOG_VERSION 4U
 #define LAGHU_CATALOG_MAX_WIDTHS 8U
 #define LAGHU_CATALOG_DEFAULT_LIMIT 10000U
 #define LAGHU_CATALOG_DEFAULT_TTL 604800U
@@ -35,7 +34,6 @@ typedef struct {
 } laghu_catalog_variant;
 
 typedef struct {
-  uint32_t version;
   char normalized_url[LAGHU_RUNTIME_PATH_SIZE];
   char source_hash[LAGHU_RUNTIME_KEY_SIZE];
   char policy_key[LAGHU_RUNTIME_KEY_SIZE];
@@ -77,7 +75,6 @@ typedef struct {
 } laghu_image_beacon_record;
 
 typedef struct {
-  uint32_t version;
   char identity[LAGHU_RUNTIME_KEY_SIZE];
   uint64_t updated_at;
   unsigned int width;

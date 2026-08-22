@@ -143,8 +143,6 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_co
                                             "Content-Type", &request->headers_out.content_type)) {
     return false;
   }
-  context->request.version = LAGHU_HTTP_ABI_VERSION;
-  context->request.struct_size = sizeof(context->request);
   context->request.method = ngx_http_laghu_view(&request->method_name);
 #if (NGX_HTTP_SSL)
   context->request.scheme =
@@ -191,16 +189,12 @@ bool ngx_http_laghu_normalize(ngx_http_request_t *request, ngx_http_laghu_loc_co
     context->request.normalized_path = ngx_http_laghu_view(&request->uri);
   }
   context->request.headers = context->request_headers;
-  context->response.version = LAGHU_HTTP_ABI_VERSION;
-  context->response.struct_size = sizeof(context->response);
   context->response.status = request->headers_out.status == 0U ? NGX_HTTP_OK : (unsigned int)request->headers_out.status;
   context->response.headers = context->response_headers;
   context->response.has_declared_length = request->headers_out.content_length_n >= 0;
   context->response.declared_length = context->response.has_declared_length ? (size_t)request->headers_out.content_length_n : 0U;
   context->response.complete = true;
   context->response.partial = request->headers_out.status == NGX_HTTP_PARTIAL_CONTENT;
-  context->environment.version = LAGHU_HTTP_ABI_VERSION;
-  context->environment.struct_size = sizeof(context->environment);
   context->environment.config = conf->core;
   context->environment.cache_path = conf->service.image_cache;
   context->environment.rum = ngx_http_laghu_rum;

@@ -237,7 +237,7 @@ import sys
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
-        self.send_header('ETag', '\"laghu-fixture-v1\"')
+        self.send_header('ETag', '\"laghu-fixture\"')
         super().end_headers()
 
 os.chdir(sys.argv[2])
@@ -789,7 +789,7 @@ def run_origin_mode(mode: str, executable: Path, optimizer: Path | None) -> None
                 optimizer_log.close()
 
             logs = log_path.read_bytes().decode("utf-8", "replace")
-            if '"schema":"laghu-log-v1"' not in logs:
+            if '"schema":"laghu-log"' not in logs:
                 raise AssertionError(f"laghu logs not emitted for {mode}")
     finally:
         stop_origin()

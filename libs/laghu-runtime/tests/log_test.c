@@ -27,7 +27,7 @@ int main(void) {
                                   .compressed = true,
                                   .rate_limited = true};
   assert(laghu_log_render_transaction(&record, output, sizeof(output)));
-  assert(strstr(output, "laghu-log-v1") != NULL);
+  assert(strstr(output, "laghu-log") != NULL);
   assert(strstr(output, "token=secret") == NULL);
   assert(strstr(output, "\"path\":\"/safe\"") != NULL);
   assert(strstr(output, "\"route\":\"static\"") != NULL);

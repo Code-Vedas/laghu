@@ -1019,8 +1019,7 @@ static bool laghu_http_finalize_resource(laghu_http_transaction *transaction, la
 bool laghu_http_transaction_finalize(laghu_http_transaction *transaction, laghu_buffer captured_body, laghu_http_transaction_result *result) {
   bool ok = true;
   laghu_http_result_init(result);
-  if (transaction == NULL || result == NULL || !transaction->prepared || transaction->version != LAGHU_HTTP_ABI_VERSION ||
-      transaction->struct_size != sizeof(*transaction) || !laghu_http_view_valid(captured_body)) {
+  if (transaction == NULL || result == NULL || !transaction->prepared || !laghu_http_view_valid(captured_body)) {
     return result != NULL && laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
   }
   result->action = transaction->action;

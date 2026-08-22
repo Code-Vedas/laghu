@@ -20,7 +20,7 @@ static bool laghu_precompressed_key(const char *payload_hash, laghu_precompresse
   char material[LAGHU_RUNTIME_KEY_SIZE + 32U];
   int length;
   if (payload_hash == NULL || name == NULL) return false;
-  length = snprintf(material, sizeof(material), "laghu-precompressed-v1\n%s\n%s", payload_hash, name);
+  length = snprintf(material, sizeof(material), "laghu-precompressed\n%s\n%s", payload_hash, name);
   return length > 0 && (size_t)length < sizeof(material) && laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)length}, output);
 }
 

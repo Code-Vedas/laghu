@@ -552,7 +552,7 @@ static bool laghu_runtime_rewrite_css_markup_impl(const char *cache_path, laghu_
     laghu_runtime_cache_entry entry;
     if (!laghu_runtime_cache_lookup_variant(cache_path, result->dependency_key, &entry)) {
       if (!laghu_runtime_cache_publish(cache_path, result->dependency_key, result->dependency_key, result->dependency_key, "text/html",
-                                       "laghu-css-markup-v3", (laghu_buffer){builder.data, builder.length}, &entry)) {
+                                       "laghu-css-markup", (laghu_buffer){builder.data, builder.length}, &entry)) {
         goto failed;
       }
       free(builder.data);

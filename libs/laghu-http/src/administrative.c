@@ -821,7 +821,7 @@ bool laghu_http_administrative_render_console_page(const laghu_http_administrati
   if (plan->action == LAGHU_HTTP_ADMINISTRATIVE_ACTION_CONSOLE && plan->output_json) {
     written = snprintf(
         output, capacity,
-        "{\"schema\":\"laghu-console-v1\","
+        "{\"schema\":\"laghu-console\","
         "\"runtime\":\"%s\",\"cache\":\"%s\","
         "\"workers\":\"%s\",\"hits\":%llu,\"misses\":%llu,"
         "\"bytes\":%llu,\"ready\":%s}",
@@ -889,7 +889,7 @@ bool laghu_http_administrative_render_stats(const laghu_cache_limits *limits, co
   }
   written =
       snprintf(output, capacity,
-               "{\"schema\":\"laghu-cache-stats-v1\",\"backend\":\"file\","
+               "{\"schema\":\"laghu-cache-stats\",\"backend\":\"file\","
                "\"capacity\":{\"bytes\":%llu,\"files\":%llu},"
                "\"usage\":{\"bytes\":%llu,\"files\":%llu},"
                "\"requests\":{\"hits\":%llu,\"misses\":%llu,"
@@ -920,7 +920,7 @@ bool laghu_http_administrative_build_history_model(const laghu_operational_snaps
                                                    laghu_http_administrative_history_model *model) {
   unsigned int index;
   unsigned int count;
-  if (snapshot == NULL || query == NULL || model == NULL || snapshot->version != LAGHU_OPERATIONAL_VERSION || query->limit == 0U) {
+  if (snapshot == NULL || query == NULL || model == NULL || query->limit == 0U) {
     return false;
   }
   memset(model, 0, sizeof(*model));
@@ -967,7 +967,7 @@ bool laghu_http_administrative_render_history(const laghu_http_administrative_hi
     }
     written =
         snprintf(output, capacity,
-                 "{\"schema\":\"laghu-history-v1\",\"limit\":%u,\"count\":%u,"
+                 "{\"schema\":\"laghu-history\",\"limit\":%u,\"count\":%u,"
                  "\"totals\":{\"original_bytes\":%llu,\"selected_bytes\":%llu,"
                  "\"saved_bytes\":%llu},\"records\":[",
                  model->limit, records, (unsigned long long)total_original, (unsigned long long)total_selected, (unsigned long long)total_saved);
@@ -1102,7 +1102,7 @@ bool laghu_http_administrative_render_explain(const laghu_http_administrative_ex
   }
   if (model->json) {
     written = snprintf(output, capacity,
-                       "{\"schema\":\"laghu-explain-v1\","
+                       "{\"schema\":\"laghu-explain\","
                        "\"target\":\"%s\","
                        "\"status\":\"%s\","
                        "\"source_hash\":\"%s\","
@@ -1173,7 +1173,7 @@ bool laghu_http_administrative_render_console(const laghu_cache_stats *stats, co
   }
   if (as_json) {
     written = snprintf(output, capacity,
-                       "{\"schema\":\"laghu-console-v1\","
+                       "{\"schema\":\"laghu-console\","
                        "\"runtime\":\"%s\",\"cache\":\"%s\","
                        "\"workers\":\"%s\",\"hits\":%llu,\"misses\":%llu,"
                        "\"bytes\":%llu,\"ready\":%s}",

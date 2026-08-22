@@ -84,7 +84,7 @@ def yaml_runtime_arguments(arguments):
             runtime[key].append(value)
         else:
             runtime[key] = value
-    lines = ["schema: 1", "runtime:"]
+    lines = ["runtime:"]
     for key, value in runtime.items():
         if isinstance(value, list):
             lines.append(f"  {key}:")
@@ -344,7 +344,7 @@ class StatusOrigin(http.server.BaseHTTPRequestHandler):
         b'"configured_workers":1,"healthy_workers":1}'
     )
     stats_body = (
-        b'{"schema":"laghu-cache-stats-v1","backend":"file",'
+        b'{"schema":"laghu-cache-stats","backend":"file",'
         b'"capacity":{"bytes":10,"files":1},"usage":{"bytes":2,"files":1},'
         b'"requests":{"hits":1,"misses":2,"hit_ratio_ppm":333333},'
         b'"publications":0,"rejected_writes":0,"evictions":0,'
@@ -368,7 +368,7 @@ class StatusOrigin(http.server.BaseHTTPRequestHandler):
                 self.send_error(400)
                 return
             body = json.dumps({
-                "schema": "laghu-explain-v1",
+                "schema": "laghu-explain",
                 "target": target,
                 "status": "ready",
                 "source_hash": "abcd1234",
@@ -472,7 +472,7 @@ def status_smoke(executable, root):
         result = run(server.server_port, "--json")
         assert result.returncode == 0
         payload = json.loads(result.stdout)
-        assert payload["schema"] == "laghu-status-v1"
+        assert payload["schema"] == "laghu-status"
         assert payload["ready"]["status"] == "ready"
         assert payload["stats"]["requests"] == {
             "hits": 1, "misses": 2, "hit_ratio_ppm": 333333,
@@ -581,7 +581,7 @@ def doctor_smoke(executable, root):
         result = run(server.server_port, "--json")
         assert result.returncode == 0
         payload = json.loads(result.stdout)
-        assert payload["schema"] == "laghu-doctor-v1"
+        assert payload["schema"] == "laghu-doctor"
         assert payload["runtime"] == "ready"
         assert payload["cache"] == "ready"
         assert payload["workers"] == "ready"
@@ -640,7 +640,7 @@ def purge_smoke(executable, root):
         result = run(server.server_port, "/", "--json")
         assert result.returncode == 0
         assert json.loads(result.stdout) == {
-            "schema": "laghu-purge-v1", "status": "accepted",
+            "schema": "laghu-purge", "status": "accepted",
             "matched_artifacts": 7,
         }
         assert handler.requests == [("/", f"127.0.0.1:{server.server_port}")]
@@ -705,104 +705,6 @@ def purge_smoke(executable, root):
         server.server_close()
 
 
-def migrate_smoke(executable, root):
-    source = root / "legacy.conf"
-    source.write_text(
-        "\n".join(
-            [
-                "# legacy mod_pagespeed sample",
-                "pagespeed on;",
-                "ModPagespeed Off;",
-                "pagespeed RewriteLevel CoreFilters;",
-                "pagespeed EnableFilters rewrite_images,combine_css,Image;",
-                "pagespeed Disallow \"/private/*\";",
-                "pagespeed FileCachePath file:///tmp/legacy-cache;",
-                "pagespeed AllowResources \"/*\";",
-                "modpagespeed inplaceresourceoptimization On;",
-                "modpagespeed maprewritedomain https://public.test https://origin.test;",
-                "modpagespeed mapproxyDomain https://cdn.public.test https://cdn.origin.test;",
-                "modpagespeed shardDomain https://shard.test https://shard1.test,https://shard2.test;",
-                "modpagespeed unknownlegacy on;",
-                "mod_pagespeed InPlaceOptimizeForBrowser Off;",
-                "mod_pagespeed imagerecompressquality 81;",
-                "Location /pagespeed_admin {",
-                '    ProxyPass "/pagespeed_statistics" "http://127.0.0.1/status"',
-                "}",
-                "Location /pagespeed_stats {",
-                '    ProxyPass "/pagespeed_statistics" "http://127.0.0.1/status"',
-                "}",
-                "PageSpeedFilters=\"RewriteImages,inlinecss\";",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    expected = "\n".join(
-        [
-            "# legacy mod_pagespeed sample",
-            "laghu on;",
-            "laghu off;",
-            "laghu preset balanced;",
-            "laghu enable image_lossless,image_metadata,image_dimensions,image_responsive,image_lazyload,resource_combine,image_modern;",
-            "laghu disallow /private/*;",
-            "laghu file_cache_backend file:///tmp/legacy-cache/laghu;",
-            "laghu allow_resources /*;",
-            "laghu enable image_modern;",
-            "laghu map_rewrite_domain https://public.test https://origin.test;",
-            "laghu map_proxy_domain https://cdn.public.test https://cdn.origin.test;",
-            "laghu shard_domain https://shard.test https://shard1.test,https://shard2.test;",
-            "# unsupported legacy directive omitted by laghu migrate; manual review required",
-            "laghu disable image_modern;",
-            "laghu image_quality 81;",
-            "Location /.laghu/console {",
-            '    ProxyPass "/.laghu/stats" "http://127.0.0.1/status"',
-            "}",
-            "Location /.laghu/stats {",
-            '    ProxyPass "/.laghu/stats" "http://127.0.0.1/status"',
-            "}",
-            "laghu query_filter_overrides on;",
-            "laghuFilters=+image_lossless,+image_metadata,+image_dimensions,+image_responsive,+image_lazyload,+resource_inline;",
-        ]
-    )
-    result = subprocess.run(
-        [str(executable), "migrate", str(source)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"laghu migrate returned {result.returncode}", file=sys.stderr)
-        print(f"stdout: {result.stdout}", file=sys.stderr)
-        print(f"stderr: {result.stderr}", file=sys.stderr)
-    assert result.returncode == 0
-    assert result.stdout.splitlines() == expected.splitlines()
-
-    result = subprocess.run(
-        [str(executable), "migrate", str(root / "missing-legacy.conf")],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 4
-
-    result = subprocess.run(
-        [str(executable), "migrate"],
-        input=(
-            "pagespeed on;\n"
-            "location /pagespeed_console { return 200; }\n"
-            "location /pagespeed_stats { return 200; }\n"
-            "PageSpeedFilters=\"RemoveComments\";\n"
-        ),
-        text=True,
-        capture_output=True,
-    )
-    assert result.returncode == 0
-    assert result.stdout == (
-        "laghu on;\n"
-        "location /.laghu/metrics { return 200; }\n"
-        "location /.laghu/stats { return 200; }\n"
-        "laghu query_filter_overrides on;\n"
-        "laghuFilters=+html_minify;\n"
-    )
-
-
 def explain_smoke(executable, root):
     token = root / "explain.token"
     token.write_text("0123456789abcdef\n")
@@ -826,7 +728,7 @@ def explain_smoke(executable, root):
         result = run(server.server_port, "--json")
         assert result.returncode == 0
         payload = json.loads(result.stdout)
-        assert payload["schema"] == "laghu-explain-v1"
+        assert payload["schema"] == "laghu-explain"
         assert payload["target"] == "/index.html"
         assert payload["status"] == "ready"
         assert payload["source_hash"] == "abcd1234"
@@ -881,7 +783,7 @@ def explain_smoke(executable, root):
             )
             assert result.returncode == 0
             payload = json.loads(result.stdout)
-            assert payload["schema"] == "laghu-explain-v1"
+            assert payload["schema"] == "laghu-explain"
         finally:
             tls_server.shutdown()
             tls_server.server_close()
@@ -917,7 +819,7 @@ def bench_smoke(executable, root):
         )
         assert result.returncode == 7
         payload = json.loads(result.stdout)
-        assert payload["schema"] == "laghu-bench-v1"
+        assert payload["schema"] == "laghu-bench"
         assert payload["target"] == "/error"
         assert payload["requests"] == 2
         assert payload["success"] == 0
@@ -1234,7 +1136,7 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
     static_port = free_port()
     static_config = root / "standalone-static.yaml"
     static_config.write_text(
-        "schema: 1\n"
+        ""
         "runtime:\n"
         f"  listen: 127.0.0.1:{static_port}\n"
         f"  cache: {root / 'cache'}\n"
@@ -1328,7 +1230,7 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
     upstream_port = free_port()
     upstream_config = root / "standalone-upstreams.yaml"
     upstream_config.write_text(
-        "schema: 1\n"
+        ""
         "runtime:\n"
         f"  listen: 127.0.0.1:{upstream_port}\n"
         f"  origin: http://127.0.0.1:{origin_port}\n"
@@ -1449,7 +1351,6 @@ def main():
         status_smoke(executable, root)
         doctor_smoke(executable, root)
         purge_smoke(executable, root)
-        migrate_smoke(executable, root)
         explain_smoke(executable, root)
         bench_smoke(executable, root)
         (root / "cache").mkdir()
@@ -1571,7 +1472,7 @@ def main():
 
         def write_sni_config(path, redirect):
             path.write_text(
-                "schema: 1\n"
+                ""
                 "runtime:\n"
                 f"  listen: 127.0.0.1:{sni_port}\n"
                 f"  origin: http://127.0.0.1:{origin_port}\n"
@@ -1652,7 +1553,7 @@ def main():
                 time.sleep(0.05)
             else:
                 raise AssertionError("reload did not atomically publish the replacement")
-            sni_replacement.write_text("schema: 1\nruntime: invalid\n")
+            sni_replacement.write_text("runtime: invalid\n")
             invalid_reload = subprocess.run(
                 [str(executable), "reload", "--config", str(sni_replacement)],
                 capture_output=True, text=True,
@@ -1826,7 +1727,7 @@ def main():
         assert invalid.returncode == 1
         invalid_log = invalid.stderr.decode().strip()
         invalid_record = json.loads(invalid_log)
-        assert invalid_record["schema"] == "laghu-log-v1"
+        assert invalid_record["schema"] == "laghu-log"
         assert invalid_record["event"] == "lifecycle"
         assert invalid_record["state"] == "failed"
         proxy_port = free_port()
@@ -2178,7 +2079,7 @@ def main():
                 proxy_port, "/.laghu/stats", headers=admin_headers
             )
             assert b" 200 " in stats_head.split(b"\r\n", 1)[0]
-            assert b"laghu-cache-stats-v1" in stats_body
+            assert b"laghu-cache-stats" in stats_body
             console_head, console_body = request(
                 proxy_port, "/.laghu/console", headers=admin_headers
             )
@@ -2195,7 +2096,7 @@ def main():
                 proxy_port, "/pagespeed_admin?format=json", headers=admin_headers
             )
             assert b" 200 " in admin_json_head.split(b"\r\n", 1)[0]
-            assert b"\"schema\":\"laghu-console-v1\"" in admin_json_body
+            assert b"\"schema\":\"laghu-console\"" in admin_json_body
             history_head, history_body = request(
                 proxy_port, "/.laghu/history", headers=admin_headers
             )
@@ -2207,12 +2108,12 @@ def main():
                 proxy_port, "/.laghu/history?format=json&limit=2", headers=admin_headers
             )
             assert b" 200 " in history_json_head.split(b"\r\n", 1)[0]
-            assert b"\"schema\":\"laghu-history-v1\"" in history_json_body
+            assert b"\"schema\":\"laghu-history\"" in history_json_body
             stats_legacy_head, stats_legacy_body = request(
                 proxy_port, "/pagespeed_statistics", headers=admin_headers
             )
             assert b" 200 " in stats_legacy_head.split(b"\r\n", 1)[0]
-            assert b"laghu-cache-stats-v1" in stats_legacy_body
+            assert b"laghu-cache-stats" in stats_legacy_body
             stats_legacy_json_head, _ = request(
                 proxy_port, "/pagespeed_statistics?format=json", headers=admin_headers
             )
@@ -2231,7 +2132,7 @@ def main():
                 headers=admin_headers,
             )
             assert b" 200 " in explain_json_head.split(b"\r\n", 1)[0]
-            assert b"\"schema\":\"laghu-explain-v1\"" in explain_json_body
+            assert b"\"schema\":\"laghu-explain\"" in explain_json_body
             purge_form_head, purge_form_body = request(
                 proxy_port, "/.laghu/purge?path=/site.css", headers=admin_headers
             )
@@ -2453,7 +2354,7 @@ def main():
                 b"x-laghu: pass" in corrupt_head
                 or b"x-laghu: bypass-error" in corrupt_head
             )
-            flush_file.write_text("laghu-cache-flush-v1 9\n")
+            flush_file.write_text("laghu-cache-flush 9\n")
             flush_file.chmod(0o600)
             _, flushed_stats = request(
                 proxy_port, "/.laghu/stats", headers=admin_headers
@@ -2481,7 +2382,7 @@ def main():
             main_log.flush()
             main_log.seek(0)
             logs = main_log.read().decode()
-            assert '"schema":"laghu-log-v1"' in logs
+            assert '"schema":"laghu-log"' in logs
             assert '"event":"transaction"' in logs
             assert '"path":"/.laghu/ready"' in logs
             assert '"event":"lifecycle"' in logs

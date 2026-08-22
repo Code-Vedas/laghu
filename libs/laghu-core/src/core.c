@@ -1418,7 +1418,7 @@ bool laghu_variant_key(laghu_buffer original, const laghu_policy *policy, char o
     return false;
   }
 
-  fields[0] = (unsigned char)LAGHU_VARIANT_KEY_VERSION;
+  fields[0] = 0U;
   fields[1] = has_preset ? (unsigned char)(policy->preset + 1) : 0U;
   fields[2] = has_rewrite_level ? (unsigned char)(policy->rewrite_level + 1) : 0U;
   fields[3] = (unsigned char)(policy->filter_families >> 24U);

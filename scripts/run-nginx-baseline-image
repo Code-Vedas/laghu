@@ -45,7 +45,7 @@ if [ -n "${DOCKER_PLATFORM:-}" ]; then
     --platform "${DOCKER_PLATFORM}" \
     --file "${context_dir}/packaging/container/Dockerfile" \
     --build-arg "NGINX_VERSION=${BASELINE_VERSION}" \
-    --build-arg "LAGHU_VERSION=0.1.0" \
+    --build-arg "LAGHU_BUILD_REVISION=0.1.0" \
     --progress plain \
     --tag "${image_tag}" \
     "${context_dir}"
@@ -53,7 +53,7 @@ else
   docker build \
     --file "${context_dir}/packaging/container/Dockerfile" \
     --build-arg "NGINX_VERSION=${BASELINE_VERSION}" \
-    --build-arg "LAGHU_VERSION=0.1.0" \
+    --build-arg "LAGHU_BUILD_REVISION=0.1.0" \
     --progress plain \
     --tag "${image_tag}" \
     "${context_dir}"
