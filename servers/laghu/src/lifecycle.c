@@ -138,6 +138,22 @@ static bool proxy_attach_queue(proxy_queue *queue, laghu_runtime_queue *runtime,
   return attached;
 }
 
+/* Return with the queue lock held once no request can still borrow its runtime
+ * mapping. Holding it through the replacement prevents a newly accepted
+ * request from racing a detach. */
+static bool proxy_reload_lock_when_idle(proxy_queue *queue, unsigned int timeout_seconds) {
+  uint64_t deadline = proxy_monotonic_ms() + (uint64_t)timeout_seconds * 1000U;
+  for (;;) {
+    bool idle;
+    proxy_queue_lock(queue);
+    idle = queue->count == 0U && queue->active_count == 0U;
+    if (idle) return true;
+    proxy_queue_unlock(queue);
+    if (proxy_monotonic_ms() >= deadline) return false;
+    proxy_pause_ms(20U);
+  }
+}
+
 void proxy_maintain_queue_attachments(proxy_queue *queue) {
   const laghu_proxy_options *options;
   const laghu_service_config *service;
@@ -365,16 +381,20 @@ static proxy_reload_request proxy_reload_request_consume(proxy_queue *queue, cha
 
 static bool proxy_reload_string_equal(const char *left, const char *right) { return strcmp(left, right) == 0; }
 
-/* Queue mappings, cache registrations, the RUM engine, and TLS contexts are
- * lifecycle-owned.  A reload swaps only a fully validated immutable request
- * snapshot while those ownership boundaries stay fixed. */
+static uint64_t proxy_reload_service_present(const laghu_service_config *service) {
+  return service->present & ~(UINT64_C(1) << (unsigned int)LAGHU_SERVICE_SETTING_WORKER_QUEUE);
+}
+
+/* Cache registrations, the RUM engine, and TLS contexts stay fixed across a
+ * reload. The runtime queue is the one movable mapping: it is replaced only
+ * after request work drains, so request workers never observe a stale queue. */
 static bool proxy_reload_service_compatible(const laghu_service_config *left, const laghu_service_config *right) {
-  return left->present == right->present && !memcmp(&left->cache_limits, &right->cache_limits, sizeof(left->cache_limits)) &&
-         left->purge_allow_count == right->purge_allow_count && left->trusted_proxy_count == right->trusted_proxy_count &&
-         !memcmp(left->purge_allow, right->purge_allow, sizeof(left->purge_allow)) &&
+  return proxy_reload_service_present(left) == proxy_reload_service_present(right) &&
+         !memcmp(&left->cache_limits, &right->cache_limits, sizeof(left->cache_limits)) && left->purge_allow_count == right->purge_allow_count &&
+         left->trusted_proxy_count == right->trusted_proxy_count && !memcmp(left->purge_allow, right->purge_allow, sizeof(left->purge_allow)) &&
          !memcmp(left->trusted_proxies, right->trusted_proxies, sizeof(left->trusted_proxies)) &&
          proxy_reload_string_equal(left->file_cache_backend, right->file_cache_backend) &&
-         proxy_reload_string_equal(left->image_cache, right->image_cache) && proxy_reload_string_equal(left->worker_queue, right->worker_queue) &&
+         proxy_reload_string_equal(left->image_cache, right->image_cache) &&
          proxy_reload_string_equal(left->html_refresh_queue, right->html_refresh_queue) &&
          proxy_reload_string_equal(left->chrome_analysis_queue, right->chrome_analysis_queue) &&
          proxy_reload_string_equal(left->chrome_analysis_output, right->chrome_analysis_output) &&
@@ -442,11 +462,13 @@ static void proxy_reload_snapshots_dispose(proxy_queue *queue) {
 
 static void proxy_reload_configuration(proxy_queue *queue) {
   proxy_reload_snapshot *snapshot;
+  laghu_runtime_queue replacement;
   char requested_path[LAGHU_RUNTIME_PATH_SIZE];
   char error[256] = {0};
   const laghu_proxy_options *active;
   const char *config_path;
   proxy_reload_request request;
+  bool runtime_queue_changed;
   if (queue->config_path[0] == '\0') {
     proxy_log_event(queue, "reload", "retained");
     return;
@@ -476,7 +498,31 @@ static void proxy_reload_configuration(proxy_queue *queue) {
     proxy_log_event(queue, "reload", "retained");
     return;
   }
-  proxy_queue_lock(queue);
+  runtime_queue_changed = !proxy_reload_string_equal(active->service.worker_queue, snapshot->options.service.worker_queue);
+  laghu_runtime_queue_init(&replacement);
+  if (runtime_queue_changed && snapshot->options.service.worker_queue[0] != '\0' &&
+      !laghu_runtime_queue_open(&replacement, snapshot->options.service.worker_queue)) {
+    laghu_proxy_options_dispose(&snapshot->options);
+    free(snapshot);
+    proxy_log_event(queue, "reload", "retained");
+    return;
+  }
+  if (runtime_queue_changed && !proxy_reload_lock_when_idle(queue, active->drain_timeout)) {
+    laghu_runtime_queue_close(&replacement);
+    laghu_proxy_options_dispose(&snapshot->options);
+    free(snapshot);
+    proxy_log_event(queue, "reload", "retained");
+    return;
+  }
+  if (!runtime_queue_changed) proxy_queue_lock(queue);
+  if (runtime_queue_changed) {
+    laghu_runtime_queue_close(&queue->runtime_queue);
+    queue->runtime_queue_ready = false;
+    if (replacement.implementation != NULL) {
+      (void)laghu_runtime_queue_move(&queue->runtime_queue, &replacement);
+      queue->runtime_queue_ready = true;
+    }
+  }
   snapshot->next = queue->reload_snapshots;
   queue->reload_snapshots = snapshot;
   queue->options = &snapshot->options;
@@ -582,7 +628,7 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
     proxy_log_startup_failure(&queue, "cache_unavailable");
     goto cleanup;
   }
-  if (!proxy_queue_path_valid(options->service.worker_queue) ||
+  if ((options->service.worker_queue[0] != '\0' && !proxy_queue_path_valid(options->service.worker_queue)) ||
       (options->service.html_refresh_queue[0] != '\0' && !proxy_queue_path_valid(options->service.html_refresh_queue)) ||
       (options->service.font_providers != NULL && !proxy_queue_path_valid(options->service.font_fetch_queue)) ||
       (options->service.javascript_queue[0] != '\0' && !proxy_queue_path_valid(options->service.javascript_queue)) ||

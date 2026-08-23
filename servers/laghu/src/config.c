@@ -717,14 +717,21 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   {
     laghu_service_finalize_options finalize_options = {.native_file_loading = false,
                                                        .require_cache = true,
-                                                       .require_worker_queue = true,
+                                                       .require_worker_queue = options->config.rewrite_level != LAGHU_REWRITE_LEVEL_PASSTHROUGH,
                                                        .require_admin_authorization = true,
                                                        .respect_x_forwarded_proto = options->config.respect_x_forwarded_proto == LAGHU_MODE_ON};
     laghu_service_diagnostic diagnostic;
     if (!laghu_service_config_finalize(&options->service, &finalize_options, &diagnostic)) return proxy_error(error, error_size, diagnostic.message);
+    if (!finalize_options.require_worker_queue) {
+      options->service.worker_queue[0] = '\0';
+      options->service.present &= ~(UINT64_C(1) << (unsigned int)LAGHU_SERVICE_SETTING_WORKER_QUEUE);
+    }
   }
   if (!listen_seen || (!origin_seen && options->document_root[0] == '\0' && options->site_count == 0U))
-    return proxy_error(error, error_size, "--listen, a static document root or --origin, a file cache backend, and --worker-queue are required");
+    return proxy_error(error, error_size,
+                       options->config.rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH
+                           ? "--listen, a static document root or --origin, and a file cache backend are required"
+                           : "--listen, a static document root or --origin, a file cache backend, and --worker-queue are required");
   if (ca_seen && !proxy_has_tls_target(options)) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
   if (tls_certificate_seen != tls_private_key_seen)
     return proxy_error(error, error_size, "--tls-certificate and --tls-private-key are required together");

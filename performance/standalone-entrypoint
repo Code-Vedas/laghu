@@ -11,41 +11,53 @@ rewrite_level=${LAGHU_BENCH_REWRITE_LEVEL:-all}
 queue=/run/laghu/jobs.queue
 javascript_queue=/run/laghu/javascript.queue
 cache=/var/cache/laghu/images
-token=/run/laghu/benchmark.token
 config=/run/laghu/benchmark.yaml
-
-laghu-libvips --init "${queue}" "${cache}"
-laghu-js-optimize --init "${javascript_queue}" "${cache}"
-install -o laghu -g laghu -m 600 /etc/laghu/benchmark.token "${token}"
 printf '%s\n' \
   'runtime:' \
   '  listen: 0.0.0.0:8080' \
   "  origin: ${LAGHU_BENCH_ORIGIN}" \
-  "  file_cache_backend: file://${cache}" \
-  "  worker_queue: ${queue}" \
-  "  javascript_queue: ${javascript_queue}" \
   "  rewrite_level: ${rewrite_level}" \
+  "  file_cache_backend: file://${cache}" \
   '  workers: 1' \
   '  connection_queue: 4096' \
-  '  origin_pool_size: 1024' \
-  '  metrics: true' \
-  "  purge_token_file: ${token}" \
-  '  purge_allow: 0.0.0.0/0' \
-  '  allow_resources: /*' >"${config}"
+  '  origin_pool_size: 1024' >"${config}"
+if [ "${rewrite_level}" != passthrough ]; then
+  laghu-libvips --init "${queue}" "${cache}"
+  printf '%s\n' \
+    "  worker_queue: ${queue}" >>"${config}"
+  laghu-js-optimize --init "${javascript_queue}" "${cache}"
+  printf '%s\n' \
+    "  javascript_queue: ${javascript_queue}" >>"${config}"
+fi
+printf '%s\n' \
+  'sites:' \
+  '  - host: alpha.bench.test' \
+  '    document_root: /srv/corpus' \
+  '  - host: beta.bench.test' \
+  '    document_root: /srv/corpus' \
+  'routes:' \
+  '  - match: exact' \
+  '    pattern: /redirect' \
+  '    redirect: /redirect-target' \
+  '  - match: prefix' \
+  '    pattern: /proxy/' \
+  "    proxy_pass: ${LAGHU_BENCH_ORIGIN}" >>"${config}"
 chown laghu:laghu "${config}"
 chmod 600 "${config}"
 laghu --config "${config}" &
 server=$!
 sleep 3
 kill -0 "${server}"
-laghu-libvips --serve "${queue}" "${cache}" &
-vips_worker=$!
-laghu-js-optimize --serve "${javascript_queue}" "${cache}" &
-javascript_worker=$!
+if [ "${rewrite_level}" != passthrough ]; then
+  laghu-libvips --serve "${queue}" "${cache}" &
+  vips_worker=$!
+  laghu-js-optimize --serve "${javascript_queue}" "${cache}" &
+  javascript_worker=$!
+fi
 
 cleanup() {
-  kill "${server:-}" "${vips_worker}" "${javascript_worker}" 2>/dev/null || true
-  wait "${server:-}" "${vips_worker}" "${javascript_worker}" 2>/dev/null || true
+  kill "${server:-}" "${vips_worker:-}" "${javascript_worker:-}" 2>/dev/null || true
+  wait "${server:-}" "${vips_worker:-}" "${javascript_worker:-}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

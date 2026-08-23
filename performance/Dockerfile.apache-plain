@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y apache2 \
-    && a2enmod headers \
+    && a2enmod headers proxy proxy_http \
     && rm -rf /var/lib/apt/lists/*
 
 CMD ["apache2ctl", "-D", "FOREGROUND"]

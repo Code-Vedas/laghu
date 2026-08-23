@@ -276,14 +276,10 @@
 - [x] Enforce the never-larger guarantee.
 - [x] Assert that excluded paths and responses remain untouched.
 - [x] Assert expected CLS-critical dimensions and attributes.
-- [x] nginx/plain | nginx/pagespeed | nginx/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
-- [x] apache/plain | apache/pagespeed | apache/laghu | standalone/laghu/plain | standalone/laghu/all-optimizations
+- [x] Locked rails: Target 1 standalone no-optimization versus plain NGINX and Apache; NGINX and Apache Laghu/PageSpeed five-filter pairs; standalone all/no-optimization with NGINX upstream.
 
 ### 5.4 Resource, Quality, and CWV Instrumentation
-- [x] Capture cAdvisor/cgroup CPU, RSS, and CPU per optimized byte.
-- [x] Capture optimizer latency histograms from product metrics.
-- [x] Calculate SSIMULACRA2 or DSSIM for every optimized image.
-- [x] Run Lighthouse/CDP measurements for LCP, INP, CLS, and TBT on representative pages.
+- [x] Capture separate peak cgroup memory and process RSS for each equivalent load cell.
 
 ## 6. Production Architecture
 - [x] Keep policy resolution, hashing, image/CSS/HTML parsing, catalogs, queue protocol, and cache publication independent of NGINX and Apache types.

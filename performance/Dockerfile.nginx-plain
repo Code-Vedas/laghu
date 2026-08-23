@@ -49,7 +49,4 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
       /var/cache/nginx/scgi_temp /var/cache/plain-corpus
 COPY --from=build /out/usr/sbin/nginx /usr/sbin/nginx
 COPY --from=build /out/etc/nginx/mime.types /etc/nginx/mime.types
-COPY performance/nginx/plain-entrypoint /usr/local/bin/laghu-benchmark-plain-entrypoint
-RUN chmod 0755 /usr/local/bin/laghu-benchmark-plain-entrypoint
-
-ENTRYPOINT ["/usr/local/bin/laghu-benchmark-plain-entrypoint"]
+ENTRYPOINT ["/usr/sbin/nginx", "-g", "daemon off;"]

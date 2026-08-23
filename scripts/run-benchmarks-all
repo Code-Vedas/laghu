@@ -27,8 +27,14 @@ compose() {
 cleanup() { compose down --volumes; }
 trap cleanup EXIT HUP INT TERM
 compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-compose up --build --detach
+target=${LAGHU_BENCH_TARGET:-all}
+build=${LAGHU_BENCH_BUILD:-1}
+case "${target}" in
+  target-1) if [ "${build}" = 1 ]; then compose up --build --detach benchmark-origin nginx-plain apache-plain standalone-noopt; else compose up --detach benchmark-origin nginx-plain apache-plain standalone-noopt; fi ;;
+  all) if [ "${build}" = 1 ]; then compose up --build --detach; else compose up --detach; fi ;;
+  *) echo "Unknown LAGHU_BENCH_TARGET: ${target}" >&2; exit 2 ;;
+esac
 set -- --output "${output}" --corpus "${corpus}"
 if [ "${LAGHU_BENCH_FULL:-0}" = 1 ]; then set -- "$@" --full; fi
-python3 "${REPO_ROOT}/performance/run_k6_rail.py" "$@"
+python3 "${REPO_ROOT}/performance/run_k6_rail.py" --target "${target}" "$@"
 printf '%s\n' "${output}"

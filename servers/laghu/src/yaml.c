@@ -588,10 +588,19 @@ static bool yaml_finalize_scope(const laghu_config *parent_core, const laghu_ser
     return false;
   }
   merged_rules.scope_id = scope_id;
-  if (!laghu_resolve_config_policy_with_error(&merged_core, &policy, policy_error, sizeof(policy_error)) ||
-      !laghu_service_config_finalize(&merged_service, &finalize_options, &diagnostic)) {
+  if (!laghu_resolve_config_policy_with_error(&merged_core, &policy, policy_error, sizeof(policy_error))) {
     laghu_service_config_dispose(&merged_service);
-    (void)yaml_error(error, error_size, policy_error[0] != '\0' ? policy_error : diagnostic.message);
+    (void)yaml_error(error, error_size, policy_error);
+    return false;
+  }
+  finalize_options.require_worker_queue = policy.rewrite_level != LAGHU_REWRITE_LEVEL_PASSTHROUGH;
+  if (!finalize_options.require_worker_queue) {
+    merged_service.worker_queue[0] = '\0';
+    merged_service.present &= ~(UINT64_C(1) << (unsigned int)LAGHU_SERVICE_SETTING_WORKER_QUEUE);
+  }
+  if (!laghu_service_config_finalize(&merged_service, &finalize_options, &diagnostic)) {
+    laghu_service_config_dispose(&merged_service);
+    (void)yaml_error(error, error_size, diagnostic.message);
     return false;
   }
   laghu_service_config_dispose(service);

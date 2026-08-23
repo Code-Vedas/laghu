@@ -14,6 +14,6 @@ RUN apt-get update \
       https://dl-ssl.google.com/dl/linux/direct/mod-pagespeed-stable_current_amd64.deb \
     && dpkg --install /tmp/mod-pagespeed.deb \
     && rm -rf /var/lib/apt/lists/* /tmp/mod-pagespeed.deb \
-    && a2enmod headers pagespeed
+    && a2enmod headers pagespeed proxy proxy_http
 
 CMD ["apache2ctl", "-D", "FOREGROUND"]
