@@ -141,92 +141,6 @@ static bool health_interval_requires_check_test(void) {
   return rejected;
 }
 
-static bool passthrough_queue_requirements_test(void) {
-  static const char global_passthrough[] =
-      "runtime:\n"
-      "  listen: 127.0.0.1:8080\n"
-      "  origin: http://127.0.0.1:8000\n"
-      "  cache: /tmp/cache\n"
-      "  rewrite_level: passthrough\n"
-      "sites:\n"
-      "  - host: static.example.test\n"
-      "    document_root: /srv/static\n"
-      "routes:\n"
-      "  - match: exact\n"
-      "    pattern: /redirect\n"
-      "    redirect: /result\n";
-  static const char global_active[] =
-      "runtime:\n"
-      "  listen: 127.0.0.1:8080\n"
-      "  origin: http://127.0.0.1:8000\n"
-      "  cache: /tmp/cache\n"
-      "  rewrite_level: core\n";
-  static const char nested_passthrough[] =
-      "runtime:\n"
-      "  listen: 127.0.0.1:8080\n"
-      "  origin: http://127.0.0.1:8000\n"
-      "  cache: /tmp/cache\n"
-      "  worker_queue: /tmp/jobs\n"
-      "  rewrite_level: core\n"
-      "sites:\n"
-      "  - host: static.example.test\n"
-      "    document_root: /srv/static\n"
-      "    laghu:\n"
-      "      rewrite_level: passthrough\n"
-      "routes:\n"
-      "  - match: exact\n"
-      "    pattern: /redirect\n"
-      "    redirect: /result\n"
-      "    laghu:\n"
-      "      rewrite_level: passthrough\n";
-  static const char site_active[] =
-      "runtime:\n"
-      "  listen: 127.0.0.1:8080\n"
-      "  origin: http://127.0.0.1:8000\n"
-      "  cache: /tmp/cache\n"
-      "  rewrite_level: passthrough\n"
-      "sites:\n"
-      "  - host: static.example.test\n"
-      "    document_root: /srv/static\n"
-      "    laghu:\n"
-      "      rewrite_level: core\n";
-  static const char route_active[] =
-      "runtime:\n"
-      "  listen: 127.0.0.1:8080\n"
-      "  origin: http://127.0.0.1:8000\n"
-      "  cache: /tmp/cache\n"
-      "  rewrite_level: passthrough\n"
-      "routes:\n"
-      "  - match: exact\n"
-      "    pattern: /redirect\n"
-      "    redirect: /result\n"
-      "    laghu:\n"
-      "      rewrite_level: core\n";
-  const char *fixtures[] = {global_passthrough, nested_passthrough, global_active, site_active, route_active};
-  bool expected[] = {true, true, false, false, false};
-  size_t index;
-  for (index = 0U; index < sizeof(fixtures) / sizeof(fixtures[0]); ++index) {
-    char path[] = "/tmp/laghu-passthrough-queue-XXXXXX";
-    laghu_proxy_options options;
-    char error[128U];
-    int file = mkstemp(path);
-    bool loaded;
-    if (file < 0 || write(file, fixtures[index], strlen(fixtures[index])) != (ssize_t)strlen(fixtures[index]) || close(file) != 0) return false;
-    laghu_proxy_options_init(&options);
-    loaded = laghu_proxy_load_yaml(path, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK;
-    if (loaded && index == 0U)
-      loaded = options.service.worker_queue[0] == '\0' && options.sites[0].service.worker_queue[0] == '\0' &&
-               options.routes[0].service.worker_queue[0] == '\0';
-    if (loaded && index == 1U)
-      loaded = options.service.worker_queue[0] != '\0' && options.sites[0].service.worker_queue[0] == '\0' &&
-               options.routes[0].service.worker_queue[0] == '\0';
-    laghu_proxy_options_dispose(&options);
-    (void)unlink(path);
-    if (loaded != expected[index]) return false;
-  }
-  return true;
-}
-
 static bool write_yaml_fragment_fixture(char directory[], char root[], char fragment[]) {
   static const char root_contents[] =
       ""
@@ -614,7 +528,6 @@ int main(void) {
   CHECK(scoped_rules_test());
   CHECK(gateway_health_rejected_test());
   CHECK(health_interval_requires_check_test());
-  CHECK(passthrough_queue_requirements_test());
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.service.purge_method && options.service.purge_query && options.service.statistics && options.service.purge_allow_count == 1U);

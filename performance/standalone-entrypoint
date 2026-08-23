@@ -18,13 +18,12 @@ printf '%s\n' \
   "  origin: ${LAGHU_BENCH_ORIGIN}" \
   "  rewrite_level: ${rewrite_level}" \
   "  file_cache_backend: file://${cache}" \
+  "  worker_queue: ${queue}" \
   '  workers: 1' \
   '  connection_queue: 4096' \
   '  origin_pool_size: 1024' >"${config}"
+laghu-libvips --init "${queue}" "${cache}"
 if [ "${rewrite_level}" != passthrough ]; then
-  laghu-libvips --init "${queue}" "${cache}"
-  printf '%s\n' \
-    "  worker_queue: ${queue}" >>"${config}"
   laghu-js-optimize --init "${javascript_queue}" "${cache}"
   printf '%s\n' \
     "  javascript_queue: ${javascript_queue}" >>"${config}"

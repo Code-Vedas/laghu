@@ -36,13 +36,6 @@ if(LAGHU_BUILD_TESTS)
                    $<TARGET_FILE:laghu>
                    $<TARGET_FILE:laghu_runtime_cache_fixture>
                    ${LAGHU_JS_BINARY})
-  if(LAGHU_HAVE_VIPS)
-    add_test(NAME laghu_passthrough_queue_reload_test
-             COMMAND ${Python3_EXECUTABLE}
-                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/passthrough_queue_reload_test.py
-                     $<TARGET_FILE:laghu>
-                     $<TARGET_FILE:laghu-libvips>)
-  endif()
   add_test(NAME laghu_parity_contract_test
            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity_contract_test.py
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/parity-contract.json)
