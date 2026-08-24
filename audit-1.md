@@ -664,23 +664,23 @@ One benchmark detail matters here: your rail records both cgroup peak and summed
 
 # 21. What I would change, in exact order
 
-|  Order | Change                                                      | Why first                                       |
-| -----: | ----------------------------------------------------------- | ----------------------------------------------- |
-|  **1** | Repair benchmark CPU/log/cache equivalence                  | Establish trustworthy baseline                  |
-|  **2** | Make access logging off/async; remove `fflush` request path | Very low-risk high reward                       |
-|  **3** | Stop recompressing existing gzip/Brotli artifacts           | Huge optimized-mode CPU waste                   |
-|  **4** | Cache queue capability/heartbeat outside request path       | Removes `flock` + queue scan                    |
-|  **5** | Implement correct incremental chunk parser                  | Fixes worker stalls + 10 MiB allocation         |
-|  **6** | Build event-driven downstream connection layer + keep-alive | Fundamental RPS scalability                     |
-|  **7** | Add direct static/cache artifact serving                    | RPS + allocation/RSS gain                       |
-|  **8** | Split global proxy mutex / reactor-local origin pools       | Scaling after multiple reactors                 |
-|  **9** | Compile routing/policies/config once                        | Strip request setup cost                        |
-| **10** | Make cache/catalog metadata truly hot                       | Remove stat/open/read/checksum pressure         |
-| **11** | Replace RUM mutex+linear scan                               | Optimized HTML concurrency                      |
-| **12** | Merge HTML discovery/rewrite into one pass                  | Large complex-page improvement                  |
-| **13** | Introduce request arenas/reusable buffers                   | Remove allocator churn                          |
-| **14** | Add ThinLTO/LTO + PGO                                       | Exploit cleaner architecture                    |
-| **15** | Evaluate jemalloc/mimalloc, CPU tuning                      | Only after allocation architecture is corrected |
+|  Order | Change                                                      | Why first                                       | Status (2026-08-24) |
+| -----: | ----------------------------------------------------------- | ----------------------------------------------- | ------------------- |
+|  **1** | Repair benchmark CPU/log/cache equivalence                  | Establish trustworthy baseline                  | **Applied.** Matched rail controls and diagnostics are in place; ARM results remain diagnostic until native AMD64. |
+|  **2** | Make access logging off/async; remove `fflush` request path | Very low-risk high reward                       | **Applied for Target 1.** `runtime.access_log: off` removes record/flush work; asynchronous production logging is not implemented. |
+|  **3** | Stop recompressing existing gzip/Brotli artifacts           | Huge optimized-mode CPU waste                   | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+|  **4** | Cache queue capability/heartbeat outside request path       | Removes `flock` + queue scan                    | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+|  **5** | Implement correct incremental chunk parser                  | Fixes worker stalls + 10 MiB allocation         | **Applied.** Bounded incremental parser stops at terminal chunk/trailers; removes EOF wait and fixed 10 MiB decode allocation. |
+|  **6** | Build event-driven downstream connection layer + keep-alive | Fundamental RPS scalability                     | **Not applied.** Probe/candidate regressed static RPS, so it was discarded. |
+|  **7** | Add direct static/cache artifact serving                    | RPS + allocation/RSS gain                       | **Partial.** Direct fd/sendfile candidate failed cgroup gate; retained mode-off bypass removes per-request transform-context allocation. |
+|  **8** | Split global proxy mutex / reactor-local origin pools       | Scaling after multiple reactors                 | **Not applied.** Deferred to Target 4: Target-1 performance cells do not exercise upstream proxy traffic. |
+|  **9** | Compile routing/policies/config once                        | Strip request setup cost                        | **Not applied.** Regex precompile improved regex-only work but regressed baseline/prefix cells; discarded. |
+| **10** | Make cache/catalog metadata truly hot                       | Remove stat/open/read/checksum pressure         | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+| **11** | Replace RUM mutex+linear scan                               | Optimized HTML concurrency                      | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+| **12** | Merge HTML discovery/rewrite into one pass                  | Large complex-page improvement                  | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+| **13** | Introduce request arenas/reusable buffers                   | Remove allocator churn                          | **Partial.** Mode-off static path now bypasses transform-context allocation; broader request arenas/reusable buffers are not implemented. |
+| **14** | Add ThinLTO/LTO + PGO                                       | Exploit cleaner architecture                    | **Not applied.** Both LTO and PGO regressed focused RPS measurements, so they were discarded. |
+| **15** | Evaluate jemalloc/mimalloc, CPU tuning                      | Only after allocation architecture is corrected | **Not applied.** jemalloc raised memory about 22–30%, failing the memory gate; discarded. |
 
 ---
 
