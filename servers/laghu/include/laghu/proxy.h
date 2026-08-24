@@ -173,6 +173,7 @@ typedef struct {
   unsigned int drain_timeout;
   unsigned int origin_pool_size;
   unsigned int origin_idle_timeout;
+  bool access_log;
   bool directory_listing;
   laghu_proxy_forwarded_mode forwarded_mode;
   bool origin_tls;

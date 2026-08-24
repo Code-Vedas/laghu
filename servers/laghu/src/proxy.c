@@ -210,7 +210,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   proxy_response response;
   unsigned char *initial;
   size_t initial_length, header_length;
-  unsigned char *request_body = NULL, *origin_body = NULL, *decoded = NULL, *cached_body = NULL;
+  unsigned char *request_body = NULL, *origin_body = NULL, *cached_body = NULL;
   size_t request_body_length = 0U, origin_body_length = 0U;
   laghu_socket origin = LAGHU_INVALID_SOCKET;
   SSL *origin_tls = NULL;
@@ -359,8 +359,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
       normalized_request.authority = (laghu_buffer){(const unsigned char *)(host != NULL ? host->value : options->listen_host),
                                                     strlen(host != NULL ? host->value : options->listen_host)};
     }
-    normalized_response =
-        (laghu_http_response){200U, NULL, 0U, 0U, false, true, false, {NULL, 0U}};
+    normalized_response = (laghu_http_response){200U, NULL, 0U, 0U, false, true, false, {NULL, 0U}};
     environment =
         (laghu_http_environment){.config = *config,
                                  .cache_path = service->image_cache,
@@ -428,14 +427,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
             request_headers,
             request.header_count};
       }
-      normalized_response = (laghu_http_response){response.status,
-                                                  response_headers,
-                                                  response.header_count,
-                                                  record.entry.length,
-                                                  true,
-                                                  true,
-                                                  false,
-                                                  {NULL, 0U}};
+      normalized_response =
+          (laghu_http_response){response.status, response_headers, response.header_count, record.entry.length, true, true, false, {NULL, 0U}};
       environment =
           (laghu_http_environment){.config = *config,
                                    .cache_path = service->image_cache,
@@ -664,28 +657,20 @@ origin_response_ready:
   {
     bool bodyless =
         !strcmp(request.method, "HEAD") || (response.status >= 100U && response.status < 200U) || response.status == 204U || response.status == 304U;
-    if (!gateway_buffered &&
-        !proxy_read_body(origin, origin_tls, initial, initial_length, bodyless ? 0U : (response.has_content_length ? response.content_length : 0U),
-                         !bodyless && !response.has_content_length, &origin_body, &origin_body_length)) {
+    bool body_ok = true;
+    if (!gateway_buffered)
+      body_ok = response.chunked && !bodyless
+                    ? proxy_read_chunked_body(origin, origin_tls, initial, initial_length, &origin_body, &origin_body_length)
+                    : proxy_read_body(origin, origin_tls, initial, initial_length,
+                                      bodyless ? 0U : (response.has_content_length ? response.content_length : 0U),
+                                      !bodyless && !response.has_content_length, &origin_body, &origin_body_length);
+    if (!body_ok) {
       PROXY_FAIL(502U, "Bad Gateway", proxy_socket_timed_out() ? "origin_timeout" : (origin_tls != NULL ? "origin_tls" : "origin_protocol"));
       goto done;
     }
     origin_reusable = !gateway_buffered && !strcmp(response.version, "HTTP/1.1") &&
                       !proxy_connection_nominates(response.headers, response.header_count, "close") &&
                       (bodyless ? initial_length == 0U : response.has_content_length || response.chunked);
-  }
-  if (response.chunked) {
-    size_t decoded_length = 0U;
-    decoded = malloc(LAGHU_PROXY_MAX_BODY);
-    if (decoded == NULL ||
-        !laghu_proxy_decode_chunked((laghu_buffer){origin_body, origin_body_length}, decoded, LAGHU_PROXY_MAX_BODY, &decoded_length)) {
-      PROXY_FAIL(502U, "Bad Gateway", "origin_protocol");
-      goto done;
-    }
-    free(origin_body);
-    origin_body = decoded;
-    decoded = NULL;
-    origin_body_length = decoded_length;
   }
   html_cache_response = proxy_html_cache_response_eligible(config, &request, &response, origin_body_length);
   if (!prepared_ok) {
@@ -767,7 +752,6 @@ done:
   laghu_http_transaction_result_release(&finalized);
   free(request_body);
   free(origin_body);
-  free(decoded);
   if (origin != LAGHU_INVALID_SOCKET) proxy_origin_release(worker, &upstream, origin_reusable);
   SSL_free(client_tls);
   laghu_close(client);

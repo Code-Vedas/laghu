@@ -277,14 +277,8 @@ static bool static_send_transformed(const laghu_proxy_options *options, const pr
     normalized_request.authority = (laghu_buffer){(unsigned char *)(host == NULL ? options->listen_host : host->value),
                                                   strlen(host == NULL ? options->listen_host : host->value)};
   }
-  normalized_response = (laghu_http_response){response.status,
-                                              static_response_headers,
-                                              response.header_count,
-                                              length,
-                                              !partial,
-                                              true,
-                                              partial,
-                                              {NULL, 0U}};
+  normalized_response =
+      (laghu_http_response){response.status, static_response_headers, response.header_count, length, !partial, true, partial, {NULL, 0U}};
   static_environment(&environment, worker, core, service);
   laghu_http_transaction_init(&transaction);
   prepared_ok = laghu_http_transaction_prepare(&transaction, &normalized_request, &normalized_response, &environment, &prepared);
@@ -371,7 +365,8 @@ static int static_open(const char *root, const char *relative, const char *index
   char *cursor;
   int directory;
   int file = -1;
-  (void)snprintf(components, sizeof(components), "%s%s", relative + 1U, relative[strlen(relative) - 1U] == '/' ? index_file : "");
+  int written = snprintf(components, sizeof(components), "%s%s", relative + 1U, relative[strlen(relative) - 1U] == '/' ? index_file : "");
+  if (written < 0 || (size_t)written >= sizeof(components)) return -1;
   directory = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
   if (directory < 0) return -1;
   cursor = components;
@@ -432,6 +427,81 @@ static bool static_directory(const laghu_proxy_options *options, const proxy_con
   return true;
 }
 
+/* Plain delivery stays independent of the shared transform finalizer.  The
+ * resolved site/route config reaches this path only when mode is off; query
+ * controls cannot enable a disabled runtime mode. */
+static bool static_send_plain(const laghu_proxy_options *options, laghu_socket client, SSL *tls, proxy_access_log *access, int file, const char *type,
+                              const char *etag, size_t offset, size_t length, size_t total_length, bool partial, bool head) {
+  char headers[4096];
+  unsigned char buffer[16384];
+  size_t header_index;
+  int written;
+  if (!partial)
+    written = snprintf(headers, sizeof(headers), "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nETag: %s\r\n\r\n", type, etag);
+  else
+    written = snprintf(headers, sizeof(headers),
+                       "HTTP/1.1 206 Partial Content\r\nContent-Type: %s\r\nETag: %s\r\nAccept-Ranges: bytes\r\n"
+                       "Content-Range: bytes %llu-%llu/%llu\r\n\r\n",
+                       type, etag, (unsigned long long)offset, (unsigned long long)(offset + length - 1U), (unsigned long long)total_length);
+  if (written > 0 && (size_t)written < sizeof(headers)) {
+    size_t used = (size_t)written - 2U;
+    if (options->static_cache_control[0] != '\0') {
+      int added = snprintf(headers + used, sizeof(headers) - used, "Cache-Control: %s\r\n", options->static_cache_control);
+      if (added <= 0 || (size_t)added >= sizeof(headers) - used)
+        written = -1;
+      else
+        used += (size_t)added;
+    }
+    for (header_index = 0U; header_index < options->response_header_count; ++header_index) {
+      int added = snprintf(headers + used, sizeof(headers) - used, "%s: %s\r\n", options->response_headers[header_index].name,
+                           options->response_headers[header_index].value);
+      if (added <= 0 || (size_t)added >= sizeof(headers) - used) {
+        written = -1;
+        break;
+      }
+      used += (size_t)added;
+    }
+    if (written > 0) {
+      int added =
+          snprintf(headers + used, sizeof(headers) - used, "X-Laghu: bypass-disabled\r\nX-Laghu-Cache: bypass\r\nX-Laghu-Transform: pass\r\n");
+      if (added <= 0 || (size_t)added >= sizeof(headers) - used)
+        written = -1;
+      else
+        used += (size_t)added;
+    }
+    if (written > 0) {
+      int added = snprintf(headers + used, sizeof(headers) - used, "Content-Length: %llu\r\nConnection: close\r\n\r\n", (unsigned long long)length);
+      if (added <= 0 || (size_t)added >= sizeof(headers) - used)
+        written = -1;
+      else {
+        used += (size_t)added;
+        written = (int)used;
+      }
+    }
+  }
+  if (written <= 0 || (size_t)written >= sizeof(headers) || !proxy_client_send_all(client, tls, headers, (size_t)written)) {
+    access->failure = "client_disconnect";
+    return true;
+  }
+  if (!head && lseek(file, (off_t)offset, SEEK_SET) >= 0) {
+    size_t remaining = length;
+    while (remaining != 0U) {
+      ssize_t got = read(file, buffer, remaining < sizeof(buffer) ? remaining : sizeof(buffer));
+      if (got <= 0 || !proxy_client_send_all(client, tls, buffer, (size_t)got)) {
+        access->failure = "client_disconnect";
+        break;
+      }
+      remaining -= (size_t)got;
+    }
+  }
+  access->status = partial ? 206U : 200U;
+  access->static_response = true;
+  (void)snprintf(access->route, sizeof(access->route), "%s", "static");
+  access->original_response_bytes = length;
+  access->output_bytes = head ? 0U : length;
+  return true;
+}
+
 bool proxy_static_serve_with_context(const laghu_proxy_options *options, const proxy_connection *connection, proxy_worker *worker,
                                      const proxy_request *request, const laghu_config *core, const laghu_service_config *service,
                                      const laghu_proxy_rules *rules, laghu_socket client, SSL *tls, proxy_access_log *access) {
@@ -443,10 +513,8 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
   int file;
   int written;
   bool head;
-  size_t header_index;
   const char *document_root;
   const char *index_file;
-  unsigned char buffer[16384];
   if (rules == NULL) rules = &options->rules;
   {
     size_t site_index = proxy_site_index(options, request);
@@ -462,8 +530,8 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
     access->failure = "static_path";
     return true;
   }
-  if (snprintf(path, sizeof(path), "%s%s%s", document_root, relative, relative[strlen(relative) - 1U] == '/' ? index_file : "") <= 0 ||
-      strlen(path) >= sizeof(path)) {
+  written = snprintf(path, sizeof(path), "%s%s%s", document_root, relative, relative[strlen(relative) - 1U] == '/' ? index_file : "");
+  if (written < 0 || (size_t)written >= sizeof(path)) {
     proxy_error_response(client, tls, 414U, "URI Too Long");
     access->status = 414U;
     return true;
@@ -471,7 +539,8 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
   file = static_open(document_root, relative, index_file);
   if (file < 0 && options->directory_listing && relative[strlen(relative) - 1U] == '/') file = static_open(document_root, relative, "");
   if (file < 0 && rules->spa_fallback[0] != '\0' && strcmp(relative, rules->spa_fallback) != 0 && static_target_safe(rules->spa_fallback, relative)) {
-    if (snprintf(path, sizeof(path), "%s%s", document_root, relative) <= 0 || strlen(path) >= sizeof(path)) {
+    written = snprintf(path, sizeof(path), "%s%s%s", document_root, relative, relative[strlen(relative) - 1U] == '/' ? index_file : "");
+    if (written < 0 || (size_t)written >= sizeof(path)) {
       proxy_error_response(client, tls, 414U, "URI Too Long");
       access->status = 414U;
       return true;
@@ -505,8 +574,8 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
   }
   length = (size_t)status.st_size;
   (void)snprintf(etag, sizeof(etag), "\"%llx-%llx\"", (unsigned long long)status.st_mtime, (unsigned long long)length);
-  if_none_match = proxy_find((proxy_header *)request->headers, request->header_count, "If-None-Match");
   head = strcmp(request->method, "HEAD") == 0;
+  if_none_match = proxy_find((proxy_header *)request->headers, request->header_count, "If-None-Match");
   if (worker == NULL && if_none_match != NULL && strcmp(if_none_match->value, etag) == 0) {
     written = snprintf(headers, sizeof(headers), "HTTP/1.1 304 Not Modified\r\nETag: %s\r\nContent-Length: 0\r\n\r\n", etag);
     (void)close(file);
@@ -523,7 +592,7 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
     access->status = 416U;
     return true;
   }
-  if (worker != NULL && connection != NULL && core != NULL && service != NULL) {
+  if (worker != NULL && connection != NULL && core != NULL && service != NULL && core->mode != LAGHU_MODE_OFF) {
     bool transformed = static_send_transformed(options, connection, worker, request, core, service, rules, client, tls, access, file, NULL,
                                                static_type(path), etag, offset, length, (size_t)status.st_size, range != NULL, head);
     (void)close(file);
@@ -534,60 +603,8 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
     }
     return true;
   }
-  if (range == NULL)
-    written = snprintf(headers, sizeof(headers),
-                       "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %llu\r\n"
-                       "Accept-Ranges: bytes\r\nETag: %s\r\n\r\n",
-                       static_type(path), (unsigned long long)length, etag);
-  else
-    written = snprintf(headers, sizeof(headers),
-                       "HTTP/1.1 206 Partial Content\r\nContent-Type: %s\r\nContent-Length: %llu\r\n"
-                       "Accept-Ranges: bytes\r\nContent-Range: bytes %llu-%llu/%llu\r\nETag: %s\r\n\r\n",
-                       static_type(path), (unsigned long long)length, (unsigned long long)offset, (unsigned long long)(offset + length - 1U),
-                       (unsigned long long)status.st_size, etag);
-  if (written > 0 && (size_t)written < sizeof(headers)) {
-    size_t used = (size_t)written - 2U;
-    if (options->static_cache_control[0] != '\0') {
-      int added = snprintf(headers + used, sizeof(headers) - used, "Cache-Control: %s\r\n", options->static_cache_control);
-      if (added <= 0 || (size_t)added >= sizeof(headers) - used)
-        written = -1;
-      else
-        used += (size_t)added;
-    }
-    for (header_index = 0U; header_index < options->response_header_count; ++header_index) {
-      int added = snprintf(headers + used, sizeof(headers) - used, "%s: %s\r\n", options->response_headers[header_index].name,
-                           options->response_headers[header_index].value);
-      if (added <= 0 || (size_t)added >= sizeof(headers) - used) {
-        written = -1;
-        break;
-      }
-      used += (size_t)added;
-    }
-    if (written > 0) {
-      headers[used++] = '\r';
-      headers[used++] = '\n';
-      written = (int)used;
-    }
-  }
-  if (written <= 0 || (size_t)written >= sizeof(headers) || !proxy_client_send_all(client, tls, headers, (size_t)written)) {
-    (void)close(file);
-    access->failure = "client_disconnect";
-    return true;
-  }
-  if (!head && lseek(file, (off_t)offset, SEEK_SET) >= 0) {
-    size_t remaining = length;
-    while (remaining != 0U) {
-      ssize_t got = read(file, buffer, remaining < sizeof(buffer) ? remaining : sizeof(buffer));
-      if (got <= 0 || !proxy_client_send_all(client, tls, buffer, (size_t)got)) {
-        access->failure = "client_disconnect";
-        break;
-      }
-      remaining -= (size_t)got;
-    }
-  }
+  (void)static_send_plain(options, client, tls, access, file, static_type(path), etag, offset, length, (size_t)status.st_size, range != NULL, head);
   (void)close(file);
-  access->status = range == NULL ? 200U : 206U;
-  access->output_bytes = length;
   return true;
 }
 

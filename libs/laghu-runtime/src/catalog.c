@@ -180,8 +180,8 @@ bool laghu_catalog_lookup(const char *cache_path, const char *catalog_key, uint6
   if (fclose(file) != 0) {
     read = false;
   }
-  if (!read || stored.magic != LAGHU_CATALOG_MAGIC ||
-      stored.record.variant_count > LAGHU_CATALOG_MAX_WIDTHS || stored.record.updated_at > now || now - stored.record.updated_at > ttl_seconds ||
+  if (!read || stored.magic != LAGHU_CATALOG_MAGIC || stored.record.variant_count > LAGHU_CATALOG_MAX_WIDTHS || stored.record.updated_at > now ||
+      now - stored.record.updated_at > ttl_seconds ||
       !laghu_sha256_hex((laghu_buffer){(const unsigned char *)&stored.record, sizeof(stored.record)}, checksum) ||
       strcmp(checksum, stored.checksum) != 0) {
     (void)remove(path);

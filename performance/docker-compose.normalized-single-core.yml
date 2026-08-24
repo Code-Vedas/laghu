@@ -1,0 +1,19 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# Additive Target-1 diagnostic rail. Every serving container receives one CPU
+# of scheduler capacity; the selected NGINX/Apache files set one worker/process
+# group respectively. Apache's 1,024-thread event envelope keeps the retained
+# 1,000-VU matrix from measuring a connection-capacity timeout; the one-CPU
+# quota, not its thread count, remains the CPU-equivalence control.
+services:
+  benchmark-origin:
+    cpus: 1.0
+  nginx-plain:
+    cpus: 1.0
+  apache-plain:
+    cpus: 1.0
+  standalone-noopt:
+    cpus: 1.0

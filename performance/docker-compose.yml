@@ -6,14 +6,16 @@
 services:
   benchmark-origin:
     image: nginx:1.30.4-alpine
+    platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"
     container_name: laghu-bench-origin
     volumes: ["${LAGHU_BENCH_CORPUS}:/usr/share/nginx/html:ro"]
   nginx-plain:
     build: {context: .., dockerfile: performance/Dockerfile.nginx-plain}
     image: laghu-bench-nginx-plain:local
     container_name: laghu-bench-nginx-plain
+    platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"
     ports: ["127.0.0.1:18090:8080"]
-    volumes: ["./nginx/plain.conf:/etc/nginx/nginx.conf:ro", "${LAGHU_BENCH_CORPUS}:/srv/corpus:ro"]
+    volumes: ["${LAGHU_BENCH_NGINX_PLAIN_CONFIG:-./nginx/plain.conf}:/etc/nginx/nginx.conf:ro", "${LAGHU_BENCH_CORPUS}:/srv/corpus:ro"]
     depends_on: [benchmark-origin]
   nginx-pagespeed:
     image: pagespeed/nginx-pagespeed@sha256:591567603e63e1dc1641fc02f4322b6770cda3cf3e8bc40bf21cd6bba68668d5
@@ -32,8 +34,9 @@ services:
     build: {context: ., dockerfile: Dockerfile.apache-plain}
     image: laghu-bench-apache-plain:local
     container_name: laghu-bench-apache-plain
+    platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"
     ports: ["127.0.0.1:18100:80"]
-    volumes: ["./apache/plain.conf:/etc/apache2/sites-available/000-default.conf:ro", "./apache/benchmark-mpm.conf:/etc/apache2/mods-enabled/mpm_event.conf:ro", "${LAGHU_BENCH_CORPUS}:/srv/corpus:ro"]
+    volumes: ["./apache/plain.conf:/etc/apache2/sites-available/000-default.conf:ro", "${LAGHU_BENCH_APACHE_MPM_CONFIG:-./apache/benchmark-mpm.conf}:/etc/apache2/mods-enabled/mpm_event.conf:ro", "${LAGHU_BENCH_CORPUS}:/srv/corpus:ro"]
     depends_on: [benchmark-origin]
   apache-pagespeed:
     build: {context: ., dockerfile: Dockerfile.apache-pagespeed}
@@ -54,7 +57,13 @@ services:
     build: {context: .., dockerfile: performance/Dockerfile.standalone}
     image: laghu-bench-standalone:local
     container_name: laghu-bench-standalone-noopt
-    environment: {LAGHU_BENCH_ORIGIN: http://benchmark-origin:80, LAGHU_BENCH_REWRITE_LEVEL: passthrough}
+    platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"
+    environment:
+      LAGHU_BENCH_ORIGIN: http://benchmark-origin:80
+      LAGHU_BENCH_REWRITE_LEVEL: passthrough
+      LAGHU_BENCH_ACCESS_LOG: "${LAGHU_BENCH_ACCESS_LOG:-off}"
+      LAGHU_BENCH_WORKERS: "${LAGHU_BENCH_WORKERS:-1}"
+      LAGHU_BENCH_PASSTHROUGH_PROFILE: "${LAGHU_BENCH_PASSTHROUGH_PROFILE:-production}"
     ports: ["127.0.0.1:18200:8080"]
     volumes: ["./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro", "${LAGHU_BENCH_CORPUS}:/srv/corpus:ro"]
     depends_on: [benchmark-origin]
@@ -62,7 +71,11 @@ services:
     build: {context: .., dockerfile: performance/Dockerfile.standalone}
     image: laghu-bench-standalone:local
     container_name: laghu-bench-standalone-all
-    environment: {LAGHU_BENCH_ORIGIN: http://benchmark-origin:80, LAGHU_BENCH_REWRITE_LEVEL: experimental}
+    environment:
+      LAGHU_BENCH_ORIGIN: http://benchmark-origin:80
+      LAGHU_BENCH_REWRITE_LEVEL: experimental
+      LAGHU_BENCH_WORKERS: "${LAGHU_BENCH_WORKERS:-1}"
+      LAGHU_BENCH_PASSTHROUGH_PROFILE: production
     ports: ["127.0.0.1:18201:8080"]
     volumes: ["./standalone-entrypoint:/usr/bin/laghu-benchmark-entrypoint:ro", "${LAGHU_BENCH_CORPUS}:/srv/corpus:ro"]
     depends_on: [benchmark-origin]

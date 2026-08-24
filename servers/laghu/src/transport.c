@@ -82,6 +82,183 @@ bool proxy_read_body(laghu_socket socket, SSL *tls, const unsigned char *initial
   return true;
 }
 
+typedef enum {
+  PROXY_CHUNK_SIZE = 0,
+  PROXY_CHUNK_SIZE_LF,
+  PROXY_CHUNK_DATA,
+  PROXY_CHUNK_DATA_CR,
+  PROXY_CHUNK_DATA_LF,
+  PROXY_CHUNK_TRAILER,
+  PROXY_CHUNK_TRAILER_LF,
+  PROXY_CHUNK_COMPLETE
+} proxy_chunked_state;
+
+typedef struct {
+  proxy_chunked_state state;
+  unsigned char *decoded;
+  size_t decoded_length;
+  size_t decoded_capacity;
+  size_t encoded_length;
+  size_t chunk_size;
+  size_t chunk_remaining;
+  size_t line_length;
+  bool size_digit;
+  bool extension;
+  bool trailer_colon;
+} proxy_chunked_reader;
+
+static int proxy_chunked_hex(unsigned char byte) {
+  if (byte >= '0' && byte <= '9') return byte - '0';
+  if (byte >= 'a' && byte <= 'f') return byte - 'a' + 10;
+  if (byte >= 'A' && byte <= 'F') return byte - 'A' + 10;
+  return -1;
+}
+
+static bool proxy_chunked_header_name(unsigned char byte) {
+  return (byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || strchr("!#$%&'*+-.^_`|~", byte) != NULL;
+}
+
+static bool proxy_chunked_reserve(proxy_chunked_reader *reader, size_t needed) {
+  size_t grown = reader->decoded_capacity == 0U ? 4096U : reader->decoded_capacity;
+  unsigned char *replacement;
+  if (needed > LAGHU_PROXY_MAX_BODY) return false;
+  while (grown < needed) {
+    if (grown > LAGHU_PROXY_MAX_BODY / 2U) {
+      grown = LAGHU_PROXY_MAX_BODY;
+      break;
+    }
+    grown *= 2U;
+  }
+  if (grown < needed) return false;
+  replacement = realloc(reader->decoded, grown);
+  if (replacement == NULL) return false;
+  reader->decoded = replacement;
+  reader->decoded_capacity = grown;
+  return true;
+}
+
+static bool proxy_chunked_feed(proxy_chunked_reader *reader, const unsigned char *input, size_t length) {
+  size_t index = 0U;
+  if (input == NULL && length != 0U) return false;
+  if (length > LAGHU_PROXY_MAX_BODY - reader->encoded_length) return false;
+  reader->encoded_length += length;
+  while (index < length) {
+    unsigned char byte = input[index];
+    switch (reader->state) {
+      case PROXY_CHUNK_SIZE:
+        if (++reader->line_length > LAGHU_PROXY_LINE_BYTES || byte == '\n') return false;
+        if (byte == '\r') {
+          if (!reader->size_digit) return false;
+          reader->state = PROXY_CHUNK_SIZE_LF;
+          ++index;
+        } else if (byte == ';') {
+          reader->extension = true;
+          ++index;
+        } else if (reader->extension) {
+          if (byte < 32U || byte == 127U) return false;
+          ++index;
+        } else {
+          int value = proxy_chunked_hex(byte);
+          if (value < 0 || reader->chunk_size > (SIZE_MAX - (size_t)value) / 16U) return false;
+          reader->size_digit = true;
+          reader->chunk_size = reader->chunk_size * 16U + (size_t)value;
+          if (reader->chunk_size > LAGHU_PROXY_MAX_BODY - reader->decoded_length) return false;
+          ++index;
+        }
+        break;
+      case PROXY_CHUNK_SIZE_LF:
+        if (byte != '\n') return false;
+        ++index;
+        reader->line_length = 0U;
+        reader->size_digit = false;
+        reader->extension = false;
+        if (reader->chunk_size == 0U) {
+          reader->state = PROXY_CHUNK_TRAILER;
+        } else {
+          reader->chunk_remaining = reader->chunk_size;
+          if (!proxy_chunked_reserve(reader, reader->decoded_length + reader->chunk_remaining)) return false;
+          reader->state = PROXY_CHUNK_DATA;
+        }
+        reader->chunk_size = 0U;
+        break;
+      case PROXY_CHUNK_DATA: {
+        size_t available = length - index;
+        size_t take = reader->chunk_remaining < available ? reader->chunk_remaining : available;
+        memcpy(reader->decoded + reader->decoded_length, input + index, take);
+        reader->decoded_length += take;
+        reader->chunk_remaining -= take;
+        index += take;
+        if (reader->chunk_remaining == 0U) reader->state = PROXY_CHUNK_DATA_CR;
+        break;
+      }
+      case PROXY_CHUNK_DATA_CR:
+        if (byte != '\r') return false;
+        reader->state = PROXY_CHUNK_DATA_LF;
+        ++index;
+        break;
+      case PROXY_CHUNK_DATA_LF:
+        if (byte != '\n') return false;
+        reader->state = PROXY_CHUNK_SIZE;
+        ++index;
+        break;
+      case PROXY_CHUNK_TRAILER:
+        if (byte == '\r') {
+          if (reader->line_length != 0U && !reader->trailer_colon) return false;
+          reader->state = PROXY_CHUNK_TRAILER_LF;
+          ++index;
+        } else {
+          if (byte == '\n' || byte < 32U || byte == 127U || ++reader->line_length > LAGHU_PROXY_LINE_BYTES) return false;
+          if (!reader->trailer_colon) {
+            if (byte == ':') {
+              if (reader->line_length == 1U) return false;
+              reader->trailer_colon = true;
+            } else if (!proxy_chunked_header_name(byte)) {
+              return false;
+            }
+          }
+          ++index;
+        }
+        break;
+      case PROXY_CHUNK_TRAILER_LF:
+        if (byte != '\n') return false;
+        ++index;
+        if (reader->line_length == 0U) {
+          reader->state = PROXY_CHUNK_COMPLETE;
+          if (index != length) return false;
+        } else {
+          reader->line_length = 0U;
+          reader->trailer_colon = false;
+          reader->state = PROXY_CHUNK_TRAILER;
+        }
+        break;
+      case PROXY_CHUNK_COMPLETE:
+        return false;
+    }
+  }
+  return true;
+}
+
+bool proxy_read_chunked_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, unsigned char **body,
+                             size_t *length) {
+  unsigned char buffer[65536U];
+  proxy_chunked_reader reader = {.state = PROXY_CHUNK_SIZE};
+  if (body == NULL || length == NULL || !proxy_chunked_feed(&reader, initial, initial_length)) goto fail;
+  while (reader.state != PROXY_CHUNK_COMPLETE) {
+    int got = proxy_origin_recv(socket, tls, buffer, sizeof(buffer));
+    if (got <= 0 || !proxy_chunked_feed(&reader, buffer, (size_t)got)) goto fail;
+  }
+  if (reader.decoded == NULL) {
+    reader.decoded = malloc(1U);
+    if (reader.decoded == NULL) goto fail;
+  }
+  *body = reader.decoded;
+  *length = reader.decoded_length;
+  return true;
+fail:
+  free(reader.decoded);
+  return false;
+}
+
 static bool proxy_operation_removes(const laghu_http_transaction_result *result, const char *name) {
   size_t index;
   for (index = 0U; index < result->header_operation_count; ++index)

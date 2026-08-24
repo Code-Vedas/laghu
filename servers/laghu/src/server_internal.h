@@ -219,6 +219,8 @@ void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, co
 void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char *failure);
 bool proxy_read_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, size_t expected, bool to_close,
                      unsigned char **body, size_t *length);
+bool proxy_read_chunked_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, unsigned char **body,
+                             size_t *length);
 bool proxy_beacon_allowed(proxy_queue *queue, uint64_t now);
 bool proxy_send_headers(laghu_socket client, SSL *client_tls, const proxy_response *origin, const laghu_http_transaction_result *result,
                         size_t content_length, bool has_content_length);

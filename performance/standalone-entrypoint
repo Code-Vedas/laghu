@@ -8,18 +8,37 @@ set -eu
 
 : "${LAGHU_BENCH_ORIGIN:?LAGHU_BENCH_ORIGIN is required}"
 rewrite_level=${LAGHU_BENCH_REWRITE_LEVEL:-all}
+workers=${LAGHU_BENCH_WORKERS:-1}
+passthrough_profile=${LAGHU_BENCH_PASSTHROUGH_PROFILE:-production}
+access_log=${LAGHU_BENCH_ACCESS_LOG:-on}
 queue=/run/laghu/jobs.queue
 javascript_queue=/run/laghu/javascript.queue
 cache=/var/cache/laghu/images
 config=/run/laghu/benchmark.yaml
+case "${workers}" in
+  ''|*[!0-9]*|0) echo 'LAGHU_BENCH_WORKERS must be a positive integer.' >&2; exit 64 ;;
+esac
+case "${passthrough_profile}" in
+  production) ;;
+  minimal)
+    # Current standalone configuration/lifecycle deliberately requires these
+    # resources even for rewrite_level: passthrough. Do not silently benchmark
+    # a queue/cache-backed process as a minimal server.
+    echo 'minimal passthrough is unavailable: standalone currently requires a file cache backend and worker queue.' >&2
+    exit 64
+    ;;
+  *) echo 'LAGHU_BENCH_PASSTHROUGH_PROFILE must be production or minimal.' >&2; exit 64 ;;
+esac
+case "${access_log}" in on|off) ;; *) echo 'LAGHU_BENCH_ACCESS_LOG must be on or off.' >&2; exit 64 ;; esac
 printf '%s\n' \
   'runtime:' \
   '  listen: 0.0.0.0:8080' \
   "  origin: ${LAGHU_BENCH_ORIGIN}" \
   "  rewrite_level: ${rewrite_level}" \
+  "  access_log: ${access_log}" \
   "  file_cache_backend: file://${cache}" \
   "  worker_queue: ${queue}" \
-  '  workers: 1' \
+  "  workers: ${workers}" \
   '  connection_queue: 4096' \
   '  origin_pool_size: 1024' >"${config}"
 laghu-libvips --init "${queue}" "${cache}"
@@ -43,6 +62,9 @@ printf '%s\n' \
   "    proxy_pass: ${LAGHU_BENCH_ORIGIN}" >>"${config}"
 chown laghu:laghu "${config}"
 chmod 600 "${config}"
+# Native standalone currently emits access records and diagnostics through the
+# same stderr stream. Keep it intact: the rail records logging equivalence as
+# unavailable instead of suppressing startup/runtime evidence.
 laghu --config "${config}" &
 server=$!
 sleep 3

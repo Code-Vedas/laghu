@@ -1,0 +1,18 @@
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+# Additive Target-1 production-scaling rail. Four CPU quota units are assigned
+# to each serving container. The launcher gives standalone four workers, NGINX
+# retains worker_processes auto inside that quota, and Apache uses the bounded
+# event-MPM production file selected by scripts/run-benchmarks-all.
+services:
+  benchmark-origin:
+    cpus: 4.0
+  nginx-plain:
+    cpus: 4.0
+  apache-plain:
+    cpus: 4.0
+  standalone-noopt:
+    cpus: 4.0

@@ -225,17 +225,27 @@ class Origin(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"short")
             self.close_connection = True
             return
-        elif request_path in ("/chunked", "/bad-chunk"):
+        elif request_path in ("/chunked", "/chunked-keepalive", "/chunked-trailers", "/bad-chunk", "/oversized-chunk"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Transfer-Encoding", "chunked")
+            if request_path == "/chunked-keepalive":
+                self.send_header("Connection", "keep-alive")
             self.end_headers()
-            if request_path == "/chunked":
+            if request_path in ("/chunked", "/chunked-keepalive"):
                 self.wfile.write(f"{len(BODY):x}\r\n".encode() + BODY + b"\r\n0\r\n\r\n")
+            elif request_path == "/chunked-trailers":
+                self.wfile.write(f"{len(BODY):x};test=1\r\n".encode() + BODY + b"\r\n0\r\nX-Chunked-Test: yes\r\n\r\n")
+            elif request_path == "/oversized-chunk":
+                self.wfile.write(b"a00001\r\n")
             else:
                 self.wfile.write(b"4\r\nno")
             self.wfile.flush()
-            self.close_connection = True
+            if request_path == "/chunked-keepalive":
+                time.sleep(0.25)
+                self.close_connection = False
+            else:
+                self.close_connection = True
             return
         elif request_path == "/slow":
             time.sleep(2)
@@ -1142,11 +1152,18 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         f"  cache: {root / 'cache'}\n"
         f"  worker_queue: {root / 'missing.queue'}\n"
         "  directory_listing: on\n"
+        "  static_cache_control: public, max-age=60\n"
         "sites:\n"
         "  - host: open.static.test\n"
         f"    document_root: {static_root}\n"
         "    laghu:\n"
         "      compression: gzip\n"
+        "  - host: off.static.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        "      mode: off\n"
+        "      compression: gzip\n"
+        "      query_filter_overrides: on\n"
         "  - host: secure.static.test\n"
         f"    document_root: {static_root}\n"
         "    laghu:\n"
@@ -1186,6 +1203,26 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         assert b"content-encoding:" not in gzip_disabled_head
         range_head, range_body = request(static_port, "/", headers={"Range": "bytes=0-15"}, host="open.static.test")
         assert range_head.startswith(b"http/1.1 206 ") and range_body == static_body[:16] and b"x-laghu:" in range_head
+        off_head, off_body = request(
+            static_port, "/?laghuFilters=+html_minify", headers={"Accept-Encoding": "gzip"}, host="off.static.test"
+        )
+        assert off_head.startswith(b"http/1.1 200 ") and off_body == static_body
+        assert b"content-type: text/html; charset=utf-8" in off_head
+        assert b"cache-control: public, max-age=60" in off_head and b"content-encoding:" not in off_head
+        assert b"x-laghu: bypass-disabled" in off_head
+        assert b"x-laghu-cache: bypass" in off_head and b"x-laghu-transform: pass" in off_head
+        off_etag = next(line.split(b": ", 1)[1] for line in off_head.split(b"\r\n") if line.lower().startswith(b"etag: "))
+        off_conditional_head, off_conditional_body = request(
+            static_port, "/", headers={"If-None-Match": off_etag.decode()}, host="off.static.test"
+        )
+        assert off_conditional_head.startswith(b"http/1.1 200 ") and off_conditional_body == static_body
+        assert b"x-laghu: bypass-disabled" in off_conditional_head
+        off_head_head, off_head_body = request(static_port, "/", method="HEAD", host="off.static.test")
+        assert off_head_head.startswith(b"http/1.1 200 ") and off_head_body == b""
+        assert f"content-length: {len(static_body)}".encode() in off_head_head
+        off_range_head, off_range_body = request(static_port, "/", headers={"Range": "bytes=0-15"}, host="off.static.test")
+        assert off_range_head.startswith(b"http/1.1 206 ") and off_range_body == static_body[:16]
+        assert b"content-range: bytes 0-15/" in off_range_head and b"cache-control: public, max-age=60" in off_range_head
         listed_head, _ = request(static_port, "/listed/", host="open.static.test")
         assert listed_head.startswith(b"http/1.1 200 ") and b"x-laghu:" in listed_head
         unauth_head, _ = request(static_port, "/", host="secure.static.test")
@@ -1251,6 +1288,9 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         f"    proxy_pass: http://127.0.0.1:{origin_port}\n"
         "    health_check: /api/data\n"
         "    health_interval: 1\n"
+        "  - match: exact\n"
+        "    pattern: /chunked-keepalive\n"
+        f"    proxy_pass: http://127.0.0.1:{origin_port}\n"
         "  - match: exact\n"
         "    pattern: /reentry\n"
         f"    proxy_pass: http://127.0.0.1:{reentry_server.server_port}\n"
@@ -1337,6 +1377,50 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         assert f'"upstream_protocol":"{protocol}"' in logs
 
 
+def access_log_runtime_smoke(executable, root):
+    static_root = root / "access-log-static"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("access-log runtime smoke")
+    port = free_port()
+    config = root / "access-log-off.yaml"
+    config.write_text(
+        ""
+        "runtime:\n"
+        f"  listen: 127.0.0.1:{port}\n"
+        f"  cache: {root / 'cache'}\n"
+        f"  worker_queue: {root / 'missing.queue'}\n"
+        "  access_log: off\n"
+        "sites:\n"
+        "  - host: access-log.test\n"
+        f"    document_root: {static_root}\n"
+    )
+    log = (root / "access-log-off.log").open("w+b")
+    process = subprocess.Popen([str(executable), "--config", str(config)], stdout=subprocess.DEVNULL, stderr=log)
+    try:
+        for _ in range(100):
+            try:
+                head, body = request(port, "/", host="access-log.test")
+                break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            log.flush()
+            log.seek(0)
+            raise AssertionError("access-log-off proxy did not start: " + log.read().decode())
+        assert head.startswith(b"http/1.1 200 ") and body == b"access-log runtime smoke"
+    finally:
+        request_shutdown(process)
+        process.wait(timeout=5)
+        log.flush()
+        log.seek(0)
+        logs = log.read().decode()
+        log.close()
+    assert process.returncode == 0, logs
+    assert '"event":"lifecycle"' in logs
+    assert '"state":"running"' in logs and '"state":"stopped"' in logs
+    assert '"event":"transaction"' not in logs
+
+
 def main():
     executable = pathlib.Path(sys.argv[1]).resolve()
     cache_fixture = pathlib.Path(sys.argv[2]).resolve()
@@ -1376,6 +1460,7 @@ def main():
         tls_thread = threading.Thread(target=tls_origin.serve_forever, daemon=True)
         tls_thread.start()
         standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_file)
+        access_log_runtime_smoke(executable, root)
         tls_proxy_port = free_port()
         tls_process = start_process(
             [
@@ -2263,9 +2348,18 @@ def main():
             assert b"<!-- remove -->" not in chunked_body
             assert b"/.laghu/beacon/instrumentation.js" in chunked_body
             assert b"x-laghu: pass" in chunked_head
+            chunked_keepalive_started = time.monotonic()
+            chunked_keepalive_head, chunked_keepalive_body = request(proxy_port, "/chunked-keepalive")
+            assert time.monotonic() - chunked_keepalive_started < 0.2
+            assert chunked_keepalive_head.startswith(b"http/1.1 200 ") and b"hello" in chunked_keepalive_body
+            chunked_trailers_head, chunked_trailers_body = request(proxy_port, "/chunked-trailers")
+            assert chunked_trailers_head.startswith(b"http/1.1 200 ") and b"hello" in chunked_trailers_body
             bad_chunk_head, bad_chunk_body = request(proxy_port, "/bad-chunk")
             assert b" 502 " in bad_chunk_head.split(b"\r\n", 1)[0]
             assert bad_chunk_body == b""
+            oversized_chunk_head, oversized_chunk_body = request(proxy_port, "/oversized-chunk")
+            assert b" 502 " in oversized_chunk_head.split(b"\r\n", 1)[0]
+            assert oversized_chunk_body == b""
             slow_head, slow_body = request(proxy_port, "/slow")
             assert b" 502 " in slow_head.split(b"\r\n", 1)[0]
             assert slow_body == b""

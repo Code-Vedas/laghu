@@ -8,7 +8,11 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
-case "$(uname -m)" in x86_64|amd64) ;; *) echo 'Frozen ngx_pagespeed benchmark is AMD64-only.' >&2; exit 2 ;; esac
+case "$(uname -m)" in
+  x86_64|amd64) execution_lane=native-linux-amd64; docker_platform=linux/amd64 ;;
+  arm64|aarch64) execution_lane=local-docker-linux-arm64; docker_platform=linux/arm64 ;;
+  *) echo 'Focused benchmark supports native Linux AMD64 or local Docker Linux ARM64.' >&2; exit 2 ;;
+esac
 command -v docker >/dev/null 2>&1 || { echo 'Docker is required.' >&2; exit 2; }
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 output="${LAGHU_BENCH_OUTPUT:-${REPO_ROOT}/tmp/benchmarks/${timestamp}}"
@@ -19,22 +23,77 @@ if [ -n "${LAGHU_BENCH_CORPUS:-}" ]; then
 else
   python3 "${REPO_ROOT}/performance/generate_corpus.py" --output "${corpus}"
 fi
-compose() {
-  LAGHU_BENCH_CORPUS="${corpus}" docker compose \
-    --project-directory "${REPO_ROOT}/performance" \
-    -f "${REPO_ROOT}/performance/docker-compose.yml" "$@"
-}
-cleanup() { compose down --volumes; }
-trap cleanup EXIT HUP INT TERM
-compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 target=${LAGHU_BENCH_TARGET:-all}
 build=${LAGHU_BENCH_BUILD:-1}
+rail=${LAGHU_BENCH_RAIL:-locked-control}
+nginx_plain_config=./nginx/plain.conf
+apache_mpm_config=./apache/benchmark-mpm.conf
+standalone_workers=1
+compose_override=
+case "${rail}" in
+  locked-control) ;;
+  normalized-single-core)
+    nginx_plain_config=./nginx/plain-single-core.conf
+    apache_mpm_config=./apache/benchmark-mpm-single-core.conf
+    standalone_workers=1
+    compose_override="${REPO_ROOT}/performance/docker-compose.normalized-single-core.yml"
+    ;;
+  production-scaling)
+    nginx_plain_config=./nginx/plain.conf
+    apache_mpm_config=./apache/benchmark-mpm-production-scaling.conf
+    standalone_workers=4
+    compose_override="${REPO_ROOT}/performance/docker-compose.production-scaling.yml"
+    ;;
+  *) echo "Unknown LAGHU_BENCH_RAIL: ${rail}" >&2; exit 2 ;;
+esac
+if [ "${rail}" != locked-control ] && [ "${target}" != target-1 ]; then
+  echo 'Normalized and production-scaling rails are Target-1-only.' >&2
+  exit 2
+fi
+if [ "${execution_lane}" = local-docker-linux-arm64 ] && [ "${target}" != target-1 ]; then
+  echo 'Local Docker Linux ARM64 is diagnostic-only and supports Target 1 only; it is never native AMD64 acceptance evidence.' >&2
+  exit 2
+fi
+compose() {
+  if [ -n "${compose_override}" ]; then
+    LAGHU_BENCH_CORPUS="${corpus}" \
+    LAGHU_BENCH_NGINX_PLAIN_CONFIG="${nginx_plain_config}" \
+    LAGHU_BENCH_APACHE_MPM_CONFIG="${apache_mpm_config}" \
+    LAGHU_BENCH_WORKERS="${standalone_workers}" \
+    LAGHU_BENCH_PASSTHROUGH_PROFILE=production \
+    LAGHU_BENCH_DOCKER_PLATFORM="${docker_platform}" \
+    docker compose --project-directory "${REPO_ROOT}/performance" \
+      -f "${REPO_ROOT}/performance/docker-compose.yml" -f "${compose_override}" "$@"
+  else
+    LAGHU_BENCH_CORPUS="${corpus}" \
+    LAGHU_BENCH_NGINX_PLAIN_CONFIG="${nginx_plain_config}" \
+    LAGHU_BENCH_APACHE_MPM_CONFIG="${apache_mpm_config}" \
+    LAGHU_BENCH_WORKERS="${standalone_workers}" \
+    LAGHU_BENCH_PASSTHROUGH_PROFILE=production \
+    LAGHU_BENCH_DOCKER_PLATFORM="${docker_platform}" \
+    docker compose --project-directory "${REPO_ROOT}/performance" \
+      -f "${REPO_ROOT}/performance/docker-compose.yml" "$@"
+  fi
+}
+cleanup() {
+  status=$?
+  if [ "${status}" -ne 0 ]; then
+    # Keep server diagnostics beside the invalid raw k6 fragments before the
+    # harness tears containers down. This is rail evidence, never product log
+    # suppression or a benchmark result.
+    compose logs --no-color >"${output}/container-failure.log" 2>&1 || true
+  fi
+  compose down --volumes
+  trap - EXIT
+  exit "${status}"
+}
+trap cleanup EXIT HUP INT TERM
+compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 case "${target}" in
   target-1) if [ "${build}" = 1 ]; then compose up --build --detach benchmark-origin nginx-plain apache-plain standalone-noopt; else compose up --detach benchmark-origin nginx-plain apache-plain standalone-noopt; fi ;;
   all) if [ "${build}" = 1 ]; then compose up --build --detach; else compose up --detach; fi ;;
   *) echo "Unknown LAGHU_BENCH_TARGET: ${target}" >&2; exit 2 ;;
 esac
 set -- --output "${output}" --corpus "${corpus}"
-if [ "${LAGHU_BENCH_FULL:-0}" = 1 ]; then set -- "$@" --full; fi
-python3 "${REPO_ROOT}/performance/run_k6_rail.py" --target "${target}" "$@"
+python3 "${REPO_ROOT}/performance/run_k6_rail.py" --target "${target}" --rail "${rail}" "$@"
 printf '%s\n' "${output}"

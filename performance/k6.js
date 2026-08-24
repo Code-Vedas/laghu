@@ -30,10 +30,15 @@ export const options = __ENV.DURATION
     ? {
         scenarios: {
           sustained: {
-            executor: "constant-vus",
-            vus: Number(__ENV.VUS || 10),
-            duration: __ENV.STEADY_DURATION,
-          },
+          executor: "constant-vus",
+          vus: Number(__ENV.VUS || 10),
+          duration: __ENV.STEADY_DURATION,
+          // The locked soak has 1,000 active VUs. Give all targets the same
+          // bounded drain window after its fixed active duration, so the
+          // single-core Apache diagnostic does not turn client cancellation
+          // into spurious HTTP errors.
+          gracefulStop: __ENV.GRACEFUL_STOP || "2m",
+        },
         },
         summaryTrendStats: baseOptions.summaryTrendStats,
       }

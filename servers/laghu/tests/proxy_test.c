@@ -55,6 +55,7 @@ static bool write_yaml_fixture(char path[]) {
       "runtime:\n"
       "  listen: 127.0.0.1:8080\n"
       "  origin: http://127.0.0.1:8000\n"
+      "  access_log: off\n"
       "  cache: /tmp/cache\n"
       "  worker_queue: /tmp/jobs\n"
       "  preset: balanced\n"
@@ -221,6 +222,87 @@ static bool static_response_test(void) {
   if (received <= 0) return false;
   output[received] = '\0';
   return access.status == 200U && strstr(output, "Content-Type: text/plain") != NULL;
+}
+
+static bool static_path_truncation_test(void) {
+  char directory[] = "/tmp/laghu-static-long-XXXXXX";
+  char target[LAGHU_RUNTIME_PATH_SIZE];
+  char segments[10U][103U];
+  int parents[10U];
+  int current = -1;
+  int sockets[2];
+  int file = -1;
+  size_t target_length = 1U;
+  size_t index;
+  bool result = false;
+  proxy_request request = {0};
+  proxy_access_log access = {0};
+  laghu_proxy_options options;
+  char output[4096];
+  ssize_t received;
+  memset(parents, -1, sizeof(parents));
+  if (mkdtemp(directory) == NULL) return false;
+  current = open(directory, O_RDONLY | O_DIRECTORY);
+  if (current < 0) goto done;
+  target[0] = '/';
+  for (index = 0U; index < 10U; ++index) {
+    size_t segment_length = index == 9U ? 102U : 100U;
+    memset(segments[index], 'a' + (int)index, segment_length);
+    segments[index][segment_length] = '\0';
+    memcpy(target + target_length, segments[index], segment_length);
+    target_length += segment_length;
+    target[target_length++] = '/';
+    parents[index] = current;
+    if (mkdirat(current, segments[index], 0700) != 0 || (current = openat(current, segments[index], O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
+      goto done;
+  }
+  target[target_length] = '\0';
+  if (target_length != 1013U) goto done;
+  file = openat(current, "iiiiiiiiiii", O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
+  if (file < 0 || write(file, "truncated-prefix", 16U) != 16 || close(file) != 0) goto done;
+  file = -1;
+  laghu_proxy_options_init(&options);
+  (void)snprintf(options.sites[0].host, sizeof(options.sites[0].host), "%s", "static-long.example.test");
+  (void)snprintf(options.sites[0].document_root, sizeof(options.sites[0].document_root), "%s", directory);
+  memset(options.sites[0].index_file, 'i', sizeof(options.sites[0].index_file) - 1U);
+  options.site_count = 1U;
+  (void)snprintf(request.method, sizeof(request.method), "%s", "GET");
+  memcpy(request.target, target, target_length + 1U);
+  request.headers[request.header_count++] = (proxy_header){"Host", "static-long.example.test"};
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0 || !proxy_static_serve(&options, &request, sockets[0], NULL, &access)) goto done;
+  received = recv(sockets[1], output, sizeof(output) - 1U, 0);
+  close(sockets[0]);
+  close(sockets[1]);
+  if (received <= 0) goto done;
+  output[received] = '\0';
+  if (access.status != 414U || strstr(output, "414 URI Too Long") == NULL || strstr(output, "truncated-prefix") != NULL) goto done;
+  memset(&request, 0, sizeof(request));
+  memset(&access, 0, sizeof(access));
+  (void)snprintf(options.rules.spa_fallback, sizeof(options.rules.spa_fallback), "%s", target);
+  (void)snprintf(request.method, sizeof(request.method), "%s", "GET");
+  (void)snprintf(request.target, sizeof(request.target), "%s", "/missing");
+  request.headers[request.header_count++] = (proxy_header){"Host", "static-long.example.test"};
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0 || !proxy_static_serve(&options, &request, sockets[0], NULL, &access)) goto done;
+  received = recv(sockets[1], output, sizeof(output) - 1U, 0);
+  close(sockets[0]);
+  close(sockets[1]);
+  if (received <= 0) goto done;
+  output[received] = '\0';
+  result = access.status == 414U && strstr(output, "414 URI Too Long") != NULL && strstr(output, "truncated-prefix") == NULL;
+done:
+  if (file >= 0) (void)close(file);
+  if (current >= 0) {
+    (void)unlinkat(current, "iiiiiiiiiii", 0);
+    (void)close(current);
+  }
+  for (index = 10U; index > 0U; --index) {
+    if (parents[index - 1U] >= 0) {
+      (void)unlinkat(parents[index - 1U], segments[index - 1U], AT_REMOVEDIR);
+      (void)close(parents[index - 1U]);
+    }
+  }
+  (void)rmdir(directory);
+  return result;
 }
 
 static bool route_rewrite_test(void) {
@@ -409,6 +491,10 @@ int main(void) {
                       "--worker-queue", "/tmp/jobs", "--trusted-proxy", "127.0.0.1/8"};
   char *bad_rum[] = {"laghu",      "--listen",       "127.0.0.1:8080", "--origin",    "http://127.0.0.1:8000",      "--cache",
                      "/tmp/cache", "--worker-queue", "/tmp/jobs",      "--rum-store", "redis://example.test:6379/0"};
+  char *access_log_off[] = {"laghu",          "--listen",  "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
+                            "--worker-queue", "/tmp/jobs", "--access-log",   "off"};
+  char *invalid_access_log[] = {"laghu",          "--listen",  "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
+                                "--worker-queue", "/tmp/jobs", "--access-log",   "disabled"};
   char *native_file[] = {"laghu",          "--listen",  "127.0.0.1:8080",   "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                          "--worker-queue", "/tmp/jobs", "--load-from-file", "native"};
   char *unbound_file[] = {"laghu",
@@ -486,6 +572,7 @@ int main(void) {
   CHECK(write_yaml_fixture(yaml_path));
   CHECK(laghu_proxy_load_yaml(yaml_path, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.listen_host, "127.0.0.1") && options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
+  CHECK(!options.access_log);
   CHECK(options.service.trusted_proxy_count == 1U);
   CHECK(options.response_header_count == 2U && !strcmp(options.response_headers[0].name, "X-Static-Policy"));
   CHECK(options.site_count == 1U && !strcmp(options.sites[0].host, "static.example.test"));
@@ -524,6 +611,7 @@ int main(void) {
   }
   CHECK(rmdir(yaml_directory) == 0);
   CHECK(static_response_test());
+  CHECK(static_path_truncation_test());
   CHECK(route_rewrite_test());
   CHECK(scoped_rules_test());
   CHECK(gateway_health_rejected_test());
@@ -605,6 +693,14 @@ int main(void) {
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(9, static_only, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.document_root, "/srv/static") && options.origin_host[0] == '\0');
+  CHECK(options.access_log);
+  laghu_proxy_options_dispose(&options);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, access_log_off, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(!options.access_log);
+  laghu_proxy_options_dispose(&options);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(11, invalid_access_log, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   laghu_proxy_options_dispose(&options);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, secure, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);

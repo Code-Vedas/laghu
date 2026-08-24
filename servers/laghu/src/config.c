@@ -363,6 +363,7 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
   options->origin_pool_size = LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE;
   options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
+  options->access_log = true;
   (void)snprintf(options->index_file, sizeof(options->index_file), "%s", "index.html");
   laghu_service_config_init(&options->service);
   laghu_proxy_rules_init(&options->rules);
@@ -410,7 +411,7 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool io_timeout_seen = false, drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
   bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, pid_file_seen = false, forwarded_seen = false;
   bool document_root_seen = false, index_seen = false;
-  bool directory_listing_seen = false;
+  bool directory_listing_seen = false, access_log_seen = false;
   bool static_cache_control_seen = false;
   bool respect_vary_seen = false, respect_proto_seen = false;
   bool query_overrides_seen = false;
@@ -521,6 +522,12 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
         return proxy_error(error, error_size, "invalid or duplicate --directory-listing");
       options->directory_listing = strcmp(value, "on") == 0;
       directory_listing_seen = true;
+    } else if (strcmp(name, "--access-log") == 0) {
+      NEED_VALUE();
+      if (access_log_seen || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0))
+        return proxy_error(error, error_size, "invalid or duplicate --access-log");
+      options->access_log = strcmp(value, "on") == 0;
+      access_log_seen = true;
     } else if (strcmp(name, "--static-cache-control") == 0) {
       NEED_VALUE();
       if (static_cache_control_seen || strlen(value) >= sizeof(options->static_cache_control) || strpbrk(value, "\r\n"))

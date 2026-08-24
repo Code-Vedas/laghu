@@ -394,9 +394,9 @@ static bool laghu_http_accepts_image(const laghu_http_request *request, const ch
 
 static bool laghu_http_contract_valid(const laghu_http_request *request, const laghu_http_response *response,
                                       const laghu_http_environment *environment) {
-  return request != NULL && response != NULL && environment != NULL &&
-         laghu_http_normalized_view_valid(request->method, false) && laghu_http_normalized_view_valid(request->scheme, false) &&
-         laghu_http_normalized_view_valid(request->authority, false) && laghu_http_normalized_view_valid(request->normalized_path, true) &&
+  return request != NULL && response != NULL && environment != NULL && laghu_http_normalized_view_valid(request->method, false) &&
+         laghu_http_normalized_view_valid(request->scheme, false) && laghu_http_normalized_view_valid(request->authority, false) &&
+         laghu_http_normalized_view_valid(request->normalized_path, true) &&
          laghu_http_headers_valid(request->headers, request->header_count, LAGHU_HTTP_MAX_REQUEST_HEADERS) &&
          laghu_http_headers_valid(response->headers, response->header_count, LAGHU_HTTP_MAX_RESPONSE_HEADERS) &&
          laghu_http_view_valid(response->source_validator) && environment->cache_path != NULL;
@@ -662,8 +662,7 @@ bool laghu_http_transaction_prepare(laghu_http_transaction *transaction, const l
   bool image_class_known = false;
   laghu_image_content_class image_content_class = LAGHU_IMAGE_CONTENT_PHOTO;
   laghu_http_result_init(result);
-  if (transaction == NULL || result == NULL ||
-      !laghu_http_contract_valid(request, response, environment)) {
+  if (transaction == NULL || result == NULL || !laghu_http_contract_valid(request, response, environment)) {
     return result != NULL && laghu_http_add_status(result, LAGHU_DECISION_BYPASS_ERROR) && false;
   }
   laghu_http_transaction_init(transaction);
