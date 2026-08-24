@@ -750,3 +750,142 @@ That is the standard I would use for every subsequent optimization decision.
 This is a **source audit**, not a `perf`/flamegraph capture, so I am deliberately not assigning invented percentage improvements to individual fixes. After correcting the rail, the next performance iteration should use `perf`, syscall counts, allocation profiling and mutex-contention measurements to prove which of these dominates on the actual machine.
 
 I have intentionally kept the security audit out of this report so performance findings do not get diluted. The next pass can audit memory safety, HTTP parsing/framing, path traversal/symlinks, proxy/request smuggling, TLS, authentication/token handling, SSRF/upstreams, cache poisoning, command/file handling, privilege boundaries, dependencies and compiler hardening as a separate offender report.
+
+---
+
+# 23. Target 1 native AMD64 result (2026-08-24)
+
+Native acceptance run: 99/99 clean trials on `linux-fast-build` (Linux AMD64), three medians per cell, matched four-CPU production-scaling rail and access logging off. Raw after bundle: `tmp/benchmarks/native-amd64-target1-after-20260824/results.json`; it records image/config digests and zero HTTP/check errors.
+
+The retained before bundle is `tmp/benchmarks/native-amd64-target1-before-retained-20260823/results.json` (99/99 clean, same host and corpus). It predates the explicit four-CPU/logging-equivalence metadata, so before/after deltas below show measured directional gain, not a replacement acceptance verdict.
+
+| Standalone cell | RPS change | cgroup change | RSS change |
+| --- | ---: | ---: | ---: |
+| warm 1 | +33.2% | +2.7% | +3.2% |
+| warm 10 | +90.2% | +1.7% | +3.6% |
+| warm 50 | +61.4% | +2.1% | +3.6% |
+| warm 100 | +17.8% | +2.1% | +3.3% |
+| warm 500 | +54.6% | +0.7% | +3.4% |
+| warm 1000 | +74.9% | +1.8% | +3.5% |
+| JavaScript execution 10 | +232.3% | +1.8% | +3.5% |
+| mixed assets 1000 | +42.1% | +0.8% | +3.8% |
+| cache storm 1000 | +48.8% | +3.2% | +3.9% |
+| cache thrash 1000 | +69.7% | +3.2% | +4.0% |
+| soak 1000 | +27.4% | +9.4% | +3.9% |
+
+Current native Target-1 acceptance is **fail**: versus NGINX, 0/11 cells pass (RPS 33.4–132.5%, cgroup 236.4–345.3%, RSS 113.8–114.9% of baseline); versus Apache, 4/11 cells pass (RPS 51.7–112.3%, cgroup 55.0–138.7%, RSS 45.3–105.9%). Target 1 therefore remains unaccepted; the persisted raw after bundle is the new native baseline.
+
+ARM was deliberately not run for this remeasurement. Target 2 rail/configuration is ready but has not been run or changed.
+
+---
+
+# 24. Target 1 detailed handoff for the next audit (2026-08-24)
+
+This section is an evidence handoff, not a new claim of parity.  It distinguishes observed data from interpretation and recommended next work.  Section 21 remains the concise priority-1-to-15 disposition; this section adds the details needed to audit those decisions without changing that table.
+
+## Observed facts: locked Target 1 contract
+
+Target 1 compares standalone Laghu with no optimizations against plain NGINX and plain Apache.  It uses matched static delivery, virtual-host selection, proxy and redirect correctness routes, corpus, headers, container limits, warm-up policy, and activation rules.  Standalone memory means only the standalone Laghu container; it excludes the NGINX origin container.
+
+The acceptance unit is one equivalent load cell, never an aggregate.  Each cell is three clean independent trials; its value is the median.  Every trial must have zero HTTP/check errors.  A standalone cell passes a reference only when RPS is at least 98% of that reference and both peak cgroup memory and peak process RSS are at most 102% of it.  Faster RPS or lower memory is always favorable, but does not excuse failure of another gate.
+
+| Cell | Request path(s) | VUs | Work shape |
+| --- | --- | ---: | --- |
+| warm 1 | `/index.html` | 1 | fixed 1,000 iterations |
+| warm 10 | `/index.html` | 10 | fixed 1,000 iterations |
+| warm 50 | `/index.html` | 50 | fixed 1,000 iterations |
+| warm 100 | `/index.html` | 100 | fixed 1,000 iterations |
+| warm 500 | `/index.html` | 500 | fixed 1,000 iterations |
+| warm 1000 | `/index.html` | 1,000 | fixed 1,000 iterations |
+| JavaScript execution 10 | `/js-10k.js` | 10 | fetch then execute JavaScript |
+| mixed assets 1000 | `/index.html`, `/css-100k.css`, `/js-100k.js`, `/image-480.jpg` | 1,000 | round-robin assets |
+| cache storm 1000 | `/image-480.jpg` | 1,000 | repeated same image |
+| cache thrash 1000 | `/image-100.jpg`, `/image-480.jpg`, `/image-768.jpg`, `/image-1440.jpg`, `/image-3840.jpg` | 1,000 | round-robin image set |
+| soak 1000 | same four mixed-asset paths | 1,000 | 30-second sustained load |
+
+The accepted native execution identity is `tmp/benchmarks/native-amd64-target1-after-20260824/results.json`.  It contains 99 raw trials: three targets × eleven cells × three repetitions.  Its execution record says `native-linux-amd64`, `linux/amd64`, host `Linux-6.12.101+deb13-amd64-x86_64-with-glibc2.41`, machine `x86_64`, and `linux-fast-build`.  All three measured target containers report `linux/amd64`; `errors` is an empty array.
+
+The rail is `production-scaling`: four CPU quota units, four standalone workers, NGINX `worker_processes auto`, and Apache `benchmark-mpm-production-scaling.conf`.  Request headers are `Host: alpha.bench.test`, `Accept: */*`, and `Accept-Encoding: identity`.  Request-access logging is disabled for all targets; standalone retains lifecycle and error diagnostics on stderr.  The result also records corpus SHA-256, config SHA-256 values, and image digests, so an auditor should read that JSON rather than reproduce digests in prose.
+
+The only retained "before" comparison is `tmp/benchmarks/native-amd64-target1-before-retained-20260823/results.json`.  It is a clean 99-trial same-host/corpus bundle, but it predates explicit four-CPU and logging-equivalence metadata.  Its directional deltas in section 23 are useful evidence of improvement; they are not a replacement Target-1 acceptance baseline and must not be used to relax the current gate.
+
+## Observed facts: current per-cell parity
+
+Numbers below are standalone divided by the named plain-server median.  RPS must be at least 98.0%; cgroup and RSS must each be at most 102.0%.  “RPS”, “CG”, and “RSS” in the failure column name only the threshold(s) exceeded; they do not assert a source-level cause.
+
+| Cell | vs NGINX: RPS / CG / RSS | NGINX gate result | vs Apache: RPS / CG / RSS | Apache gate result |
+| --- | --- | --- | --- | --- |
+| cache storm 1000 | 101.9% / 336.5% / 114.3% | fail: CG, RSS | 112.3% / 64.5% / 45.8% | pass |
+| cache thrash 1000 | 132.5% / 312.7% / 114.0% | fail: CG, RSS | 92.2% / 63.3% / 45.7% | fail: RPS |
+| JavaScript execution 10 | 124.0% / 345.3% / 114.3% | fail: CG, RSS | 106.8% / 64.4% / 46.3% | pass |
+| mixed assets 1000 | 88.6% / 333.8% / 114.3% | fail: RPS, CG, RSS | 111.4% / 64.3% / 45.9% | pass |
+| soak 1000 | 49.0% / 236.4% / 113.8% | fail: RPS, CG, RSS | 63.4% / 55.0% / 45.3% | fail: RPS |
+| warm 1 | 85.3% / 326.0% / 114.0% | fail: RPS, CG, RSS | 103.4% / 138.7% / 105.9% | fail: CG, RSS |
+| warm 10 | 42.3% / 327.2% / 114.9% | fail: RPS, CG, RSS | 64.9% / 127.9% / 100.6% | fail: RPS, CG |
+| warm 50 | 80.3% / 327.9% / 114.8% | fail: RPS, CG, RSS | 83.1% / 121.8% / 92.5% | fail: RPS, CG |
+| warm 100 | 33.4% / 327.9% / 114.4% | fail: RPS, CG, RSS | 51.7% / 110.1% / 82.1% | fail: RPS, CG |
+| warm 500 | 63.7% / 328.7% / 114.5% | fail: RPS, CG, RSS | 73.8% / 79.0% / 57.6% | fail: RPS |
+| warm 1000 | 80.6% / 345.3% / 114.6% | fail: RPS, CG, RSS | 106.9% / 64.4% / 47.8% | pass |
+
+“0/11 against NGINX” means zero of the eleven independent cells meets all three gates against NGINX.  NGINX cgroup memory fails in every cell (236.4–345.3% of NGINX), and standalone RSS also fails in every cell (113.8–114.9%); eight cells additionally fail RPS.  It does not mean zero requests succeeded: all 33 NGINX-comparison trials and their standalone counterparts completed with zero reported errors.
+
+“4/11 against Apache” means four cells meet all three gates: cache storm, JavaScript execution, mixed assets, and warm 1000.  The remaining seven miss RPS, cgroup memory, RSS, or a combination as shown above.  Thus standalone is not yet accepted even though it is already better than Apache in some cells and dramatically smaller than Apache in several high-concurrency cells.
+
+## Observed facts: retained work and measured focused evidence
+
+* **Benchmark controls and logging equivalence.** The focused rail now emits the one locked target inventory, raw trials, medians, per-cell ratios, thresholds, errors, host/config/image provenance, and no overall-winner field.  The native result above is the first retained Target-1 result with those explicit production-scaling and logging-equivalence fields.
+* **Access logging off for Target 1.** `runtime.access_log: off` skips request transaction rendering, mutex/write/flush work while retaining lifecycle and error diagnostics.  Local ARM focused A/B evidence in `tmp/benchmarks/local-arm64-access-log-ab-20260823/` measured cache-storm RPS 2,921→3,270 (+11.9%) and soak 5,370→5,938 (+10.6%); cgroup fell about 31–33%, while RSS was effectively unchanged.  These focused ARM results explain retention but are not native AMD64 acceptance evidence.
+* **Incremental bounded chunked-upstream parser.** The native transport now stops at the terminal chunk/trailers and grows decode storage within the body limit rather than allocating a fixed 10 MiB buffer and waiting for origin EOF.  Focused local evidence in `tmp/benchmarks/local-arm64-target1-chunked-probe-20260823/` and `tmp/benchmarks/local-arm64-target1-chunked-fix-20260823/` reduced its test fixture from 258.9 ms to 3.925 ms and raised it from 3.863 to 254.799 RPS.  This is retained for correctness and proxy performance, but Target-1 performance cells are static/plain and do not use it.
+* **Mode-off static bypass.** The static path bypasses the shared transform finalizer when the resolved mode is off, preserving static request semantics and headers.  Focused three-pass local A/B evidence in `tmp/p13-mode-off-ab/raw/` measured tiny HTML 5,669.83→7,086.65 RPS (+25.0%) and 100 KiB CSS 4,659.12→6,982.27 (+49.9%), with slightly lower cgroup/RSS.  This is the relevant retained speed change for Target 1; its full native effect is represented only by the final 99-trial bundle.
+* **Static-path truncation fix.** Oversized constructed paths now return 414 instead of serving a truncated prefix; regression coverage proves trailing-slash and SPA-fallback cases never serve the truncated-prefix resource.  This is a correctness retention, not a parity claim.
+* **Validation status.** The retained tree previously completed default Release build, 48/48 CTests, NGINX/Apache smoke lanes, docs, formatting, and `scripts/run-all`; the native performance bundle itself contains zero HTTP/check errors.  No permanent probe output/code is retained in product source.
+
+## Observed facts: rejected or deferred work
+
+* **Priority 6, downstream keep-alive/repark session candidate: rejected.** Its static focused RPS regressed about 61%; raw connection-lifecycle probe evidence remains at `tmp/connection-lifecycle-probe/20260824T130500Z/`.  That probe found low queue mutex wait in its small fixture, so it did not justify retaining a regressing architecture candidate.
+* **Priority 7, fd/sendfile static candidate: rejected.** It gained plaintext static RPS by about 25–36%, but the 100 KiB plaintext cgroup median rose 14.9%, far beyond the 2% gate; RSS was essentially unchanged.  Raw A/B evidence is `tmp/p7-static-cache-ab/20260824T155200Z/`; later cgroup probe data is `tmp/static-cgroup-probe/20260824T165000Z/`.  The later probe attributed only 64 KiB to the worker buffer and did not prove the earlier approximately 5 MiB peak difference as a durable component allocation.
+* **Priority 9, route/regex precompile candidate: rejected.** It improved regex CSS from 105.12 to 167.50 RPS (+59.3%), but tiny static fell from 698.33 to 464.17 RPS (-33.5%) and prefix CSS from 151.39 to 133.04 RPS (-12.1%).  Raw evidence is `tmp/route-policy-precompile/20260824T172922Z/results.json`; the narrow repeat is `.../20260824T173707Z/results.json`.  It did not provide complete retained-memory evidence for every cell, so it must not be treated as a memory conclusion.
+* **Priority 14, GCC IPO/LTO candidate: rejected.** On its ARM focused A/B, tiny HTML, 100 KiB CSS, and mixed assets regressed 7.0%, 15.1%, and 10.3% RPS respectively; p95 worsened in every cell while cgroup/RSS stayed effectively flat.  Raw data is under `tmp/p14-thinlto-ab/raw/`; this was GCC IPO/LTO, not LLVM ThinLTO.
+* **Priority 14, PGO candidate: rejected.** ARM focused data in `tmp/p14-pgo-ab/summary.json` shows CSS 4,868.57→3,240.32 RPS (-33.4%), mixed assets 5,901.75→5,505.24 (-6.7%), and tiny HTML essentially flat/slightly lower.  It has zero reported HTTP/check errors, but no full rail and no retention case.
+* **Priority 15, jemalloc candidate: rejected.** Its three focused cells raised cgroup memory 24.7–29.7% and RSS 21.6–28.3%, violating the 2% memory gate in every cell.  `tmp/p15-allocator-ab/summary.json` is the raw summary.  Its apparent CSS RPS gain is not an acceptance result because the system-control CSS run was order-biased/anomalously slow; the memory failure is still sufficient to reject the candidate.
+* **Optimization-only priorities 3, 4, 8, 10, 11, and 12: deferred.** Recompression, queue capability snapshots, origin-pool/mutex work, cache/catalog work, RUM, and HTML rewrite work belong to Target 4 or proxy/optimization paths.  They are not a credible explanation for static Target-1 parity and must not be pulled forward merely because they are visible in a broad source audit.
+
+## Interpretation: what the native result supports, and what it does not
+
+1. **Fixed/runtime memory is the first remaining Target-1 problem.** Standalone is approximately 78.6–96.3 MiB cgroup and 54.8–55.5 MiB summed process RSS over the eleven medians, even before higher-concurrency differences are considered.  NGINX is about 24.1–40.7 MiB cgroup and 47.9–48.8 MiB RSS.  The nearly flat standalone RSS and cgroup across most warm VU levels, plus failure of NGINX memory gates in every cell, point first to initialized runtime/worker/cache infrastructure rather than a request-sized leak.  This is an inference; the final rail does not yet decompose its memory by mapping, queue, worker stack, cache, or socket state.
+2. **The retained mode-off bypass removed one real request allocation but cannot by itself close the fixed gap.** Temporary request-allocation evidence at `tmp/request-allocation-probe/20260824T180243Z/results.json` recorded one 117,936-byte transform-context allocation per static request before that bypass.  The native result still has the fixed memory pattern, so an auditor should look for process-start and worker-start allocation rather than re-open that already-bypassed finalizer path first.
+3. **RPS is the second Target-1 problem after memory decomposition.** Standalone already exceeds NGINX RPS in cache storm, cache thrash, and JavaScript execution, yet is only 33.4–88.6% in mixed/most warm cells and 49.0% in soak.  The shape rules out a single universal "Laghu is slow" explanation.  It is consistent with connection lifecycle, worker scheduling, static read/send behavior, and workload-specific contention, but no native flamegraph, syscall profile, or production-load contention probe has proven one of those causes.
+4. **The static send candidate is not evidence that sendfile is the next safe fix.** Its RPS gain was real in its focused setup, but its cgroup failure makes it ineligible.  The later probe weakened the first explanation for that increase; it did not establish a replacement cause.  Reintroducing sendfile or a large buffer without a fresh probe would repeat an already rejected path.
+5. **Chunked upstream, catalog, RUM, HTML, and origin-pool work must stay separate.** Target 1's benchmark cells test no-optimization standalone static delivery.  The proxy and transformation improvements are useful product work but do not explain the present static/Nginx memory gate unless a probe proves shared initialization is responsible.
+
+## Priority disposition cross-check
+
+For audit traceability, section 21's concise rows have this current interpretation: 1 is complete benchmark-equivalence work; 2 and 5 are retained; 3, 4, 8, 10, 11, and 12 are deferred to Target 4; 6 and 9 are rejected after focused regression; 7 and 13 are partial through the retained mode-off bypass while their broader candidates remain rejected/not implemented; 14 and 15 are rejected.  No priority is silently considered accepted without the evidence described above.
+
+## Recommendation: next Target-1 cycle and approval boundary
+
+Remain on Target 1.  Do not repair or run Target 2, do not change PageSpeed equivalence, and do not rerun the full 99 trials yet.
+
+1. Terra prepares a narrow, compile-gated native memory probe only.  It should record, by process and worker, startup and peak `smaps_rollup`/cgroup components, thread-stack count/size, queue/request-buffer capacities, cache/metadata mapping sizes, and socket memory; it must separate mode-off static requests from process initialization.  It must not alter behavior or produce permanent output.
+2. Root shows the probe diff and a brief scope summary.  User approval is required before running it.
+3. Terra reports measured components and one smallest proposed change.  Root requests user approval before applying that one change.
+4. After approval, Terra applies the change, removes all probes, runs focused correctness/native surface tests, then a focused three-pass A/B on the affected Target-1 cells.  It reports RPS, cgroup, RSS, errors, and whether the expected fixed-memory component changed.
+5. Only after a substantial focused gain and explicit user approval may Terra run another full native AMD64 99-trial production-scaling Target-1 rail.  The full rail remains the only way to update all eleven acceptance verdicts.
+
+ARM is explicitly excluded from this next cycle at user direction.  No ARM result is needed or should be presented as acceptance evidence.
+
+## Target 2 status and evidence boundary
+
+Target 2 is paused.  The last sentence in section 23 predates this partial attempt and is superseded by this status.  The NGINX Laghu-versus-PageSpeed attempt stopped at 25 of 66 trials when the RSS sampler found a short-lived worker via `/proc` and then lost it before reading its status.  Completed HTTP checks were clean, but the partial run is invalid: it has neither a complete three-run median set nor a comparable memory result.  It yields no Target-2 RPS, memory, or PageSpeed conclusion.
+
+No Target-2 sampler repair, rerun, or configuration change is authorized in this cycle.  The partial Target-2 bundle is not present in this checkout, so its exact path cannot be independently verified here; preserve it wherever it was generated and label it invalid if recovered.  This absence is deliberate documentation of an evidence gap, not permission to discard or replace it.
+
+## Provenance, limitations, and audit rules
+
+* Primary native Target-1 evidence: `tmp/benchmarks/native-amd64-target1-after-20260824/`, especially `results.json` plus its 99 per-trial JSON summaries and corpus manifest.
+* Retained directional-before evidence: `tmp/benchmarks/native-amd64-target1-before-retained-20260823/`; use only with the equivalence-metadata caveat above.
+* Focused retained/rejected experiment evidence: `tmp/benchmarks/local-arm64-access-log-ab-20260823/`, `tmp/benchmarks/local-arm64-target1-chunked-probe-20260823/`, `tmp/benchmarks/local-arm64-target1-chunked-fix-20260823/`, `tmp/p13-mode-off-ab/raw/`, `tmp/connection-lifecycle-probe/20260824T130500Z/`, `tmp/p7-static-cache-ab/20260824T155200Z/`, `tmp/static-cgroup-probe/20260824T165000Z/`, `tmp/route-policy-precompile/`, `tmp/p14-thinlto-ab/raw/`, `tmp/p14-pgo-ab/`, and `tmp/p15-allocator-ab/`.
+* Historical `20260821T195000Z-native-pass{1,2,3}` and `20260821T195000Z-native-normalized-summary.json` were specified as immutable evidence on `linux-fast-build`, but they are not present in this checkout and their exact remote path remains unverified.  Do not infer deletion, mutation, or current parity from their absence here.
+* Peak process RSS is summed per process by the rail.  For multi-process servers it may count shared pages more than once; cgroup peak is therefore the stronger total-container measure, but both metrics remain locked acceptance gates.
+* Never mix ARM diagnostic A/B values with native AMD64 acceptance values, aggregate unlike cells, substitute latency for RPS, include the upstream origin in standalone memory, or use an optimization-only path to explain Target 1 without direct evidence.
+* The current repository has staged benchmark/audit work outside this appended handoff.  This section changes no product source, runner, ROADMAP, `1-pager.md`, raw artifact, or prior audit text.

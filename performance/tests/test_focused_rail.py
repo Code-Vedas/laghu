@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 
 from performance.run_k6_rail import (COMPARISONS, EXECUTION_LANES, FIVE_FILTERS, LOAD_MATRIX, LOGGING_EQUIVALENCE,
-                                     MEASUREMENT_RAILS, PASSTHROUGH_PROFILES, SCHEMA, TARGETS, compare, execution_lane,
-                                     measurement_rail, medians, passthrough_profile, target_url)
+                                     MEASUREMENT_RAILS, PASSTHROUGH_PROFILES, SCHEMA, TARGETS, TARGET_SCOPES, active_targets,
+                                     compare, execution_lane, measurement_rail, medians, passthrough_profile, target_url)
 
 
 class FocusedRailTest(unittest.TestCase):
@@ -23,6 +23,16 @@ class FocusedRailTest(unittest.TestCase):
         self.assertEqual([row[2] for row in LOAD_MATRIX[:6]], [1, 10, 50, 100, 500, 1000])
         self.assertEqual({row[0] for row in LOAD_MATRIX}, {"warm", "javascript-execution", "mixed-assets", "cache-storm", "cache-thrash", "soak-1000-vu"})
         self.assertIn('"GRACEFUL_STOP=2m"', (Path(__file__).resolve().parents[1] / "run_k6_rail.py").read_text())
+
+    def test_each_locked_category_can_run_without_other_comparisons(self):
+        self.assertEqual(TARGET_SCOPES, ("target-1", "nginx-pagespeed", "apache-pagespeed", "standalone-all"))
+        self.assertEqual([target.name for target in active_targets("nginx-pagespeed")],
+                         ["nginx/laghu-five-filters", "nginx/pagespeed-five-filters"])
+        self.assertEqual(len(active_targets("target-1")), 3)
+        self.assertEqual(len(active_targets("apache-pagespeed")), 2)
+        self.assertEqual([target.name for target in active_targets("standalone-all")],
+                         ["standalone/no-optimization", "standalone/all-optimization"])
+        self.assertEqual(len(active_targets("all")), len(TARGETS))
 
     def test_pagespeed_and_laghu_five_filter_contract(self):
         root = Path(__file__).resolve().parents[1]

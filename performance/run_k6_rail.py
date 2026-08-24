@@ -89,6 +89,7 @@ TARGETS = (
     Target("apache/pagespeed-five-filters", "apache-pagespeed", "http://127.0.0.1:18101", "http://apache-pagespeed:80", ("apache-pagespeed",)),
     Target("standalone/all-optimization", "standalone-all", "http://127.0.0.1:18201", "http://standalone-all:8080", ("standalone-all",)),
 )
+TARGET_SCOPES = ("target-1", "nginx-pagespeed", "apache-pagespeed", "standalone-all")
 COMPARISONS = (
     ("target-1-nginx", "standalone/no-optimization", "nginx/plain", 0.98, 1.02),
     ("target-1-apache", "standalone/no-optimization", "apache/plain", 0.98, 1.02),
@@ -150,6 +151,17 @@ def execution_lane(machine: str | None = None) -> ExecutionLane:
 
 def target_url(target: Target, lane: ExecutionLane) -> str:
     return target.base_url if lane.k6_network == "host" else target.compose_url
+
+
+def active_targets(scope: str) -> tuple[Target, ...]:
+    """Select one locked comparison category without changing its load cells."""
+    if scope == "all":
+        return TARGETS
+    if scope not in TARGET_SCOPES:
+        raise RuntimeError(f"unknown benchmark target scope: {scope}")
+    if scope == "standalone-all":
+        return tuple(target for target in TARGETS if target.name in {"standalone/all-optimization", "standalone/no-optimization"})
+    return tuple(target for target in TARGETS if target.category == scope)
 
 
 def require(condition: bool, message: str) -> None:
@@ -335,7 +347,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--corpus", required=True, type=Path)
-    parser.add_argument("--target", choices=("target-1", "all"), default="all")
+    parser.add_argument("--target", choices=(*TARGET_SCOPES, "all"), default="all")
     parser.add_argument("--rail", choices=tuple(rail.name for rail in MEASUREMENT_RAILS), default="locked-control")
     parser.add_argument("--passthrough-profile", choices=tuple(profile.name for profile in PASSTHROUGH_PROFILES), default="production")
     args = parser.parse_args()
@@ -349,13 +361,14 @@ def main() -> None:
     load_corpus_manifest(args.corpus)
     args.output.mkdir(parents=True, exist_ok=True)
     targets = {target.name: target for target in TARGETS}
-    active = tuple(target for target in TARGETS if args.target == "all" or target.category == "target-1")
+    active = active_targets(args.target)
     for target in active:
         wait_ready(target, lane)
         verify_target_contract(target, lane)
     container_platforms = verify_execution_lane(lane, active)
     docker_network = execution_network(lane, active)
-    verify_target1_equivalence(targets, lane)
+    if args.target in {"target-1", "all"}:
+        verify_target1_equivalence(targets, lane)
     raw = [run_trial(args.output, rail, lane, docker_network, target, scenario, paths, vus, duration, run) for target in active for scenario, paths, vus, duration in LOAD_MATRIX for run in range(1, 4)]
     median_rows = medians(raw)
     allowed = {target.name for target in active}
