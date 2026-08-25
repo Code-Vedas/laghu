@@ -45,7 +45,6 @@ static void proxy_worker_end(proxy_worker *worker) {
   worker->active_client = LAGHU_INVALID_SOCKET;
   worker->active_origin = LAGHU_INVALID_SOCKET;
   if (worker->queue->active_count != 0U) --worker->queue->active_count;
-  pthread_cond_broadcast(&worker->queue->drained);
   proxy_queue_unlock(worker->queue);
 }
 

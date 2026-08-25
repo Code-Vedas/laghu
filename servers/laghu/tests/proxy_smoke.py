@@ -1377,6 +1377,45 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         assert f'"upstream_protocol":"{protocol}"' in logs
 
 
+def passthrough_without_transform_infrastructure_smoke(executable, root):
+    static_root = root / "passthrough-minimal-static"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("passthrough without transform infrastructure")
+    port = free_port()
+    config = root / "passthrough-minimal.yaml"
+    config.write_text(
+        "runtime:\n"
+        f"  listen: 127.0.0.1:{port}\n"
+        "  rewrite_level: passthrough\n"
+        "  access_log: off\n"
+        "sites:\n"
+        "  - host: passthrough-minimal.test\n"
+        f"    document_root: {static_root}\n"
+    )
+    log = (root / "passthrough-minimal.log").open("w+b")
+    process = subprocess.Popen([str(executable), "--config", str(config)], stdout=subprocess.DEVNULL, stderr=log)
+    try:
+        for _ in range(100):
+            try:
+                head, body = request(port, "/", host="passthrough-minimal.test")
+                break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            log.flush()
+            log.seek(0)
+            raise AssertionError("minimal passthrough did not start: " + log.read().decode())
+        assert head.startswith(b"http/1.1 200 ") and body == b"passthrough without transform infrastructure"
+    finally:
+        request_shutdown(process)
+        process.wait(timeout=5)
+        log.flush()
+        log.seek(0)
+        logs = log.read().decode()
+        log.close()
+    assert process.returncode == 0, logs
+
+
 def access_log_runtime_smoke(executable, root):
     static_root = root / "access-log-static"
     static_root.mkdir()
@@ -1433,6 +1472,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="laghu-proxy-") as directory:
         root = pathlib.Path(directory)
         status_smoke(executable, root)
+        passthrough_without_transform_infrastructure_smoke(executable, root)
         doctor_smoke(executable, root)
         purge_smoke(executable, root)
         explain_smoke(executable, root)
@@ -1555,7 +1595,7 @@ def main():
         sni_replacement = root / "sni-replacement.yaml"
         sni_pid = root / "sni-reload.pid"
 
-        def write_sni_config(path, redirect):
+        def write_sni_config(path, redirect, site_root=one_root):
             path.write_text(
                 ""
                 "runtime:\n"
@@ -1566,7 +1606,7 @@ def main():
                 f"  pid_file: {sni_pid}\n"
                 "sites:\n"
                 "  - host: one.example.test\n"
-                f"    document_root: {one_root}\n"
+                f"    document_root: {site_root}\n"
                 f"    tls_certificate: {one_certificate}\n"
                 f"    tls_private_key: {one_key}\n"
                 "    laghu:\n"
@@ -1586,7 +1626,7 @@ def main():
             )
 
         write_sni_config(sni_config, "/before")
-        write_sni_config(sni_replacement, "/after")
+        write_sni_config(sni_replacement, "/after", two_root)
         pathlib.Path(f"{sni_pid}.reload").write_bytes(str(sni_replacement).encode() + b"\0")
         sni_process = subprocess.Popen(
             [str(executable), "--config", str(sni_config)], stdout=subprocess.DEVNULL,
@@ -1638,6 +1678,11 @@ def main():
                 time.sleep(0.05)
             else:
                 raise AssertionError("reload did not atomically publish the replacement")
+            reloaded_root_head, reloaded_root_body = request(
+                sni_port, "/", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b" 200 " in reloaded_root_head.split(b"\r\n", 1)[0] and reloaded_root_body == b"two site"
             sni_replacement.write_text("runtime: invalid\n")
             invalid_reload = subprocess.run(
                 [str(executable), "reload", "--config", str(sni_replacement)],

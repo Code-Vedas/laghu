@@ -156,9 +156,11 @@ typedef struct {
   char document_root[LAGHU_RUNTIME_PATH_SIZE];
   char index_file[128];
   char static_cache_control[256];
-  laghu_proxy_site sites[LAGHU_PROXY_MAX_SITES];
+  /* Exact-count immutable scope storage.  Parsers retain the documented
+   * LAGHU_PROXY_MAX_* bounds, but do not materialize unused scopes. */
+  laghu_proxy_site *sites;
   size_t site_count;
-  laghu_proxy_route routes[LAGHU_PROXY_MAX_ROUTES];
+  laghu_proxy_route *routes;
   size_t route_count;
   bool global_routes_seen;
   laghu_proxy_response_header response_headers[LAGHU_PROXY_MAX_RESPONSE_HEADERS];

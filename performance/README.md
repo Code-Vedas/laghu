@@ -19,6 +19,18 @@ redirects before its load matrix. Standalone memory counts only its container,
 never the shared upstream. Historical `20260821T195000Z-*` bundles are
 immutable evidence and are not read or changed by this command.
 
+Memory fields use explicit v2 semantics. `lifetime_cgroup_peak_bytes` is the
+container-lifetime cgroup high-water (including startup) and remains the
+product-footprint gate. `trial_cgroup_current_peak_bytes` samples cgroup
+`memory.current` every 50 ms from immediately before k6 starts through its
+completion and is the workload-footprint gate. `cgroup_peak_bytes` remains a
+compatibility alias for `lifetime_cgroup_peak_bytes`. The runner never resets
+`memory.peak`: on cgroup v2, reset state is specific to an open file
+descriptor. For a target with multiple measured containers, trial memory is
+the sum of their sampled peaks; that is exact for current single-container
+targets and a conservative bound otherwise. RSS remains its historical
+before/after live-process snapshot metric, not a sampled trial peak.
+
 The retained 30-second soak uses a common two-minute post-duration drain
 window. It does not extend the active load phase; it prevents one target's
 queued in-flight requests from becoming client-cancelled errors.
@@ -40,11 +52,10 @@ Target-1 logging is matched: NGINX uses `access_log off`, Apache disables its
 default virtual-host access log, and standalone sets `runtime.access_log: off`.
 Standalone lifecycle and error diagnostics remain on stderr; only request
 transaction records are disabled.
-Standalone no-optimization is explicitly **production passthrough**:
-its queue/cache infrastructure starts while transformations are bypassed.
-**Minimal passthrough** means no queue/cache infrastructure, but is deliberately
-blocked today because the standalone YAML/lifecycle contract requires both;
-the rail will not label that production setup as minimal.
+Standalone no-optimization is policy-derived **production passthrough**:
+when no transform, RUM, cache, or administrative feature is enabled, it starts
+without transform cache, image queue, or RUM infrastructure. `minimal` uses
+the same valid lifecycle; the named rail remains `production` for continuity.
 
 On Linux AMD64, k6 uses host networking and published loopback ports. On local
 ARM Docker Desktop, k6 joins the Compose network and resolves service DNS

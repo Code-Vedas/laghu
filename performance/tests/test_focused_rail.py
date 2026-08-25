@@ -14,7 +14,7 @@ from performance.run_k6_rail import (COMPARISONS, EXECUTION_LANES, FIVE_FILTERS,
 
 class FocusedRailTest(unittest.TestCase):
     def test_contract_has_only_locked_categories(self):
-        self.assertEqual(SCHEMA, "laghu-focused-performance-v1")
+        self.assertEqual(SCHEMA, "laghu-focused-performance-v2")
         self.assertEqual({target.category for target in TARGETS}, {"target-1", "nginx-pagespeed", "apache-pagespeed", "standalone-all"})
         self.assertEqual(len(COMPARISONS), 5)
         self.assertEqual(FIVE_FILTERS, ("collapse_whitespace", "remove_comments", "rewrite_images", "recompress_images", "convert_jpeg_to_webp"))
@@ -53,6 +53,34 @@ class FocusedRailTest(unittest.TestCase):
         self.assertEqual(len(verdicts), 2)
         self.assertTrue(all(row["verdict"] == "pass" for row in verdicts))
 
+    def test_v2_memory_metrics_keep_lifetime_alias_and_gate_trial_peak(self):
+        raw = []
+        for target, rps, lifetime, trial, rss in (("standalone/no-optimization", 98.0, 102, 102, 102),
+                                                   ("nginx/plain", 100.0, 100, 100, 100),
+                                                   ("apache/plain", 100.0, 100, 100, 100)):
+            for run in range(1, 4):
+                raw.append({"target": target, "scenario": "warm", "vus": 10, "run": run, "rps": rps,
+                            "cgroup_peak_bytes": lifetime, "lifetime_cgroup_peak_bytes": lifetime,
+                            "trial_cgroup_current_peak_bytes": trial, "rss_peak_bytes": rss, "errors": 0})
+        median_rows = medians(raw)
+        standalone = next(row for row in median_rows if row["target"] == "standalone/no-optimization")
+        self.assertEqual(standalone["cgroup_peak_bytes"], standalone["lifetime_cgroup_peak_bytes"])
+        verdicts = compare(median_rows, {"standalone/no-optimization", "nginx/plain", "apache/plain"})
+        self.assertTrue(all(row["verdict"] == "pass" for row in verdicts))
+        self.assertTrue(all(row["ratios"]["trial_cgroup_current_memory"] == 1.02 for row in verdicts))
+        self.assertTrue(all(row["thresholds"]["trial_cgroup_current_memory_maximum"] == 1.02 for row in verdicts))
+
+    def test_v2_trial_cgroup_gate_can_fail_independently(self):
+        raw = []
+        for target, trial in (("standalone/no-optimization", 103), ("nginx/plain", 100), ("apache/plain", 100)):
+            for run in range(1, 4):
+                raw.append({"target": target, "scenario": "warm", "vus": 10, "run": run, "rps": 100.0,
+                            "cgroup_peak_bytes": 100, "lifetime_cgroup_peak_bytes": 100,
+                            "trial_cgroup_current_peak_bytes": trial, "rss_peak_bytes": 100, "errors": 0})
+        verdicts = compare(medians(raw), {"standalone/no-optimization", "nginx/plain", "apache/plain"})
+        self.assertTrue(all(row["ratios"]["lifetime_cgroup_memory"] == 1.0 for row in verdicts))
+        self.assertTrue(all(row["verdict"] == "fail" for row in verdicts))
+
     def test_missing_clean_run_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "three clean"):
             medians([{"target": "x", "scenario": "warm", "vus": 1, "rps": 1.0, "cgroup_peak_bytes": 1, "rss_peak_bytes": 1, "errors": 0}])
@@ -66,11 +94,12 @@ class FocusedRailTest(unittest.TestCase):
         self.assertEqual(single_core.logging_equivalence, "matched")
         self.assertEqual({target.category for target in TARGETS}, {"target-1", "nginx-pagespeed", "apache-pagespeed", "standalone-all"})
 
-    def test_passthrough_profiles_do_not_mislabel_queue_backed_runtime(self):
+    def test_passthrough_profiles_describe_policy_derived_runtime(self):
         self.assertEqual(tuple(profile.name for profile in PASSTHROUGH_PROFILES), ("minimal", "production"))
-        self.assertFalse(passthrough_profile("minimal").runnable)
-        self.assertIn("requires a file cache backend and worker queue", passthrough_profile("minimal").limitation)
+        self.assertTrue(passthrough_profile("minimal").runnable)
+        self.assertIsNone(passthrough_profile("minimal").limitation)
         self.assertTrue(passthrough_profile("production").runnable)
+        self.assertIn("no transform cache, image queue, or RUM", passthrough_profile("production").infrastructure)
 
     def test_target1_logging_and_mpm_controls_are_explicit(self):
         root = Path(__file__).resolve().parents[1]

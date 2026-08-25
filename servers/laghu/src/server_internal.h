@@ -87,6 +87,17 @@ typedef struct proxy_reload_snapshot {
   struct proxy_reload_snapshot *next;
 } proxy_reload_snapshot;
 
+/* Immutable document-root descriptors belong to an options generation.  They
+ * remain open until all workers stop, so request traversal never races a
+ * reload or a root replacement. */
+typedef struct proxy_static_roots {
+  const laghu_proxy_options *options;
+  int global_root;
+  int *site_roots;
+  size_t site_count;
+  struct proxy_static_roots *next;
+} proxy_static_roots;
+
 typedef struct {
   uint64_t identity;
   uint64_t updated_ms;
@@ -102,10 +113,18 @@ typedef struct {
   bool healthy;
 } proxy_upstream_health;
 
+typedef struct {
+  bool cache;
+  bool image_queue;
+  bool rum;
+  bool operational;
+} proxy_lifecycle_requirements;
+
 typedef struct proxy_queue {
   const laghu_proxy_options *options;
   char config_path[LAGHU_RUNTIME_PATH_SIZE];
   proxy_reload_snapshot *reload_snapshots;
+  proxy_static_roots *static_roots;
   proxy_connection *items;
   unsigned int capacity;
   unsigned int head;
@@ -131,6 +150,7 @@ typedef struct proxy_queue {
   laghu_runtime_queue javascript_queue;
   laghu_runtime_queue chrome_analysis_queue;
   laghu_runtime_queue otel_trace_queue;
+  bool image_queue_required;
   bool runtime_queue_ready;
   bool html_refresh_queue_ready;
   bool font_fetch_queue_ready;
@@ -143,7 +163,6 @@ typedef struct proxy_queue {
   proxy_upstream_health upstream_health[LAGHU_PROXY_MAX_ROUTES][LAGHU_PROXY_MAX_FAILOVERS + 1U];
   pthread_mutex_t lock;
   pthread_cond_t ready;
-  pthread_cond_t drained;
 } proxy_queue;
 
 typedef struct proxy_worker {
@@ -253,6 +272,9 @@ bool proxy_static_serve(const laghu_proxy_options *options, const proxy_request 
 bool proxy_static_serve_with_context(const laghu_proxy_options *options, const proxy_connection *connection, proxy_worker *worker,
                                      const proxy_request *request, const laghu_config *core, const laghu_service_config *service,
                                      const laghu_proxy_rules *rules, laghu_socket client, SSL *tls, proxy_access_log *access);
+proxy_static_roots *proxy_static_roots_create(const laghu_proxy_options *options);
+void proxy_static_roots_dispose(proxy_static_roots *roots);
+int proxy_static_root_fd(const proxy_static_roots *roots, const laghu_proxy_options *options, size_t site_index);
 bool proxy_route_serve(const laghu_proxy_options *options, const proxy_request *request, laghu_socket client, SSL *tls, proxy_access_log *access);
 bool proxy_route_rewrite(const laghu_proxy_options *options, proxy_request *request);
 const laghu_proxy_route *proxy_route_upstream(const laghu_proxy_options *options, const proxy_request *request);
@@ -270,7 +292,14 @@ bool proxy_route_gateway_fetch(proxy_worker *worker, const laghu_proxy_options *
                                size_t *body_length, laghu_proxy_upstream_target *selected, unsigned int *failovers, bool *timed_out);
 void proxy_maintain_upstream_health(proxy_queue *queue);
 bool proxy_options_has_tls_upstream(const laghu_proxy_options *options);
+bool proxy_options_append_site(laghu_proxy_options *options, laghu_proxy_site **site);
+bool proxy_options_append_route(laghu_proxy_options *options, laghu_proxy_route **route);
+bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_service_config *service,
+                                        proxy_lifecycle_requirements *requirements);
+bool proxy_options_lifecycle_requirements(const laghu_proxy_options *options, proxy_lifecycle_requirements *requirements);
 size_t proxy_site_index(const laghu_proxy_options *options, const proxy_request *request);
+/* Produces a non-owning request-scoped view; release it with free(), not
+ * laghu_proxy_options_dispose(). */
 void proxy_options_for_request(const laghu_proxy_options *options, const proxy_request *request, laghu_proxy_options *resolved);
 void proxy_scope_for_request(const laghu_proxy_options *options, const proxy_request *request, const laghu_config **core,
                              const laghu_service_config **service);

@@ -19,12 +19,14 @@ import platform
 import statistics
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
-SCHEMA = "laghu-focused-performance-v1"
+SCHEMA = "laghu-focused-performance-v2"
+TRIAL_CGROUP_SAMPLING_INTERVAL_SECONDS = 0.05
 VUS = (1, 10, 50, 100, 500, 1000)
 LOAD_MATRIX = (
     *(("warm", ("/index.html",), vus, None) for vus in VUS),
@@ -112,13 +114,8 @@ MEASUREMENT_RAILS = (
     MeasurementRail("production-scaling", 4.0, 4, "auto", "benchmark-mpm-production-scaling.conf", "matched"),
 )
 PASSTHROUGH_PROFILES = (
-    PassthroughProfile(
-        "minimal",
-        "no transformation queue or cache infrastructure",
-        False,
-        "current standalone YAML/lifecycle requires a file cache backend and worker queue even in passthrough mode",
-    ),
-    PassthroughProfile("production", "queue/cache infrastructure initialized; transformations bypassed", True, None),
+    PassthroughProfile("minimal", "policy-derived passthrough: no transform cache, image queue, or RUM", True, None),
+    PassthroughProfile("production", "policy-derived passthrough: no transform cache, image queue, or RUM", True, None),
 )
 EXECUTION_LANES = (
     ExecutionLane("native-linux-amd64", "linux/amd64", "host", (), True, None),
@@ -205,14 +202,161 @@ def request(url: str, headers: dict[str, str] | None = None, follow: bool = True
     return int(lines[0].split()[1]), {line.split(":", 1)[0].lower(): line.split(":", 1)[1].strip() for line in lines[1:] if ":" in line}, body
 
 
-def cgroup_snapshot(target: Target) -> dict[str, int]:
+def target_container_name(short_name: str) -> str:
+    return f"laghu-bench-{short_name}"
+
+
+def container_lifetime_cgroup_peak(name: str) -> tuple[int, str]:
+    """Read the cgroup lifetime high-water without attempting an FD-local reset."""
+    output = docker(
+        "exec",
+        name,
+        "sh",
+        "-c",
+        "if [ -r /sys/fs/cgroup/memory.peak ]; then printf 'cgroup-v2-memory.peak '; cat /sys/fs/cgroup/memory.peak; "
+        "elif [ -r /sys/fs/cgroup/memory.max_usage_in_bytes ]; then printf 'cgroup-v1-memory.max_usage_in_bytes '; "
+        "cat /sys/fs/cgroup/memory.max_usage_in_bytes; else exit 1; fi",
+    ).stdout.strip().split(maxsplit=1)
+    require(len(output) == 2 and output[1].isdigit(), f"{name}: invalid cgroup lifetime peak")
+    return int(output[1]), output[0]
+
+
+def container_rss_snapshot(name: str) -> int:
+    """Sum live process RSS without failing when a process exits during /proc traversal."""
+    output = docker(
+        "exec",
+        name,
+        "sh",
+        "-c",
+        "total=0; for status in /proc/[0-9]*/status; do [ -r \"$status\" ] || continue; "
+        "value=$(awk '/^VmRSS:/{print $2; exit}' \"$status\" 2>/dev/null) || continue; "
+        "case \"$value\" in ''|*[!0-9]*) continue ;; esac; total=$((total + value)); done; printf '%s\\n' \"$total\"",
+    ).stdout.strip()
+    require(output.isdigit(), f"{name}: invalid RSS snapshot")
+    return int(output) * 1024
+
+
+def lifetime_memory_snapshot(target: Target) -> dict[str, Any]:
     """Count target containers only; standalone deliberately excludes its NGINX origin."""
     cgroup_peak = rss_peak = 0
+    sources: dict[str, str] = {}
     for short_name in target.containers:
-        name = f"laghu-bench-{short_name}"
-        cgroup_peak += int(docker("exec", name, "sh", "-c", "cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory.max_usage_in_bytes").stdout.strip())
-        rss_peak += int(docker("exec", name, "sh", "-c", "awk '/VmRSS:/{total += $2} END {print total + 0}' /proc/[0-9]*/status").stdout.strip()) * 1024
-    return {"cgroup_peak_bytes": cgroup_peak, "rss_peak_bytes": rss_peak}
+        name = target_container_name(short_name)
+        peak, source = container_lifetime_cgroup_peak(name)
+        cgroup_peak += peak
+        rss_peak += container_rss_snapshot(name)
+        sources[short_name] = source
+    return {"lifetime_cgroup_peak_bytes": cgroup_peak, "rss_peak_bytes": rss_peak, "cgroup_lifetime_sources": sources}
+
+
+@dataclass(frozen=True)
+class CgroupCurrentSample:
+    short_name: str
+    name: str
+    pid: int
+    source: str
+    metric_path: str
+    samples_path: str
+    errors_path: str
+
+
+class TrialCgroupCurrentSampler:
+    """Sample cgroup current usage from trial start through trial completion.
+
+    cgroup-v2 memory.peak resets are file-descriptor local. This intentionally
+    never resets memory.peak; it obtains a separate workload metric by sampling
+    memory.current (or the cgroup-v1 equivalent) in each target container.
+    """
+
+    def __init__(self, target: Target, interval_seconds: float = TRIAL_CGROUP_SAMPLING_INTERVAL_SECONDS):
+        self.target = target
+        self.interval_seconds = interval_seconds
+        self.samples: list[CgroupCurrentSample] = []
+        self.started_monotonic_ns: int | None = None
+        self.stopped_monotonic_ns: int | None = None
+
+    @staticmethod
+    def abort(sample: CgroupCurrentSample) -> None:
+        """Best-effort cleanup that never hides the original sampler failure."""
+        subprocess.run(
+            ["docker", "exec", sample.name, "sh", "-c",
+             f"kill -TERM {sample.pid} 2>/dev/null || true; rm -f {sample.samples_path} {sample.errors_path}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def start(self) -> None:
+        require(self.interval_seconds > 0.0, "cgroup sampling interval must be positive")
+        token = uuid.uuid4().hex
+        self.started_monotonic_ns = time.monotonic_ns()
+        try:
+            for short_name in self.target.containers:
+                name = target_container_name(short_name)
+                prefix = f"/tmp/laghu-cgroup-current-{token}-{short_name}"
+                samples_path, errors_path = f"{prefix}.samples", f"{prefix}.errors"
+                script = (
+                    "if [ -r /sys/fs/cgroup/memory.current ]; then metric=/sys/fs/cgroup/memory.current; source=cgroup-v2-memory.current; "
+                    "elif [ -r /sys/fs/cgroup/memory.usage_in_bytes ]; then metric=/sys/fs/cgroup/memory.usage_in_bytes; "
+                    "source=cgroup-v1-memory.usage_in_bytes; else exit 1; fi; "
+                    f"rm -f {samples_path} {errors_path}; "
+                    "(trap 'exit 0' TERM INT; while :; do value=$(cat \"$metric\") || { printf 'read failed\\n' > "
+                    f"{errors_path}; exit 1; }}; case \"$value\" in ''|*[!0-9]*) printf 'invalid sample: %s\\n' \"$value\" > "
+                    f"{errors_path}; exit 1 ;; esac; printf '%s\\n' \"$value\" >> {samples_path} || exit 1; "
+                    f"sleep {self.interval_seconds:.3f} || exit 1; done) >/dev/null 2>{errors_path} & "
+                    "printf '%s %s %s\\n' \"$source\" \"$metric\" \"$!\""
+                )
+                output = docker("exec", name, "sh", "-c", script).stdout.strip().split()
+                require(len(output) == 3 and output[2].isdigit(), f"{name}: cgroup sampler did not start")
+                self.samples.append(CgroupCurrentSample(short_name, name, int(output[2]), output[0], output[1], samples_path, errors_path))
+        except Exception:
+            for sample in self.samples:
+                self.abort(sample)
+            raise
+
+    def stop(self) -> dict[str, Any]:
+        require(self.started_monotonic_ns is not None, "cgroup sampler was not started")
+        containers: list[dict[str, Any]] = []
+        stopped_names: set[str] = set()
+        try:
+            for sample in self.samples:
+                stopped = False
+                script = (
+                    f"cat {sample.metric_path} >> {sample.samples_path} || exit 1; "
+                    f"if kill -0 {sample.pid} 2>/dev/null; then kill -TERM {sample.pid} || exit 1; fi; "
+                    "attempts=0; while kill -0 "
+                    f"{sample.pid} 2>/dev/null; do attempts=$((attempts + 1)); [ \"$attempts\" -lt 200 ] || exit 1; sleep 0.01; done; "
+                    f"if [ -s {sample.errors_path} ]; then cat {sample.errors_path} >&2; exit 1; fi; cat {sample.samples_path}; "
+                    f"rm -f {sample.samples_path} {sample.errors_path}"
+                )
+                try:
+                    output = docker("exec", sample.name, "sh", "-c", script).stdout.split()
+                    require(output and all(value.isdigit() for value in output), f"{sample.name}: invalid cgroup trial samples")
+                    containers.append({"container": sample.short_name, "source": sample.source, "samples": len(output), "peak_bytes": max(map(int, output))})
+                    stopped = True
+                    stopped_names.add(sample.short_name)
+                finally:
+                    if not stopped:
+                        self.abort(sample)
+        except Exception:
+            for sample in self.samples:
+                if sample.short_name not in stopped_names:
+                    self.abort(sample)
+            raise
+        finally:
+            self.stopped_monotonic_ns = time.monotonic_ns()
+        return {
+            "trial_cgroup_current_peak_bytes": sum(row["peak_bytes"] for row in containers),
+            "cgroup_trial_sampling": {
+                "method": "periodic-memory.current-sampling",
+                "interval_ms": round(self.interval_seconds * 1000),
+                "started_before_k6": True,
+                "stopped_after_k6": True,
+                "containers": containers,
+                "aggregation": "sum-of-per-container-sampled-peaks; exact for single-container targets and a conservative upper bound for multi-container targets",
+                "duration_ms": round((self.stopped_monotonic_ns - self.started_monotonic_ns) / 1_000_000),
+            },
+        }
 
 
 def container_platform(short_name: str) -> str:
@@ -294,13 +438,36 @@ def run_trial(output: Path, rail: MeasurementRail, lane: ExecutionLane, docker_n
         command.extend(("-e", "EXECUTE_JAVASCRIPT=/js-10k.js"))
     if duration is not None:
         command.extend(("-e", f"STEADY_DURATION={duration}"))
-    before = cgroup_snapshot(target)
-    subprocess.run([*command, "/scripts/k6.js"], check=True)
-    after = cgroup_snapshot(target)
+    before = lifetime_memory_snapshot(target)
+    sampler = TrialCgroupCurrentSampler(target)
+    sampler.start()
+    try:
+        subprocess.run([*command, "/scripts/k6.js"], check=True)
+    finally:
+        trial_cgroup = sampler.stop()
+    after = lifetime_memory_snapshot(target)
     metrics = json.loads(summary.read_text(encoding="utf-8"))["metrics"]
     errors = int(metrics["checks"]["fails"])
     require(errors == 0, f"{target.name}: {scenario}/{vus}/run{run} errors")
-    return {"rail": rail.name, "execution_lane": lane.name, "target": target.name, "scenario": scenario, "vus": vus, "run": run, "requests": int(metrics["http_reqs"]["count"]), "rps": metrics["http_reqs"]["rate"], "errors": errors, "cgroup_peak_bytes": max(before["cgroup_peak_bytes"], after["cgroup_peak_bytes"]), "rss_peak_bytes": max(before["rss_peak_bytes"], after["rss_peak_bytes"]), "k6_summary": summary.name}
+    lifetime_cgroup_peak = max(before["lifetime_cgroup_peak_bytes"], after["lifetime_cgroup_peak_bytes"])
+    return {
+        "rail": rail.name,
+        "execution_lane": lane.name,
+        "target": target.name,
+        "scenario": scenario,
+        "vus": vus,
+        "run": run,
+        "requests": int(metrics["http_reqs"]["count"]),
+        "rps": metrics["http_reqs"]["rate"],
+        "errors": errors,
+        "lifetime_cgroup_peak_bytes": lifetime_cgroup_peak,
+        "trial_cgroup_current_peak_bytes": trial_cgroup["trial_cgroup_current_peak_bytes"],
+        "cgroup_peak_bytes": lifetime_cgroup_peak,
+        "rss_peak_bytes": max(before["rss_peak_bytes"], after["rss_peak_bytes"]),
+        "cgroup_lifetime_sources": {"before": before["cgroup_lifetime_sources"], "after": after["cgroup_lifetime_sources"]},
+        **trial_cgroup,
+        "k6_summary": summary.name,
+    }
 
 
 def medians(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -310,7 +477,12 @@ def medians(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output = []
     for (_, _, _), rows in sorted(grouped.items()):
         require(len(rows) == 3 and all(row["errors"] == 0 for row in rows), "every cell needs three clean independent runs")
-        output.append({"rail": rows[0].get("rail", "locked-control"), "target": rows[0]["target"], "scenario": rows[0]["scenario"], "vus": rows[0]["vus"], "runs": 3, "errors": 0, **{key: statistics.median(row[key] for row in rows) for key in ("rps", "cgroup_peak_bytes", "rss_peak_bytes")}})
+        metrics = {key: statistics.median(row[key] for row in rows) for key in ("rps", "cgroup_peak_bytes", "rss_peak_bytes")}
+        for key in ("lifetime_cgroup_peak_bytes", "trial_cgroup_current_peak_bytes"):
+            if any(key in row for row in rows):
+                require(all(key in row for row in rows), f"{key} must be present for every run in a cell")
+                metrics[key] = statistics.median(row[key] for row in rows)
+        output.append({"rail": rows[0].get("rail", "locked-control"), "target": rows[0]["target"], "scenario": rows[0]["scenario"], "vus": rows[0]["vus"], "runs": 3, "errors": 0, **metrics})
     return output
 
 
@@ -325,8 +497,24 @@ def compare(rows: list[dict[str, Any]], allowed: set[str]) -> list[dict[str, Any
         require(candidate_keys == baseline_keys and candidate_keys, f"{name}: missing equivalent load cell")
         for scenario, vus in sorted(candidate_keys):
             current, reference = indexed[(candidate, scenario, vus)], indexed[(baseline, scenario, vus)]
-            ratios = {"rps": current["rps"] / reference["rps"], "cgroup_memory": current["cgroup_peak_bytes"] / reference["cgroup_peak_bytes"], "rss": current["rss_peak_bytes"] / reference["rss_peak_bytes"]}
-            result.append({"rail": current.get("rail", "locked-control"), "comparison": name, "candidate": candidate, "baseline": baseline, "scenario": scenario, "vus": vus, "ratios": ratios, "thresholds": {"rps_minimum": min_rps, "memory_maximum": max_memory}, "verdict": "pass" if ratios["rps"] >= min_rps and ratios["cgroup_memory"] <= max_memory and ratios["rss"] <= max_memory else "fail"})
+            lifetime_current = current.get("lifetime_cgroup_peak_bytes", current["cgroup_peak_bytes"])
+            lifetime_reference = reference.get("lifetime_cgroup_peak_bytes", reference["cgroup_peak_bytes"])
+            ratios = {"rps": current["rps"] / reference["rps"], "cgroup_memory": lifetime_current / lifetime_reference,
+                      "lifetime_cgroup_memory": lifetime_current / lifetime_reference, "rss": current["rss_peak_bytes"] / reference["rss_peak_bytes"]}
+            trial_present = "trial_cgroup_current_peak_bytes" in current or "trial_cgroup_current_peak_bytes" in reference
+            if trial_present:
+                require("trial_cgroup_current_peak_bytes" in current and "trial_cgroup_current_peak_bytes" in reference,
+                        f"{name}: trial cgroup metric must be present for both targets")
+                ratios["trial_cgroup_current_memory"] = current["trial_cgroup_current_peak_bytes"] / reference["trial_cgroup_current_peak_bytes"]
+            thresholds = {"rps_minimum": min_rps, "memory_maximum": max_memory, "lifetime_cgroup_memory_maximum": max_memory}
+            if trial_present:
+                thresholds["trial_cgroup_current_memory_maximum"] = max_memory
+            memory_ok = ratios["lifetime_cgroup_memory"] <= max_memory and ratios["rss"] <= max_memory
+            if trial_present:
+                memory_ok = memory_ok and ratios["trial_cgroup_current_memory"] <= max_memory
+            result.append({"rail": current.get("rail", "locked-control"), "comparison": name, "candidate": candidate, "baseline": baseline,
+                           "scenario": scenario, "vus": vus, "ratios": ratios, "thresholds": thresholds,
+                           "verdict": "pass" if ratios["rps"] >= min_rps and memory_ok else "fail"})
     return result
 
 
@@ -373,7 +561,25 @@ def main() -> None:
     median_rows = medians(raw)
     allowed = {target.name for target in active}
     comparison_rows = compare(median_rows, allowed)
-    result = {"schema": SCHEMA, "target_scope": args.target, "execution": {"lane": lane.name, "container_platform": lane.container_platform, "observed_target_container_platforms": container_platforms, "k6_network": docker_network, "k6_sysctls": lane.k6_sysctls, "native_amd64_acceptance": lane.native_amd64_acceptance, "acceptance_verdict": "eligible" if lane.native_amd64_acceptance else "diagnostic-only-not-native-amd64-evidence"}, "measurement_rail": {"id": rail.name, "cpu_quota": rail.cpu_quota, "standalone_workers": rail.standalone_workers, "nginx_workers": rail.nginx_workers, "apache_mpm": rail.apache_mpm, "logging_equivalence": rail.logging_equivalence, "logging_policy": LOGGING_EQUIVALENCE}, "passthrough_profile": {"id": profile.name, "infrastructure": profile.infrastructure}, "raw_runs": raw, "medians": median_rows, "comparisons": comparison_rows, "reproducibility": reproducibility(args.corpus, active, rail, lane, container_platforms, docker_network), "errors": [], "verdict": "pass" if all(row["verdict"] == "pass" for row in comparison_rows) else "fail"}
+    result = {
+        "schema": SCHEMA,
+        "target_scope": args.target,
+        "execution": {"lane": lane.name, "container_platform": lane.container_platform, "observed_target_container_platforms": container_platforms, "k6_network": docker_network, "k6_sysctls": lane.k6_sysctls, "native_amd64_acceptance": lane.native_amd64_acceptance, "acceptance_verdict": "eligible" if lane.native_amd64_acceptance else "diagnostic-only-not-native-amd64-evidence"},
+        "measurement_rail": {"id": rail.name, "cpu_quota": rail.cpu_quota, "standalone_workers": rail.standalone_workers, "nginx_workers": rail.nginx_workers, "apache_mpm": rail.apache_mpm, "logging_equivalence": rail.logging_equivalence, "logging_policy": LOGGING_EQUIVALENCE},
+        "memory_measurement": {
+            "legacy_cgroup_peak_bytes": "alias of lifetime_cgroup_peak_bytes retained for v1 readers",
+            "lifetime_cgroup_peak_bytes": {"source": "cgroup-v2 memory.peak when available", "scope": "container lifetime high-water including startup", "gate": "product footprint", "reset_policy": "never reset; cgroup-v2 memory.peak reset state is file-descriptor local"},
+            "trial_cgroup_current_peak_bytes": {"source": "periodic cgroup-v2 memory.current sampling when available", "scope": "sampler start before k6 through sampler stop after k6", "sampling_interval_ms": round(TRIAL_CGROUP_SAMPLING_INTERVAL_SECONDS * 1000), "gate": "workload footprint", "multi_container_aggregation": "sum of per-container sampled peaks; exact for single-container targets and conservative for multi-container targets"},
+            "rss_peak_bytes": "maximum of safe live-process RSS snapshots immediately before and after each trial; retained metric, not a sampled workload peak",
+        },
+        "passthrough_profile": {"id": profile.name, "infrastructure": profile.infrastructure},
+        "raw_runs": raw,
+        "medians": median_rows,
+        "comparisons": comparison_rows,
+        "reproducibility": reproducibility(args.corpus, active, rail, lane, container_platforms, docker_network),
+        "errors": [],
+        "verdict": "pass" if all(row["verdict"] == "pass" for row in comparison_rows) else "fail",
+    }
     (args.output / "results.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

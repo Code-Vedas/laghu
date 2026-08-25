@@ -4,11 +4,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "server_internal.h"
+
+#define PROXY_RESPONSE_HEADER_BYTES 16384U
 
 void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, const char *reason) {
   char response[512];
@@ -280,33 +283,65 @@ bool proxy_beacon_allowed(proxy_queue *queue, uint64_t now) {
   return allowed;
 }
 
+static bool proxy_response_headers_flush(laghu_socket client, SSL *client_tls, char headers[PROXY_RESPONSE_HEADER_BYTES], size_t *used) {
+  if (*used == 0U) return true;
+  if (!proxy_client_send_all(client, client_tls, headers, *used)) return false;
+  *used = 0U;
+  return true;
+}
+
+static bool proxy_response_headers_append(laghu_socket client, SSL *client_tls, char headers[PROXY_RESPONSE_HEADER_BYTES], size_t *used,
+                                          const char *format, ...) {
+  va_list arguments;
+  int count;
+  va_start(arguments, format);
+  count = vsnprintf(headers + *used, PROXY_RESPONSE_HEADER_BYTES - *used, format, arguments);
+  va_end(arguments);
+  if (count < 0) return false;
+  if ((size_t)count >= PROXY_RESPONSE_HEADER_BYTES - *used) {
+    if (!proxy_response_headers_flush(client, client_tls, headers, used)) return false;
+    va_start(arguments, format);
+    count = vsnprintf(headers, PROXY_RESPONSE_HEADER_BYTES, format, arguments);
+    va_end(arguments);
+    if (count < 0 || (size_t)count >= PROXY_RESPONSE_HEADER_BYTES) return false;
+  }
+  *used += (size_t)count;
+  return true;
+}
+
 bool proxy_send_headers(laghu_socket client, SSL *client_tls, const proxy_response *origin, const laghu_http_transaction_result *result,
                         size_t content_length, bool has_content_length) {
-  char line[16384];
+  char headers[PROXY_RESPONSE_HEADER_BYTES];
+  size_t used = 0U;
   size_t index;
   unsigned int status = result != NULL && result->not_modified ? 304U : origin->status;
   const char *reason = result != NULL && result->not_modified ? "Not Modified" : (origin->reason[0] ? origin->reason : "OK");
-  int count = snprintf(line, sizeof(line), "HTTP/1.1 %u %s\r\n", status, reason);
   if (result != NULL && result->not_modified) has_content_length = false;
-  if (count <= 0 || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
+  if (!proxy_response_headers_append(client, client_tls, headers, &used, "HTTP/1.1 %u %s\r\n", status, reason)) return false;
   for (index = 0U; index < origin->header_count; ++index) {
     if (proxy_hop(origin->headers[index].name) || proxy_connection_nominates(origin->headers, origin->header_count, origin->headers[index].name) ||
         proxy_name_equal(origin->headers[index].name, "Content-Length") ||
         (result != NULL && proxy_operation_removes(result, origin->headers[index].name)))
       continue;
-    count = snprintf(line, sizeof(line), "%s: %s\r\n", origin->headers[index].name, origin->headers[index].value);
-    if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
+    if (!proxy_response_headers_append(client, client_tls, headers, &used, "%s: %s\r\n", origin->headers[index].name,
+                                       origin->headers[index].value))
+      return false;
   }
   if (result != NULL)
     for (index = 0U; index < result->header_operation_count; ++index) {
       const laghu_http_header_operation *operation = &result->header_operations[index];
       if (operation->kind == LAGHU_HTTP_HEADER_REMOVE || proxy_name_equal(operation->name, "Content-Length")) continue;
-      count = snprintf(line, sizeof(line), "%s: %s\r\n", operation->name, operation->value == NULL ? "" : operation->value);
-      if (count <= 0 || (size_t)count >= sizeof(line) || !proxy_client_send_all(client, client_tls, line, (size_t)count)) return false;
+      if (!proxy_response_headers_append(client, client_tls, headers, &used, "%s: %s\r\n", operation->name,
+                                         operation->value == NULL ? "" : operation->value))
+        return false;
     }
-  count = has_content_length ? snprintf(line, sizeof(line), "Content-Length: %zu\r\nConnection: close\r\n\r\n", content_length)
-                             : snprintf(line, sizeof(line), "Connection: close\r\n\r\n");
-  return count > 0 && proxy_client_send_all(client, client_tls, line, (size_t)count);
+  if (has_content_length) {
+    if (!proxy_response_headers_append(client, client_tls, headers, &used, "Content-Length: %zu\r\nConnection: close\r\n\r\n", content_length))
+      return false;
+  } else if (!proxy_response_headers_append(client, client_tls, headers, &used, "Connection: close\r\n\r\n")) {
+    return false;
+  }
+  return proxy_response_headers_flush(client, client_tls, headers, &used);
 }
 
 bool proxy_send_early_hints(laghu_socket client, SSL *client_tls, const char *request_version, const laghu_http_transaction_result *result) {

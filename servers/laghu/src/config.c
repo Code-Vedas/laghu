@@ -19,6 +19,7 @@
 
 #include "laghu/proxy.h"
 #include "laghu/types.h"
+#include "server_internal.h"
 
 static bool proxy_uint(const char *value, unsigned int minimum, unsigned int maximum, unsigned int *output) {
   unsigned long parsed;
@@ -367,20 +368,74 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   (void)snprintf(options->index_file, sizeof(options->index_file), "%s", "index.html");
   laghu_service_config_init(&options->service);
   laghu_proxy_rules_init(&options->rules);
-  {
-    size_t index;
-    for (index = 0U; index < LAGHU_PROXY_MAX_SITES; ++index) {
-      laghu_config_init(&options->sites[index].config);
-      laghu_service_config_init(&options->sites[index].service);
-      laghu_proxy_rules_init(&options->sites[index].rules);
-    }
-    for (index = 0U; index < LAGHU_PROXY_MAX_ROUTES; ++index) {
-      options->routes[index].site_index = LAGHU_PROXY_SITE_GLOBAL;
-      laghu_config_init(&options->routes[index].config);
-      laghu_service_config_init(&options->routes[index].service);
-      laghu_proxy_rules_init(&options->routes[index].rules);
-    }
-  }
+}
+
+bool proxy_options_append_site(laghu_proxy_options *options, laghu_proxy_site **site) {
+  laghu_proxy_site *sites;
+  laghu_proxy_site *next;
+  if (options == NULL || options->site_count == LAGHU_PROXY_MAX_SITES) return false;
+  sites = realloc(options->sites, (options->site_count + 1U) * sizeof(*sites));
+  if (sites == NULL) return false;
+  options->sites = sites;
+  next = &options->sites[options->site_count++];
+  memset(next, 0, sizeof(*next));
+  laghu_config_init(&next->config);
+  laghu_service_config_init(&next->service);
+  laghu_proxy_rules_init(&next->rules);
+  if (site != NULL) *site = next;
+  return true;
+}
+
+bool proxy_options_append_route(laghu_proxy_options *options, laghu_proxy_route **route) {
+  laghu_proxy_route *routes;
+  laghu_proxy_route *next;
+  if (options == NULL || options->route_count == LAGHU_PROXY_MAX_ROUTES) return false;
+  routes = realloc(options->routes, (options->route_count + 1U) * sizeof(*routes));
+  if (routes == NULL) return false;
+  options->routes = routes;
+  next = &options->routes[options->route_count++];
+  memset(next, 0, sizeof(*next));
+  next->site_index = LAGHU_PROXY_SITE_GLOBAL;
+  laghu_config_init(&next->config);
+  laghu_service_config_init(&next->service);
+  laghu_proxy_rules_init(&next->rules);
+  if (route != NULL) *route = next;
+  return true;
+}
+
+bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_service_config *service,
+                                        proxy_lifecycle_requirements *requirements) {
+  laghu_policy policy;
+  bool administrative;
+  bool cache_feature;
+  bool rum_feature;
+  if (core == NULL || service == NULL || requirements == NULL || !laghu_resolve_config_policy(core, &policy)) return false;
+  administrative = service->purge_method || service->purge_query || service->statistics || service->metrics || service->readiness ||
+                   service->cache_flush_file[0] != '\0';
+  cache_feature = service->html_refresh_queue[0] != '\0' || service->chrome_analysis_queue[0] != '\0' ||
+                  service->font_provider_config[0] != '\0' || service->javascript_observation_config[0] != '\0' ||
+                  service->javascript_defer_config[0] != '\0' || service->layout_reservation_config[0] != '\0' ||
+                  service->asset_offload_config[0] != '\0' || service->source_policy.mode != LAGHU_SOURCE_FILE_OFF ||
+                  service->otel_endpoint[0] != '\0' || core->html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET;
+  rum_feature = core->critical_css_beacon == LAGHU_MODE_ON || core->instrumentation_beacon == LAGHU_MODE_ON || service->rum_store_required ||
+                service->rum_snapshot_path[0] != '\0' || service->rum_client_library[0] != '\0' || strcmp(service->rum_store, "local:") != 0;
+  requirements->image_queue = requirements->image_queue || policy.filter_families != 0U;
+  requirements->cache = requirements->cache || policy.filter_families != 0U || administrative || cache_feature || rum_feature;
+  requirements->rum = requirements->rum || rum_feature;
+  requirements->operational = requirements->operational || service->metrics || service->readiness;
+  return true;
+}
+
+bool proxy_options_lifecycle_requirements(const laghu_proxy_options *options, proxy_lifecycle_requirements *requirements) {
+  size_t index;
+  if (options == NULL || requirements == NULL) return false;
+  memset(requirements, 0, sizeof(*requirements));
+  if (!proxy_scope_lifecycle_requirements(&options->config, &options->service, requirements)) return false;
+  for (index = 0U; index < options->site_count; ++index)
+    if (!proxy_scope_lifecycle_requirements(&options->sites[index].config, &options->sites[index].service, requirements)) return false;
+  for (index = 0U; index < options->route_count; ++index)
+    if (!proxy_scope_lifecycle_requirements(&options->routes[index].config, &options->routes[index].service, requirements)) return false;
+  return true;
 }
 
 void laghu_proxy_options_dispose(laghu_proxy_options *options) {
@@ -393,6 +448,12 @@ void laghu_proxy_options_dispose(laghu_proxy_options *options) {
     laghu_service_config_dispose(&options->sites[index].service);
   }
   for (index = 0U; index < options->route_count; ++index) laghu_service_config_dispose(&options->routes[index].service);
+  free(options->sites);
+  free(options->routes);
+  options->sites = NULL;
+  options->routes = NULL;
+  options->site_count = 0U;
+  options->route_count = 0U;
 }
 
 static laghu_proxy_parse_result proxy_error(char *error, size_t capacity, const char *message) {
@@ -722,19 +783,22 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
     options->config = resolved;
   }
   {
-    laghu_service_finalize_options finalize_options = {.native_file_loading = false,
-                                                       .require_cache = true,
-                                                       .require_worker_queue = true,
-                                                       .require_admin_authorization = true,
-                                                       .respect_x_forwarded_proto = options->config.respect_x_forwarded_proto == LAGHU_MODE_ON};
+    proxy_lifecycle_requirements requirements = {0};
+    laghu_service_finalize_options finalize_options;
     laghu_service_diagnostic diagnostic;
+    if (!laghu_resolve_config_policy_with_error(&options->config, &(laghu_policy){0}, error, error_size)) return LAGHU_PROXY_PARSE_ERROR;
+    if (!proxy_scope_lifecycle_requirements(&options->config, &options->service, &requirements))
+      return proxy_error(error, error_size, "invalid standalone policy");
+    finalize_options = (laghu_service_finalize_options){.native_file_loading = false,
+                                                         .require_cache = requirements.cache,
+                                                         .require_worker_queue = requirements.image_queue,
+                                                         .require_admin_authorization = true,
+                                                         .respect_x_forwarded_proto = options->config.respect_x_forwarded_proto == LAGHU_MODE_ON};
     if (!laghu_service_config_finalize(&options->service, &finalize_options, &diagnostic)) return proxy_error(error, error_size, diagnostic.message);
   }
   if (!listen_seen || (!origin_seen && options->document_root[0] == '\0' && options->site_count == 0U))
     return proxy_error(error, error_size,
-                       options->config.rewrite_level == LAGHU_REWRITE_LEVEL_PASSTHROUGH
-                           ? "--listen, a static document root or --origin, and a file cache backend are required"
-                           : "--listen, a static document root or --origin, a file cache backend, and --worker-queue are required");
+                       "--listen and a static document root or --origin are required");
   if (ca_seen && !proxy_has_tls_target(options)) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
   if (tls_certificate_seen != tls_private_key_seen)
     return proxy_error(error, error_size, "--tls-certificate and --tls-private-key are required together");
@@ -742,12 +806,6 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   if (options->service.trusted_proxy_count != 0U && options->forwarded_mode == LAGHU_PROXY_FORWARDED_OFF &&
       options->config.respect_x_forwarded_proto != LAGHU_MODE_ON)
     return proxy_error(error, error_size, "--trusted-proxy requires forwarded headers");
-  {
-    laghu_policy policy;
-    char policy_error[160U];
-    if (!laghu_resolve_config_policy_with_error(&options->config, &policy, policy_error, sizeof(policy_error)))
-      return proxy_error(error, error_size, policy_error);
-  }
   {
     laghu_proxy_rules empty;
     laghu_proxy_rules resolved;

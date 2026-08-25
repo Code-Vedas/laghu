@@ -51,6 +51,10 @@ void proxy_options_for_request(const laghu_proxy_options *options, const proxy_r
   const laghu_service_config *service;
   if (options == NULL || request == NULL || resolved == NULL) return;
   *resolved = *options;
+  resolved->sites = NULL;
+  resolved->site_count = 0U;
+  resolved->routes = NULL;
+  resolved->route_count = 0U;
   proxy_scope_for_request(options, request, &core, &service);
   resolved->config = *core;
   resolved->service = *service;

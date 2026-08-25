@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
@@ -360,28 +361,74 @@ fail:
   return false;
 }
 
-static int static_open(const char *root, const char *relative, const char *index_file) {
+static int static_root_open(const char *root) {
+  if (root == NULL || root[0] == '\0') return -1;
+  return open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+}
+
+proxy_static_roots *proxy_static_roots_create(const laghu_proxy_options *options) {
+  proxy_static_roots *roots;
+  size_t index;
+  if (options == NULL) return NULL;
+  roots = calloc(1U, sizeof(*roots));
+  if (roots == NULL) return NULL;
+  roots->options = options;
+  roots->global_root = -1;
+  roots->global_root = static_root_open(options->document_root);
+  roots->site_count = options->site_count;
+  if (roots->site_count != 0U) {
+    roots->site_roots = malloc(roots->site_count * sizeof(*roots->site_roots));
+    if (roots->site_roots == NULL) {
+      proxy_static_roots_dispose(roots);
+      return NULL;
+    }
+    for (index = 0U; index < roots->site_count; ++index) roots->site_roots[index] = static_root_open(options->sites[index].document_root);
+  }
+  return roots;
+}
+
+void proxy_static_roots_dispose(proxy_static_roots *roots) {
+  size_t index;
+  if (roots == NULL) return;
+  if (roots->global_root >= 0) (void)close(roots->global_root);
+  for (index = 0U; index < roots->site_count; ++index)
+    if (roots->site_roots[index] >= 0) (void)close(roots->site_roots[index]);
+  free(roots->site_roots);
+  free(roots);
+}
+
+int proxy_static_root_fd(const proxy_static_roots *roots, const laghu_proxy_options *options, size_t site_index) {
+  while (roots != NULL && roots->options != options) roots = roots->next;
+  if (roots == NULL) return -1;
+  if (site_index == LAGHU_PROXY_SITE_GLOBAL) return roots->global_root;
+  return site_index < roots->site_count ? roots->site_roots[site_index] : -1;
+}
+
+static int static_open(int root_fd, const char *root, const char *relative, const char *index_file) {
   char components[LAGHU_RUNTIME_PATH_SIZE];
   char *cursor;
   int directory;
   int file = -1;
+  bool directory_owned;
   int written = snprintf(components, sizeof(components), "%s%s", relative + 1U, relative[strlen(relative) - 1U] == '/' ? index_file : "");
   if (written < 0 || (size_t)written >= sizeof(components)) return -1;
-  directory = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+  directory = root_fd >= 0 ? root_fd : static_root_open(root);
   if (directory < 0) return -1;
+  directory_owned = root_fd < 0;
   cursor = components;
   for (;;) {
     char *separator = strchr(cursor, '/');
     int next;
     if (separator != NULL) *separator = '\0';
     if (cursor[0] == '\0') {
-      file = directory;
+      file = directory_owned ? directory : dup(directory);
       break;
     }
     if (!strcmp(cursor, ".") || !strcmp(cursor, "..")) break;
     next = openat(directory, cursor, O_RDONLY | O_NOFOLLOW | (separator == NULL ? 0 : O_DIRECTORY));
-    close(directory);
+    if (directory_owned) (void)close(directory);
     directory = next;
+    directory_owned = true;
     if (directory < 0) return -1;
     if (separator == NULL) {
       file = directory;
@@ -389,7 +436,7 @@ static int static_open(const char *root, const char *relative, const char *index
     }
     cursor = separator + 1U;
   }
-  if (file < 0) close(directory);
+  if (file < 0 && directory_owned) (void)close(directory);
   return file;
 }
 
@@ -515,9 +562,11 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
   bool head;
   const char *document_root;
   const char *index_file;
+  size_t site_index;
+  int root_fd;
   if (rules == NULL) rules = &options->rules;
   {
-    size_t site_index = proxy_site_index(options, request);
+    site_index = proxy_site_index(options, request);
     const laghu_proxy_site *site = site_index == LAGHU_PROXY_SITE_GLOBAL ? NULL : &options->sites[site_index];
     document_root = site == NULL ? options->document_root : site->document_root;
     index_file = site == NULL ? options->index_file : site->index_file;
@@ -536,8 +585,9 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
     access->status = 414U;
     return true;
   }
-  file = static_open(document_root, relative, index_file);
-  if (file < 0 && options->directory_listing && relative[strlen(relative) - 1U] == '/') file = static_open(document_root, relative, "");
+  root_fd = worker == NULL ? -1 : proxy_static_root_fd(worker->queue->static_roots, options, site_index);
+  file = static_open(root_fd, document_root, relative, index_file);
+  if (file < 0 && options->directory_listing && relative[strlen(relative) - 1U] == '/') file = static_open(root_fd, document_root, relative, "");
   if (file < 0 && rules->spa_fallback[0] != '\0' && strcmp(relative, rules->spa_fallback) != 0 && static_target_safe(rules->spa_fallback, relative)) {
     written = snprintf(path, sizeof(path), "%s%s%s", document_root, relative, relative[strlen(relative) - 1U] == '/' ? index_file : "");
     if (written < 0 || (size_t)written >= sizeof(path)) {
@@ -545,7 +595,7 @@ bool proxy_static_serve_with_context(const laghu_proxy_options *options, const p
       access->status = 414U;
       return true;
     }
-    file = static_open(document_root, relative, index_file);
+    file = static_open(root_fd, document_root, relative, index_file);
     if (file >= 0) access->spa_fallback = true;
   }
   if (file < 0) return false;
