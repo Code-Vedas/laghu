@@ -227,7 +227,7 @@ jobs:
           NGINX_BASELINE_IMAGE_MANIFEST: tmp/legacy-baseline-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-linux-amd64.json
           BASELINE_IMAGE_TAG: laghu-baseline-compatibility-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-amd64
         run: scripts/run-nginx-baseline-image
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: legacy-baseline-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-amd64
           path: |
@@ -319,7 +319,7 @@ jobs:
       - run: >-
           scripts/run-in-docker --target ${{ matrix.target }}
           --architectures ${{ matrix.architecture }}
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: docker-${{ matrix.target }}-${{ matrix.architecture }}
@@ -337,7 +337,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y apache2 apache2-dev libvips-dev
       - run: scripts/run-execution-rail
       - run: scripts/run-amd64-container-parity-rail
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: execution-rail
@@ -495,7 +495,7 @@ jobs:
           apache2ctl configtest
           LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: laghu-deb-${{ runner.arch }}
           path: ../*laghu*.deb
@@ -540,7 +540,7 @@ jobs:
           httpd -t
           LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: laghu-rpm-${{ runner.arch }}
           path: ~/rpmbuild/RPMS/**/*.rpm

@@ -65,7 +65,7 @@ jobs:
           cp packaging/nginx/mod-http-laghu.conf packaging/nginx/laghu.conf \
             "tmp/release/${archive}/"
           tar -C tmp/release -czf "tmp/release/${archive}.tar.gz" "${archive}"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-module-${{ matrix.nginx_version }}-${{ matrix.architecture }}
           path: tmp/release/*.tar.gz
@@ -96,7 +96,7 @@ jobs:
           cp tmp/apache-module/.libs/mod_laghu.so packaging/apache/laghu.load \
             packaging/apache/laghu.conf "tmp/release/${archive}/"
           tar -C tmp/release -czf "tmp/release/${archive}.tar.gz" "${archive}"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-apache-${{ matrix.architecture }}
           path: tmp/release/*.tar.gz
@@ -126,7 +126,7 @@ jobs:
           cp -R packaging/debian debian
           dpkg-buildpackage --build=binary --no-sign
           nginx -t
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-deb-${{ matrix.architecture }}
           path: ../*laghu*.deb
@@ -159,7 +159,7 @@ jobs:
             "$HOME/rpmbuild/SOURCES/laghu-0.1.0.tar.gz" .
           cp packaging/rpm/laghu.spec "$HOME/rpmbuild/SPECS/laghu.spec"
           rpmbuild -ba "$HOME/rpmbuild/SPECS/laghu.spec"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-rpm-${{ matrix.architecture }}
           path: ~/rpmbuild/RPMS/**/*.rpm
@@ -199,7 +199,7 @@ jobs:
     needs: [modules, apache_module, deb, rpm]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release-assets
