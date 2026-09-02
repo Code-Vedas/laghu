@@ -8,7 +8,7 @@ ARG NGINX_TARBALL_SHA256=4261dc90e9e47c1c4041276e9aaa3d48ebe2e664f728e14fa95ae6c
 ARG LAGHU_BUILD_REVISION=0.1.0
 
 # docker.io/library/ubuntu:24.04; digest updates are managed by Dependabot.
-FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 AS build
+FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b AS build
 
 ARG NGINX_VERSION
 ARG NGINX_TARBALL_SHA256
@@ -74,7 +74,7 @@ RUN nginx_signing_key_fingerprint=43387825DDB1BB97EC36BA5D007C8D7C15D87369 && \
     install -D -m 0644 LICENSE /out/usr/share/licenses/nginx/LICENSE
 
 # docker.io/library/ubuntu:24.04; digest updates are managed by Dependabot.
-FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
 
 ARG NGINX_VERSION
 ARG LAGHU_BUILD_REVISION
