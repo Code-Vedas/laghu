@@ -294,8 +294,7 @@ void proxy_maintain_upstream_health(proxy_queue *queue);
 bool proxy_options_has_tls_upstream(const laghu_proxy_options *options);
 bool proxy_options_append_site(laghu_proxy_options *options, laghu_proxy_site **site);
 bool proxy_options_append_route(laghu_proxy_options *options, laghu_proxy_route **route);
-bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_service_config *service,
-                                        proxy_lifecycle_requirements *requirements);
+bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_service_config *service, proxy_lifecycle_requirements *requirements);
 bool proxy_options_lifecycle_requirements(const laghu_proxy_options *options, proxy_lifecycle_requirements *requirements);
 size_t proxy_site_index(const laghu_proxy_options *options, const proxy_request *request);
 /* Produces a non-owning request-scoped view; release it with free(), not

@@ -331,7 +331,8 @@ static bool static_preopened_root_test(void) {
   char output[1024];
   ssize_t received;
   if (mkdtemp(directory) == NULL || !proxy_test_path_join(root, sizeof(root), directory, "/root") ||
-      !proxy_test_path_join(moved, sizeof(moved), directory, "/moved") || !proxy_test_path_join(replacement, sizeof(replacement), directory, "/root") ||
+      !proxy_test_path_join(moved, sizeof(moved), directory, "/moved") ||
+      !proxy_test_path_join(replacement, sizeof(replacement), directory, "/root") ||
       !proxy_test_path_join(outside, sizeof(outside), directory, "/outside") || !proxy_test_path_join(link, sizeof(link), directory, "/root-link") ||
       !proxy_test_path_join(missing, sizeof(missing), directory, "/missing"))
     return false;
@@ -474,8 +475,8 @@ static bool response_header_batch_test(void) {
   response.headers[response.header_count++] = (proxy_header){"Content-Type", "text/plain"};
   response.headers[response.header_count++] = (proxy_header){"Connection", "keep-alive"};
   result.header_operations[result.header_operation_count].kind = LAGHU_HTTP_HEADER_APPEND;
-  (void)snprintf(result.header_operations[result.header_operation_count].name, sizeof(result.header_operations[result.header_operation_count].name), "%s",
-                 "X-Result");
+  (void)snprintf(result.header_operations[result.header_operation_count].name, sizeof(result.header_operations[result.header_operation_count].name),
+                 "%s", "X-Result");
   result.header_operations[result.header_operation_count++].value = "present";
   if (!proxy_send_headers(sockets[0], NULL, &response, &result, 3U, true)) goto done;
   received = recv(sockets[1], output, sizeof(output) - 1U, 0);
@@ -587,10 +588,10 @@ int main(void) {
                          "--cache", "/tmp/cache", "--worker-queue", "/tmp/jobs"};
   char *bare_passthrough[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--rewrite-level", "passthrough"};
   char *bare_core[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--rewrite-level", "core"};
-  char *passthrough_beacon[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--rewrite-level", "passthrough",
-                                "--critical-css-beacon"};
-  char *passthrough_beacon_cache[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--rewrite-level", "passthrough",
-                                      "--critical-css-beacon", "--cache", "/tmp/cache"};
+  char *passthrough_beacon[] = {"laghu",           "--listen",    "127.0.0.1:8080",       "--origin", "http://127.0.0.1:8000",
+                                "--rewrite-level", "passthrough", "--critical-css-beacon"};
+  char *passthrough_beacon_cache[] = {"laghu",           "--listen",    "127.0.0.1:8080",        "--origin", "http://127.0.0.1:8000",
+                                      "--rewrite-level", "passthrough", "--critical-css-beacon", "--cache",  "/tmp/cache"};
   char *backend_conflict[] = {"laghu",    "--listen",   "127.0.0.1:8080",       "--origin",          "http://127.0.0.1:8000",
                               "--cache",  "/tmp/cache", "--file-cache-backend", "file:///tmp/cache", "--worker-queue",
                               "/tmp/jobs"};
@@ -876,7 +877,7 @@ int main(void) {
   {
     proxy_lifecycle_requirements requirements = {0};
     CHECK(proxy_options_lifecycle_requirements(&options, &requirements));
-    CHECK(requirements.cache && requirements.image_queue && !requirements.rum && !requirements.operational);
+    CHECK(requirements.cache && requirements.image_queue && requirements.rum && !requirements.operational);
   }
   laghu_proxy_options_dispose(&options);
   laghu_proxy_options_init(&options);

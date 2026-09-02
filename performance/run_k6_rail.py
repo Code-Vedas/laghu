@@ -101,6 +101,10 @@ COMPARISONS = (
 )
 REQUEST_HEADERS = {"Host": "alpha.bench.test", "Accept": "*/*", "Accept-Encoding": "identity"}
 FIVE_FILTERS = ("collapse_whitespace", "remove_comments", "rewrite_images", "recompress_images", "convert_jpeg_to_webp")
+PAGESPEED_WARMUP_PATHS = ("/index.html",)
+PAGESPEED_WARMUP_VUS = 100
+PAGESPEED_WARMUP_ITERATIONS = 1000
+PAGESPEED_WARMUP_WINDOWS = 3
 LOGGING_EQUIVALENCE = {
     "nginx": "disabled",
     "apache": "disabled",
@@ -412,6 +416,53 @@ def wait_ready(target: Target, lane: ExecutionLane) -> None:
     raise RuntimeError(f"{target.name}: readiness timeout")
 
 
+def restart_target(target: Target) -> None:
+    """Give each PageSpeed comparator its own cold process activation."""
+    for short_name in target.containers:
+        docker("restart", target_container_name(short_name))
+
+
+def k6_command(output: Path, lane: ExecutionLane, docker_network: str, target: Target, paths: tuple[str, ...], vus: int,
+               iterations: int, summary: Path, duration: str | None = None, javascript: bool = False) -> list[str]:
+    command = ["docker", "run", "--rm", "--platform", lane.container_platform, "--user", "0", "--network", docker_network]
+    for sysctl in lane.k6_sysctls:
+        command.extend(("--sysctl", sysctl))
+    command.extend(("-v", f"{Path(__file__).with_name('k6.js').resolve()}:/scripts/k6.js:ro", "-v", f"{output.resolve()}:/output", "grafana/k6:0.57.0", "run",
+                    "--summary-export", f"/output/{summary.relative_to(output)}", "-e", f"BASE_URL={target_url(target, lane)}",
+                    "-e", f"REQUEST_PATHS={json.dumps(paths)}", "-e", f"REQUEST_HEADERS={json.dumps(REQUEST_HEADERS)}", "-e", f"VUS={vus}",
+                    "-e", f"ITERATIONS={iterations}", "-e", "REQUEST_TIMEOUT=90s", "-e", "GRACEFUL_STOP=2m"))
+    if javascript:
+        command.extend(("-e", "EXECUTE_JAVASCRIPT=/js-10k.js"))
+    if duration is not None:
+        command.extend(("-e", f"STEADY_DURATION={duration}"))
+    return command
+
+
+def warm_pagespeed_target(output: Path, lane: ExecutionLane, docker_network: str, target: Target) -> dict[str, Any]:
+    """Run the locked, excluded warm-up after each PageSpeed comparator restart.
+
+    The NGINX adapter starts asynchronous helper processes. A mere HTTP 200
+    does not prove that those helpers have left startup. PageSpeed has its own
+    cache initialization, so both targets receive the same user-visible work
+    before measurement. These runs are never included in raw_runs or gates.
+    """
+    warmup_dir = output / "warmup" / target.name.replace("/", "-")
+    warmup_dir.mkdir(parents=True, exist_ok=True)
+    windows = []
+    for window in range(1, PAGESPEED_WARMUP_WINDOWS + 1):
+        summary = warmup_dir / f"window-{window}.json"
+        subprocess.run([*k6_command(output, lane, docker_network, target, PAGESPEED_WARMUP_PATHS, PAGESPEED_WARMUP_VUS,
+                                     PAGESPEED_WARMUP_ITERATIONS, summary), "/scripts/k6.js"], check=True)
+        metrics = json.loads(summary.read_text(encoding="utf-8"))["metrics"]
+        errors = int(metrics["checks"]["fails"])
+        require(errors == 0, f"{target.name}: warm-up window {window} errors")
+        windows.append({"window": window, "k6_summary": str(summary.relative_to(output)), "requests": int(metrics["http_reqs"]["count"]),
+                        "rps": metrics["http_reqs"]["rate"], "errors": errors})
+    return {"activation": "docker-restart-per-target", "excluded_from_raw_runs": True,
+            "schedule": {"paths": PAGESPEED_WARMUP_PATHS, "vus": PAGESPEED_WARMUP_VUS, "iterations_per_window": PAGESPEED_WARMUP_ITERATIONS,
+                         "windows": PAGESPEED_WARMUP_WINDOWS, "request_headers": REQUEST_HEADERS}, "windows": windows}
+
+
 def verify_target1_equivalence(targets: dict[str, Target], lane: ExecutionLane) -> None:
     del lane
     paths = ("/index.html", "/css-10k.css", "/js-10k.js", "/image-480.jpg", "/proxy/upstream-response.txt", "/redirect-target")
@@ -430,14 +481,7 @@ def verify_target1_equivalence(targets: dict[str, Target], lane: ExecutionLane) 
 def run_trial(output: Path, rail: MeasurementRail, lane: ExecutionLane, docker_network: str, target: Target, scenario: str,
               paths: tuple[str, ...], vus: int, duration: str | None, run: int) -> dict[str, Any]:
     summary = output / f"{target.name.replace('/', '-')}-{scenario}-{vus}-run{run}.json"
-    command = ["docker", "run", "--rm", "--platform", lane.container_platform, "--user", "0", "--network", docker_network]
-    for sysctl in lane.k6_sysctls:
-        command.extend(("--sysctl", sysctl))
-    command.extend(("-v", f"{Path(__file__).with_name('k6.js').resolve()}:/scripts/k6.js:ro", "-v", f"{output.resolve()}:/output", "grafana/k6:0.57.0", "run", "--summary-export", f"/output/{summary.name}", "-e", f"BASE_URL={target_url(target, lane)}", "-e", f"REQUEST_PATHS={json.dumps(paths)}", "-e", f"REQUEST_HEADERS={json.dumps(REQUEST_HEADERS)}", "-e", f"VUS={vus}", "-e", "ITERATIONS=1000", "-e", "REQUEST_TIMEOUT=90s", "-e", "GRACEFUL_STOP=2m"))
-    if scenario == "javascript-execution":
-        command.extend(("-e", "EXECUTE_JAVASCRIPT=/js-10k.js"))
-    if duration is not None:
-        command.extend(("-e", f"STEADY_DURATION={duration}"))
+    command = k6_command(output, lane, docker_network, target, paths, vus, 1000, summary, duration, scenario == "javascript-execution")
     before = lifetime_memory_snapshot(target)
     sampler = TrialCgroupCurrentSampler(target)
     sampler.start()
@@ -557,7 +601,17 @@ def main() -> None:
     docker_network = execution_network(lane, active)
     if args.target in {"target-1", "all"}:
         verify_target1_equivalence(targets, lane)
-    raw = [run_trial(args.output, rail, lane, docker_network, target, scenario, paths, vus, duration, run) for target in active for scenario, paths, vus, duration in LOAD_MATRIX for run in range(1, 4)]
+    warmup: dict[str, Any] = {}
+    raw = []
+    for target in active:
+        if args.target in {"nginx-pagespeed", "apache-pagespeed"}:
+            restart_target(target)
+            wait_ready(target, lane)
+            verify_target_contract(target, lane)
+            warmup[target.name] = warm_pagespeed_target(args.output, lane, docker_network, target)
+        for scenario, paths, vus, duration in LOAD_MATRIX:
+            for run in range(1, 4):
+                raw.append(run_trial(args.output, rail, lane, docker_network, target, scenario, paths, vus, duration, run))
     median_rows = medians(raw)
     allowed = {target.name for target in active}
     comparison_rows = compare(median_rows, allowed)
@@ -573,6 +627,7 @@ def main() -> None:
             "rss_peak_bytes": "maximum of safe live-process RSS snapshots immediately before and after each trial; retained metric, not a sampled workload peak",
         },
         "passthrough_profile": {"id": profile.name, "infrastructure": profile.infrastructure},
+        "premeasurement_warmup": warmup,
         "raw_runs": raw,
         "medians": median_rows,
         "comparisons": comparison_rows,

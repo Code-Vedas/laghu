@@ -4,12 +4,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import re
 import unittest
 from pathlib import Path
 
 from performance.run_k6_rail import (COMPARISONS, EXECUTION_LANES, FIVE_FILTERS, LOAD_MATRIX, LOGGING_EQUIVALENCE,
-                                     MEASUREMENT_RAILS, PASSTHROUGH_PROFILES, SCHEMA, TARGETS, TARGET_SCOPES, active_targets,
-                                     compare, execution_lane, measurement_rail, medians, passthrough_profile, target_url)
+                                     MEASUREMENT_RAILS, PAGESPEED_WARMUP_ITERATIONS, PAGESPEED_WARMUP_PATHS, PAGESPEED_WARMUP_VUS,
+                                     PAGESPEED_WARMUP_WINDOWS, PASSTHROUGH_PROFILES, SCHEMA, TARGETS, TARGET_SCOPES,
+                                     active_targets, compare, execution_lane, measurement_rail, medians, passthrough_profile, target_url)
 
 
 class FocusedRailTest(unittest.TestCase):
@@ -40,9 +42,29 @@ class FocusedRailTest(unittest.TestCase):
         self.assertEqual(pagespeed.count("collapse_whitespace,remove_comments,rewrite_images,recompress_images,convert_jpeg_to_webp"), 2)
         for path in (root / "nginx" / "laghu.conf", root / "apache" / "laghu.conf"):
             config = path.read_text()
-            self.assertIn("RewriteLevel core" if "apache" in str(path) else "rewrite_level core", config)
+            self.assertIn("RewriteLevel core" if path.parent.name == "apache" else "rewrite_level core", config)
             for family in ("image_metadata", "image_dimensions", "image_responsive", "image_lazyload", "css_minify", "javascript_minify", "resource_hints", "cache_extension"):
                 self.assertIn(family, config)
+
+    def test_pagespeed_targets_have_equal_excluded_per_target_warmup(self):
+        self.assertEqual(PAGESPEED_WARMUP_PATHS, ("/index.html",))
+        self.assertEqual((PAGESPEED_WARMUP_VUS, PAGESPEED_WARMUP_ITERATIONS, PAGESPEED_WARMUP_WINDOWS), (100, 1000, 3))
+        runner = (Path(__file__).resolve().parents[1] / "run_k6_rail.py").read_text()
+        self.assertIn('"docker-restart-per-target"', runner)
+        self.assertIn('"excluded_from_raw_runs": True', runner)
+        self.assertIn('if args.target in {"nginx-pagespeed", "apache-pagespeed"}', runner)
+
+    def test_apache_pagespeed_targets_have_matching_resource_controls(self):
+        root = Path(__file__).resolve().parents[1]
+        compose = (root / "docker-compose.yml").read_text()
+        for service in ("apache-pagespeed:", "apache-laghu:"):
+            match = re.search(rf"^  {re.escape(service)}(?P<block>.*?)(?=^  [a-z][^\n]*:\n|\Z)", compose, re.MULTILINE | re.DOTALL)
+            self.assertIsNotNone(match)
+            block = match.group("block")
+            self.assertIn('platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"', block)
+            self.assertIn("cpus: 4.0", block)
+            self.assertIn("nofile: {soft: 8192, hard: 8192}", block)
+            self.assertIn("${LAGHU_BENCH_APACHE_MPM_CONFIG:-./apache/benchmark-mpm.conf}", block)
 
     def test_medians_and_thresholds_are_per_equivalent_cell(self):
         raw = []

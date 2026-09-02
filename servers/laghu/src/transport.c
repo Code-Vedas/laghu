@@ -3,8 +3,8 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <stdio.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -323,8 +323,7 @@ bool proxy_send_headers(laghu_socket client, SSL *client_tls, const proxy_respon
         proxy_name_equal(origin->headers[index].name, "Content-Length") ||
         (result != NULL && proxy_operation_removes(result, origin->headers[index].name)))
       continue;
-    if (!proxy_response_headers_append(client, client_tls, headers, &used, "%s: %s\r\n", origin->headers[index].name,
-                                       origin->headers[index].value))
+    if (!proxy_response_headers_append(client, client_tls, headers, &used, "%s: %s\r\n", origin->headers[index].name, origin->headers[index].value))
       return false;
   }
   if (result != NULL)

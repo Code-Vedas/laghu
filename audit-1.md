@@ -425,6 +425,10 @@ The standalone implementation is violating the intended architecture.
 
 Refresh the snapshot periodically—100 ms, 500 ms or one second depending on desired responsiveness—and expose a cached atomic capability mask/health state to request handling.
 
+**Target-2 NGINX disposition (2026-09-01): already off the request path.** Native probes found zero capability snapshots in NGINX request workers; snapshot/slot scans occurred only in lifecycle/helper polling. The valid profile is `/home/debian/laghu-target2-queue-profile.QlBcCr/profile-summary.json` (SHA-256 `51b3773a1a44bb8f1a3cd5dfcc368ef6b402344bccc7f5cb1a4ffb366b993a3e`; evidence-manifest SHA-256 `3ecc2defd5175172538cb6c63cf4b8fad7920af63321608365382461a6922664`). It recorded 1,605 publishes, 15 accepted, 1,553 queue-full rejections, 37 nonblocking-lock rejections, and 1,563 READY same-index observations; aggregate lock acquisition and hold were only 3.906 ms and 2.405 ms.
+
+A bounded exact-identity READY-image duplicate scan was tested and rejected. Native C/X/X/C/C/X evidence is `/home/debian/laghu-target2-queue-dedupe.aBsDHS/evidence` (`summary.json` SHA-256 `e94f7053e5f4d2f003d0c7227899e6f2cee39ed7019cbdab1e3b622d36d6945e`; manifest SHA-256 `ede39609a43e59a1eab9c06a901d5a2265b2f92c6c70758fe0d5a12a67b2db39`). Cache-storm RPS improved 1.1143x but lifetime/trial cgroup regressed to 1.1248x/1.0769x; cache-thrash RPS regressed to 0.8548x and trial cgroup to 1.0685x. All trials were error-free; the candidate and probes were discarded.
+
 ---
 
 # 12. P1: HTML rewrite complexity becomes multiplicative
@@ -465,6 +469,10 @@ For HTML where the input length is already known, reserve roughly:
 
 upfront.
 
+**Target-2 disposition (2026-09-01): profiled; first candidate rejected.** Native warm-100 plus mixed-assets probes at `/home/debian/laghu-target2-html-profile.2WXO8X/evidence/profile-summary.json` (SHA-256 `37dfe3a46f70a95e529f64afc5c5661cdf3b3a2f5c80678190d633752fe755b2`; evidence-manifest SHA-256 `c6705285deec458645f4aad50f9c1fecec4f11c36a3b04c90ed3dd8109e9ca3f`) recorded 4,800 HTML calls/1,017,600 input bytes: image discovery used 492.3 ms and style-attribute discovery 573.2 ms. This dependency-pending workload exited before image rewrite, lexical rewrite, or cached-URL replacement, so it does not yet prove that merging those later passes is beneficial.
+
+Deferring the bounded CSS scan allocation until a `style=` match was tested and rejected. Native C/X/X/C/C/X evidence is `/home/debian/laghu-target2-html-style.8xiVdJ/evidence` (`summary.json` SHA-256 `23ea2da510a539c0eddc3e4ecafc1673da5865a15efde8818f7ce4dbb182531b`; manifest SHA-256 `e0b90b2c311575c002c002a793b9be41cab35758be46e4684a9b1511e7a74776`). Warm-100 RPS improved 1.0215x but lifetime cgroup reached 1.0278x; mixed-assets RPS was 2.1809x but lifetime cgroup reached 1.0224x and RSS 1.2664x. All 12 trials were error-free; candidate/tests were discarded.
+
 ---
 
 # 13. P1: RUM lookup is global-lock + linear-search
@@ -494,6 +502,8 @@ Replace this with a keyed structure.
 
 A good implementation would be a sharded hash table or read-mostly immutable snapshot/RCU arrangement. Access timestamps should not force the read operation onto an exclusive lock.
 
+**Target-2 disposition:** inapplicable to the locked five-filter comparison. RUM is disabled by that preset, so no RUM product candidate was tested in Target 2.
+
 ---
 
 # 14. P1: catalog reads are not warm-memory operations
@@ -505,6 +515,10 @@ HTML can perform this per discovered resource.
 The checksum is useful for persistence/recovery, but recomputing it after every successful hot lookup is expensive insurance.
 
 I would maintain catalog metadata in a bounded mmap/in-memory hash structure and validate durable records as they are loaded/published/recovered.
+
+Native Target-2 profiling at `/home/debian/laghu-target2-cache-profile.ohScmd/evidence/profile-summary.json` (SHA-256 `80e1d8f6f2c872a0fccc4afdf9851be7cf65a132c6996e0c6a287d0ebf381aff`; evidence-manifest SHA-256 `68f550d079c3f81ae9b40ee3692b524f25fdf5d5f4450e3981e38124e06e4407`) measured 4,096 catalog lookups, 504 hits, 3,515,904 metadata bytes read and 504 record checksums. Artifact metadata added 1,792 lookups/565 hits/343,520 bytes; index-key allocation was only 1,800 allocations/247,627 bytes.
+
+A fixed 16-entry process-local positive/negative catalog cache was tested and rejected. Native C/X/X/C/C/X evidence is `/home/debian/laghu-target2-catalog-hot.ff5lml/evidence` (`summary.json` SHA-256 `948c2cf81f210136723be964d9bd88c4c1815e451181b493c31f2a174e67daec`; manifest SHA-256 `3316b8eebcba9fd1b4d77e4a7786b4383e90be7cc7633e2a34f9540378ec0530`). Storm passed with RPS 1.0307x, lifetime/trial cgroup 0.9638x/1.0179x and RSS 1.0037x; thrash RPS improved to 1.1530x but lifetime cgroup 1.1181x and RSS 1.0588x failed. All trials were error-free; the candidate was discarded.
 
 ---
 
@@ -660,6 +674,10 @@ The 16 MiB default metadata mapping is another fixed RSS/cgroup cost.  It should
 
 One benchmark detail matters here: your rail records both cgroup peak and summed per-process `VmRSS`.  For multi-process targets, summed RSS can double-count shared mappings/pages. **Cgroup memory should be the stronger “how much memory did this target actually consume?” metric.**
 
+**Target-2 memory disposition (2026-09-01): decomposed; broad sparse initialization rejected.** Native `smaps_rollup`, mapping, process-tree and cgroup evidence is `/home/debian/laghu-target2-memory.VR72el/evidence/memory-profile.json` (SHA-256 `40d30d9e58a23c0aa94e21db4f550778626ccea2ac3709aa1af5d386540d12dd`; manifest SHA-256 `73e1ff471752d39b2027c35b86b7b6e11fc63b57e453391082e0b61c13973161`). At ready, Laghu used 110.0 MB cgroup/69.3 MB PSS versus PageSpeed 49.2/57.3 MB. Laghu's 57 MB `/run/laghu` queues comprised a required 41 MB image queue, an unused 17 MB JavaScript queue, and a 73 KB font queue; whole-mapping initialization accounted for 58.8 MB file-dirty memory.
+
+Initializing only queue/slot headers reduced ready cgroup to 67.0 MB and file-dirty memory to 16.9 MB, but was rejected. Native C/X/X/C/C/X evidence is `/home/debian/laghu-target2-memory.VR72el/ab-evidence` (`summary.json` SHA-256 `7e4c14a344741145fed399df3896a0f70074b4e90e6b0bdda840214044cb855c`; manifest SHA-256 `91904659bd289c3bc10f34b7969542cdd3d53c00b0ae912487a9307841200805`). Warm-100 RPS was 0.9798x, mixed-assets RPS/RSS 0.5245x/1.2208x, and cache-thrash RPS 0.9656x; all 18 trials were error-free. The broad change was discarded so the active image queue keeps eager pages; the unused JavaScript facility is the narrower follow-up.
+
 ---
 
 # 21. What I would change, in exact order
@@ -669,13 +687,13 @@ One benchmark detail matters here: your rail records both cgroup peak and summed
 |  **1** | Repair benchmark CPU/log/cache equivalence                  | Establish trustworthy baseline                  | **Applied.** Matched rail controls and diagnostics are in place; ARM results remain diagnostic until native AMD64. |
 |  **2** | Make access logging off/async; remove `fflush` request path | Very low-risk high reward                       | **Applied for Target 1.** `runtime.access_log: off` removes record/flush work; asynchronous production logging is not implemented. |
 |  **3** | Stop recompressing existing gzip/Brotli artifacts           | Huge optimized-mode CPU waste                   | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
-|  **4** | Cache queue capability/heartbeat outside request path       | Removes `flock` + queue scan                    | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+|  **4** | Cache queue capability/heartbeat outside request path       | Removes `flock` + queue scan                    | **Already satisfied for NGINX; candidate rejected.** Request workers made zero snapshots; a duplicate-job scan failed the Target-2 A/B gates. |
 |  **5** | Implement correct incremental chunk parser                  | Fixes worker stalls + 10 MiB allocation         | **Applied.** Bounded incremental parser stops at terminal chunk/trailers; removes EOF wait and fixed 10 MiB decode allocation. |
 |  **6** | Build event-driven downstream connection layer + keep-alive | Fundamental RPS scalability                     | **Not applied.** Probe/candidate regressed static RPS, so it was discarded. |
-|  **7** | Add direct static/cache artifact serving                    | RPS + allocation/RSS gain                       | **Partial.** Direct fd/sendfile candidate failed cgroup gate; retained mode-off bypass removes per-request transform-context allocation. |
+|  **7** | Add direct static/cache artifact serving                    | RPS + allocation/RSS gain                       | **Rejected.** P2R13 re-test improved native RPS but soak lifetime cgroup was +7.43%, above the +2% gate; retained mode-off bypass remains separate. |
 |  **8** | Split global proxy mutex / reactor-local origin pools       | Scaling after multiple reactors                 | **Not applied.** Deferred to Target 4: Target-1 performance cells do not exercise upstream proxy traffic. |
 |  **9** | Compile routing/policies/config once                        | Strip request setup cost                        | **Not applied.** Regex precompile improved regex-only work but regressed baseline/prefix cells; discarded. |
-| **10** | Make cache/catalog metadata truly hot                       | Remove stat/open/read/checksum pressure         | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
+| **10** | Make cache/catalog metadata truly hot                       | Remove stat/open/read/checksum pressure         | **Rejected for Target 2.** Bounded catalog hot-cache improved RPS but failed thrash lifetime-cgroup/RSS gates. |
 | **11** | Replace RUM mutex+linear scan                               | Optimized HTML concurrency                      | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
 | **12** | Merge HTML discovery/rewrite into one pass                  | Large complex-page improvement                  | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
 | **13** | Introduce request arenas/reusable buffers                   | Remove allocator churn                          | **Partial.** Mode-off static path now bypasses transform-context allocation; broader request arenas/reusable buffers are not implemented. |
@@ -781,7 +799,7 @@ ARM was deliberately not run for this remeasurement. Target 2 rail/configuration
 
 # 24. Target 1 detailed handoff for the next audit (2026-08-24)
 
-This section is an evidence handoff, not a new claim of parity.  It distinguishes observed data from interpretation and recommended next work.  Section 21 remains the concise priority-1-to-15 disposition; this section adds the details needed to audit those decisions without changing that table.
+This section is an evidence handoff, not a new claim that the north-star performance threshold has been met.  It distinguishes observed data from interpretation and recommended next work.  Section 21 remains the concise priority-1-to-15 disposition; this section adds the details needed to audit those decisions without changing that table.
 
 ## Observed facts: locked Target 1 contract
 
@@ -809,7 +827,7 @@ The rail is `production-scaling`: four CPU quota units, four standalone workers,
 
 The only retained "before" comparison is `tmp/benchmarks/native-amd64-target1-before-retained-20260823/results.json`.  It is a clean 99-trial same-host/corpus bundle, but it predates explicit four-CPU and logging-equivalence metadata.  Its directional deltas in section 23 are useful evidence of improvement; they are not a replacement Target-1 acceptance baseline and must not be used to relax the current gate.
 
-## Observed facts: current per-cell parity
+## Observed facts: current per-cell comparison-gate status
 
 Numbers below are standalone divided by the named plain-server median.  RPS must be at least 98.0%; cgroup and RSS must each be at most 102.0%.  “RPS”, “CG”, and “RSS” in the failure column name only the threshold(s) exceeded; they do not assert a source-level cause.
 
@@ -837,7 +855,7 @@ Numbers below are standalone divided by the named plain-server median.  RPS must
 * **Access logging off for Target 1.** `runtime.access_log: off` skips request transaction rendering, mutex/write/flush work while retaining lifecycle and error diagnostics.  Local ARM focused A/B evidence in `tmp/benchmarks/local-arm64-access-log-ab-20260823/` measured cache-storm RPS 2,921→3,270 (+11.9%) and soak 5,370→5,938 (+10.6%); cgroup fell about 31–33%, while RSS was effectively unchanged.  These focused ARM results explain retention but are not native AMD64 acceptance evidence.
 * **Incremental bounded chunked-upstream parser.** The native transport now stops at the terminal chunk/trailers and grows decode storage within the body limit rather than allocating a fixed 10 MiB buffer and waiting for origin EOF.  Focused local evidence in `tmp/benchmarks/local-arm64-target1-chunked-probe-20260823/` and `tmp/benchmarks/local-arm64-target1-chunked-fix-20260823/` reduced its test fixture from 258.9 ms to 3.925 ms and raised it from 3.863 to 254.799 RPS.  This is retained for correctness and proxy performance, but Target-1 performance cells are static/plain and do not use it.
 * **Mode-off static bypass.** The static path bypasses the shared transform finalizer when the resolved mode is off, preserving static request semantics and headers.  Focused three-pass local A/B evidence in `tmp/p13-mode-off-ab/raw/` measured tiny HTML 5,669.83→7,086.65 RPS (+25.0%) and 100 KiB CSS 4,659.12→6,982.27 (+49.9%), with slightly lower cgroup/RSS.  This is the relevant retained speed change for Target 1; its full native effect is represented only by the final 99-trial bundle.
-* **Static-path truncation fix.** Oversized constructed paths now return 414 instead of serving a truncated prefix; regression coverage proves trailing-slash and SPA-fallback cases never serve the truncated-prefix resource.  This is a correctness retention, not a parity claim.
+* **Static-path truncation fix.** Oversized constructed paths now return 414 instead of serving a truncated prefix; regression coverage proves trailing-slash and SPA-fallback cases never serve the truncated-prefix resource.  This is a correctness retention, not a north-star threshold claim.
 * **Validation status.** The retained tree previously completed default Release build, 48/48 CTests, NGINX/Apache smoke lanes, docs, formatting, and `scripts/run-all`; the native performance bundle itself contains zero HTTP/check errors.  No permanent probe output/code is retained in product source.
 
 ## Observed facts: rejected or deferred work
@@ -848,7 +866,7 @@ Numbers below are standalone divided by the named plain-server median.  RPS must
 * **Priority 14, GCC IPO/LTO candidate: rejected.** On its ARM focused A/B, tiny HTML, 100 KiB CSS, and mixed assets regressed 7.0%, 15.1%, and 10.3% RPS respectively; p95 worsened in every cell while cgroup/RSS stayed effectively flat.  Raw data is under `tmp/p14-thinlto-ab/raw/`; this was GCC IPO/LTO, not LLVM ThinLTO.
 * **Priority 14, PGO candidate: rejected.** ARM focused data in `tmp/p14-pgo-ab/summary.json` shows CSS 4,868.57→3,240.32 RPS (-33.4%), mixed assets 5,901.75→5,505.24 (-6.7%), and tiny HTML essentially flat/slightly lower.  It has zero reported HTTP/check errors, but no full rail and no retention case.
 * **Priority 15, jemalloc candidate: rejected.** Its three focused cells raised cgroup memory 24.7–29.7% and RSS 21.6–28.3%, violating the 2% memory gate in every cell.  `tmp/p15-allocator-ab/summary.json` is the raw summary.  Its apparent CSS RPS gain is not an acceptance result because the system-control CSS run was order-biased/anomalously slow; the memory failure is still sufficient to reject the candidate.
-* **Optimization-only priorities 3, 4, 8, 10, 11, and 12: deferred.** Recompression, queue capability snapshots, origin-pool/mutex work, cache/catalog work, RUM, and HTML rewrite work belong to Target 4 or proxy/optimization paths.  They are not a credible explanation for static Target-1 parity and must not be pulled forward merely because they are visible in a broad source audit.
+* **Optimization-only priorities 3, 4, 8, 10, 11, and 12: deferred.** Recompression, queue capability snapshots, origin-pool/mutex work, cache/catalog work, RUM, and HTML rewrite work belong to Target 4 or proxy/optimization paths.  They are not a credible explanation for static Target-1 comparison-gate status and must not be pulled forward merely because they are visible in a broad source audit.
 
 ## Interpretation: what the native result supports, and what it does not
 
@@ -885,7 +903,142 @@ No Target-2 sampler repair, rerun, or configuration change is authorized in this
 * Primary native Target-1 evidence: `tmp/benchmarks/native-amd64-target1-after-20260824/`, especially `results.json` plus its 99 per-trial JSON summaries and corpus manifest.
 * Retained directional-before evidence: `tmp/benchmarks/native-amd64-target1-before-retained-20260823/`; use only with the equivalence-metadata caveat above.
 * Focused retained/rejected experiment evidence: `tmp/benchmarks/local-arm64-access-log-ab-20260823/`, `tmp/benchmarks/local-arm64-target1-chunked-probe-20260823/`, `tmp/benchmarks/local-arm64-target1-chunked-fix-20260823/`, `tmp/p13-mode-off-ab/raw/`, `tmp/connection-lifecycle-probe/20260824T130500Z/`, `tmp/p7-static-cache-ab/20260824T155200Z/`, `tmp/static-cgroup-probe/20260824T165000Z/`, `tmp/route-policy-precompile/`, `tmp/p14-thinlto-ab/raw/`, `tmp/p14-pgo-ab/`, and `tmp/p15-allocator-ab/`.
-* Historical `20260821T195000Z-native-pass{1,2,3}` and `20260821T195000Z-native-normalized-summary.json` were specified as immutable evidence on `linux-fast-build`, but they are not present in this checkout and their exact remote path remains unverified.  Do not infer deletion, mutation, or current parity from their absence here.
+* Historical `20260821T195000Z-native-pass{1,2,3}` and `20260821T195000Z-native-normalized-summary.json` were specified as immutable evidence on `linux-fast-build`, but they are not present in this checkout and their exact remote path remains unverified.  Do not infer deletion, mutation, or current comparison-gate status from their absence here.
 * Peak process RSS is summed per process by the rail.  For multi-process servers it may count shared pages more than once; cgroup peak is therefore the stronger total-container measure, but both metrics remain locked acceptance gates.
 * Never mix ARM diagnostic A/B values with native AMD64 acceptance values, aggregate unlike cells, substitute latency for RPS, include the upstream origin in standalone memory, or use an optimization-only path to explain Target 1 without direct evidence.
 * The current repository has staged benchmark/audit work outside this appended handoff.  This section changes no product source, runner, ROADMAP, `1-pager.md`, raw artifact, or prior audit text.
+
+## P2R13 fd/sendfile re-test disposition (2026-08-25)
+
+The new native profile proved the old candidate had been unreachable in Target-1 passthrough: the accepted control sent one 202-byte header block plus 65,536 and 36,864-byte buffered body writes.  The narrowly revised candidate preserved passthrough headers, conditional, range, HEAD, gzip fallback, root traversal, and byte identity; it sent the same headers followed by one 102,400-byte `sendfile` call.
+
+Native AMD64 production-scaling used an interleaved baseline/candidate/candidate/baseline/baseline/candidate schedule, three clean trials per version and cell, with current lifetime-cgroup, sampled trial-cgroup, and RSS accounting.  Median RPS was +16.87% for warm-100, +5.98% for soak-1000, and +25.12% for 100 KiB CSS.  Warm lifetime/trial/RSS ratios were 96.67%/100.62%/97.83%; CSS was 87.29%/81.80%/98.93%; soak was 107.43%/99.13%/98.74%.
+
+All 18 trials had zero HTTP/check errors, but soak lifetime cgroup exceeded the locked 102% gate.  This re-test is therefore rejected and reverted.  Unlike the earlier P7 candidate (100 KiB cgroup +14.9% with an unexplained cache/buffer footprint), this was a direct policy path with v2 metrics and improved CSS memory; it still cannot be retained.  Raw evidence is `/home/debian/laghu-p2r13-runtime-profile.20260825T142424Z/evidence/ab-evidence/summary.json` (SHA-256 `262a82fb5a9b5ff1fdc0c6fc6814b90a5f89b366bec4b09d301ec4cf6f8b284c`) and the paired wire traces in that evidence directory.
+
+## Target 2 native AMD64 baseline (2026-08-25)
+
+The prior 25/66 Target-2 attempt remains invalid (RSS `/proc` sampler race).
+The first completed 66-trial replacement at
+`/home/debian/laghu-target2-native-Gc63vR/bundle` (SHA-256
+`1fc161fa3323298a653258fd5f8177cb3cc413ab3258e00eb6cc7cbf8312bd8a`) is
+preserved but directional-invalid: Laghu measured first immediately after
+adapter/helper activation, while PageSpeed followed all 33 Laghu trials.
+
+Before the clean rerun, NGINX Laghu exhausted its inherited descriptor limit
+during soak (`EMFILE`, 81 failed checks), while PageSpeed had 8192. The matched
+rail repair applies `worker_rlimit_nofile 8192` and soft/hard 8192 container
+limits to both NGINX targets; it is comparator validity work, not a product
+optimization. The clean preflight verified 8192 in both containers.
+
+The rail now restarts each Target-2 comparator, verifies HTTP activation, and
+excludes three identical 1,000-request/100-VU `/index.html` warm-up windows
+before its raw trials. The valid bundle is
+`/home/debian/laghu-target2-native-Gc63vR/bundle-warmup-control`
+(`results.json` SHA-256
+`a39ee05228aa8848a4ed3a7fa123d1b0993305d292adbcdf94a2086df59aaf93`): 66
+raw native-AMD64 trials, six zero-error warm-up windows, and zero HTTP/check
+errors. All 11 cells fail. Ratios are RPS 0.75–105.22%, lifetime cgroup
+165.73–338.24% (soak 216.95%), trial cgroup 165.74–348.87% (soak 227.50%),
+and RSS 156.08–244.74%. JavaScript execution alone clears RPS (105.22%), but
+still fails every memory gate. No candidate optimization disposition is implied.
+
+## Target 2 first optimization disposition (2026-08-25)
+
+Native profiling at `/home/debian/laghu-target2-profile.9R8sbJ/native-profile-evidence` showed that each worker repeatedly encoded and published the same gzip and Brotli variants. The first candidate checked the persistent variant catalog by payload hash, coding, validator, content type, and backend before encoding. It was rejected and discarded: this moved catalog lock/open/read/checksum work onto every request instead of removing request-path work.
+
+The valid warm-100 A/B is `/home/debian/laghu-target2-profile.9R8sbJ/candidate-ab-evidence-v2`; candidate/control median ratios were RPS 0.852647, lifetime cgroup 1.010355, sampled trial cgroup 1.001104, and RSS 1.339154. The valid image-heavy cache-thrash A/B is `/home/debian/laghu-target2-profile.9R8sbJ/candidate-ab-evidence-v3-imageheavy`; ratios were RPS 0.853026, lifetime cgroup 0.965142, sampled trial cgroup 0.952210, and RSS 0.986185. All valid measured trials had zero HTTP/check errors. The earlier incomplete image activation and runner-import attempt remain preserved as invalid evidence; no duplicate-artifact lookup product change was retained.
+
+## Target 2 process-local publication index: accepted (2026-08-31)
+
+The retained replacement is a 64-entry, deterministic-LRU, process-local SHA-256 publication index in the shared precompressed runtime. It uses a lock for threaded adapters, stores fixed digests rather than cache paths, keys successful gzip/Brotli publication by cache path, payload, coding, validator, content type, backend, and index version, and invalidates on an observed select miss. Failed publication never inserts; configuration/metadata changes miss; the fixed footprint is about 9 KiB per worker.
+
+Focused precompressed tests cover first/repeat publication, validator/content-type misses, observed cache invalidation, failure/retry, and bounded eviction. Fresh local runtime/core tests (48/48 CTest) and the NGINX dynamic-module smoke passed; no probes remain.
+
+Native AMD64 NGINX A/B used C/X/X/C/C/X with three raw trials per version and three excluded 1,000-request/100-VU warm-up windows per trial. Control and candidate used the identical image (`sha256:39f07920e97442603760237c77bb35255f9160846f67f4252ce2908a493b4e03`); the fresh candidate module (`d2fe77aa6799f8b7ef52ae4de1fbdcf094962f056154e8c80004e8ced5f5ec28`) was read-only mounted over the control module. All 12 raw trials and 36 warm-up windows had zero HTTP/check errors. Candidate/control ratios were warm-100 RPS 68.052772, lifetime cgroup 0.586087, sampled trial cgroup 0.525952, RSS 0.608980; mixed-assets RPS 10.215609, lifetime cgroup 0.600906, sampled trial cgroup 0.574325, RSS 0.716934.
+
+Evidence is `/home/debian/laghu-target2-publication-index.cLT8Jb/evidence/v2-valid/verification.json` (SHA-256 `e35d69b6641c3e4faa5e4861fce3508c579362de00063b194127e762b1c36dc0`). The out-of-tree runner had written one terminal literal `\n` after each JSON document; originals are immutable and hashed in `.../evidence/invalid-json-writer/`, while `v2-valid/normalization-manifest.json` (SHA-256 `3abdc10f4bdf0e81d05a351f710d1f73dc10ca255c5348ed22a4bdf6eba434da`) records mechanical removal of exactly that terminal pair. Metrics were recomputed only from the normalized parseable copies; no performance rerun was needed.
+
+## Target 2 full native AMD64 rerun after publication index (2026-08-31)
+
+The retained change was rebuilt from isolated source and rerun through the full locked NGINX rail at `/home/debian/laghu-target2-full.Wmkqqa/bundle-full66`. `results.json` SHA-256 is `9653333b0ecadbf53c6a6e882b09fa2d3e77466d822e00b58a25b542c6c46fff`; the bundle checksum manifest is `66ce1507aaab2b41ba281961c1af030c8888ad08eb586331e6e3c1d98da5e733`, and the isolated-source checksum manifest is `6fab7948b49a8a7fc9b6cc7eed4b5fee41bd212c548a1a8e308bb7ca22ce0440`. All 66 raw trials and six excluded warm-up windows parsed directly, used native `linux/amd64`, inherited matched 8,192 descriptor limits, and had zero HTTP/check errors. Laghu image digest was `sha256:4a6f58b2285a3678dbe98f059c2a0cb95e42f8b3c589b04512e9b385993e72e7`; PageSpeed remained pinned at `sha256:591567603e63e1dc1641fc02f4322b6770cda3cf3e8bc40bf21cd6bba68668d5`.
+
+| Cell | VUs | RPS ratio | Lifetime cgroup | Trial cgroup | RSS | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| JavaScript execution | 10 | 0.514256 | 1.074516 | 1.070835 | 1.152404 | Fail |
+| Warm | 1 | 0.858232 | 1.784489 | 1.771242 | 1.356655 | Fail |
+| Warm | 10 | 1.105377 | 1.783862 | 1.763009 | 1.356726 | Fail |
+| Warm | 50 | 1.229539 | 1.779484 | 1.778209 | 1.356046 | Fail |
+| Warm | 100 | 0.620354 | 1.759754 | 1.746526 | 1.466334 | Fail |
+| Warm | 500 | 0.843677 | 1.333979 | 1.319683 | 1.300865 | Fail |
+| Warm | 1,000 | 0.957639 | 1.143979 | 1.139385 | 1.203319 | Fail |
+| Mixed assets | 1,000 | 0.399317 | 1.119271 | 1.017827 | 1.667279 | Fail |
+| Cache storm | 1,000 | 0.007227 | 1.572984 | 1.598848 | 1.917338 | Fail |
+| Cache thrash | 1,000 | 0.009256 | 1.643141 | 1.550652 | 1.965352 | Fail |
+| Soak | 1,000 | 0.033560 | 1.250566 | 1.253211 | 1.940957 | Fail |
+
+Result: 0/11 cells pass all gates. Across cells, RPS ratios are 0.007227–1.229539, lifetime cgroup 1.074516–1.784489, trial cgroup 1.017827–1.778209, and RSS 1.152404–1.965352. Against the earlier valid Laghu baseline, the publication index raises Laghu RPS by 9.54–44.94x in the seven warm cells, 7.00x for mixed assets, and 1.13x for soak while approximately preserving cache-storm/thrash RPS; most Laghu cgroup medians fall by 40–49%. JavaScript RPS is 18% lower and cache-storm/thrash RSS 5–8% higher than that historical, non-interleaved run, so those movements are not credited as improvements. The change is materially beneficial but does not meet the Target-2 comparison threshold; cache storm, cache thrash, soak, JavaScript work, and remaining memory overhead require later measured cycles.
+
+## Target 2 unused JavaScript queue candidate: rejected (2026-09-01)
+
+Native proof `/home/debian/laghu-target2-memory.VR72el/js-proof.json` (SHA-256 `8e6892e930b15ca4c836014c0b35e5b51983ffdf904493b1c91ce1da4a2309cd`) found zero JavaScript jobs, reads, or writes across warm-100, mixed-assets, and cache-thrash: next-write/read remained 0/0 and all eight slots remained EMPTY. The locked five-filter preset excludes JavaScript minification, yet the control still created a 16,814,384-byte JavaScript queue, ran its worker, and mapped the queue into each NGINX worker; the required 41,961,712-byte image queue and image worker were active.
+
+The narrow candidate derived NGINX JavaScript-queue attachment from the resolved JavaScript-minify filter and disabled only that worker in the locked container preset, retaining default-on product behavior. First native C/X/X/C/C/X evidence at `/home/debian/laghu-target2-memory.VR72el/js-ab-evidence` (`summary.json` SHA-256 `3b3835dd6e91c6b4f2f2972e66c652f33919bc7e6649a356451d91bbd9c683b9`; manifest `c309326ae632f191cf092a43426aac598cce454b45ffbf37ef939974e7e11d9e`) had 18/18 clean trials: warm-100 RPS/lifetime/trial/RSS ratios were 1.0083/0.8485/0.8042/0.8578, mixed-assets 0.6861/0.9186/0.9327/0.9579, and cache-thrash 0.9564/0.8711/0.8667/0.9121.
+
+Fresh reversed five-run confirmation at `/home/debian/laghu-target2-memory.VR72el/js-confirm-evidence` (`summary.json` SHA-256 `77b0008457b0b2f9473b464c4340dfb161a8c640e2015803ba4ca674d21fcacf`; manifest `091a4fd462ed6da85a589d73c1593d1c35ebc8a2686f45915b51e6c252939560`) had 20/20 clean trials. Mixed-assets again failed at 0.7204x RPS despite lifetime/trial/RSS improvements to 0.8045/0.8186/0.8449; cache-thrash passed at 1.1955x RPS with 0.8775/0.8446/0.8998 memory ratios. Control and candidate mixed RPS CVs were 50.5% and 47.4%, but the independent confirmation still does not satisfy the locked median gate.
+
+The candidate was rejected and fully reverted. Post-revert inspection shows no JavaScript activation flag, conditional queue attachment, candidate test, or probe remains; the accepted publication index and benchmark-control work are unchanged.
+
+## Target 2 audit applicability closure (2026-09-01)
+
+The process-local publication index is the only retained Target-2 product optimization from this audit. Capability snapshots were already lifecycle-only/off-request; duplicate queue suppression, catalog hot caching, HTML lazy allocation, broad sparse queue initialization, and unused-JavaScript-queue activation were each measured and rejected under the per-cell RPS/memory gates.
+
+RUM and rate limiting are disabled in the locked five-filter NGINX preset. Standalone route compilation, standalone configuration copies, origin pooling, static serving, connection ownership, and standalone reactor findings do not execute in this NGINX adapter comparison and are therefore inapplicable, not untested Target-2 fixes.
+
+Target 2 remains 0/11 against PageSpeed using the accepted full native bundle above. The comparison threshold remains unmet outside the applicable Audit-1 candidates tested here; this closure makes no Target-3, Target-4, or overall-winner claim.
+
+## Target 3 native AMD64 baseline (2026-09-01)
+
+The first valid Apache Laghu-versus-PageSpeed bundle is
+`/home/debian/laghu-target3-apache.BjZrsa/bundle/results.json` (SHA-256
+`02ac991330e59f0109b68f19883b32dcbb0407b9ad9647479f1e8a39657b94c8`).
+It contains 66 raw trials (two targets, eleven cells, three runs), native
+`linux/amd64` containers, six excluded restart/readiness-checked warm-up
+windows, and zero HTTP/check errors. Both Apache targets use four CPUs, the
+same `benchmark-mpm.conf`, and nofile soft/hard limits of 8,192. PageSpeed is
+locked to whitespace collapse, comment removal, image rewrite/recompression,
+and JPEG-to-WebP; Laghu's matching five-filter preset disables all extra work.
+
+Every cell fails the locked gate. Ratios are Laghu/PageSpeed; RPS must be at
+least 0.98 and lifetime cgroup, sampled trial cgroup, and RSS must each be at
+most 1.02.
+
+| Cell | VUs | RPS | Lifetime cgroup | Trial cgroup | RSS | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| Warm | 1 | 2.0967 | 2.7051 | 2.1939 | 1.3869 | Fail |
+| Warm | 10 | 1.5367 | 2.6447 | 2.2722 | 1.4066 | Fail |
+| Warm | 50 | 1.6483 | 2.6435 | 2.2843 | 1.4164 | Fail |
+| Warm | 100 | 1.3178 | 3.8346 | 3.0796 | 1.7565 | Fail |
+| Warm | 500 | 0.7003 | 3.5790 | 3.6167 | 2.0634 | Fail |
+| Warm | 1,000 | 1.8659 | 4.5514 | 4.2937 | 2.4308 | Fail |
+| JavaScript execution | 10 | 1.0318 | 4.0815 | 4.0315 | 2.3120 | Fail |
+| Mixed assets | 1,000 | 1.5515 | 3.7001 | 2.1677 | 1.1022 | Fail |
+| Cache storm | 1,000 | 0.4779 | 3.3859 | 2.3842 | 1.3304 | Fail |
+| Cache thrash | 1,000 | 2.6452 | 3.3859 | 2.2095 | 1.3728 | Fail |
+| Soak | 1,000 | 0.2337 | 2.4349 | 2.4382 | 1.5170 | Fail |
+
+This is a valid initial Target-3 baseline, not an overall-server conclusion.
+It does not itself authorize an additional profile, architecture, or post-change
+66-trial cycle.
+
+### Target 3 Apache capture-memory profile and rejected heap candidate (2026-09-01)
+
+External native profiling at `/home/debian/laghu-target3-cycle.QuGTy5/target3-memory-profile/` used runner-produced traffic for readiness, warm-100, mixed-assets, and cache-thrash.  At the matching excluded warm-up point Apache Laghu used 199.25 MiB cgroup current/171.62 MiB anonymous memory versus PageSpeed's 52.64/27.51 MiB; under mixed assets it reached 302.16/267.09 MiB versus 65.38/37.41 MiB.  The dominant Laghu child had 65,692 KiB RSS, 57,455 KiB PSS, 56,512 KiB private dirty anonymous memory, a 34,064 KiB private mapping, and 49,152 KiB `AnonHugePages`; PageSpeed children were 5–8 MiB PSS.  The 41,961,712-byte image queue and 16,814,384-byte JavaScript queue were mostly unfaulted in Apache children and were not the dominant measured gap.  A manual syscall trace that escaped the k6 JSON and made zero requests is invalid and excluded.
+
+The source cause was `mod_laghu` eagerly reserving `prepared.capture_limit` (normally 32 MiB) from every transforming Apache request pool before any body bucket arrived.  The first bounded-heap-growth candidate was rejected: it replaced that allocation with a 64 KiB geometrically growing `realloc` buffer and request-pool cleanup, preserving the cap and five-filter preset but retaining heap memory under concurrency.  Native interleaved C/X/C/X/C/X evidence at `/home/debian/laghu-target3-cycle.QuGTy5/target3-capture-ab/records.json` (SHA-256 `727a7794a671511878f2f3a7d823bbf031a000c456b782880fb491f1d08627da`) contains 18/18 clean records and 18,000 requests.  Candidate/control median ratios were warm-100 RPS/trial-cgroup/RSS `1.089/1.015/0.975`, mixed-assets `0.544/1.674/2.018`, and cache-thrash `2.224/1.779/2.029`; the mixed regression and memory failures require rejection.  It was fully discarded before the next candidate; no heap allocation, cleanup callback, probe, or benchmark-control change remains.
+
+The APR-pool chunk candidate was also rejected before measurement.  Under native Apache event MPM it logged `bypass-error` and terminated request children with `SIGSEGV` on the first `/index.html`; the local smoke did not reproduce this path.  The candidate had zero valid trials; its three control-only records were excluded.  Evidence is `/home/debian/laghu-target3-cycle.QuGTy5/target3-capture-chunk-ab-run.log` and the container Apache error log.  The chunk collector, fallback, and crash-path code were fully reverted; no probes remain.
+
+## Audit scope control
+
+This audit is a bounded suggestion worklist toward the north-star performance threshold. Completing or disposing of a suggestion does not authorize new profile-driven or architectural work; only an explicit audit suggestion and the user approval rules can do that. This document records no broader authorization.

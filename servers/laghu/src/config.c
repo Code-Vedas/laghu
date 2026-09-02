@@ -403,8 +403,7 @@ bool proxy_options_append_route(laghu_proxy_options *options, laghu_proxy_route 
   return true;
 }
 
-bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_service_config *service,
-                                        proxy_lifecycle_requirements *requirements) {
+bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_service_config *service, proxy_lifecycle_requirements *requirements) {
   laghu_policy policy;
   bool administrative;
   bool cache_feature;
@@ -412,13 +411,17 @@ bool proxy_scope_lifecycle_requirements(const laghu_config *core, const laghu_se
   if (core == NULL || service == NULL || requirements == NULL || !laghu_resolve_config_policy(core, &policy)) return false;
   administrative = service->purge_method || service->purge_query || service->statistics || service->metrics || service->readiness ||
                    service->cache_flush_file[0] != '\0';
-  cache_feature = service->html_refresh_queue[0] != '\0' || service->chrome_analysis_queue[0] != '\0' ||
-                  service->font_provider_config[0] != '\0' || service->javascript_observation_config[0] != '\0' ||
-                  service->javascript_defer_config[0] != '\0' || service->layout_reservation_config[0] != '\0' ||
-                  service->asset_offload_config[0] != '\0' || service->source_policy.mode != LAGHU_SOURCE_FILE_OFF ||
-                  service->otel_endpoint[0] != '\0' || core->html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET;
-  rum_feature = core->critical_css_beacon == LAGHU_MODE_ON || core->instrumentation_beacon == LAGHU_MODE_ON || service->rum_store_required ||
-                service->rum_snapshot_path[0] != '\0' || service->rum_client_library[0] != '\0' || strcmp(service->rum_store, "local:") != 0;
+  cache_feature = service->html_refresh_queue[0] != '\0' || service->chrome_analysis_queue[0] != '\0' || service->font_provider_config[0] != '\0' ||
+                  service->javascript_observation_config[0] != '\0' || service->javascript_defer_config[0] != '\0' ||
+                  service->layout_reservation_config[0] != '\0' || service->asset_offload_config[0] != '\0' ||
+                  service->source_policy.mode != LAGHU_SOURCE_FILE_OFF || service->otel_endpoint[0] != '\0' ||
+                  core->html_cache_ttl != LAGHU_HTML_CACHE_TTL_UNSET;
+  /* HTML finalization always receives the RUM handle for a transformed policy;
+   * mode-off passthrough remains facility-free unless an explicit RUM feature
+   * requests it. */
+  rum_feature = policy.filter_families != 0U || core->critical_css_beacon == LAGHU_MODE_ON || core->instrumentation_beacon == LAGHU_MODE_ON ||
+                service->rum_store_required || service->rum_snapshot_path[0] != '\0' || service->rum_client_library[0] != '\0' ||
+                strcmp(service->rum_store, "local:") != 0;
   requirements->image_queue = requirements->image_queue || policy.filter_families != 0U;
   requirements->cache = requirements->cache || policy.filter_families != 0U || administrative || cache_feature || rum_feature;
   requirements->rum = requirements->rum || rum_feature;
@@ -790,15 +793,14 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
     if (!proxy_scope_lifecycle_requirements(&options->config, &options->service, &requirements))
       return proxy_error(error, error_size, "invalid standalone policy");
     finalize_options = (laghu_service_finalize_options){.native_file_loading = false,
-                                                         .require_cache = requirements.cache,
-                                                         .require_worker_queue = requirements.image_queue,
-                                                         .require_admin_authorization = true,
-                                                         .respect_x_forwarded_proto = options->config.respect_x_forwarded_proto == LAGHU_MODE_ON};
+                                                        .require_cache = requirements.cache,
+                                                        .require_worker_queue = requirements.image_queue,
+                                                        .require_admin_authorization = true,
+                                                        .respect_x_forwarded_proto = options->config.respect_x_forwarded_proto == LAGHU_MODE_ON};
     if (!laghu_service_config_finalize(&options->service, &finalize_options, &diagnostic)) return proxy_error(error, error_size, diagnostic.message);
   }
   if (!listen_seen || (!origin_seen && options->document_root[0] == '\0' && options->site_count == 0U))
-    return proxy_error(error, error_size,
-                       "--listen and a static document root or --origin are required");
+    return proxy_error(error, error_size, "--listen and a static document root or --origin are required");
   if (ca_seen && !proxy_has_tls_target(options)) return proxy_error(error, error_size, "--origin-ca-file requires an https origin");
   if (tls_certificate_seen != tls_private_key_seen)
     return proxy_error(error, error_size, "--tls-certificate and --tls-private-key are required together");

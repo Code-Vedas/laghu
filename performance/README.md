@@ -19,6 +19,16 @@ redirects before its load matrix. Standalone memory counts only its container,
 never the shared upstream. Historical `20260821T195000Z-*` bundles are
 immutable evidence and are not read or changed by this command.
 
+For each NGINX and Apache Laghu/PageSpeed category, the runner restarts each comparator,
+waits for its own HTTP activation, then performs the same excluded warm-up:
+three 1,000-request windows against `/index.html` at 100 VUs with the locked
+headers. This prevents Laghu's asynchronous helper startup from benefiting
+only the later PageSpeed half of a sequential rail. Warm-up JSON and zero-error
+records are retained under `warmup/` and recorded in
+`premeasurement_warmup`; they are never raw trials, medians, or gate input.
+The Apache comparators are both pinned to four CPUs, the same bounded event-MPM
+file, and an 8,192-descriptor limit.
+
 Memory fields use explicit v2 semantics. `lifetime_cgroup_peak_bytes` is the
 container-lifetime cgroup high-water (including startup) and remains the
 product-footprint gate. `trial_cgroup_current_peak_bytes` samples cgroup

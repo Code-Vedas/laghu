@@ -702,7 +702,7 @@ memory value <=102%.
 | cache thrash 1000 | 109.7 / 76.3 / 70.4 / 66.3 — pass | 126.1 / 13.9 / 12.4 / 26.4 — pass |
 | soak 1000 | 47.4 / 74.4 / 74.1 / 61.7 — fail | 63.2 / 19.7 / 15.9 / 26.3 — fail |
 
-**Current parity verdict: fail.** Standalone passes **2/11** against NGINX
+**Current comparison-gate status: fail.** Standalone passes **2/11** against NGINX
 and **3/11** against Apache. Memory passes every compared cell: NGINX ratios
 are 54.4–78.0% lifetime cgroup, 48.3–74.1% trial cgroup, and 61.7–66.3% RSS;
 Apache ratios are 12.0–22.4%, 8.6–17.9%, and 25.5–57.9% respectively. RPS is
@@ -779,7 +779,7 @@ ratio <=102%.
 | cache thrash 1000 | 111.8 / 81.3 / 63.6 / 63.4 — pass | 122.5 / 15.6 / 11.1 / 25.8 — pass |
 | soak 1000 | 52.6 / 85.7 / 75.3 / 61.0 — fail | 68.6 / 18.6 / 14.8 / 25.2 — fail |
 
-**Current parity verdict: fail on RPS only.** Memory passes all 22 comparison
+**Current comparison-gate status: fail on RPS only.** Memory passes all 22 comparison
 cells. Standalone now passes **4/11** against NGINX and **5/11** against
 Apache; it previously passed 2/11 and 3/11 respectively in section 22.
 Remaining RPS ranges are 49.1–125.8% versus NGINX and 62.8–264.4% versus
@@ -791,13 +791,12 @@ production rail, corpus digest, request headers, load matrix, and 99-trial
 shape. It is directional only because source/config/image digests differ and
 host-state variance is material: current/prior median-RPS ratios span
 78.5–147.6% for standalone cells, 71.3–196.3% for NGINX, and 84.0–126.3% for
-Apache. No cross-bundle parity verdict is inferred.
+Apache. No cross-bundle comparison-gate conclusion is inferred.
 
-**Next Target-1 priority:** profile remaining global proxy mutex/request
-bookkeeping beyond the retained dead-broadcast deletion. Keep root reopening,
-queue-attachment movement, eager dispatch, allocator, sendfile, and broad
-transport rewrites out of scope unless a new native profile proves a distinct
-mechanism.
+**Target-1 scope status:** this result authorizes no additional Target-1 profile or architecture cycle.
+Root reopening, queue-attachment movement, eager dispatch, allocator, sendfile,
+and broad transport rewrites remain out of scope unless they appear as an
+explicit audit suggestion and receive user approval.
 
 ## 24. Rejected listener accept-batching cycle and remaining Target-1 work
 
@@ -835,8 +834,74 @@ accept batch were rejected. P2.R3 sparse transform-queue initialization stays
 deferred because true Target-1 passthrough does not create or touch that
 queue.
 
-Next single cycle: fresh low-overhead native CPU/syscall/connection/worker/
-queue profile on warm-100 and soak-1000 using the accepted tree. Consider a
-transport or architecture change only if that profile proves a distinct
-dominant mechanism. Target 2, Target 3, Target 4, and the separate security
-inventory remain deferred.
+No additional Target-1 profile or architecture cycle is authorized by this
+disposition. Target 2, Target 3, Target 4, and the separate security inventory
+remain deferred.
+
+## 25. P2R13 direct passthrough/sendfile re-test: rejected and reverted
+
+The fresh native profile found that Target-1 `rewrite_level: passthrough` still
+entered `static_send_transformed`; the first sendfile branch was therefore
+unreachable.  Exact current-control tracing for 100 KiB CSS showed one 202-byte
+header `sendto`, then buffered `sendto` calls of 65,536 and 36,864 bytes.  The
+revised candidate routed only resolved passthrough, identity-coded static
+responses around the transform body copy, while preserving policy headers,
+conditional/range/HEAD behavior, configured headers, secure root traversal,
+and gzip's transformed path.  Its trace showed the same 202-byte header block
+and one `sendfile(102400)`; both response digests matched the corpus exactly.
+
+Targeted `laghu_proxy_test` and `laghu_proxy_smoke` passed before rejection.
+The latter covered passthrough identity, weak ETag 304, HEAD, range, and gzip
+fallback.  No probe code was retained.  The final candidate was reverted after
+the user decision.
+
+The native AMD64 production-scaling A/B schedule was baseline, candidate,
+candidate, baseline, baseline, candidate for each cell.  All 18 trials had
+zero HTTP/check errors.  Values are `RPS | lifetime cgroup | trial cgroup | RSS`
+in bytes; the raw source is
+`/home/debian/laghu-p2r13-runtime-profile.20260825T142424Z/evidence/ab-evidence/summary.json`
+(SHA-256 `262a82fb5a9b5ff1fdc0c6fc6814b90a5f89b366bec4b09d301ec4cf6f8b284c`).
+
+| Cell | Version/order | RPS | Lifetime cgroup | Trial cgroup | RSS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| warm-100 | baseline/1 | 4032.119 | 10813440 | 9424896 | 31834112 |
+| warm-100 | candidate/2 | 4485.899 | 10186752 | 9318400 | 31428608 |
+| warm-100 | candidate/3 | 3746.044 | 10452992 | 9543680 | 30994432 |
+| warm-100 | baseline/4 | 3838.419 | 10698752 | 9052160 | 31559680 |
+| warm-100 | baseline/5 | 3677.971 | 10866688 | 9261056 | 31682560 |
+| warm-100 | candidate/6 | 4610.202 | 10678272 | 9031680 | 30601216 |
+| soak-1000 | baseline/1 | 3258.603 | 29708288 | 28774400 | 30875648 |
+| soak-1000 | candidate/2 | 3097.496 | 36896768 | 35954688 | 31064064 |
+| soak-1000 | candidate/3 | 3045.815 | 33062912 | 29827072 | 31174656 |
+| soak-1000 | baseline/4 | 2912.629 | 34971648 | 30158848 | 31707136 |
+| soak-1000 | baseline/5 | 2922.647 | 33202176 | 30089216 | 31461376 |
+| soak-1000 | candidate/6 | 3120.067 | 35667968 | 27299840 | 30806016 |
+| CSS-100KiB | baseline/1 | 2215.018 | 12906496 | 12234752 | 31313920 |
+| CSS-100KiB | candidate/2 | 2799.363 | 12460032 | 9990144 | 31166464 |
+| CSS-100KiB | candidate/3 | 2771.491 | 10997760 | 8859648 | 31129600 |
+| CSS-100KiB | baseline/4 | 2426.652 | 12517376 | 10625024 | 32079872 |
+| CSS-100KiB | baseline/5 | 1476.890 | 12599296 | 10870784 | 31502336 |
+| CSS-100KiB | candidate/6 | 2143.877 | 10616832 | 8892416 | 31350784 |
+
+Median candidate/control ratios were warm-100: RPS 116.87%, lifetime/trial/RSS
+96.67%/100.62%/97.83%; soak-1000: 105.98%,
+107.43%/99.13%/98.74%; CSS-100KiB: 125.12%,
+87.29%/81.80%/98.93%.  Soak lifetime cgroup exceeded the strict 102% cap even
+though RPS, trial memory, and RSS passed.  The candidate is rejected, not a
+partial retention.
+
+This is a meaningful re-test of audit-1 P7: the earlier candidate improved
+plaintext RPS by roughly 25–36% but had 100 KiB cgroup +14.9% with an unclear
+cache/buffer cause.  P2R13 used the retained v2 lifetime/trial split and a
+direct policy path; it improved CSS memory, but the soak lifetime failure still
+disqualifies it.
+
+Target-1 narrow suggestions are now exhausted: retained P1 dead-drained
+broadcast removal, P2.R1/R2/R4, P2.R9, and P2.R11 remain; R8, R10,
+accept-batching, and P2R13 are rejected; R3 cannot improve true passthrough.
+This disposition does not authorize a new connection-lifecycle, worker/queue,
+or other architecture slice. Targets 2–4 and security remain deferred.
+
+## Audit scope control
+
+This audit is a bounded suggestion worklist toward the north-star performance threshold. Completing or disposing of a suggestion does not authorize new profile-driven or architectural work; only an explicit audit suggestion and the user approval rules can do that. This document records no broader authorization.
