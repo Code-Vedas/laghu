@@ -81,7 +81,7 @@ bool proxy_route_acquire(proxy_worker *worker, const laghu_proxy_options *option
       upstream_primary(route, &target);
     else
       target = route->failovers[index - 1U];
-    if (proxy_origin_acquire(worker, origin, target.host, target.port, target.authority, target.tls, &attempt_timed_out)) {
+    if (proxy_origin_acquire(worker, options, origin, target.host, target.port, target.authority, target.tls, &attempt_timed_out)) {
       *selected = target;
       upstream_mark(worker, options, route, index, true);
       return true;
@@ -406,9 +406,9 @@ failed:
   return false;
 }
 
-bool proxy_gateway_fetch(proxy_worker *worker, const laghu_proxy_upstream_target *target, laghu_proxy_upstream_protocol protocol,
-                         const proxy_request *request, const unsigned char *request_body, size_t request_body_length, proxy_response *response,
-                         unsigned char **body, size_t *body_length, bool *timed_out) {
+bool proxy_gateway_fetch(proxy_worker *worker, const laghu_proxy_options *options, const laghu_proxy_upstream_target *target,
+                         laghu_proxy_upstream_protocol protocol, const proxy_request *request, const unsigned char *request_body,
+                         size_t request_body_length, proxy_response *response, unsigned char **body, size_t *body_length, bool *timed_out) {
   proxy_gateway_parameters parameters = {0};
   laghu_socket socket = LAGHU_INVALID_SOCKET;
   bool result = false;
@@ -419,12 +419,12 @@ bool proxy_gateway_fetch(proxy_worker *worker, const laghu_proxy_upstream_target
   *body = NULL;
   *body_length = 0U;
   if (!gateway_parameters(&parameters, request, target, protocol)) return false;
-  socket = proxy_connect(worker, target->host, target->port, worker->queue->options->connect_timeout);
+  socket = proxy_connect(worker, target->host, target->port, options->connect_timeout);
   if (socket == LAGHU_INVALID_SOCKET) {
     *timed_out = proxy_socket_timed_out();
     return false;
   }
-  proxy_timeout(socket, worker->queue->options->io_timeout);
+  proxy_timeout(socket, options->io_timeout);
   if ((protocol == LAGHU_PROXY_UPSTREAM_FASTCGI && !gateway_send_fastcgi(socket, &parameters, request_body, request_body_length)) ||
       (protocol == LAGHU_PROXY_UPSTREAM_UWSGI && !gateway_send_uwsgi(socket, &parameters, request_body, request_body_length)) ||
       (protocol == LAGHU_PROXY_UPSTREAM_SCGI && !gateway_send_scgi(socket, &parameters, request_body, request_body_length)))
@@ -463,8 +463,8 @@ bool proxy_route_gateway_fetch(proxy_worker *worker, const laghu_proxy_options *
       upstream_primary(route, selected);
     else
       *selected = route->failovers[index - 1U];
-    if (proxy_gateway_fetch(worker, selected, route->upstream_protocol, request, request_body, request_body_length, response, body, body_length,
-                            &attempt_timed_out)) {
+    if (proxy_gateway_fetch(worker, options, selected, route->upstream_protocol, request, request_body, request_body_length, response, body,
+                            body_length, &attempt_timed_out)) {
       upstream_mark(worker, options, route, index, true);
       return true;
     }
@@ -527,7 +527,7 @@ void proxy_maintain_upstream_health(proxy_queue *queue) {
   uint64_t now;
   size_t route_index;
   if (queue == NULL) return;
-  options = proxy_current_options(queue);
+  options = proxy_options_acquire(queue);
   now = proxy_monotonic_ms();
   for (route_index = 0U; route_index < options->route_count; ++route_index) {
     const laghu_proxy_route *route = &options->routes[route_index];
@@ -555,4 +555,5 @@ void proxy_maintain_upstream_health(proxy_queue *queue) {
       }
     }
   }
+  proxy_options_release(queue);
 }

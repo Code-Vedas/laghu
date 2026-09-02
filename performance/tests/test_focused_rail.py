@@ -10,7 +10,8 @@ from pathlib import Path
 
 from performance.run_k6_rail import (COMPARISONS, EXECUTION_LANES, FIVE_FILTERS, LOAD_MATRIX, LOGGING_EQUIVALENCE,
                                      MEASUREMENT_RAILS, PAGESPEED_WARMUP_ITERATIONS, PAGESPEED_WARMUP_PATHS, PAGESPEED_WARMUP_VUS,
-                                     PAGESPEED_WARMUP_WINDOWS, PASSTHROUGH_PROFILES, SCHEMA, TARGETS, TARGET_SCOPES,
+                                     PAGESPEED_WARMUP_WINDOWS, PASSTHROUGH_PROFILES, SCHEMA, STANDALONE_ALL_WARMUP_ITERATIONS,
+                                     STANDALONE_ALL_WARMUP_PATHS, STANDALONE_ALL_WARMUP_VUS, STANDALONE_ALL_WARMUP_WINDOWS, TARGETS, TARGET_SCOPES,
                                      active_targets, compare, execution_lane, measurement_rail, medians, passthrough_profile, target_url)
 
 
@@ -52,7 +53,13 @@ class FocusedRailTest(unittest.TestCase):
         runner = (Path(__file__).resolve().parents[1] / "run_k6_rail.py").read_text()
         self.assertIn('"docker-restart-per-target"', runner)
         self.assertIn('"excluded_from_raw_runs": True', runner)
-        self.assertIn('if args.target in {"nginx-pagespeed", "apache-pagespeed"}', runner)
+        self.assertIn('if args.target in {"nginx-pagespeed", "apache-pagespeed", "standalone-all"}', runner)
+
+    def test_standalone_all_targets_have_equal_excluded_per_target_warmup(self):
+        self.assertEqual(STANDALONE_ALL_WARMUP_PATHS, ("/index.html",))
+        self.assertEqual((STANDALONE_ALL_WARMUP_VUS, STANDALONE_ALL_WARMUP_ITERATIONS, STANDALONE_ALL_WARMUP_WINDOWS), (100, 1000, 3))
+        runner = (Path(__file__).resolve().parents[1] / "run_k6_rail.py").read_text()
+        self.assertIn("warm_standalone_all_target", runner)
 
     def test_apache_pagespeed_targets_have_matching_resource_controls(self):
         root = Path(__file__).resolve().parents[1]
@@ -134,6 +141,10 @@ class FocusedRailTest(unittest.TestCase):
         self.assertIn("a2disconf other-vhosts-access-log", (root / "Dockerfile.apache-plain").read_text())
         compose = (root / "docker-compose.yml").read_text()
         self.assertIn('LAGHU_BENCH_ACCESS_LOG: "${LAGHU_BENCH_ACCESS_LOG:-off}"', compose)
+        standalone_all = re.search(r"^  standalone-all:(?P<block>.*?)(?=^  [a-z][^\n]*:\n|\Z)", compose, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(standalone_all)
+        self.assertIn('platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"', standalone_all.group("block"))
+        self.assertIn('LAGHU_BENCH_ACCESS_LOG: "${LAGHU_BENCH_ACCESS_LOG:-off}"', standalone_all.group("block"))
         self.assertNotIn("LAGHU_NATIVE_LOG_PROBE", compose)
         runner = (root.parent / "scripts" / "run-benchmarks-all").read_text()
         self.assertNotIn("LAGHU_NATIVE_LOG_PROBE", runner)

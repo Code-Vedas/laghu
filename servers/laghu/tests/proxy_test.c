@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "server_internal.h"
@@ -49,6 +50,38 @@ static bool proxy_test_path_join(char *target, size_t target_size, const char *b
   return true;
 }
 
+static bool runtime_queue_capabilities_cache_test(void) {
+  char directory[] = "/tmp/laghu-runtime-capabilities-XXXXXX";
+  char path[LAGHU_RUNTIME_PATH_SIZE];
+  laghu_runtime_queue runtime_queue;
+  proxy_queue queue = {0};
+  proxy_worker worker = {0};
+  uint64_t previous;
+  bool result = false;
+  if (mkdtemp(directory) == NULL || !proxy_test_path_join(path, sizeof(path), directory, "/jobs.queue")) return false;
+  laghu_runtime_queue_init(&runtime_queue);
+  if (!laghu_runtime_queue_create(&runtime_queue, path, 1U, 64U) || !laghu_runtime_queue_set_backend(&runtime_queue, 7U, "test-worker") ||
+      !laghu_runtime_queue_heartbeat(&runtime_queue, (uint64_t)time(NULL)))
+    goto done;
+  queue.runtime_queue = runtime_queue;
+  queue.runtime_queue_ready = true;
+  worker.queue = &queue;
+  if (proxy_runtime_queue_capabilities(&worker) != 7U) goto done;
+  previous = (uint64_t)time(NULL);
+  while ((uint64_t)time(NULL) == previous) {
+  }
+  worker.runtime_queue_capabilities_checked_at = (uint64_t)time(NULL);
+  worker.runtime_queue_capabilities = 7U;
+  if (!laghu_runtime_queue_set_backend(&queue.runtime_queue, 3U, "test-worker") || proxy_runtime_queue_capabilities(&worker) != 7U) goto done;
+  worker.runtime_queue_capabilities_checked_at = 0U;
+  result = proxy_runtime_queue_capabilities(&worker) == 3U;
+done:
+  laghu_runtime_queue_close(&queue.runtime_queue);
+  (void)unlink(path);
+  (void)rmdir(directory);
+  return result;
+}
+
 static bool write_yaml_fixture(char path[]) {
   static const char fixture[] =
       ""
@@ -58,6 +91,8 @@ static bool write_yaml_fixture(char path[]) {
       "  access_log: off\n"
       "  cache: /tmp/cache\n"
       "  worker_queue: /tmp/jobs\n"
+      "  request_header_timeout: 7\n"
+      "  request_body_timeout: 19\n"
       "  preset: balanced\n"
       "  trusted_proxy:\n"
       "    - 127.0.0.0/8\n"
@@ -140,6 +175,48 @@ static bool health_interval_requires_check_test(void) {
   laghu_proxy_options_dispose(&options);
   (void)unlink(path);
   return rejected;
+}
+
+static bool request_line_parse_test(void) {
+  static const char valid_origin[] = "GET /path?encoded=%ZZ HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  static const char valid_double_slash[] = "GET //path?encoded=%ZZ HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  static const char valid_tchar[] = "!#$%&'*+-.^_`|~ / HTTP/1.0\r\n\r\n";
+  static const char invalid_cases[][192U] = {
+      "GET  / HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET\t/ HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "G\x01ET / HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET /bad\tpath HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET /bad\x1fpath HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET /bad\x7fpath HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET relative HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "OPTIONS * HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET /fragment#part HTTP/1.1\r\nHost: example.test\r\n\r\n",
+      "GET / HTTP/1.2\r\nHost: example.test\r\n\r\n",
+      "GET / HTTP/1.1 extra\r\nHost: example.test\r\n\r\n",
+      "GET / HTTP/1.1\r\nHost: one.example\r\nHost: two.example\r\n\r\n",
+      "POST / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n",
+  };
+  proxy_request request;
+  size_t index;
+  memset(&request, 0, sizeof(request));
+  memcpy(request.storage, valid_origin, sizeof(valid_origin));
+  if (!proxy_parse_request(&request, sizeof(valid_origin) - 1U) || strcmp(request.method, "GET") || strcmp(request.target, "/path?encoded=%ZZ"))
+    return false;
+  memset(&request, 0, sizeof(request));
+  memcpy(request.storage, valid_double_slash, sizeof(valid_double_slash));
+  if (!proxy_parse_request(&request, sizeof(valid_double_slash) - 1U) || strcmp(request.target, "//path?encoded=%ZZ")) return false;
+  memset(&request, 0, sizeof(request));
+  memcpy(request.storage, valid_tchar, sizeof(valid_tchar));
+  if (!proxy_parse_request(&request, sizeof(valid_tchar) - 1U) || strcmp(request.method, "!#$%&'*+-.^_`|~")) return false;
+  for (index = 0U; index < sizeof(invalid_cases) / sizeof(invalid_cases[0]); ++index) {
+    size_t length = strlen(invalid_cases[index]);
+    memset(&request, 0, sizeof(request));
+    memcpy(request.storage, invalid_cases[index], length + 1U);
+    if (proxy_parse_request(&request, length)) return false;
+  }
+  return true;
 }
 
 static bool write_yaml_fragment_fixture(char directory[], char root[], char fragment[]) {
@@ -490,7 +567,8 @@ done:
 }
 
 static bool scoped_rules_test(void) {
-  static const char auth_contents[] = "operator:sha256:0000000000000000000000000000000000000000000000000000000000000000\n";
+  static const char auth_contents[] =
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n";
   char auth_path[] = "/tmp/laghu-basic-auth-XXXXXX";
   char auth_link[] = "/tmp/laghu-basic-auth-link-XXXXXX";
   char error[128U];
@@ -515,7 +593,8 @@ static bool scoped_rules_test(void) {
            laghu_proxy_rules_merge(&merged, &merged, &route, error, sizeof(error));
   if (result)
     result = merged.compression == LAGHU_PROXY_COMPRESSION_GZIP && merged.rate_per_second == 2U && merged.rate_burst == 8U &&
-             merged.allow_count == 1U && merged.basic_auth_user_count == 1U && !strcmp(merged.basic_auth_realm, "Private") &&
+             merged.allow_count == 1U && merged.basic_auth_user_count == 1U &&
+             merged.basic_auth_users[0].password_kdf == LAGHU_PROXY_BASIC_AUTH_SCRYPT_V1 && !strcmp(merged.basic_auth_realm, "Private") &&
              !laghu_proxy_rules_apply(&route, "request_header_limit", "1023", error, sizeof(error));
   if (chmod(auth_path, 0644) != 0) result = false;
   laghu_proxy_rules_init(&route);
@@ -530,6 +609,145 @@ static bool scoped_rules_test(void) {
     }
   }
   (void)unlink(auth_link);
+  (void)unlink(auth_path);
+  return result;
+}
+
+static bool auth_fixture_write(const char *path, const char *contents) {
+  int file;
+  size_t length;
+  ssize_t written;
+  if (path == NULL || contents == NULL) return false;
+  length = strlen(contents);
+  file = open(path, O_WRONLY | O_TRUNC | O_CLOEXEC);
+  if (file < 0) return false;
+  written = write(file, contents, length);
+  return close(file) == 0 && written == (ssize_t)length;
+}
+
+static bool token_fixture_write(const char *path, const void *contents, size_t length) {
+  int file;
+  ssize_t written;
+  if (path == NULL || (contents == NULL && length != 0U)) return false;
+  file = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (file < 0) return false;
+  written = write(file, contents, length);
+  return close(file) == 0 && written == (ssize_t)length;
+}
+
+typedef struct {
+  const char *moved;
+  bool completed;
+} token_swap_hook;
+
+static void token_swap_before_open(const char *path, void *context) {
+  static const char replacement[] = "replacement-purge-token-0123456789\n";
+  token_swap_hook *swap = context;
+  if (swap == NULL || rename(path, swap->moved) != 0) return;
+  swap->completed = token_fixture_write(path, replacement, sizeof(replacement) - 1U);
+}
+
+static void token_delete_after_open(const char *path, void *context) {
+  bool *deleted = context;
+  if (deleted != NULL) *deleted = unlink(path) == 0;
+}
+
+static bool admin_token_file_test(void) {
+  static const char valid[] = "standalone-purge-token-0123456789\n";
+  static const char wrong[] = "standalone-purge-token-wrong\n";
+  char directory[] = "/tmp/laghu-purge-token-XXXXXX";
+  char token[LAGHU_RUNTIME_PATH_SIZE];
+  char moved[LAGHU_RUNTIME_PATH_SIZE];
+  unsigned char output[257U];
+  unsigned char oversized[257U];
+  laghu_service_config service;
+  proxy_request request = {0};
+  token_swap_hook swap;
+  bool deleted = false;
+  size_t length = 0U;
+  bool result = false;
+  if (mkdtemp(directory) == NULL || !proxy_test_path_join(token, sizeof(token), directory, "/token") ||
+      !proxy_test_path_join(moved, sizeof(moved), directory, "/moved"))
+    return false;
+  laghu_service_config_init(&service);
+  if (!token_fixture_write(token, valid, sizeof(valid) - 1U) ||
+      snprintf(service.purge_token_file, sizeof(service.purge_token_file), "%s", token) < 0 || strlen(token) >= sizeof(service.purge_token_file))
+    goto done;
+  request.headers[0U] = (proxy_header){"X-Laghu-Purge-Token", (char *)"standalone-purge-token-0123456789"};
+  request.header_count = 1U;
+  if (!proxy_admin_token(&service, &request) || !proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL) ||
+      length != sizeof(valid) - 1U || memcmp(output, valid, length) != 0)
+    goto done;
+  request.headers[0U].value = (char *)wrong;
+  if (proxy_admin_token(&service, &request)) goto done;
+  if (chmod(token, 0644) != 0 || proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL) || chmod(token, 0600) != 0) goto done;
+  if (unlink(token) != 0 || !token_fixture_write(moved, valid, sizeof(valid) - 1U) || symlink(moved, token) != 0 ||
+      proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL) || unlink(token) != 0 || unlink(moved) != 0)
+    goto done;
+  if (mkdir(token, 0700) != 0 || proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL) || rmdir(token) != 0) goto done;
+  if (mkfifo(token, 0600) != 0 || proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL) || unlink(token) != 0) goto done;
+  memset(oversized, 'x', sizeof(oversized));
+  if (!token_fixture_write(token, oversized, sizeof(oversized)) || proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL)) goto done;
+  if (!token_fixture_write(token, "", 0U) || proxy_admin_token_file_read(token, output, &length, NULL, NULL, NULL)) goto done;
+  if (!token_fixture_write(token, valid, sizeof(valid) - 1U)) goto done;
+  swap = (token_swap_hook){moved, false};
+  if (proxy_admin_token_file_read(token, output, &length, token_swap_before_open, NULL, &swap) || !swap.completed) goto done;
+  if (!token_fixture_write(token, valid, sizeof(valid) - 1U) ||
+      !proxy_admin_token_file_read(token, output, &length, NULL, token_delete_after_open, &deleted) || !deleted || access(token, F_OK) == 0 ||
+      length != sizeof(valid) - 1U || memcmp(output, valid, length) != 0)
+    goto done;
+  result = true;
+done:
+  laghu_service_config_dispose(&service);
+  (void)unlink(token);
+  (void)unlink(moved);
+  (void)rmdir(directory);
+  return result;
+}
+
+static bool basic_auth_format_test(void) {
+  static const char scrypt[] =
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n";
+  static const char legacy[] = "operator:sha256:4104d36f8da2c254349f85836793ebe029e0c957063a34c91c2e9203187b5631\n";
+  static const char invalid[][256U] = {
+      "operator:scrypt-v1:16385:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n",
+      "operator:scrypt-v1:18446744073709551615:8:1:00112233445566778899aabbccddeeff:"
+      "f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n",
+      "operator:scrypt-v1:16384:9:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n",
+      "operator:scrypt-v1:16384:8:2:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n",
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeefg:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n",
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb\n",
+      "operator:sha256:not-a-hex-digest\n",
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8:extra\n",
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n"
+      "operator:sha256:4104d36f8da2c254349f85836793ebe029e0c957063a34c91c2e9203187b5631\n",
+  };
+  static const unsigned char expected_salt[] = {0x00U, 0x11U, 0x22U, 0x33U, 0x44U, 0x55U, 0x66U, 0x77U,
+                                                0x88U, 0x99U, 0xaaU, 0xbbU, 0xccU, 0xddU, 0xeeU, 0xffU};
+  static const unsigned char expected_hash[] = {0xf5U, 0x20U, 0x6dU, 0x57U, 0x0fU, 0xcdU, 0x12U, 0x0bU, 0xd1U, 0xf2U, 0x3aU,
+                                                0x8cU, 0xd1U, 0x86U, 0xbdU, 0x87U, 0xc0U, 0x4aU, 0xc1U, 0xdbU, 0x00U, 0xe9U,
+                                                0xacU, 0x1eU, 0xfcU, 0xa5U, 0x89U, 0x77U, 0x4aU, 0xe6U, 0xecU, 0xb8U};
+  char auth_path[] = "/tmp/laghu-basic-auth-format-XXXXXX";
+  char error[128U];
+  laghu_proxy_rules rules;
+  size_t index;
+  int file = mkstemp(auth_path);
+  bool result;
+  if (file < 0 || close(file) != 0 || chmod(auth_path, 0600) != 0 || !auth_fixture_write(auth_path, scrypt)) return false;
+  laghu_proxy_rules_init(&rules);
+  result = laghu_proxy_rules_apply(&rules, "basic_auth_file", auth_path, error, sizeof(error)) && rules.basic_auth_user_count == 1U &&
+           rules.basic_auth_users[0].password_kdf == LAGHU_PROXY_BASIC_AUTH_SCRYPT_V1 &&
+           memcmp(rules.basic_auth_users[0].password_salt, expected_salt, sizeof(expected_salt)) == 0 &&
+           memcmp(rules.basic_auth_users[0].password_hash, expected_hash, sizeof(expected_hash)) == 0;
+  if (result && !auth_fixture_write(auth_path, legacy)) result = false;
+  laghu_proxy_rules_init(&rules);
+  if (result)
+    result = laghu_proxy_rules_apply(&rules, "basic_auth_file", auth_path, error, sizeof(error)) && rules.basic_auth_user_count == 1U &&
+             rules.basic_auth_users[0].password_kdf == LAGHU_PROXY_BASIC_AUTH_SHA256;
+  for (index = 0U; result && index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+    laghu_proxy_rules_init(&rules);
+    result = auth_fixture_write(auth_path, invalid[index]) && !laghu_proxy_rules_apply(&rules, "basic_auth_file", auth_path, error, sizeof(error));
+  }
   (void)unlink(auth_path);
   return result;
 }
@@ -566,7 +784,11 @@ int main(void) {
                    "--javascript-outline-threshold",
                    "16384",
                    "--drain-timeout",
-                   "45"};
+                   "45",
+                   "--request-header-timeout",
+                   "7",
+                   "--request-body-timeout",
+                   "19"};
   char *backend[] = {"laghu",
                      "--listen",
                      "127.0.0.1:8080",
@@ -614,6 +836,7 @@ int main(void) {
                       "--worker-queue", "/tmp/jobs", "--preset",       "safe",     "--rewrite-level",       "core"};
   char *bad_drain[] = {"laghu",          "--listen",  "127.0.0.1:8080",  "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                        "--worker-queue", "/tmp/jobs", "--drain-timeout", "0"};
+  char *bad_header_timeout[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--request-header-timeout", "0"};
   char *pool[] = {"laghu",          "--listen",  "127.0.0.1:8080",     "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                   "--worker-queue", "/tmp/jobs", "--origin-pool-size", "1",        "--origin-idle-timeout", "9"};
   char *filters[] = {"laghu",           "--listen",         "127.0.0.1:8080", "--origin",        "http://127.0.0.1:8000",
@@ -751,6 +974,7 @@ int main(void) {
   CHECK(laghu_proxy_load_yaml(yaml_path, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.listen_host, "127.0.0.1") && options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
   CHECK(!options.access_log);
+  CHECK(options.request_header_timeout == 7U && options.request_body_timeout == 19U);
   CHECK(options.service.trusted_proxy_count == 1U);
   CHECK(options.response_header_count == 2U && !strcmp(options.response_headers[0].name, "X-Static-Policy"));
   CHECK(options.site_count == 1U && !strcmp(options.sites[0].host, "static.example.test"));
@@ -788,19 +1012,23 @@ int main(void) {
     CHECK(rmdir(fragments) == 0);
   }
   CHECK(rmdir(yaml_directory) == 0);
+  CHECK(runtime_queue_capabilities_cache_test());
   CHECK(static_response_test());
   CHECK(static_path_truncation_test());
   CHECK(static_preopened_root_test());
   CHECK(route_rewrite_test());
   CHECK(response_header_batch_test());
   CHECK(scoped_rules_test());
+  CHECK(basic_auth_format_test());
+  CHECK(admin_token_file_test());
   CHECK(gateway_health_rejected_test());
   CHECK(health_interval_requires_check_test());
+  CHECK(request_line_parse_test());
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.service.purge_method && options.service.purge_query && options.service.statistics && options.service.purge_allow_count == 1U);
   laghu_proxy_options_init(&options);
-  CHECK(laghu_proxy_parse_options(22, valid, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(laghu_proxy_parse_options(26, valid, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.origin_host, "127.0.0.1"));
   CHECK(!strcmp(options.origin_port, "8000"));
   CHECK(options.config.allow_api == LAGHU_MODE_ON);
@@ -811,6 +1039,9 @@ int main(void) {
   CHECK(options.config.javascript_inline_limit == 4096U);
   CHECK(options.config.javascript_outline_threshold == 16384U);
   CHECK(options.drain_timeout == 45U);
+  CHECK(options.request_header_timeout == 7U && options.request_body_timeout == 19U);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(7, bad_header_timeout, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, pool, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.origin_pool_size == 1U && options.origin_idle_timeout == 9U);
@@ -829,8 +1060,8 @@ int main(void) {
   {
     proxy_origin_connection first_origin = {.socket = first[0]};
     proxy_origin_connection second_origin = {.socket = second[0]};
-    proxy_origin_release(&worker, &first_origin, true);
-    proxy_origin_release(&worker, &second_origin, true);
+    proxy_origin_release(&worker, &options, &first_origin, true);
+    proxy_origin_release(&worker, &options, &second_origin, true);
   }
   CHECK(queue.origin_count == 1U);
   CHECK(recv(second[1], &marker, 1U, 0) == 0);

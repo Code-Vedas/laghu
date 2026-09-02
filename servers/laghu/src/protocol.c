@@ -139,6 +139,28 @@ bool proxy_content_length(proxy_header *headers, size_t count, size_t *value, bo
   return true;
 }
 
+static bool proxy_request_method_valid(const char *method) {
+  const unsigned char *byte = (const unsigned char *)method;
+  if (*byte == '\0') return false;
+  while (*byte != '\0') {
+    if (!isalnum(*byte) && strchr("!#$%&'*+-.^_`|~", *byte) == NULL) return false;
+    ++byte;
+  }
+  return true;
+}
+
+/* Standalone is origin-form only. Keep percent escapes opaque: routing and
+ * upstream forwarding already preserve their current encoded-path contract. */
+static bool proxy_request_target_valid(const char *target) {
+  const unsigned char *byte = (const unsigned char *)target;
+  if (*byte++ != '/') return false;
+  while (*byte != '\0') {
+    if (*byte <= 32U || *byte == 127U || *byte == '#') return false;
+    ++byte;
+  }
+  return true;
+}
+
 bool proxy_parse_request(proxy_request *request, size_t length) {
   char *line, *space1, *space2;
   proxy_header *host, *transfer, *expect, *upgrade;
@@ -149,10 +171,11 @@ bool proxy_parse_request(proxy_request *request, size_t length) {
   space2 = strchr(space1, ' ');
   if (space2 == NULL || strchr(space2 + 1, ' ') != NULL) return false;
   *space2++ = '\0';
-  if (*line == '\0' || *space1 == '\0' || *space2 == '\0' || !laghu_base_string_copy(request->method, sizeof(request->method), line) ||
+  if (!proxy_request_method_valid(line) || !proxy_request_target_valid(space1) || *space2 == '\0' ||
+      !laghu_base_string_copy(request->method, sizeof(request->method), line) ||
       !laghu_base_string_copy(request->target, sizeof(request->target), space1) ||
-      !laghu_base_string_copy(request->version, sizeof(request->version), space2) || request->target[0] != '/' ||
-      strchr(request->target, '#') != NULL || (strcmp(request->version, "HTTP/1.1") && strcmp(request->version, "HTTP/1.0")))
+      !laghu_base_string_copy(request->version, sizeof(request->version), space2) ||
+      (strcmp(request->version, "HTTP/1.1") && strcmp(request->version, "HTTP/1.0")))
     return false;
   host = proxy_find(request->headers, request->header_count, "Host");
   if ((!strcmp(request->version, "HTTP/1.1") && host == NULL) || proxy_header_count(request->headers, request->header_count, "Host") > 1U)

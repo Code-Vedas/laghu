@@ -378,6 +378,26 @@ Add both an **idle timeout and absolute deadline**:
 
 This is the strongest remotely reachable security finding in this pass.
 
+### S1 disposition — accepted
+
+Standalone now enforces independent monotonic downstream deadlines: headers
+default to 10 seconds and `Content-Length` bodies to 60 seconds; both accept
+configured values from 1 through 300 seconds via
+`request_header_timeout`/`request_body_timeout`. `io_timeout` remains the
+per-operation idle limit; neither total deadline resets after a byte arrives.
+Origin/upstream reads retain their existing timeout path.
+
+The read loop bounds each plain or TLS wait by the smaller remaining total
+deadline and idle timeout, handles `EINTR` plus TLS `WANT_READ`/`WANT_WRITE`,
+then restores normal socket idle timeouts. Expiry preserves current request
+failure behavior: 400, `client_parse`, close, and normal access-log handling.
+
+Focused local evidence: parser/YAML bounds tests, standalone smoke, and
+plain/downstream-TLS one-worker slow-trickle header/body regressions passed;
+each timed-out worker then served normal GET and complete POST. A reload with
+changed deadline fields applied successfully. ASan/UBSan proxy unit and direct
+sanitizer standalone smoke passed; macOS ASan lacks leak-detector support.
+
 ---
 
 # 11. S2 — direct downstream TLS POST body bug
@@ -412,6 +432,27 @@ Then add tests where the TLS body is deliberately split across multiple records/
 
 I rate this **medium security/correctness**, not a proven confidentiality break.
 
+### S2 disposition — accepted, no additional source change
+
+S1's retained downstream deadline reader already made the required correction:
+the direct client body call receives `client_tls`, so post-header TLS bytes are
+read through `SSL_read`, not raw `recv`. No further production alteration was
+needed for S2.
+
+Focused regressions send headers first and a `Content-Length` body in separate
+writes/TLS records. Direct TLS proxy POST preserved the exact echoed body; a
+formatted beacon POST reached its semantic `worker` failure rather than generic
+body parsing; authenticated PURGE with a body returned 202. Incomplete TLS
+body close released the worker for a following POST, while a slow TLS body kept
+the existing 400 timeout behavior. Equivalent split plaintext and TLS POSTs
+both preserved exact bodies. Source inspection confirms no
+`proxy_read_body(client, NULL)` remains; the sole `recv(client, ...)` is
+rejected-connection cleanup.
+
+Parser unit, standalone smoke, and direct ASan/UBSan standalone smoke passed;
+lint and diff checks passed. This validates TLS framing and direct-body read
+correctness.
+
 ---
 
 # 12. S3 — tighten request-line grammar
@@ -432,6 +473,24 @@ So I am **not claiming a demonstrated request-smuggling exploit**.
 I am saying this is a proxy desynchronization hardening gap. Enforce HTTP method `tchar` grammar and reject inappropriate C0/DEL/whitespace characters in the origin-form target before routing or forwarding.
 
 Also add a dedicated protocol fuzz harness. Current fuzz CI covers image/runtime code, not the HTTP request/parser surface.
+
+### S3 disposition — accepted
+
+The standalone request parser now accepts only RFC token characters in the
+method and rejects whitespace, C0 controls, and DEL in its origin-form target
+before routing. Existing origin-form behavior remains unchanged: encoded paths
+are opaque, `//` and query strings remain accepted, and absolute, authority,
+asterisk, and fragment forms remain rejected. NGINX and Apache adapters do not
+use this parser.
+
+Focused local parser cases cover valid token methods, encoded targets, exact
+separators and versions, controls, target forms, duplicate `Host`, and
+`Content-Length`/`Transfer-Encoding`. A bounded standalone request-line
+libFuzzer target runs both full request input and a header-completed line
+fixture, checks deterministic accept/reject, and is compiled with
+ASan/UBSan. The retained five-seed corpus completed 20,000 runs with 174
+coverage counters and no sanitizer finding. Normal parser and proxy smoke,
+sanitizer parser and standalone smoke, lint, and `git diff --check` passed.
 
 ---
 
@@ -455,6 +514,27 @@ Use a versioned format with something such as **scrypt** or **Argon2id**, includ
 
 Also make the deployment contract explicit: HTTP Basic credentials must be under direct TLS or a specifically trusted TLS-terminating proxy.
 
+### S4 disposition — accepted
+
+New credentials use the fixed versioned format
+`username:scrypt-v1:16384:8:1:<16-byte-salt-hex>:<32-byte-derived-key-hex>`.
+OpenSSL `EVP_PBE_scrypt` derives the key with a 32 MiB maximum-memory bound;
+the parser accepts only those exact `N`, `r`, and `p` values, preventing an
+auth-file from selecting unbounded work. Derived-key comparison is
+`CRYPTO_memcmp`, and decoded credentials and transient derived keys are cleared.
+
+Legacy `username:sha256:<64-hex>` entries remain read-only for an explicit
+migration period and are documented as deprecated. Laghu never rewrites a
+password file. Basic authentication now requires direct TLS, or an `https`
+forwarded scheme from an explicitly configured trusted TLS terminator.
+
+Focused tests cover a deterministic scrypt vector, successful and rejected
+credentials, clear-HTTP denial, trusted-terminator success, malformed base64
+and hex, fixed-parameter bounds including extreme values, duplicate users,
+legacy loading, and existing secure-mode/symlink file checks. Normal auth unit
+and proxy smoke, ASan/UBSan unit and standalone smoke, lint, and
+`git diff --check` passed.
+
 ---
 
 # 14. S5 — purge-token TOCTOU
@@ -466,6 +546,12 @@ The password-file code already demonstrates the stronger pattern: `lstat → ope
 Use that same pattern for the purge token with `O_NOFOLLOW | O_CLOEXEC`.
 
 This is primarily local hardening because exploitation requires control over the relevant path namespace.
+
+### S5 disposition — accepted
+
+`proxy_admin_token_file_read()` now uses `lstat → open(O_RDONLY|O_NOFOLLOW|O_CLOEXEC) → fstat`, requires matching device/inode, regular type, effective owner, and private mode before reading at most 256 bytes from the opened descriptor. POSIX fallbacks retain the inode check; missing `O_CLOEXEC` is set with `fcntl` before validation. Token trimming, comparison, errors, and cleanup remain unchanged.
+
+Focused tests cover valid/wrong token, unsafe mode, symlink, directory, FIFO, empty/oversized files, replacement before open, and deletion after open. `laghu_proxy_test`, proxy smoke, ASan/UBSan unit plus standalone smoke, lint, and `git diff --check` passed.
 
 ---
 
@@ -493,9 +579,36 @@ refuse startup
 
 unless an explicit, separately reviewed privilege-dropping mechanism is used.
 
+### S6 disposition — accepted
+
+`laghu-chrome-analyze` now refuses every valid startup mode when its effective UID is root, before queue creation or worker readiness, writing a clear diagnostic and exiting `77`. The Chrome argv has no sandbox-disabling flag; normal non-root invocation remains unchanged. The NGINX container already runs as `laghu`, Apache uses `runuser -u laghu`, and the packaged systemd unit retains `User=laghu` while treating exit `77` as non-restartable.
+
+Focused startup tests use a test-only mocked root EUID plus real non-root initialization to verify the exit, diagnostic, absent queue, normal queue creation, argv ban, and systemd contract. Normal and ASan/UBSan CTest, lint, and `git diff --check` passed.
+
 ---
 
 # 16. CVE/advisory audit — current status
+
+### Vendored libyaml nesting-depth disposition — accepted
+
+The vendored 0.2.5 identity and MIT license remain unchanged. Because upstream
+still publishes only pre-release `0.2.6-rc.1`, Laghu backports the exact
+1,000-level default from `51843fe48257c6b7b6e70cdec1db634f64a40818` and its
+combined flow/block scanner completion from
+`849d0aefecb42fe70165ed1557c329aff9e74d3e`; parser errors now report the
+upstream `exceeded maximum nesting depth` diagnostic.
+
+Vendor tests accept near-limit flow/block documents and aliases, reject depth
+1,001, and exercise the error. Standalone startup and `reload --config` reject
+deep YAML within five seconds without stopping the active process. Normal and
+ASan/UBSan vendor/YAML/proxy tests plus proxy smoke, lint/license headers, and
+`git diff --check` passed.
+
+### Cargo dependency/advisory disposition — accepted
+
+The sole Cargo root now requires `anyhow >=1.0.103` and `memmap2 >=0.9.11`, while retaining the already-patched committed lockfile. Weekly Cargo Dependabot covers that root; CI installs pinned `cargo-audit 0.22.2`, verifies that `Cargo.lock` is tracked, and audits that exact file.
+
+All 16 Rust tests passed with `--locked`; `cargo-audit 0.22.2 --file Cargo.lock` scanned all 228 locked crates clean. The Cargo-root/workflow contract, lint/license/format checks, and `git diff --check` passed.
 
 ### Vendored libyaml: actionable
 
@@ -574,6 +687,12 @@ Add a release gate using Trivy/Grype/OSV-compatible scanning against the final i
 
 Your release process already creates an SBOM and signed checksum/provenance for release assets, which is a good foundation.
 
+### OCI image CVE disposition — accepted
+
+Release now scans each published image by its immutable build digest before promotion and retains its raw Trivy JSON with that digest. The policy records all OS/library severities, then fails only on fixed HIGH/CRITICAL findings; promotion occurs only after that gate.
+
+Native AMD64 proof on `linux-fast-build` built and scanned both distinct final images: `ngx-laghu@sha256:650b49922de1a9d08ae51d9824482e49af234eff1c8e670ad1fc34eaf9a04516` (834 LOW/MEDIUM findings, zero HIGH/CRITICAL) and `mod-laghu@sha256:08da264cc5600728bddd0cd9cf460e33996705d6e8b237881ae90edcff554059` (789 LOW/MEDIUM, zero HIGH/CRITICAL). Both raw scans and fixed-HIGH/CRITICAL gates exited zero; raw JSON, commands, logs, and SHA-256 manifest remain at `/home/debian/laghu-oci-cve-20260902T142000Z/evidence`, after task-local registry/image cleanup.
+
 ---
 
 # 18. Supply-chain findings
@@ -595,6 +714,12 @@ Release workflows also use Actions by mutable major tags such as `actions/checko
 
 Dependabot updates those Actions weekly, which is good, but for release/security workflows I would pin external Actions to full commit SHAs and let Dependabot update the SHAs.
 
+### Immutable release inputs and Action pins disposition — accepted
+
+Both release Dockerfiles now pin the Ubuntu 24.04 and Rust 1.95-bookworm indexes by digest; the NGINX image verifies the pinned `1.30.4` tarball SHA-256 and its official Roman Arutyunyan PGP signing fingerprint. All 58 workflow actions are full-commit pinned with version comments, with weekly Dependabot coverage for Actions and release-container images; focused contracts prevent mutable base/Rust/action refs and missing NGINX checks.
+
+On `linux-fast-build`, the NGINX release image completed with checksum and `VALIDSIG` evidence. The distinct Apache release image also completed and its loaded `linux/amd64` tag was observed (`sha256:2409c7fac93f`, 924 MB), but the interrupted session did not reach its inspect step and the host became disk-full immediately after; that caveat is retained beside the raw build logs and checksums at `/home/debian/laghu-supply-chain-20260902T173000Z/evidence`. Only the task-owned validation image tags were removed; no broad prune occurred.
+
 ---
 
 # 19. Production C hardening is not guaranteed by Laghu itself
@@ -608,6 +733,12 @@ It means Laghu does not guarantee them.
 Add a release hardening profile and verify the resulting binaries, rather than merely setting compiler flags and assuming they stuck. Baseline targets should include stack protector, FORTIFY where supported, PIE for executables and RELRO/NOW.
 
 Benchmark the hardening build to make sure Target-1 measurements use the same release characteristics you actually ship.
+
+### Production C hardening disposition — accepted
+
+Linux Release CMake builds now require stack protector, FORTIFY=3, PIE where applicable, and RELRO/NOW; Debian, RPM, and both release containers select the profile explicitly, while Apache and NGINX module builds apply the matching C/link flags. A focused checker validates compile commands plus ELF type, GNU_RELRO, non-executable stack, NOW, and stack-protector references; CI/release module jobs run its contract/artifact checks.
+
+On `linux-fast-build`, nine native AMD64 Release artifacts passed: standalone, six C workers, Apache module, and NGINX 1.30.4 module. The standalone is a DYN PIE with `FLAGS_1 NOW PIE`; both modules are DYN with RELRO/NOW and a non-executable stack. Focused contracts, workflow YAML parse, lint/license, `laghu --help`, and `git diff --check` passed. Logs and SHA-256 manifest remain at `/home/debian/laghu-hardening-20260902T184500Z/evidence`; only its isolated source/build/module directories were removed.
 
 ---
 
@@ -630,6 +761,24 @@ release action SHA pinning
 ```
 
 Of those, **Slowloris** and the **direct-TLS body bug** are the two source-security fixes I would make before broadening the audit further.
+
+### Chunked-parser corpus / fuzz disposition — accepted
+
+The five in-repository chunked fixtures remain covered by the deterministic
+`laghu_proxy_chunked_regression` CTest: native Linux/AMD64 Clang 19.1.7 ran
+1/1 passing in 0.05 seconds. The existing `laghu_proxy_chunked_fuzz` target
+was compiled with its configured `-fsanitize=fuzzer,address,undefined` flags
+and run locally with `-runs=20000 -seed=20260902` against only
+`servers/laghu/tests/corpus/chunked`: exit 0, 20,000 completed iterations,
+and 1.503 seconds elapsed, with no ASan/UBSan finding. The harness allows
+malformed, truncated, and trailing inputs to be rejected while asserting that
+every successful decode owns a bounded body and that two successful feed
+shapes produce identical bytes. Raw build, CTest, status, and fuzz logs are
+retained at `/home/debian/laghu-chunked-fuzz-20260902T220000Z/evidence/`
+(`chunked-fuzz-build-r2.log`, `chunked-regression-ctest-r2.log`, and
+`chunked-fuzz-linux-clang19-20000-r2.log`); the task-local Clang build used
+`-Wno-error=newline-eof` solely for the pre-existing missing final newline in
+vendored `third_party/libyaml/src/loader.c`.
 
 ---
 
@@ -905,3 +1054,79 @@ or other architecture slice. Targets 2–4 and security remain deferred.
 ## Audit scope control
 
 This audit is a bounded suggestion worklist toward the north-star performance threshold. Completing or disposing of a suggestion does not authorize new profile-driven or architectural work; only an explicit audit suggestion and the user approval rules can do that. This document records no broader authorization.
+
+## Approved reload generation reclamation
+
+**Status: accepted.** Native AMD64 exercised eight successful reloads. The
+previous retained-snapshot behavior grew RSS by 3.26 MB (8.02%) and cgroup
+memory by 4.09 MB (13.10%); accepted behavior grew RSS by 1.33 MB (3.27%) and
+cgroup memory by 1.75 MB (5.67%). Preopened document-root descriptors stayed
+at 2 rather than growing from 2 to 18.
+
+The implementation uses writer-preferred generation quiescence: requests
+borrow and release their immutable configuration generation; reload blocks new
+borrowers, waits for active borrowers, swaps configuration/root descriptors,
+then frees old generation. At most one heap reload snapshot remains and the
+initial caller-owned options are not freed.
+
+Validated: all eight reloads served new routes; concurrent reload/request,
+invalid, incompatible, stale, permission, and symlink handoffs retained the
+last valid generation; proxy tests, standalone smoke, and ASan/UBSan passed.
+
+## Final numbers and profiling (2026-09-02) — CLOSED
+
+### Closure inventory
+
+| Item | Final disposition | Evidence / final state |
+| --- | --- | --- |
+| P0 rail metrics, feature-derived lifecycle, compact config, reload reclamation | Accepted | Retained P2.R1/R2/R4 and accepted reload-generation reclamation. |
+| P1 dead drained-broadcast and P2.R9 preopened roots | Accepted | Retained native AMD64 evidence in sections 22–23. |
+| P2.R8, P2.R10, accept batching, and P2R13 sendfile | Rejected | Measured candidates regressed a locked RPS or memory gate; all reverted. |
+| P2.R3 sparse transform queue | Inapplicable | True Target-1 passthrough does not create/touch it. |
+| P2.R11 profiling / flamegraph | Blocked | `perf` is absent and `perf_event_paranoid=3`; no flamegraph claim is made. Native `strace` is retained as the permitted alternative. |
+| S1–S6 remote/local security findings | Accepted | Slowloris, direct-TLS body handling, request grammar, credential storage, purge-token TOCTOU, and root Chrome sandbox behavior have their accepted dispositions above. |
+| Cargo, OCI CVE, immutable supply chain, production C hardening | Accepted | Current Cargo advisory scan is clean; OCI/supply-chain/hardening evidence is retained in sections 16–19. |
+| Final stable libyaml 0.2.6 upgrade | Blocked upstream | Official releases still list `v0.2.6-rc.1` as pre-release and `v0.2.5` as latest; Laghu retains 0.2.5 plus the accepted 1,000-depth backport. [GitHub releases](https://github.com/yaml/libyaml/releases) |
+| Section 20 HTTP chunk-parser corpus / regression | Accepted | Five-file local corpus remains covered by `laghu_proxy_chunked_regression` (native Linux/AMD64 Clang CTest: 1/1 passed, 0.05 s). `laghu_proxy_chunked_fuzz` compiled with fuzzer/ASan/UBSan and completed 20,000 seeded local iterations: exit 0, 1.503 s, no sanitizer finding. |
+
+### Hardened Release Target-1 directional diagnostic
+
+`linux-fast-build` ran exactly one fresh 15-second, 100-VU `/index.html` trial
+per Target-1 comparator using the existing `production-scaling` controls: four
+standalone workers, four-CPU quotas, `runtime.access_log: off`, production
+passthrough, `Host: alpha.bench.test`, and identity encoding. All requests
+were HTTP 200/check-clean.
+
+| Comparator | Requests | RPS | Errors |
+| --- | ---: | ---: | ---: |
+| Standalone no-optimization | 85,029 | 5,664.60 | 0 |
+| Plain NGINX | 157,541 | 10,485.53 | 0 |
+| Plain Apache | 107,189 | 7,137.14 | 0 |
+
+Standalone-only lifetime cgroup peak was 9,191,424 bytes before and 11,051,008
+bytes after its trial; RSS snapshots were 30,212,096 and 30,629,888 bytes.
+The actual release binary is a DYN PIE with GNU_RELRO, non-executable stack,
+`BIND_NOW`, and `FLAGS_1 NOW PIE`. Raw k6 JSON, exact configuration hashes,
+ELF report, image identity, cgroup/RSS snapshots, and manifest are retained at
+`/home/debian/laghu-audit-closure-20260902T205831Z/evidence/release-directional-r3/`
+(`summary.json` and `manifest.sha256`); ELF evidence is beside it as
+`../release-directional-laghu.readelf`.
+
+This is **directional only**: one short run per comparator, not the 99-trial /
+33-median rail. It creates no Target-1 gate result and does not change the
+section-23 native verdict.
+
+### R11 profiling disposition
+
+`perf`/flamegraph remains **BLOCKED** on `linux-fast-build`: `perf` is not
+installed and `/proc/sys/kernel/perf_event_paranoid` is `3`. The retained
+native alternative is a 15-second / 100-VU standalone `strace` run with 36,248
+HTTP 200 responses at 2,412.754651 RPS: 14,659 `accept`, 29,155 `sendto`
+(1.99/request), and 354 `futex` calls. Raw evidence is
+`/home/debian/laghu-audit-closure-20260902T205831Z/evidence/r11-k6.stdout`
+and `r11-strace.log`; the earlier focused raw trace remains at
+`/home/debian/laghu-p2r11-profile.70Mk42/evidence/warm-50.strace.txt`.
+It is syscall evidence, not a replacement for sampled CPU profiling.
+
+No Pass-2 item lacks an accepted, rejected, inapplicable, or blocked
+disposition. **Audit-2 is CLOSED.**

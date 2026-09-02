@@ -25,6 +25,39 @@ import urllib.parse
 BODY = b"<!doctype html>\n<html>  <head><!-- remove --></head>  <body>hello</body></html>"
 
 
+def process_rss_bytes(pid):
+    try:
+        for line in pathlib.Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    except (FileNotFoundError, ValueError):
+        pass
+    return None
+
+
+def process_cgroup_current_bytes(pid):
+    try:
+        for line in pathlib.Path(f"/proc/{pid}/cgroup").read_text().splitlines():
+            fields = line.split(":", 2)
+            if len(fields) == 3 and fields[0] == "0":
+                return int((pathlib.Path("/sys/fs/cgroup") / fields[2].lstrip("/") / "memory.current").read_text())
+    except (FileNotFoundError, ValueError):
+        pass
+    return None
+
+
+def process_open_root_descriptors(pid, roots):
+    try:
+        descriptors = pathlib.Path(f"/proc/{pid}/fd")
+        return sum(
+            1
+            for descriptor in descriptors.iterdir()
+            if any(pathlib.Path(os.readlink(descriptor)).resolve() == root.resolve() for root in roots)
+        )
+    except (FileNotFoundError, OSError):
+        return None
+
+
 def start_process(arguments, **options):
     process_arguments, config_path = yaml_runtime_arguments(arguments)
     process = subprocess.Popen(process_arguments, **options)
@@ -1047,6 +1080,141 @@ def read_open_socket(sock):
     return b"".join(chunks).lower()
 
 
+def slow_trickle_request(port, initial, chunks, tls_context=None):
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    if tls_context is not None:
+        sock = tls_context.wrap_socket(sock, server_hostname="127.0.0.1")
+    sock.settimeout(2)
+    try:
+        sock.sendall(initial)
+        for chunk in chunks:
+            time.sleep(0.35)
+            try:
+                sock.sendall(chunk)
+            except OSError:
+                break
+        return read_open_socket(sock)
+    except OSError:
+        sock.close()
+        raise
+
+
+def split_body_request(port, path, method, headers, body, tls_context=None, close_early=False):
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    if tls_context is not None:
+        sock = tls_context.wrap_socket(sock, server_hostname="127.0.0.1")
+    sock.settimeout(5)
+    header_lines = "".join(f"{name}: {value}\r\n" for name, value in headers.items())
+    request_head = (
+        f"{method} {path} HTTP/1.1\r\nHost: example.test\r\n"
+        f"Content-Length: {len(body)}\r\n{header_lines}Connection: close\r\n\r\n"
+    ).encode()
+    try:
+        # Header and each body fragment are separate writes. With TLS this is
+        # a regression guard against falling back to raw recv() after SSL_read().
+        sock.sendall(request_head)
+        time.sleep(0.05)
+        offsets = (1, min(3, len(body)), len(body))
+        previous = 0
+        for offset in offsets:
+            if offset > previous:
+                sock.sendall(body[previous:offset])
+                previous = offset
+                time.sleep(0.02)
+            if close_early and previous != 0:
+                sock.close()
+                return b""
+        if tls_context is None:
+            sock.shutdown(socket.SHUT_WR)
+        return read_open_socket(sock)
+    except OSError:
+        sock.close()
+        raise
+
+
+def slowloris_deadline_smoke(executable, root, origin_port, ca_file, server_file, server_key):
+    def exercise(port, tls_context=None):
+        header_response = slow_trickle_request(
+            port,
+            b"GET /api/data HTTP/1.1\r\nHost: example.test\r\nX-Slow: ",
+            [b"a", b"b", b"c", b"d"],
+            tls_context,
+        )
+        assert header_response.startswith(b"http/1.1 400 "), header_response
+        head, body = request(port, "/api/data", tls_context=tls_context)
+        assert b" 200 " in head.split(b"\r\n", 1)[0] and body == b'{"ok":true}'
+
+        body_response = slow_trickle_request(
+            port,
+            b"POST /echo HTTP/1.1\r\nHost: example.test\r\nContent-Length: 8\r\nConnection: close\r\n\r\na",
+            [b"b", b"c", b"d", b"e"],
+            tls_context,
+        )
+        assert body_response.startswith(b"http/1.1 400 "), body_response
+        head, body = request(port, "/echo", method="POST", body=b"complete", tls_context=tls_context)
+        assert b" 200 " in head.split(b"\r\n", 1)[0] and body == b"complete"
+        split_response = split_body_request(port, "/echo", "POST", {}, b"split-complete", tls_context)
+        assert split_response.startswith(b"http/1.1 200 ")
+        assert split_response.split(b"\r\n\r\n", 1)[1] == b"split-complete"
+
+    def start(port, downstream_tls):
+        arguments = [
+            str(executable), "--listen", f"127.0.0.1:{port}",
+            "--origin", f"http://127.0.0.1:{origin_port}",
+            "--cache", str(root / "cache"), "--worker-queue", str(root / "missing.queue"),
+            "--workers", "1", "--connection-queue", "2", "--io-timeout", "2",
+            "--request-header-timeout", "1", "--request-body-timeout", "1",
+        ]
+        if downstream_tls:
+            arguments += ["--tls-certificate", str(server_file), "--tls-private-key", str(server_key)]
+        return start_process(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    plain_port = free_port()
+    plain_process = start(plain_port, False)
+    try:
+        for _ in range(100):
+            try:
+                head, body = request(plain_port, "/api/data")
+                if b" 200 " in head.split(b"\r\n", 1)[0] and body == b'{"ok":true}':
+                    break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            raise AssertionError("plain deadline smoke did not start")
+        exercise(plain_port)
+    finally:
+        request_shutdown(plain_process)
+        plain_process.wait(timeout=5)
+        plain_logs = plain_process.stderr.read().decode()
+        plain_process.stderr.close()
+        if plain_process.laghu_config_path:
+            os.unlink(plain_process.laghu_config_path)
+    assert plain_process.returncode == 0, plain_logs
+
+    tls_port = free_port()
+    tls_process = start(tls_port, True)
+    client_context = ssl.create_default_context(cafile=ca_file)
+    try:
+        for _ in range(100):
+            try:
+                head, body = request(tls_port, "/api/data", tls_context=client_context)
+                if b" 200 " in head.split(b"\r\n", 1)[0] and body == b'{"ok":true}':
+                    break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            raise AssertionError("TLS deadline smoke did not start")
+        exercise(tls_port, client_context)
+    finally:
+        request_shutdown(tls_process)
+        tls_process.wait(timeout=5)
+        tls_logs = tls_process.stderr.read().decode()
+        tls_process.stderr.close()
+        if tls_process.laghu_config_path:
+            os.unlink(tls_process.laghu_config_path)
+    assert tls_process.returncode == 0, tls_logs
+
+
 def gateway_server(protocol):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1141,7 +1309,9 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
     (static_root / "index.html").write_bytes(static_body)
     (static_root / "large.txt").write_bytes(b"x" * 1025)
     auth = root / "standalone-auth"
-    auth.write_text("operator:sha256:" + hashlib.sha256(b"correct horse").hexdigest() + "\n")
+    auth_salt = bytes.fromhex("00112233445566778899aabbccddeeff")
+    auth_hash = hashlib.scrypt(b"correct horse", salt=auth_salt, n=16384, r=8, p=1, dklen=32)
+    auth.write_text("operator:scrypt-v1:16384:8:1:" + auth_salt.hex() + ":" + auth_hash.hex() + "\n")
     auth.chmod(0o600)
     static_port = free_port()
     static_config = root / "standalone-static.yaml"
@@ -1151,6 +1321,9 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         f"  listen: 127.0.0.1:{static_port}\n"
         f"  cache: {root / 'cache'}\n"
         f"  worker_queue: {root / 'missing.queue'}\n"
+        "  respect_x_forwarded_proto: on\n"
+        "  trusted_proxy:\n"
+        "    - 127.0.0.1/32\n"
         "  directory_listing: on\n"
         "  static_cache_control: public, max-age=60\n"
         "sites:\n"
@@ -1186,6 +1359,7 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
     static_log = (root / "standalone-static.log").open("w+b")
     static_process = subprocess.Popen([str(executable), "--config", str(static_config)], stdout=subprocess.DEVNULL, stderr=static_log)
     basic = "Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ=="
+    protected_headers = {"Authorization": basic, "X-Forwarded-Proto": "https"}
     try:
         for _ in range(100):
             try:
@@ -1227,19 +1401,40 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         assert listed_head.startswith(b"http/1.1 200 ") and b"x-laghu:" in listed_head
         unauth_head, _ = request(static_port, "/", host="secure.static.test")
         assert unauth_head.startswith(b"http/1.1 401 ") and b'www-authenticate: basic realm="standalone"' in unauth_head
-        malformed_auth_head, _ = request(static_port, "/", headers={"Authorization": "Basic a==="}, host="secure.static.test")
+        malformed_auth_head, _ = request(
+            static_port,
+            "/",
+            headers={"Authorization": "Basic a===", "X-Forwarded-Proto": "https"},
+            host="secure.static.test",
+        )
         assert malformed_auth_head.startswith(b"http/1.1 401 ")
-        secure_head, secure_body = request(static_port, "/missing", headers={"Authorization": basic}, host="secure.static.test")
+        cleartext_auth_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        assert cleartext_auth_head.startswith(b"http/1.1 401 ")
+        wrong_password_head, _ = request(
+            static_port,
+            "/",
+            headers={"Authorization": "Basic b3BlcmF0b3I6d3Jvbmc=", "X-Forwarded-Proto": "https"},
+            host="secure.static.test",
+        )
+        assert wrong_password_head.startswith(b"http/1.1 401 ")
+        wrong_user_head, _ = request(
+            static_port,
+            "/",
+            headers={"Authorization": "Basic b3RoZXI6Y29ycmVjdCBob3JzZQ==", "X-Forwarded-Proto": "https"},
+            host="secure.static.test",
+        )
+        assert wrong_user_head.startswith(b"http/1.1 401 ")
+        secure_head, secure_body = request(static_port, "/missing", headers=protected_headers, host="secure.static.test")
         assert secure_head.startswith(b"http/1.1 200 ") and b"static body" in secure_body
-        large_head, _ = request(static_port, "/large.txt", headers={"Authorization": basic}, host="secure.static.test")
+        large_head, _ = request(static_port, "/large.txt", headers=protected_headers, host="secure.static.test")
         assert large_head.startswith(b"http/1.1 413 ")
-        body_limit = raw_request(static_port, b"POST / HTTP/1.1\r\nHost: secure.static.test\r\nAuthorization: Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ==\r\nContent-Length: 5\r\n\r\nhello")
+        body_limit = raw_request(static_port, b"POST / HTTP/1.1\r\nHost: secure.static.test\r\nAuthorization: Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ==\r\nX-Forwarded-Proto: https\r\nContent-Length: 5\r\n\r\nhello")
         assert body_limit.startswith(b"http/1.1 413 ")
-        second_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        second_head, _ = request(static_port, "/", headers=protected_headers, host="secure.static.test")
         assert second_head.startswith(b"http/1.1 200 ")
-        third_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        third_head, _ = request(static_port, "/", headers=protected_headers, host="secure.static.test")
         assert third_head.startswith(b"http/1.1 200 ")
-        rate_head, _ = request(static_port, "/", headers={"Authorization": basic}, host="secure.static.test")
+        rate_head, _ = request(static_port, "/", headers=protected_headers, host="secure.static.test")
         assert rate_head.startswith(b"http/1.1 429 ")
         denied_head, _ = request(static_port, "/", host="denied.static.test")
         assert denied_head.startswith(b"http/1.1 403 ")
@@ -1501,6 +1696,7 @@ def main():
         tls_thread.start()
         standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_file)
         access_log_runtime_smoke(executable, root)
+        slowloris_deadline_smoke(executable, root, origin_port, ca_file, server_file, server_key)
         tls_proxy_port = free_port()
         tls_process = start_process(
             [
@@ -1533,13 +1729,19 @@ def main():
         assert b" 200 " in tls_head.split(b"\r\n", 1)[0], (tls_head, tls_logs)
         assert tls_body == b'{"ok":true}'
         downstream_tls_port = free_port()
+        downstream_purge_token = root / "downstream-tls-purge.token"
+        downstream_purge_token.write_text("downstream-tls-purge-token-0123456789\n")
+        downstream_purge_token.chmod(0o600)
         downstream_tls_process = start_process(
             [
                 str(executable), "--listen", f"127.0.0.1:{downstream_tls_port}",
                 "--origin", f"http://127.0.0.1:{origin_port}", "--cache",
                 str(root / "cache"), "--worker-queue", str(root / "missing.queue"),
                 "--tls-certificate", str(server_file), "--tls-private-key",
-                str(server_key), "--forwarded-headers", "both",
+                str(server_key), "--forwarded-headers", "both", "--rum-store", "memory:",
+                "--instrumentation-beacon", "--instrumentation-sample-rate", "100",
+                "--purge-method", "PURGE", "--purge-token-file", str(downstream_purge_token),
+                "--purge-allow", "127.0.0.1/32", "--request-body-timeout", "1",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -1560,6 +1762,43 @@ def main():
                 raise AssertionError(f"downstream TLS proxy did not start: {downstream_error}")
             assert b" 200 " in downstream_head.split(b"\r\n", 1)[0]
             assert downstream_body == b'{"ok":true}'
+            split_proxy_response = split_body_request(
+                downstream_tls_port, "/echo", "POST", {}, b"tls-split-proxy-body", downstream_client_context
+            )
+            assert split_proxy_response.startswith(b"http/1.1 200 ")
+            assert split_proxy_response.split(b"\r\n\r\n", 1)[1] == b"tls-split-proxy-body"
+            split_beacon_response = split_body_request(
+                downstream_tls_port,
+                "/.laghu/beacon/instrumentation",
+                "POST",
+                {"Content-Type": "application/json", "Sec-Fetch-Site": "same-origin"},
+                b'{"version":1,"template":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bucket":0,"lcp_ms":1,"inp_ms":1,"cls_milli":1,"dcl_ms":1,"load_ms":1,"errors":0,"rejections":0,"candidates":[]}',
+                downstream_client_context,
+            )
+            assert split_beacon_response.startswith(b"http/1.1 400 ")
+            split_admin_response = split_body_request(
+                downstream_tls_port,
+                "/api/data",
+                "PURGE",
+                {"X-Laghu-Purge-Token": "downstream-tls-purge-token-0123456789"},
+                b"ignored-admin-body",
+                downstream_client_context,
+            )
+            assert split_admin_response.startswith(b"http/1.1 202 ")
+            assert split_body_request(
+                downstream_tls_port, "/echo", "POST", {}, b"incomplete", downstream_client_context, close_early=True
+            ) == b""
+            post_close_head, post_close_body = request(
+                downstream_tls_port, "/echo", method="POST", body=b"after-close", tls_context=downstream_client_context
+            )
+            assert b" 200 " in post_close_head.split(b"\r\n", 1)[0] and post_close_body == b"after-close"
+            timeout_response = slow_trickle_request(
+                downstream_tls_port,
+                b"POST /echo HTTP/1.1\r\nHost: example.test\r\nContent-Length: 8\r\nConnection: close\r\n\r\na",
+                [b"b", b"c", b"d", b"e"],
+                downstream_client_context,
+            )
+            assert timeout_response.startswith(b"http/1.1 400 ")
             health_head, health_body = request(
                 downstream_tls_port, "/.laghu/health", tls_context=downstream_client_context
             )
@@ -1582,6 +1821,7 @@ def main():
             downstream_tls_logs = downstream_tls_process.stderr.read().decode()
             downstream_tls_process.stderr.close()
         assert downstream_tls_process.returncode == 0, downstream_tls_logs
+        assert '"failure":"worker"' in downstream_tls_logs
         one_certificate, one_key = create_dns_tls_certificate(root, "one.example.test", "one")
         two_certificate, two_key = create_dns_tls_certificate(root, "two.example.test", "two")
         one_root = root / "one-site"
@@ -1593,9 +1833,15 @@ def main():
         sni_port = free_port()
         sni_config = root / "sni-reload.yaml"
         sni_replacement = root / "sni-replacement.yaml"
+        sni_incompatible = root / "sni-incompatible.yaml"
         sni_pid = root / "sni-reload.pid"
 
-        def write_sni_config(path, redirect, site_root=one_root):
+        def write_sni_config(path, redirect, site_root=one_root, request_header_timeout=10, request_body_timeout=60):
+            extra_sites = "".join(
+                f"  - host: reload-{index}.example.test\n"
+                f"    document_root: {one_root}\n"
+                for index in range(24)
+            )
             path.write_text(
                 ""
                 "runtime:\n"
@@ -1604,6 +1850,8 @@ def main():
                 f"  cache: {root / 'cache'}\n"
                 f"  worker_queue: {root / 'missing.queue'}\n"
                 f"  pid_file: {sni_pid}\n"
+                f"  request_header_timeout: {request_header_timeout}\n"
+                f"  request_body_timeout: {request_body_timeout}\n"
                 "sites:\n"
                 "  - host: one.example.test\n"
                 f"    document_root: {site_root}\n"
@@ -1623,10 +1871,11 @@ def main():
                 f"    document_root: {two_root}\n"
                 f"    tls_certificate: {two_certificate}\n"
                 f"    tls_private_key: {two_key}\n"
+                + extra_sites
             )
 
         write_sni_config(sni_config, "/before")
-        write_sni_config(sni_replacement, "/after", two_root)
+        write_sni_config(sni_replacement, "/after", two_root, 2, 3)
         pathlib.Path(f"{sni_pid}.reload").write_bytes(str(sni_replacement).encode() + b"\0")
         sni_process = subprocess.Popen(
             [str(executable), "--config", str(sni_config)], stdout=subprocess.DEVNULL,
@@ -1695,6 +1944,19 @@ def main():
             )
             assert b"location: /after" in route_head
             write_sni_config(sni_replacement, "/after")
+            write_sni_config(sni_incompatible, "/incompatible")
+            sni_incompatible.write_text(sni_incompatible.read_text().replace("sites:\n", "  workers: 2\nsites:\n", 1))
+            incompatible_reload = subprocess.run(
+                [str(executable), "reload", "--config", str(sni_incompatible)],
+                capture_output=True, text=True,
+            )
+            assert incompatible_reload.returncode == 0, incompatible_reload.stderr
+            time.sleep(0.1)
+            route_head, _ = request(
+                sni_port, "/route", tls_context=sni_context,
+                server_hostname="one.example.test", host="one.example.test"
+            )
+            assert b"location: /after" in route_head
             os.kill(sni_process.pid, signal.SIGHUP)
             time.sleep(0.1)
             route_head, _ = request(
@@ -1722,6 +1984,65 @@ def main():
             )
             assert b"location: /after" in route_head
             assert not reload_request.exists()
+            reload_errors = []
+
+            def reload_reader():
+                try:
+                    head, _ = request(
+                        sni_port, "/route", tls_context=sni_context,
+                        server_hostname="one.example.test", host="one.example.test"
+                    )
+                    if b" 302 " not in head.split(b"\r\n", 1)[0]:
+                        reload_errors.append(head)
+                except (OSError, AssertionError) as error:
+                    reload_errors.append(error)
+
+            rss_before_reloads = process_rss_bytes(sni_process.pid)
+            cgroup_before_reloads = process_cgroup_current_bytes(sni_process.pid)
+            roots_before_reloads = process_open_root_descriptors(sni_process.pid, [one_root, two_root])
+            for index in range(8):
+                target = f"/reload-{index}"
+                readers = [threading.Thread(target=reload_reader) for _ in range(4)]
+                for reader in readers:
+                    reader.start()
+                write_sni_config(sni_replacement, target, two_root if index % 2 else one_root)
+                reload_result = subprocess.run(
+                    [str(executable), "reload", "--config", str(sni_replacement)],
+                    capture_output=True, text=True,
+                )
+                assert reload_result.returncode == 0, reload_result.stderr
+                for reader in readers:
+                    reader.join(timeout=5)
+                assert not any(reader.is_alive() for reader in readers)
+                for _ in range(warm_attempts):
+                    route_head, _ = request(
+                        sni_port, "/route", tls_context=sni_context,
+                        server_hostname="one.example.test", host="one.example.test"
+                    )
+                    if f"location: {target}".encode() in route_head:
+                        break
+                    time.sleep(0.02)
+                else:
+                    raise AssertionError("reload stress did not publish the requested generation")
+            assert not reload_errors, reload_errors
+            rss_after_reloads = process_rss_bytes(sni_process.pid)
+            cgroup_after_reloads = process_cgroup_current_bytes(sni_process.pid)
+            roots_after_reloads = process_open_root_descriptors(sni_process.pid, [one_root, two_root])
+            if rss_before_reloads is not None and rss_after_reloads is not None:
+                assert rss_after_reloads <= rss_before_reloads + 2 * 1024 * 1024, (
+                    rss_before_reloads,
+                    rss_after_reloads,
+                )
+            if cgroup_before_reloads is not None and cgroup_after_reloads is not None:
+                assert cgroup_after_reloads <= cgroup_before_reloads + 2 * 1024 * 1024, (
+                    cgroup_before_reloads,
+                    cgroup_after_reloads,
+                )
+            if roots_before_reloads is not None and roots_after_reloads is not None:
+                assert roots_after_reloads <= roots_before_reloads + 2, (
+                    roots_before_reloads,
+                    roots_after_reloads,
+                )
         finally:
             request_shutdown(sni_process)
             sni_process.wait(timeout=5)

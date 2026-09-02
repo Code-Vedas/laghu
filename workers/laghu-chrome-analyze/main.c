@@ -34,6 +34,14 @@
 
 static volatile sig_atomic_t laghu_chrome_analyze_stop;
 
+static uid_t laghu_chrome_analyze_effective_uid(void) {
+#ifdef LAGHU_CHROME_ANALYZE_TEST_EUID
+  return (uid_t)LAGHU_CHROME_ANALYZE_TEST_EUID;
+#else
+  return geteuid();
+#endif
+}
+
 static const char laghu_chrome_analyze_script[] =
     "<script>(()=>{const image=Array.from(document.images).slice(0,32);"
     "let lcp=-1;try{const e=performance.getEntriesByType("
@@ -190,7 +198,6 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file, unsig
     return false;
   }
   if (child == 0) {
-    const bool root = geteuid() == 0U;
     (void)setpgid(0, 0);
     (void)dup2(pipefd[1], STDOUT_FILENO);
     (void)close(pipefd[0]);
@@ -207,8 +214,7 @@ static bool laghu_chrome_analyze_run(const char *chrome, const char *file, unsig
     arguments[9] = profile_argument;
     arguments[10] = "--dump-dom";
     arguments[11] = file_url;
-    arguments[12] = root ? "--no-sandbox" : NULL;
-    arguments[root ? 13U : 12U] = NULL;
+    arguments[12] = NULL;
     execvp(chrome, arguments);
     _exit(127);
   }
@@ -376,6 +382,10 @@ int main(int argc, char **argv) {
   initialize = strcmp(argv[1], "--serve") != 0 && strcmp(argv[1], "--once") != 0;
   once = strcmp(argv[1], "--once") == 0;
   chrome = argc == 5 ? argv[4] : "chromium";
+  if (laghu_chrome_analyze_effective_uid() == 0U) {
+    fputs("laghu-chrome-analyze: refusing to start as root; Chrome sandbox must remain enabled. Run this worker as an unprivileged user.\n", stderr);
+    return 77;
+  }
   if (initialize) {
     laghu_runtime_queue_init(&queue);
     if (!laghu_runtime_queue_create(&queue, argv[2], LAGHU_CHROME_ANALYZE_SLOTS, LAGHU_CHROME_ANALYZE_MAX_HTML)) return 1;

@@ -1,0 +1,54 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+
+for expected in \
+  'LAGHU_ENABLE_RELEASE_HARDENING' \
+  'CMAKE_POSITION_INDEPENDENT_CODE ON' \
+  'check_pie_supported' \
+  '-fstack-protector-strong -D_FORTIFY_SOURCE=3' \
+  '-Wl,-z,relro,-z,now'; do
+  if ! grep -Fq -- "${expected}" "${REPO_ROOT}/CMakeLists.txt"; then
+    echo "Missing CMake Release hardening contract: ${expected}" >&2
+    exit 1
+  fi
+done
+
+for file in \
+  "${REPO_ROOT}/scripts/build-apache-module" \
+  "${REPO_ROOT}/scripts/build-nginx-module" \
+  "${REPO_ROOT}/packaging/nginx-module/config" \
+  "${REPO_ROOT}/packaging/container/Dockerfile"; do
+  if ! grep -Fq -- '-fstack-protector-strong' "${file}" || \
+     ! grep -Fq -- '-D_FORTIFY_SOURCE=3' "${file}" || \
+     ! grep -Fq -- '-Wl,-z,relro,-z,now' "${file}"; then
+    echo "Missing native module hardening contract: ${file}" >&2
+    exit 1
+  fi
+done
+
+for file in \
+  "${REPO_ROOT}/packaging/container/Dockerfile" \
+  "${REPO_ROOT}/packaging/container/Dockerfile.apache" \
+  "${REPO_ROOT}/packaging/debian/rules" \
+  "${REPO_ROOT}/packaging/rpm/laghu.spec"; do
+  if ! grep -Fq -- '-DCMAKE_BUILD_TYPE=Release' "${file}" || \
+     ! grep -Fq -- '-DLAGHU_ENABLE_RELEASE_HARDENING=ON' "${file}"; then
+    echo "Release hardening profile is not explicit: ${file}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'scripts/check-release-hardening' "${REPO_ROOT}/.github/workflows/release.yml"; then
+  echo 'Release workflow must verify native ELF hardening' >&2
+  exit 1
+fi
+
+echo 'release hardening contract tests passed'

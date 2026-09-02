@@ -5,6 +5,15 @@
 
 version: 2
 updates:
+  - package-ecosystem: cargo
+    directory: /workers/laghu-js-optimize
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns:
+          - "*"
+
   - package-ecosystem: bundler
     directory: /docs
     schedule:
@@ -23,3 +32,11 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: docker
+    directory: /packaging/container
+    schedule:
+      interval: weekly
+    groups:
+      container-images:
+        patterns:
+          - "*"

@@ -12,6 +12,9 @@ runtime:
   connection_queue: 64
   connect_timeout: 5
   io_timeout: 30
+  # Idle I/O remains 30 seconds; these total limits do not reset per byte.
+  request_header_timeout: 10
+  request_body_timeout: 60
   drain_timeout: 30
 
 # Ordered routes run before static or the global origin. Exactly one of
@@ -47,6 +50,8 @@ sites:
       static_max_bytes: 16m
       allow:
         - 10.0.0.0/8
+      # Use scrypt-v1 records. Basic credentials require direct TLS, or a
+      # trusted TLS terminator with respect_x_forwarded_proto enabled.
       basic_auth_file: /etc/laghu/shop.basic-auth
       basic_auth_realm: Shop administration
       rate_limit: 20

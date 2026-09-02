@@ -1,0 +1,64 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+compile_commands=
+if [ "${1:-}" = "--compile-commands" ]; then
+  compile_commands=${2:?missing compile_commands.json path}
+  shift 2
+fi
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: $0 [--compile-commands PATH] ELF..." >&2
+  exit 2
+fi
+
+command -v readelf >/dev/null 2>&1 || {
+  echo 'readelf is required for Linux release hardening checks' >&2
+  exit 127
+}
+
+if [ -n "${compile_commands}" ]; then
+  test -f "${compile_commands}"
+  commands=$(grep -c '"command":' "${compile_commands}" || true)
+  test "${commands}" -gt 0
+  if grep '"command":' "${compile_commands}" | \
+      grep -Fv -- '-fstack-protector-strong' >/dev/null || \
+     grep '"command":' "${compile_commands}" | \
+      grep -Fv -- '-D_FORTIFY_SOURCE=3' >/dev/null; then
+    echo 'Release C compile command is missing stack or FORTIFY hardening' >&2
+    exit 1
+  fi
+fi
+
+for artifact in "$@"; do
+  test -f "${artifact}"
+  if ! readelf -hW "${artifact}" | awk '$1 == "Type:" && $2 == "DYN" { found = 1 } END { exit found ? 0 : 1 }'; then
+    echo "Expected ELF DYN (PIE or shared object): ${artifact}" >&2
+    exit 1
+  fi
+  if ! readelf -lW "${artifact}" | grep -q 'GNU_RELRO'; then
+    echo "Missing GNU_RELRO: ${artifact}" >&2
+    exit 1
+  fi
+  if ! readelf -lW "${artifact}" | awk '
+      $1 == "GNU_STACK" { found = 1; if ($0 ~ / RWE /) bad = 1 }
+      END { exit found && !bad ? 0 : 1 }
+    '; then
+    echo "Missing non-executable GNU_STACK: ${artifact}" >&2
+    exit 1
+  fi
+  if ! readelf -dW "${artifact}" | grep -Eq '\(BIND_NOW\)|\(FLAGS_1\).*NOW'; then
+    echo "Missing BIND_NOW: ${artifact}" >&2
+    exit 1
+  fi
+  if ! readelf -Ws "${artifact}" | grep -q '__stack_chk_fail'; then
+    echo "Missing stack-protector reference: ${artifact}" >&2
+    exit 1
+  fi
+  echo "release hardening passed: ${artifact}"
+done

@@ -12,7 +12,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 override_dh_auto_configure:
 	dh_auto_configure --builddirectory=debian/build -- \
 		-DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
-		-DCMAKE_BUILD_TYPE=Release
+		-DCMAKE_BUILD_TYPE=Release -DLAGHU_ENABLE_RELEASE_HARDENING=ON
 	dh_auto_configure --buildsystem=nginx_mod \
 		--sourcedirectory=packaging/nginx-module \
 		--builddirectory=debian/nginx-module-build

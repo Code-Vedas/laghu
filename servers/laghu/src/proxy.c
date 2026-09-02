@@ -24,22 +24,37 @@ void proxy_queue_lock(proxy_queue *queue) { pthread_mutex_lock(&queue->lock); }
 
 void proxy_queue_unlock(proxy_queue *queue) { pthread_mutex_unlock(&queue->lock); }
 
-const laghu_proxy_options *proxy_current_options(proxy_queue *queue) {
+const laghu_proxy_options *proxy_options_acquire(proxy_queue *queue) {
   const laghu_proxy_options *options;
-  proxy_queue_lock(queue);
+  if (queue == NULL) return NULL;
+  (void)pthread_mutex_lock(&queue->options_lock);
+  while (queue->options_writer_pending) (void)pthread_cond_wait(&queue->options_quiescent, &queue->options_lock);
+  ++queue->options_readers;
   options = queue->options;
-  proxy_queue_unlock(queue);
+  (void)pthread_mutex_unlock(&queue->options_lock);
   return options;
+}
+
+void proxy_options_release(proxy_queue *queue) {
+  if (queue == NULL) return;
+  (void)pthread_mutex_lock(&queue->options_lock);
+  if (queue->options_readers != 0U && --queue->options_readers == 0U) (void)pthread_cond_broadcast(&queue->options_quiescent);
+  (void)pthread_mutex_unlock(&queue->options_lock);
 }
 
 uint32_t proxy_runtime_queue_capabilities(proxy_worker *worker) {
   laghu_runtime_queue_snapshot snapshot;
-  laghu_runtime_queue *queue = proxy_runtime_queue(worker);
   uint64_t now = (uint64_t)time(NULL);
-  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot) || snapshot.capabilities == 0U || snapshot.worker_heartbeat == 0U ||
-      snapshot.worker_heartbeat > now || now - snapshot.worker_heartbeat > 45U)
-    return 0U;
-  return snapshot.capabilities;
+  laghu_runtime_queue *queue;
+  if (worker->runtime_queue_capabilities_checked_at == now) return worker->runtime_queue_capabilities;
+  queue = proxy_runtime_queue(worker);
+  if (queue == NULL || !laghu_runtime_queue_snapshot_get(queue, &snapshot)) return 0U;
+  worker->runtime_queue_capabilities_checked_at = now;
+  worker->runtime_queue_capabilities =
+      snapshot.capabilities != 0U && snapshot.worker_heartbeat != 0U && snapshot.worker_heartbeat <= now && now - snapshot.worker_heartbeat <= 45U
+          ? snapshot.capabilities
+          : 0U;
+  return worker->runtime_queue_capabilities;
 }
 
 void proxy_worker_origin(proxy_worker *worker, laghu_socket origin) {
@@ -202,7 +217,7 @@ static void proxy_html_cache_enqueue_refresh(proxy_worker *worker, const laghu_c
 void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   laghu_socket client = connection->socket;
   SSL *client_tls = connection->tls;
-  const laghu_proxy_options *options = proxy_current_options(worker->queue);
+  const laghu_proxy_options *options = proxy_options_acquire(worker->queue);
   const laghu_config *config = &options->config;
   const laghu_service_config *service = &options->service;
   const laghu_proxy_rules *rules = &options->rules;
@@ -253,7 +268,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     proxy_error_response(client, client_tls, (code), reason); \
   } while (0)
   proxy_timeout(client, options->io_timeout);
-  if (!proxy_read_headers(client, request.storage, client_tls, &header_length, &initial, &initial_length) ||
+  if (!proxy_read_client_headers(client, request.storage, client_tls, options->io_timeout, options->request_header_timeout, &header_length, &initial,
+                                 &initial_length) ||
       !proxy_parse_request(&request, header_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
@@ -282,7 +298,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   }
   {
     const char *access_failure = "none";
-    if (!proxy_request_access_allowed(worker->queue, connection, &request, rules, &access_failure)) {
+    if (!proxy_request_access_allowed(worker->queue, config, service, connection, &request, rules, &access_failure)) {
       access.access = access_failure;
       if (!strcmp(access_failure, "basic_auth")) {
         const char *realm = rules->basic_auth_realm[0] == '\0' ? "Laghu" : rules->basic_auth_realm;
@@ -329,7 +345,8 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
     goto done;
   }
   if (request.content_length != 0U &&
-      !proxy_read_body(client, NULL, initial, initial_length, request.content_length, false, &request_body, &request_body_length)) {
+      !proxy_read_client_body(client, client_tls, initial, initial_length, request.content_length, options->io_timeout, options->request_body_timeout,
+                              &request_body, &request_body_length)) {
     PROXY_FAIL(400U, "Bad Request", "client_parse");
     goto done;
   }
@@ -510,10 +527,11 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   }
 route_origin_acquire: {
   unsigned int acquired_failovers = 0U;
-  bool acquired = origin_host[0] != '\0' &&
-                  (upstream_route != NULL
-                       ? proxy_route_acquire(worker, options, upstream_route, &upstream, &selected_target, &acquired_failovers, &tls_timed_out)
-                       : proxy_origin_acquire(worker, &upstream, origin_host, origin_port, origin_authority, selected_origin_tls, &tls_timed_out));
+  bool acquired =
+      origin_host[0] != '\0' &&
+      (upstream_route != NULL
+           ? proxy_route_acquire(worker, options, upstream_route, &upstream, &selected_target, &acquired_failovers, &tls_timed_out)
+           : proxy_origin_acquire(worker, options, &upstream, origin_host, origin_port, origin_authority, selected_origin_tls, &tls_timed_out));
   access.failovers += acquired_failovers;
   if (!acquired) {
     PROXY_FAIL(502U, "Bad Gateway", tls_timed_out ? "origin_timeout" : (selected_origin_tls ? "origin_tls" : "origin_connect"));
@@ -566,7 +584,7 @@ route_origin_acquire: {
       !proxy_parse_response(&response, header_length)) {
     if (upstream_route != NULL) proxy_route_mark_unhealthy(worker, options, upstream_route, &selected_target);
     if (retryable_route && access.failovers < upstream_route->failover_count) {
-      proxy_origin_release(worker, &upstream, false);
+      proxy_origin_release(worker, options, &upstream, false);
       origin = LAGHU_INVALID_SOCKET;
       origin_tls = NULL;
       memset(&response, 0, sizeof(response));
@@ -747,13 +765,14 @@ done:
   access.original_response_bytes = origin_body_length;
   if (access.output_bytes == 0U && origin_body_length != 0U) access.output_bytes = origin_body_length;
   if (proxy_is_forcing(worker->queue)) access.failure = "shutdown";
-  proxy_access_write(worker->queue, &access);
+  proxy_access_write(worker->queue, options, &access);
   laghu_http_transaction_result_release(&prepared);
   laghu_http_transaction_result_release(&finalized);
   free(request_body);
   free(origin_body);
-  if (origin != LAGHU_INVALID_SOCKET) proxy_origin_release(worker, &upstream, origin_reusable);
+  if (origin != LAGHU_INVALID_SOCKET) proxy_origin_release(worker, options, &upstream, origin_reusable);
   SSL_free(client_tls);
   laghu_close(client);
+  proxy_options_release(worker->queue);
 #undef PROXY_FAIL
 }

@@ -685,18 +685,18 @@ Initializing only queue/slot headers reduced ready cgroup to 67.0 MB and file-di
 |  Order | Change                                                      | Why first                                       | Status (2026-08-24) |
 | -----: | ----------------------------------------------------------- | ----------------------------------------------- | ------------------- |
 |  **1** | Repair benchmark CPU/log/cache equivalence                  | Establish trustworthy baseline                  | **Applied.** Matched rail controls and diagnostics are in place; ARM results remain diagnostic until native AMD64. |
-|  **2** | Make access logging off/async; remove `fflush` request path | Very low-risk high reward                       | **Applied for Target 1.** `runtime.access_log: off` removes record/flush work; asynchronous production logging is not implemented. |
-|  **3** | Stop recompressing existing gzip/Brotli artifacts           | Huge optimized-mode CPU waste                   | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
-|  **4** | Cache queue capability/heartbeat outside request path       | Removes `flock` + queue scan                    | **Already satisfied for NGINX; candidate rejected.** Request workers made zero snapshots; a duplicate-job scan failed the Target-2 A/B gates. |
+|  **2** | Make access logging off/async; remove `fflush` request path | Very low-risk high reward                       | **Complete.** Target-1 keeps `runtime.access_log: off`; 256-slot async logging failed the cgroup gate and 32-slot logging lost 187 of 1,001 required records, so both were reverted. |
+|  **3** | Stop recompressing existing gzip/Brotli artifacts           | Huge optimized-mode CPU waste                   | **Applied in shared runtime.** Retained 64-entry publication index prevents repeat successful gzip/Brotli publication; Target-4 measurement remains pending. |
+|  **4** | Cache queue capability/heartbeat outside request path       | Removes `flock` + queue scan                    | **Applied for Target 4.** Standalone caches a successful capability/heartbeat snapshot for one second; native A/B improved both measured RPS cells. |
 |  **5** | Implement correct incremental chunk parser                  | Fixes worker stalls + 10 MiB allocation         | **Applied.** Bounded incremental parser stops at terminal chunk/trailers; removes EOF wait and fixed 10 MiB decode allocation. |
 |  **6** | Build event-driven downstream connection layer + keep-alive | Fundamental RPS scalability                     | **Not applied.** Probe/candidate regressed static RPS, so it was discarded. |
 |  **7** | Add direct static/cache artifact serving                    | RPS + allocation/RSS gain                       | **Rejected.** P2R13 re-test improved native RPS but soak lifetime cgroup was +7.43%, above the +2% gate; retained mode-off bypass remains separate. |
-|  **8** | Split global proxy mutex / reactor-local origin pools       | Scaling after multiple reactors                 | **Not applied.** Deferred to Target 4: Target-1 performance cells do not exercise upstream proxy traffic. |
+|  **8** | Split global proxy mutex / reactor-local origin pools       | Scaling after multiple reactors                 | **Inapplicable for locked Target 4.** One-worker native proxy probe found no material mutex wait and no reusable origin-pool entries; no change retained. |
 |  **9** | Compile routing/policies/config once                        | Strip request setup cost                        | **Not applied.** Regex precompile improved regex-only work but regressed baseline/prefix cells; discarded. |
 | **10** | Make cache/catalog metadata truly hot                       | Remove stat/open/read/checksum pressure         | **Rejected for Target 2.** Bounded catalog hot-cache improved RPS but failed thrash lifetime-cgroup/RSS gates. |
-| **11** | Replace RUM mutex+linear scan                               | Optimized HTML concurrency                      | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
-| **12** | Merge HTML discovery/rewrite into one pass                  | Large complex-page improvement                  | **Not applied.** Deferred to Target 4 because it is optimization-only work. |
-| **13** | Introduce request arenas/reusable buffers                   | Remove allocator churn                          | **Partial.** Mode-off static path now bypasses transform-context allocation; broader request arenas/reusable buffers are not implemented. |
+| **11** | Replace RUM mutex+linear scan                               | Optimized HTML concurrency                      | **Inapplicable for locked Target 4.** Native all-opt RUM probe observed zero request API calls; no change retained. |
+| **12** | Merge HTML discovery/rewrite into one pass                  | Large complex-page improvement                  | **Inapplicable for locked Target 4.** All-opt native probe exited dependency-pending before rewrite/copy passes; no change retained. |
+| **13** | Introduce request arenas/reusable buffers                   | Remove allocator churn                          | **Rejected for Target 4.** Per-worker transform-context reuse failed mixed-assets RPS (77.77% versus 80% floor); reverted. Mode-off bypass remains separate; Target-3 capture candidates were also rejected. |
 | **14** | Add ThinLTO/LTO + PGO                                       | Exploit cleaner architecture                    | **Not applied.** Both LTO and PGO regressed focused RPS measurements, so they were discarded. |
 | **15** | Evaluate jemalloc/mimalloc, CPU tuning                      | Only after allocation architecture is corrected | **Not applied.** jemalloc raised memory about 22–30%, failing the memory gate; discarded. |
 
@@ -866,7 +866,7 @@ Numbers below are standalone divided by the named plain-server median.  RPS must
 * **Priority 14, GCC IPO/LTO candidate: rejected.** On its ARM focused A/B, tiny HTML, 100 KiB CSS, and mixed assets regressed 7.0%, 15.1%, and 10.3% RPS respectively; p95 worsened in every cell while cgroup/RSS stayed effectively flat.  Raw data is under `tmp/p14-thinlto-ab/raw/`; this was GCC IPO/LTO, not LLVM ThinLTO.
 * **Priority 14, PGO candidate: rejected.** ARM focused data in `tmp/p14-pgo-ab/summary.json` shows CSS 4,868.57→3,240.32 RPS (-33.4%), mixed assets 5,901.75→5,505.24 (-6.7%), and tiny HTML essentially flat/slightly lower.  It has zero reported HTTP/check errors, but no full rail and no retention case.
 * **Priority 15, jemalloc candidate: rejected.** Its three focused cells raised cgroup memory 24.7–29.7% and RSS 21.6–28.3%, violating the 2% memory gate in every cell.  `tmp/p15-allocator-ab/summary.json` is the raw summary.  Its apparent CSS RPS gain is not an acceptance result because the system-control CSS run was order-biased/anomalously slow; the memory failure is still sufficient to reject the candidate.
-* **Optimization-only priorities 3, 4, 8, 10, 11, and 12: deferred.** Recompression, queue capability snapshots, origin-pool/mutex work, cache/catalog work, RUM, and HTML rewrite work belong to Target 4 or proxy/optimization paths.  They are not a credible explanation for static Target-1 comparison-gate status and must not be pulled forward merely because they are visible in a broad source audit.
+* **Optimization-only priorities 4, 8, 10, 11, and 12: deferred or disposed by adapter applicability.** The retained shared publication index closes priority 3; origin-pool/mutex, catalog, RUM, and HTML rewrite work remains Target-4 or adapter-specific.  None is a credible explanation for static Target-1 comparison-gate status.
 
 ## Interpretation: what the native result supports, and what it does not
 
@@ -878,7 +878,7 @@ Numbers below are standalone divided by the named plain-server median.  RPS must
 
 ## Priority disposition cross-check
 
-For audit traceability, section 21's concise rows have this current interpretation: 1 is complete benchmark-equivalence work; 2 and 5 are retained; 3, 4, 8, 10, 11, and 12 are deferred to Target 4; 6 and 9 are rejected after focused regression; 7 and 13 are partial through the retained mode-off bypass while their broader candidates remain rejected/not implemented; 14 and 15 are rejected.  No priority is silently considered accepted without the evidence described above.
+For audit traceability, section 21's concise rows have this current interpretation: 1 is complete benchmark-equivalence work; 2, 3, and 5 are retained; 4, 8, 10, 11, and 12 are Target-4 or adapter-specific; 6 and 9 are rejected after focused regression; 7 and 13 are partial through the retained mode-off bypass while their broader candidates remain rejected; 14 and 15 are rejected.  No priority is silently considered accepted without the evidence described above.
 
 ## Recommendation: next Target-1 cycle and approval boundary
 
@@ -1042,3 +1042,227 @@ The APR-pool chunk candidate was also rejected before measurement.  Under native
 ## Audit scope control
 
 This audit is a bounded suggestion worklist toward the north-star performance threshold. Completing or disposing of a suggestion does not authorize new profile-driven or architectural work; only an explicit audit suggestion and the user approval rules can do that. This document records no broader authorization.
+
+## Target 4 priority 13 request-context reuse: rejected and reverted (2026-09-02)
+
+The default-off native probe covered 5,001 optimized requests. It counted one
+117,936-byte transform context allocation per request: 589.8 MB cumulative
+traffic, with one context concurrently active per worker. The candidate kept
+one bounded context per worker instead of allocating it for every request.
+
+Native AMD64 C/X/X/C/C/X evidence at
+`/home/debian/laghu-target4-p13-candidate.4OjI9v/evidence/ab/records.json`
+(SHA-256 `4bb9ebb5b1a9a0546e34ad124057e3526abdcf4c13420d19d36664a05511d613`)
+contains 18/18 clean runs and three excluded warm-up windows for each
+activation. Candidate/control median ratios were warm-100 RPS/lifetime-cgroup/
+trial-cgroup/RSS `0.9909/1.0007/1.0105/1.0019`, mixed-assets-1,000
+`0.7777/1.0049/1.0009/1.0010`, and cache-thrash-1,000
+`1.0201/1.0065/0.9940/0.9988`. The mixed-assets RPS result violates the locked
+0.80 Target-4 floor despite otherwise flat memory.
+
+Probe raw traffic is
+`/home/debian/laghu-target4-p13-probe.Sc7t7s/evidence/probe/`; representative
+mixed/thrash summaries hash to
+`83c8b846f0730e8d636d471cc639fab9894b306611f20e46a850c7e485e78712` and
+`5fa72b34ad8ee27beb28b899ad009cf678e1cc48b4f3e573c8ca88a22370d97f`.
+The candidate, its reuse state, and all probe controls were removed after the
+rejection; no product change remains.
+
+## Target 4 native AMD64 baseline (2026-09-02)
+
+The first clean standalone all-optimization/no-optimization bundle is
+`/home/debian/laghu-target4-baseline.xYBVSg/evidence/bundle-full66/results.json`
+(SHA-256 `92b6f5159cf3e14f90b2185f967901f4f4d468f45dc7a5e8a3a912083651b052`).
+It contains 66 raw trials (two targets, eleven cells, three independent runs),
+six excluded equal warm-up windows (three per standalone target), native
+`linux/amd64` containers, one NGINX upstream, matching request-access logging
+off, and zero HTTP/check errors.  Both targets used the same image
+`sha256:45f94a644a0ccf3ef235a706fc15a1a10dafba6172d832ae4d263554a5874f39`;
+the corpus manifest SHA-256 is
+`6b406889a9aeaf85b11986a5e746ac5066d23f8aea3bd2941513247f5a535c93`.
+
+Ratios are all-optimization/no-optimization.  The Target-4 north-star gates
+are RPS at least 0.80 and lifetime cgroup, sampled trial cgroup, and RSS each
+at most 1.20.  All eleven cells currently fail; this is a baseline, not a
+post-change result.
+
+| Cell | VUs | RPS | Lifetime cgroup | Trial cgroup | RSS | Gate |
+|---|---:|---:|---:|---:|---:|---|
+| Warm | 1 | 0.171954 | 4.287537 | 4.319015 | 2.625368 | Fail |
+| Warm | 10 | 1.126307 | 4.287537 | 4.396358 | 2.625544 | Fail |
+| Warm | 50 | 0.233373 | 4.287537 | 4.241885 | 2.626438 | Fail |
+| Warm | 100 | 0.799170 | 4.208768 | 3.931604 | 2.629313 | Fail |
+| Warm | 500 | 0.450444 | 3.703159 | 3.577555 | 2.631069 | Fail |
+| Warm | 1,000 | 0.703366 | 2.807018 | 2.995293 | 2.629806 | Fail |
+| JavaScript execution | 10 | 0.744727 | 3.424951 | 5.348135 | 3.880257 | Fail |
+| Mixed assets | 1,000 | 0.466660 | 3.841270 | 4.089076 | 3.869747 | Fail |
+| Cache storm | 1,000 | 0.897060 | 4.536989 | 3.761202 | 5.367052 | Fail |
+| Cache thrash | 1,000 | 0.815862 | 3.987270 | 4.447478 | 5.382985 | Fail |
+| Soak | 1,000 | 0.046073 | 4.018492 | 3.610502 | 5.782886 | Fail |
+
+The earlier image-build-only attempt is retained as invalid at
+`/home/debian/laghu-target4-baseline.xYBVSg/evidence/rail.log`; it made no raw
+trial and was stopped before a Compose target activation.  The valid isolated
+run log is `.../evidence/rail-full66.log`; its source/config digest inventory,
+target image digest, host identity, and raw k6 summaries remain in the bundle.
+
+## Target 4 priority 4 native probe and candidate (2026-09-02)
+
+Priority 4 applies to the standalone optimized request path.  The temporary
+native probe at `/home/debian/laghu-target4-p4-probe.czuLPN/evidence/` recorded
+1,003 `proxy_runtime_queue_capabilities` calls and 1,003 queue snapshots for
+1,000 clean warm-100 requests (zero unavailable snapshots).  The probe image
+was retained as `laghu-target4-p4-probe:local`; all probe source and output
+hooks were removed before the candidate build.
+
+The candidate caches a successful worker queue capability/heartbeat snapshot
+only for the current epoch second.  It keeps retry behavior when the queue or
+snapshot is unavailable and refreshes the capability/heartbeat state in the
+next second.  `laghu_proxy_test` now covers same-second caching plus forced
+next-second refresh.  Local validation passed the focused proxy CTest and all
+15 focused-rail contract tests; `git diff --check` passed.
+
+Native AMD64 interleaved evidence is
+`/home/debian/laghu-target4-p4-candidate.ZrSIIj/evidence/ab/summary.json`
+(SHA-256 `b837df4a0514476729f30da5a031d5d5df5f9ad8db73cba0f47367a29f7d3607`),
+with raw evidence SHA-256
+`b05018740b6e1a0fbb68f05ada26e6c75096c23b1d2e586fa783031f91a51531`.
+It alternates pre-change control and candidate (`C,X,X,C,C,X`), restarts the
+single standalone container before every raw run, gives every activation three
+excluded equal warm-up windows, and has 12/12 zero-error raw runs.  Ratios are
+candidate/control medians; this focused A/B is retention evidence only, not a
+replacement for the eleven-cell Target-4 gate.
+
+| Cell | VUs | RPS | Lifetime cgroup | Trial cgroup | RSS | Assessment |
+|---|---:|---:|---:|---:|---:|---|
+| Warm | 100 | 1.009480 | 1.003321 | 0.993215 | 1.002046 | RPS +0.9%; memory effectively flat |
+| Cache thrash | 1,000 | 1.154710 | 0.972736 | 0.988704 | 1.120630 | RPS +15.5%; RSS +12.1%, within Target-4 1.20 bound |
+
+**Retained after approval.** It removes measured repeated `flock`/slot-scan
+work, preserves the unavailable retry path, and improves both measured cells
+without exceeding the Target-4 memory ceiling.  No post-change full 66-trial
+bundle was run.
+
+## Target 4 priority 8 native probe (2026-09-02)
+
+Priority 8 was measured through a real proxy-only route, not a corpus file that
+the static handler could satisfy.  The temporary default-off
+`LAGHU_P8_LOCK_PROBE=1` build measured global-lock call sites and wait/hold
+time, origin acquire/release/pool behavior, health, logging, active-worker, and
+shutdown interactions.  The valid native AMD64 evidence is
+`/home/debian/laghu-target4-p8-probe.1788323169/evidence/probe-proxy-only/`:
+two 1,000-VU, 1,000-request proxy-route runs had zero HTTP/check errors; raw
+SHA-256 is `8fe46b95aa6cca2f1f0f3b7a032293abda3e23402ec35d72d62f9d678aa97b0b`
+and server-log SHA-256 is
+`5b030b3aa3c0800c6b95084e1f1944cb06a37b35a5208c37186fa2a1965bdcf3`.
+
+The one-worker locked Target-4 configuration made 2,001 real origin acquires,
+but every acquire was a miss with zero candidate scans, hits, reuses, or pooled
+releases.  Across all measured global lock sites, total wait was 3.55 ms; the
+origin-acquire lock itself waited 84.6 microseconds across 2,001 calls.  Queue
+readiness, active-worker, health, logging, and shutdown locks were likewise
+sub-millisecond aggregates; reload does not execute in this locked request
+rail.  There is no demonstrated shared
+mutex contention or reusable global-pool work for a reactor-local split to
+remove.  The initial `/proxy/upstream-response.txt` probe is retained as
+invalid because the static handler served that corpus file before proxying.
+
+**Rejected as inapplicable; no product change.** Splitting ownership would add
+reload, shutdown, health, failover, TLS, and pool-limit risk without a measured
+Target-4 bottleneck.  All temporary probe code was removed; no candidate A/B or
+post-change full bundle is warranted.
+
+## Target 4 priority 11 native probe (2026-09-02)
+
+Priority 11 was measured in the locked standalone all-optimization rail on
+native AMD64: three equal excluded warm-100 windows, then optimized HTML
+warm-100, mixed-assets-1,000 VU, and the fixed 30-second 1,000-VU soak.  The
+three measured cells made 8,220 clean requests with zero HTTP/check errors.
+The raw evidence is
+`/home/debian/laghu-target4-p11-probe.1788324701/evidence/probe/probe-raw.json`
+(SHA-256 `1a4d1ee8462324ff3297aea462100f3f3b7444dc6854638f4f26537dc172288a`)
+and the standalone log is SHA-256
+`03741b7581ff5a71e33162638b6c6ea545c59a65fc29184c8885ac4ee2b77678`.
+
+The default-off `LAGHU_P11_RUM_PROBE=1` counter saw zero RUM reads, publishes,
+and updates in the final activation.  The engine did initialize one empty
+4,096-slot store (zero RUM data bytes), loaded one snapshot, and issued 14
+empty snapshot-write attempts; no request API invoked the global lookup mutex
+or linear slot search.  The prior restart-only activation likewise had zero
+RUM API calls.  Measured RPS was 1,718.64 (warm-100), 1,307.51
+(mixed-assets-1,000), and 129.98 (soak); those probe values are not a
+post-change comparison.
+
+**Rejected as inapplicable; no product change.** A bounded lookup or lock
+refinement cannot improve the locked request path when it makes no RUM calls.
+All temporary probe code and probe controls were removed.  Focused Debug RUM,
+Release proxy, and standalone smoke tests passed; no candidate A/B or
+post-change full bundle is warranted.
+
+## Target 4 priority 12 native probe (2026-09-02)
+
+The default-off native probe ran the locked all-opt warm-100, mixed-assets-1,000,
+and 30-second 1,000-VU soak after three equal warm-up windows: 6,508 measured
+requests, zero HTTP/check errors.  It saw 6,971 HTML calls/1,477,852 bytes;
+every call exited dependency-pending after exactly one image discovery and one
+style-attribute discovery.  Those phases used 253.2 ms and 538.2 ms total;
+there were zero image/style/CSS-markup rewrites, cached-URL scans, copies,
+allocations, matches, or edits.  Raw/log evidence is
+`/home/debian/laghu-target4-p12-probe.1788325301/evidence/probe2/` (SHA-256
+`3497ddb97c7ac039247185af398c3371f758f3a0cdec634e762b16ff0144499d` and
+`6a746c2dae49f04bc5ffe91c32c38eb88b5a6d0c3269924e6941c2eaa0fb7953`).
+
+**Rejected as inapplicable; no product change.** The compatible later passes
+never execute in this rail, so a merge cannot improve it.  All probe code and
+controls were removed; no candidate A/B or full bundle is warranted.
+
+## Priority 2 asynchronous access logging: 256-slot candidate rejected (2026-09-02)
+
+The prior synchronous path rendered a transaction, held the global queue mutex,
+wrote it, and flushed stderr on every request.  A bounded 256-slot async
+candidate moved rendering and batched writes to one consumer, used nonblocking
+overflow accounting, and drained during shutdown.  It preserved exact JSON
+transactions: 12/12 native AMD64 C/X/X/C/C/X logging-on runs had zero HTTP/check
+errors, zero malformed records, zero drops, and exact request/transaction
+counts.
+
+The native evidence is
+`/home/debian/laghu-accesslog-candidate.AUwQnz/accesslog-ab-evidence/records.json`
+(SHA-256 `3448ed1e5363cf448bfe352ca36d7c4eae027be8aa45f045cf81ef3ebd814d45`).
+Candidate/control medians were warm-100 RPS `1.0221`, lifetime cgroup `1.1659`,
+trial cgroup `1.0017`, and RSS `0.9971`; soak-1000 RPS `1.0364`, lifetime
+cgroup `1.1039`, trial cgroup `1.1820`, and RSS `1.0036`.  The exact cgroup
+regressions exceed the locked 1.02 gate despite modest RPS improvement.
+
+**Rejected and reverted.** Target 1 continues to use `runtime.access_log: off`.
+The native probe and the 256-slot candidate source are removed; the immutable
+raw evidence remains at the path above.
+
+## Priority 2 asynchronous access logging: 32-slot refinement rejected (2026-09-02)
+
+The smaller bounded queue was stopped before A/B measurement because its first
+native warm-100 run completed 1,000 HTTP requests without errors but emitted
+814 of 1,001 required transaction records: 187 records were lost and one
+overflow event was recorded.  Logging integrity is required, so this is a
+correctness rejection rather than a performance result.  Both async candidates
+and their probes were reverted; Priority 2 is complete with the retained
+`runtime.access_log: off` fast path.
+
+## Audit-1 closure (2026-09-02) — CLOSED
+
+Every Pass-1 priority has a final disposition.  **Accepted:** benchmark/control
+repair (P1), access-log-off fast path (P2), retained publication index (P3),
+bounded incremental chunk parser (P5), and mode-off static bypass (the retained
+portion of P7/P13).  **Rejected:** downstream keep-alive/repark (P6), direct
+static/sendfile (P7), route precompile (P9), catalog hot cache (P10), broad
+request-context reuse (P13), LTO/PGO (P14), and allocator replacement (P15).
+**Inapplicable:** origin-pool/mutex splitting (P8), RUM (P11), and HTML-pass
+merging (P12) in their locked adapter rails.  The non-retained portions of P7
+and P13 are rejected, not deferred work.
+
+The current Target-1 comparison gate remains a documented **fail on RPS**, not
+an open audit item: the accepted native 99-trial bundle in audit-2 records
+memory passing all 22 comparisons and RPS passing 4/11 against NGINX and 5/11
+against Apache.  A short hardened-release diagnostic is recorded in audit-2;
+it does not replace that rail or change any acceptance verdict.  No Pass-1
+item lacks an accepted, rejected, inapplicable, or blocked disposition.

@@ -21,13 +21,13 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install NGINX build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential cmake libpcre2-dev libssl-dev zlib1g-dev
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@fddeee1a7ece751b577e409a89057319e3172939 # v4
         with:
           languages: c-cpp
           build-mode: manual
@@ -35,5 +35,4 @@ jobs:
         run: |
           scripts/run-build-all
           scripts/run-module-build-all
-      - uses: github/codeql-action/analyze@v4
-
+      - uses: github/codeql-action/analyze@fddeee1a7ece751b577e409a89057319e3172939 # v4

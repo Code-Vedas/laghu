@@ -398,8 +398,7 @@ void proxy_static_roots_dispose(proxy_static_roots *roots) {
 }
 
 int proxy_static_root_fd(const proxy_static_roots *roots, const laghu_proxy_options *options, size_t site_index) {
-  while (roots != NULL && roots->options != options) roots = roots->next;
-  if (roots == NULL) return -1;
+  if (roots == NULL || roots->options != options) return -1;
   if (site_index == LAGHU_PROXY_SITE_GLOBAL) return roots->global_root;
   return site_index < roots->site_count ? roots->site_roots[site_index] : -1;
 }

@@ -62,7 +62,7 @@ void proxy_access_init(proxy_access_log *access, proxy_queue *queue) {
   proxy_access_generate_trace_ids(access);
 }
 
-void proxy_access_write(proxy_queue *queue, const proxy_access_log *access) {
+void proxy_access_write(proxy_queue *queue, const laghu_proxy_options *options, const proxy_access_log *access) {
   char line[LAGHU_LOG_LINE_SIZE];
   uint64_t elapsed = proxy_monotonic_ms() - access->started_ms;
   (void)laghu_operational_registry_heartbeat(&queue->operational, (uint64_t)time(NULL), true, 0U, 0U);
@@ -77,7 +77,7 @@ void proxy_access_write(proxy_queue *queue, const proxy_access_log *access) {
   laghu_operational_registry_record(&queue->operational, operational_decision, access->original_response_bytes, access->output_bytes,
                                     elapsed * UINT64_C(1000));
   if (strcmp(access->failure, "none") != 0) laghu_operational_registry_failure(&queue->operational, LAGHU_OPERATIONAL_FAILURE_TRANSPORT);
-  if (!proxy_current_options(queue)->access_log) return;
+  if (options == NULL || !options->access_log) return;
   {
     laghu_log_transaction record = {.common = {(time_t)time(NULL), "standalone", "standalone", access->trace_id[0] == '\0' ? NULL : access->trace_id,
                                                access->span_id[0] == '\0' ? NULL : access->span_id},

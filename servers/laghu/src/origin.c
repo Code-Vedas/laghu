@@ -18,6 +18,15 @@ void proxy_timeout(laghu_socket socket, unsigned int seconds) {
   (void)setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value));
 }
 
+static void proxy_timeout_ms(laghu_socket socket, uint64_t milliseconds) {
+  struct timeval value;
+  if (milliseconds == 0U) milliseconds = 1U;
+  value.tv_sec = (time_t)(milliseconds / 1000U);
+  value.tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
+  (void)setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value));
+  (void)setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value));
+}
+
 bool proxy_send_all(laghu_socket socket, const void *data, size_t length) {
   const char *bytes = data;
   while (length != 0U) {
@@ -34,6 +43,51 @@ bool proxy_socket_timed_out(void) { return errno == EAGAIN || errno == EWOULDBLO
 int proxy_origin_recv(laghu_socket socket, SSL *tls, void *data, size_t length) {
   if (tls == NULL) return recv(socket, data, (int)length, 0);
   return SSL_read(tls, data, (int)length);
+}
+
+/* Downstream request reads retain the socket's idle limit, while this monotonic
+ * deadline is never reset after a successful byte. Upstream response reads
+ * deliberately keep their existing independent origin timeout behavior. */
+int proxy_client_recv_until(laghu_socket socket, SSL *tls, void *data, size_t length, unsigned int idle_timeout, uint64_t deadline) {
+  for (;;) {
+    uint64_t now = proxy_monotonic_ms();
+    uint64_t idle_ms = (uint64_t)idle_timeout * 1000U;
+    uint64_t remaining;
+    int got;
+    if (now >= deadline) {
+      errno = ETIMEDOUT;
+      return -1;
+    }
+    remaining = deadline - now;
+    if (remaining > idle_ms) remaining = idle_ms;
+    proxy_timeout_ms(socket, remaining);
+    got = tls == NULL ? recv(socket, data, (int)length, 0) : SSL_read(tls, data, (int)length);
+    if (got >= 0) return got;
+    if (tls == NULL) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    {
+      int error = SSL_get_error(tls, got);
+      if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        struct pollfd ready = {(int)socket, error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, 0};
+        now = proxy_monotonic_ms();
+        if (now >= deadline) {
+          errno = ETIMEDOUT;
+          return -1;
+        }
+        remaining = deadline - now;
+        if (remaining > idle_ms) remaining = idle_ms;
+        got = poll(&ready, 1U, (int)remaining);
+        if (got > 0) continue;
+        if (got < 0 && errno == EINTR) continue;
+        if (got == 0) errno = EAGAIN;
+      } else if (error == SSL_ERROR_SYSCALL && errno == EINTR) {
+        continue;
+      }
+    }
+    return -1;
+  }
 }
 
 bool proxy_origin_send_all(laghu_socket socket, SSL *tls, const void *data, size_t length) {
@@ -87,8 +141,7 @@ static int proxy_downstream_sni(SSL *tls, int *alert, void *argument) {
   size_t index;
   (void)alert;
   if (queue == NULL || (name = SSL_get_servername(tls, TLSEXT_NAMETYPE_host_name)) == NULL || name[0] == '\0') return SSL_TLSEXT_ERR_OK;
-  proxy_queue_lock(queue);
-  options = queue->options;
+  options = queue->downstream_tls_options;
   for (index = 0U; options != NULL && index < options->site_count; ++index) {
     const laghu_proxy_site *site = &options->sites[index];
     if (site->downstream_tls_context != NULL && !strcasecmp(name, site->host)) {
@@ -96,13 +149,11 @@ static int proxy_downstream_sni(SSL *tls, int *alert, void *argument) {
       break;
     }
   }
-  proxy_queue_unlock(queue);
   return SSL_TLSEXT_ERR_OK;
 }
 
-SSL_CTX *proxy_downstream_tls_context(proxy_queue *queue) {
+SSL_CTX *proxy_downstream_tls_context(proxy_queue *queue, const laghu_proxy_options *options) {
   SSL_CTX *context;
-  const laghu_proxy_options *options = queue == NULL ? NULL : queue->options;
   const char *certificate = options == NULL ? NULL : options->tls_certificate;
   const char *private_key = options == NULL ? NULL : options->tls_private_key;
   size_t index;
@@ -256,6 +307,31 @@ bool proxy_read_headers(laghu_socket socket, char *buffer, SSL *tls, size_t *len
   return false;
 }
 
+bool proxy_read_client_headers(laghu_socket socket, char *buffer, SSL *tls, unsigned int idle_timeout, unsigned int total_timeout, size_t *length,
+                               unsigned char **body_start, size_t *body_initial) {
+  uint64_t deadline = proxy_monotonic_ms() + (uint64_t)total_timeout * 1000U;
+  size_t used = 0U;
+  bool complete = false;
+  while (used < LAGHU_PROXY_HEADER_BYTES) {
+    int got = proxy_client_recv_until(socket, tls, buffer + used, LAGHU_PROXY_HEADER_BYTES - used, idle_timeout, deadline);
+    char *end;
+    if (got <= 0) break;
+    used += (size_t)got;
+    buffer[used] = '\0';
+    end = strstr(buffer, "\r\n\r\n");
+    if (end != NULL) {
+      size_t header_length = (size_t)(end - buffer) + 4U;
+      *body_start = (unsigned char *)buffer + header_length;
+      *body_initial = used - header_length;
+      *length = header_length;
+      complete = true;
+      break;
+    }
+  }
+  proxy_timeout(socket, idle_timeout);
+  return complete;
+}
+
 laghu_socket proxy_connect(proxy_worker *worker, const char *host, const char *port, unsigned int timeout) {
   struct addrinfo hints, *addresses = NULL, *address;
   laghu_socket descriptor = LAGHU_INVALID_SOCKET;
@@ -325,10 +401,9 @@ static bool proxy_origin_idle_alive(laghu_socket socket) {
   return recv(socket, &byte, 1U, MSG_PEEK | MSG_DONTWAIT) > 0 ? false : errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
-bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin, const char *host, const char *port, const char *authority,
-                          bool origin_tls, bool *timed_out) {
+bool proxy_origin_acquire(proxy_worker *worker, const laghu_proxy_options *options, proxy_origin_connection *origin, const char *host,
+                          const char *port, const char *authority, bool origin_tls, bool *timed_out) {
   proxy_queue *queue = worker->queue;
-  const laghu_proxy_options *options = proxy_current_options(queue);
   uint64_t now = proxy_monotonic_ms();
   unsigned int index = 0U;
   memset(origin, 0, sizeof(*origin));
@@ -368,9 +443,8 @@ bool proxy_origin_acquire(proxy_worker *worker, proxy_origin_connection *origin,
   return true;
 }
 
-void proxy_origin_release(proxy_worker *worker, proxy_origin_connection *origin, bool reusable) {
+void proxy_origin_release(proxy_worker *worker, const laghu_proxy_options *options, proxy_origin_connection *origin, bool reusable) {
   proxy_queue *queue = worker->queue;
-  const laghu_proxy_options *options = proxy_current_options(queue);
   proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
   if (!reusable || options->origin_pool_size == 0U || proxy_is_forcing(queue)) {
     proxy_origin_dispose(origin);

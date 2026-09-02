@@ -20,11 +20,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cargo_audit:
+    name: Cargo audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit committed Rust lockfile
+        working-directory: workers/laghu-js-optimize
+        run: |
+          git ls-files --error-unmatch Cargo.lock
+          cargo audit --file Cargo.lock
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install tools
         run: |
           sudo apt-get update
@@ -35,8 +48,11 @@ jobs:
     name: Release contracts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - run: scripts/test-release-contracts
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: |
+          scripts/test-release-contracts
+          scripts/test-supply-chain-contracts
+          scripts/test-release-hardening-contracts
 
   test:
     name: Test · ${{ matrix.label }} · vips=${{ matrix.vips }}
@@ -66,7 +82,7 @@ jobs:
             architecture: arm64
             vips: "ON"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify architecture
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
       - name: Install libvips on Ubuntu
@@ -125,7 +141,7 @@ jobs:
             architecture: arm64
             nginx_version: "1.30.4"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify architecture
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
       - name: Install Linux build dependencies
@@ -155,7 +171,7 @@ jobs:
       stable: ${{ steps.releases.outputs.stable }}
       mainline: ${{ steps.releases.outputs.mainline }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: releases
         name: Verify pinned stable and mainline releases
         run: scripts/check-nginx-release-policy
@@ -173,7 +189,7 @@ jobs:
           - channel: mainline
             nginx_version: ${{ needs.nginx_release_policy.outputs.mainline }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -197,7 +213,7 @@ jobs:
     outputs:
       baseline_nginx_version: ${{ steps.compatibility.outputs.baseline_nginx_version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -218,8 +234,8 @@ jobs:
     needs: nginx_compatibility_probe
     if: ${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version != '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Archive proven legacy baseline image
         env:
           BASELINE_NGINX_VERSION: ${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}
@@ -227,7 +243,7 @@ jobs:
           NGINX_BASELINE_IMAGE_MANIFEST: tmp/legacy-baseline-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-linux-amd64.json
           BASELINE_IMAGE_TAG: laghu-baseline-compatibility-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-amd64
         run: scripts/run-nginx-baseline-image
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: legacy-baseline-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-amd64
           path: |
@@ -266,7 +282,7 @@ jobs:
             architecture: arm64
             mpm: event
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify architecture
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
       - name: Install Linux dependencies
@@ -308,8 +324,8 @@ jobs:
           - alma-apache
         architecture: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Verify native runner architecture
         run: |
           case "${{ matrix.architecture }}:$(uname -m)" in
@@ -319,7 +335,7 @@ jobs:
       - run: >-
           scripts/run-in-docker --target ${{ matrix.target }}
           --architectures ${{ matrix.architecture }}
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: docker-${{ matrix.target }}-${{ matrix.architecture }}
@@ -329,15 +345,15 @@ jobs:
     name: Execution rail · native and AMD64 containers
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Install native adapter dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y apache2 apache2-dev libvips-dev
       - run: scripts/run-execution-rail
       - run: scripts/run-amd64-container-parity-rail
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: execution-rail
@@ -347,7 +363,7 @@ jobs:
     name: Sanitizers and image fuzzing
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install compiler
         run: |
           sudo apt-get update
@@ -363,6 +379,7 @@ jobs:
       - run: ctest --test-dir tmp/sanitizers --output-on-failure
       - run: tmp/sanitizers/libs/laghu-image/laghu_image_fuzz -runs=2000
       - run: tmp/sanitizers/libs/laghu-runtime/laghu_runtime_fuzz -runs=2000
+      - run: tmp/sanitizers/servers/laghu/laghu_proxy_chunked_fuzz -runs=2000 servers/laghu/tests/corpus/chunked
 
   minimum_vips:
     name: Minimum libvips 8.15 baseline
@@ -374,7 +391,7 @@ jobs:
           apt-get update
           apt-get install --no-install-recommends -y \
             ca-certificates cmake git libvips-dev pkgconf
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: cmake -S . -B tmp/minimum-vips -DLAGHU_WITH_VIPS=ON
       - run: cmake --build tmp/minimum-vips --parallel
       - run: ctest --test-dir tmp/minimum-vips --output-on-failure
@@ -407,7 +424,7 @@ jobs:
             offering: mod-laghu
             dockerfile: packaging/container/Dockerfile.apache
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install fixture generator
         run: |
           sudo apt-get update
@@ -469,7 +486,7 @@ jobs:
           - label: Ubuntu 24.04 arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install package dependencies
         run: |
           sudo apt-get update
@@ -495,7 +512,7 @@ jobs:
           apache2ctl configtest
           LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: laghu-deb-${{ runner.arch }}
           path: ../*laghu*.deb
@@ -518,7 +535,7 @@ jobs:
           dnf install -y cargo cmake gcc git gzip httpd httpd-devel make nginx nginx-mod-devel rust
           pkgconf-pkg-config rpm-build shadow-utils systemd-rpm-macros tar
           vips-devel
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build, install, and inspect packages
         run: |
           mkdir -p "$HOME/rpmbuild/SOURCES" "$HOME/rpmbuild/SPECS"
@@ -540,7 +557,7 @@ jobs:
           httpd -t
           LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: laghu-rpm-${{ runner.arch }}
           path: ~/rpmbuild/RPMS/**/*.rpm
@@ -549,8 +566,8 @@ jobs:
     name: Documentation
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: ruby/setup-ruby@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true

@@ -21,15 +21,41 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(laghu PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+if(LAGHU_BUILD_FUZZERS)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "LAGHU_BUILD_FUZZERS requires Clang")
+  endif()
+  target_compile_options(laghu_proxy PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+  add_executable(laghu_proxy_request_line_fuzz tests/request_line_fuzz.c)
+  target_include_directories(laghu_proxy_request_line_fuzz PRIVATE src)
+  target_link_libraries(laghu_proxy_request_line_fuzz PRIVATE laghu_proxy)
+  target_compile_options(laghu_proxy_request_line_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(laghu_proxy_request_line_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  add_executable(laghu_proxy_chunked_fuzz tests/chunked_fuzz.c)
+  target_include_directories(laghu_proxy_chunked_fuzz PRIVATE src)
+  target_link_libraries(laghu_proxy_chunked_fuzz PRIVATE laghu_proxy)
+  target_compile_options(laghu_proxy_chunked_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(laghu_proxy_chunked_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+
 if(LAGHU_BUILD_TESTS)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_executable(laghu_proxy_test tests/proxy_test.c)
   target_include_directories(laghu_proxy_test PRIVATE src)
   target_link_libraries(laghu_proxy_test PRIVATE laghu_proxy)
+  add_executable(laghu_proxy_chunked_regression tests/chunked_regression.c)
+  target_include_directories(laghu_proxy_chunked_regression PRIVATE src)
+  target_link_libraries(laghu_proxy_chunked_regression PRIVATE laghu_proxy)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(laghu_proxy_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(laghu_proxy_chunked_regression PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME laghu_proxy_test COMMAND laghu_proxy_test)
+  add_test(NAME laghu_proxy_chunked_regression
+           COMMAND laghu_proxy_chunked_regression ${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/chunked)
+  add_test(NAME laghu_proxy_yaml_nesting_test
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/yaml_nesting_test.py
+                   $<TARGET_FILE:laghu>)
   add_test(NAME laghu_proxy_smoke
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/proxy_smoke.py

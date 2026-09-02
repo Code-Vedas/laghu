@@ -1,0 +1,67 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)
+NGINX_DOCKERFILE="${REPO_ROOT}/packaging/container/Dockerfile"
+APACHE_DOCKERFILE="${REPO_ROOT}/packaging/container/Dockerfile.apache"
+
+ubuntu_digest='sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517'
+rust_digest='sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1'
+nginx_sha256='4261dc90e9e47c1c4041276e9aaa3d48ebe2e664f728e14fa95ae6c67d57a08b'
+nginx_signing_fingerprint='43387825DDB1BB97EC36BA5D007C8D7C15D87369'
+
+for dockerfile in "${NGINX_DOCKERFILE}" "${APACHE_DOCKERFILE}"; do
+  if grep -Eq '^FROM ubuntu:24\\.04([[:space:]]|$)' "${dockerfile}"; then
+    echo "Mutable Ubuntu base in ${dockerfile}" >&2
+    exit 1
+  fi
+  if grep -Eq '^COPY --from=rust:1\\.95-bookworm([[:space:]]|$)' "${dockerfile}"; then
+    echo "Mutable Rust builder in ${dockerfile}" >&2
+    exit 1
+  fi
+  if ! grep -Fq "ubuntu:24.04@${ubuntu_digest}" "${dockerfile}"; then
+    echo "Missing pinned Ubuntu base in ${dockerfile}" >&2
+    exit 1
+  fi
+  if ! grep -Fq "rust:1.95-bookworm@${rust_digest}" "${dockerfile}"; then
+    echo "Missing pinned Rust builder in ${dockerfile}" >&2
+    exit 1
+  fi
+done
+
+# The following literals are Dockerfile source contracts, not shell expansions.
+# shellcheck disable=SC2016
+for expected in \
+  "ARG NGINX_TARBALL_SHA256=${nginx_sha256}" \
+  "nginx_signing_key_fingerprint=${nginx_signing_fingerprint}" \
+  'https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz.asc' \
+  'https://nginx.org/keys/arut.key' \
+  'sha256sum --check --strict' \
+  'gpgv --status-fd 1 --keyring' \
+  '[GNUPG:] VALIDSIG ${nginx_signing_key_fingerprint} '; do
+  if ! grep -Fq "${expected}" "${NGINX_DOCKERFILE}"; then
+    echo "Missing NGINX provenance check: ${expected}" >&2
+    exit 1
+  fi
+done
+
+if grep -Eq '^[[:space:]]*(uses:|- uses:)[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' \
+    "${REPO_ROOT}"/.github/workflows/*.yml | \
+    grep -Ev '@[0-9a-f]{40}([[:space:]]|$)' >/dev/null; then
+  echo 'Every external GitHub Action must be pinned to a full commit SHA' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'package-ecosystem: docker' "${REPO_ROOT}/.github/dependabot.yml" || \
+   ! grep -Fq 'directory: /packaging/container' "${REPO_ROOT}/.github/dependabot.yml"; then
+  echo 'Dependabot must maintain pinned release-container image digests' >&2
+  exit 1
+fi
+
+echo 'supply-chain contract tests passed'

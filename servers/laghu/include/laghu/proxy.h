@@ -26,6 +26,8 @@ extern "C" {
 #define LAGHU_PROXY_DEFAULT_QUEUE 64U
 #define LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT 5U
 #define LAGHU_PROXY_DEFAULT_IO_TIMEOUT 30U
+#define LAGHU_PROXY_DEFAULT_REQUEST_HEADER_TIMEOUT 10U
+#define LAGHU_PROXY_DEFAULT_REQUEST_BODY_TIMEOUT 60U
 #define LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT 30U
 #define LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE 16U
 #define LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT 30U
@@ -66,8 +68,17 @@ typedef struct {
   bool tls;
 } laghu_proxy_upstream_target;
 
+#define LAGHU_PROXY_BASIC_AUTH_SCRYPT_N UINT64_C(16384)
+#define LAGHU_PROXY_BASIC_AUTH_SCRYPT_R UINT64_C(8)
+#define LAGHU_PROXY_BASIC_AUTH_SCRYPT_P UINT64_C(1)
+#define LAGHU_PROXY_BASIC_AUTH_SCRYPT_MAX_MEMORY (UINT64_C(32) * 1024U * 1024U)
+
+typedef enum { LAGHU_PROXY_BASIC_AUTH_SHA256 = 0, LAGHU_PROXY_BASIC_AUTH_SCRYPT_V1 } laghu_proxy_basic_auth_kdf;
+
 typedef struct {
   char username[128];
+  laghu_proxy_basic_auth_kdf password_kdf;
+  unsigned char password_salt[16];
   unsigned char password_hash[32];
 } laghu_proxy_basic_auth_user;
 
@@ -172,6 +183,8 @@ typedef struct {
   unsigned int connection_queue;
   unsigned int connect_timeout;
   unsigned int io_timeout;
+  unsigned int request_header_timeout;
+  unsigned int request_body_timeout;
   unsigned int drain_timeout;
   unsigned int origin_pool_size;
   unsigned int origin_idle_timeout;

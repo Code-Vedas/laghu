@@ -142,7 +142,7 @@ void proxy_maintain_queue_attachments(proxy_queue *queue) {
   const laghu_proxy_options *options;
   const laghu_service_config *service;
   if (queue == NULL) return;
-  options = proxy_current_options(queue);
+  options = proxy_options_acquire(queue);
   service = &options->service;
   if (queue->image_queue_required) (void)proxy_attach_queue(queue, &queue->runtime_queue, &queue->runtime_queue_ready, service->worker_queue);
   if (service->html_refresh_queue[0] != '\0')
@@ -155,6 +155,7 @@ void proxy_maintain_queue_attachments(proxy_queue *queue) {
     (void)proxy_attach_queue(queue, &queue->chrome_analysis_queue, &queue->chrome_analysis_queue_ready, service->chrome_analysis_queue);
   if (service->otel_trace_queue[0] != '\0')
     (void)proxy_attach_queue(queue, &queue->otel_trace_queue, &queue->otel_trace_queue_ready, service->otel_trace_queue);
+  proxy_options_release(queue);
 }
 
 static void proxy_signal_handler(int signal_number) {
@@ -327,16 +328,23 @@ invalid:
 static proxy_reload_request proxy_reload_request_consume(proxy_queue *queue, char *config_path, size_t config_capacity) {
   char request_name[LAGHU_RUNTIME_PATH_SIZE + 8U];
   char processing_name[LAGHU_RUNTIME_PATH_SIZE + 32U];
+  char pid_path[LAGHU_RUNTIME_PATH_SIZE];
+  const laghu_proxy_options *options;
   struct stat status;
   size_t used = 0U;
   int directory;
   int file;
   bool valid = false;
-  if (queue == NULL || config_path == NULL || config_capacity == 0U ||
-      !proxy_reload_request_names(proxy_current_options(queue)->pid_file, request_name, sizeof(request_name), processing_name,
-                                  sizeof(processing_name)))
+  if (queue == NULL || config_path == NULL || config_capacity == 0U) return PROXY_RELOAD_REQUEST_NONE;
+  options = proxy_options_acquire(queue);
+  if (options == NULL || snprintf(pid_path, sizeof(pid_path), "%s", options->pid_file) <= 0) {
+    proxy_options_release(queue);
     return PROXY_RELOAD_REQUEST_NONE;
-  directory = proxy_reload_directory_open(proxy_current_options(queue)->pid_file);
+  }
+  proxy_options_release(queue);
+  if (!proxy_reload_request_names(pid_path, request_name, sizeof(request_name), processing_name, sizeof(processing_name)))
+    return PROXY_RELOAD_REQUEST_NONE;
+  directory = proxy_reload_directory_open(pid_path);
   if (directory < 0) return PROXY_RELOAD_REQUEST_INVALID;
   if (renameat(directory, request_name, directory, processing_name) != 0) {
     (void)close(directory);
@@ -435,25 +443,17 @@ static bool proxy_reload_compatible(const laghu_proxy_options *active, const lag
   return true;
 }
 
-static void proxy_reload_snapshots_dispose(proxy_queue *queue) {
-  proxy_reload_snapshot *snapshot = queue->reload_snapshots;
-  while (snapshot != NULL) {
-    proxy_reload_snapshot *next = snapshot->next;
-    laghu_proxy_options_dispose(&snapshot->options);
-    free(snapshot);
-    snapshot = next;
-  }
-  queue->reload_snapshots = NULL;
+static void proxy_reload_snapshot_dispose(proxy_reload_snapshot *snapshot) {
+  if (snapshot == NULL) return;
+  laghu_proxy_options_dispose(&snapshot->options);
+  free(snapshot);
 }
 
-static void proxy_static_roots_dispose_all(proxy_queue *queue) {
-  proxy_static_roots *roots = queue->static_roots;
-  while (roots != NULL) {
-    proxy_static_roots *next = roots->next;
-    proxy_static_roots_dispose(roots);
-    roots = next;
-  }
+static void proxy_reload_generation_dispose(proxy_queue *queue) {
+  proxy_static_roots_dispose(queue->static_roots);
   queue->static_roots = NULL;
+  proxy_reload_snapshot_dispose(queue->current_snapshot);
+  queue->current_snapshot = NULL;
 }
 
 static void proxy_reload_configuration(proxy_queue *queue) {
@@ -462,6 +462,8 @@ static void proxy_reload_configuration(proxy_queue *queue) {
   char requested_path[LAGHU_RUNTIME_PATH_SIZE];
   char error[256] = {0};
   const laghu_proxy_options *active;
+  proxy_reload_snapshot *previous_snapshot;
+  proxy_static_roots *previous_roots;
   const char *config_path;
   proxy_reload_request request;
   if (queue->config_path[0] == '\0') {
@@ -486,13 +488,15 @@ static void proxy_reload_configuration(proxy_queue *queue) {
     proxy_log_event(queue, "reload", "retained");
     return;
   }
-  active = proxy_current_options(queue);
+  active = proxy_options_acquire(queue);
   if (!proxy_reload_compatible(active, &snapshot->options)) {
+    proxy_options_release(queue);
     laghu_proxy_options_dispose(&snapshot->options);
     free(snapshot);
     proxy_log_event(queue, "reload", "retained");
     return;
   }
+  proxy_options_release(queue);
   roots = proxy_static_roots_create(&snapshot->options);
   if (roots == NULL) {
     laghu_proxy_options_dispose(&snapshot->options);
@@ -500,13 +504,25 @@ static void proxy_reload_configuration(proxy_queue *queue) {
     proxy_log_event(queue, "reload", "retained");
     return;
   }
-  proxy_queue_lock(queue);
-  roots->next = queue->static_roots;
+  /* Every request, worker-side helper, health probe, listener helper, TLS SNI
+   * callback, and log decision borrows options through this boundary. New
+   * borrows stop before the current readers quiesce; no queue mutex is held
+   * while waiting, so reload cannot invert the normal options-then-queue order. */
+  (void)pthread_mutex_lock(&queue->options_lock);
+  queue->options_writer_pending = true;
+  while (queue->options_readers != 0U) (void)pthread_cond_wait(&queue->options_quiescent, &queue->options_lock);
+  previous_snapshot = queue->current_snapshot;
+  previous_roots = queue->static_roots;
   queue->static_roots = roots;
-  snapshot->next = queue->reload_snapshots;
-  queue->reload_snapshots = snapshot;
+  queue->current_snapshot = snapshot;
   queue->options = &snapshot->options;
   if (request == PROXY_RELOAD_REQUEST_READY) (void)snprintf(queue->config_path, sizeof(queue->config_path), "%s", config_path);
+  queue->options_writer_pending = false;
+  (void)pthread_cond_broadcast(&queue->options_quiescent);
+  (void)pthread_mutex_unlock(&queue->options_lock);
+  proxy_static_roots_dispose(previous_roots);
+  proxy_reload_snapshot_dispose(previous_snapshot);
+  proxy_queue_lock(queue);
   memset(queue->upstream_health, 0, sizeof(queue->upstream_health));
   proxy_queue_unlock(queue);
   proxy_log_event(queue, "reload", "applied");
@@ -536,7 +552,7 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
   laghu_socket listener = LAGHU_INVALID_SOCKET;
   unsigned int index, started = 0U;
   int result = 1;
-  bool lock_ready = false, pid_created = false;
+  bool lock_ready = false, options_lock_ready = false, options_condition_ready = false, pid_created = false;
   bool health_started = false, health_failed = false;
   if (options == NULL || !proxy_options_lifecycle_requirements(options, &requirements)) return 1;
   bool ready_condition = false;
@@ -572,6 +588,10 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
   if (queue.items == NULL || (options->origin_pool_size != 0U && queue.origins == NULL) || workers == NULL || threads == NULL) goto cleanup;
   if (pthread_mutex_init(&queue.lock, NULL) != 0) goto cleanup;
   lock_ready = true;
+  if (pthread_mutex_init(&queue.options_lock, NULL) != 0) goto cleanup;
+  options_lock_ready = true;
+  if (pthread_cond_init(&queue.options_quiescent, NULL) != 0) goto cleanup;
+  options_condition_ready = true;
   if (pthread_cond_init(&queue.ready, NULL) != 0) goto cleanup;
   ready_condition = true;
   queue.state = PROXY_STARTING;
@@ -642,10 +662,11 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
     proxy_log_startup_failure(&queue, "origin_tls");
     goto cleanup;
   }
-  if (options->downstream_tls && (queue.downstream_tls_context = proxy_downstream_tls_context(&queue)) == NULL) {
+  if (options->downstream_tls && (queue.downstream_tls_context = proxy_downstream_tls_context(&queue, options)) == NULL) {
     proxy_log_startup_failure(&queue, "downstream_tls");
     goto cleanup;
   }
+  queue.downstream_tls_options = options;
   listener = proxy_listen(options->listen_host, options->listen_port);
   if (listener == LAGHU_INVALID_SOCKET) {
     proxy_log_startup_failure(&queue, "listen");
@@ -695,9 +716,10 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
         }
         proxy_maintain_queue_attachments(&queue);
         {
-          const laghu_proxy_options *current = proxy_current_options(&queue);
+          const laghu_proxy_options *current = proxy_options_acquire(&queue);
           (void)laghu_runtime_import_chrome_analysis(queue.rum, current->service.chrome_analysis_output, (uint64_t)time(NULL),
                                                      current->service.rum_ttl);
+          proxy_options_release(&queue);
         }
         if (proxy_listener_ready(listener)) {
           proxy_connection connection;
@@ -743,9 +765,12 @@ cleanup:
   SSL_CTX_free(queue.tls_context);
   SSL_CTX_free(queue.downstream_tls_context);
   if (pid_created) (void)unlink(options->pid_file);
-  proxy_static_roots_dispose_all(&queue);
-  proxy_reload_snapshots_dispose(&queue);
+  proxy_reload_generation_dispose(&queue);
   if (ready_condition) pthread_cond_destroy(&queue.ready);
+  if (options_lock_ready) {
+    if (options_condition_ready) pthread_cond_destroy(&queue.options_quiescent);
+    pthread_mutex_destroy(&queue.options_lock);
+  }
   if (lock_ready) pthread_mutex_destroy(&queue.lock);
   free(threads);
   free(workers);

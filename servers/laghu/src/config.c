@@ -94,10 +94,10 @@ static bool proxy_rule_cidr_add(laghu_service_cidr *values, size_t *count, const
   return true;
 }
 
-static bool proxy_rule_hex(const char *value, unsigned char output[32U]) {
+static bool proxy_rule_hex(const char *value, unsigned char *output, size_t output_size) {
   size_t index;
-  if (value == NULL || strlen(value) != 64U) return false;
-  for (index = 0U; index < 32U; ++index) {
+  if (value == NULL || output == NULL || strlen(value) != output_size * 2U) return false;
+  for (index = 0U; index < output_size; ++index) {
     int high = isdigit((unsigned char)value[index * 2U])              ? value[index * 2U] - '0'
                : value[index * 2U] >= 'a' && value[index * 2U] <= 'f' ? value[index * 2U] - 'a' + 10
                : value[index * 2U] >= 'A' && value[index * 2U] <= 'F' ? value[index * 2U] - 'A' + 10
@@ -109,6 +109,37 @@ static bool proxy_rule_hex(const char *value, unsigned char output[32U]) {
     if (high < 0 || low < 0) return false;
     output[index] = (unsigned char)((high << 4U) | low);
   }
+  return true;
+}
+
+static bool proxy_rule_scrypt_parameter(const char *value, uint64_t expected) {
+  char *end = NULL;
+  uint64_t parsed;
+  if (value == NULL || value[0] == '\0') return false;
+  errno = 0;
+  parsed = strtoull(value, &end, 10);
+  return errno == 0 && end != value && *end == '\0' && parsed == expected;
+}
+
+static bool proxy_rule_scrypt_parse(char *value, laghu_proxy_basic_auth_user *user) {
+  char *fields[6U];
+  size_t index;
+  if (value == NULL || user == NULL) return false;
+  fields[0U] = value;
+  for (index = 1U; index < sizeof(fields) / sizeof(fields[0]); ++index) {
+    char *separator = strchr(fields[index - 1U], ':');
+    if (separator == NULL) return false;
+    *separator = '\0';
+    fields[index] = separator + 1U;
+  }
+  if (strchr(fields[5U], ':') != NULL || strcmp(fields[0U], "scrypt-v1") != 0 ||
+      !proxy_rule_scrypt_parameter(fields[1U], LAGHU_PROXY_BASIC_AUTH_SCRYPT_N) ||
+      !proxy_rule_scrypt_parameter(fields[2U], LAGHU_PROXY_BASIC_AUTH_SCRYPT_R) ||
+      !proxy_rule_scrypt_parameter(fields[3U], LAGHU_PROXY_BASIC_AUTH_SCRYPT_P) ||
+      !proxy_rule_hex(fields[4U], user->password_salt, sizeof(user->password_salt)) ||
+      !proxy_rule_hex(fields[5U], user->password_hash, sizeof(user->password_hash)))
+    return false;
+  user->password_kdf = LAGHU_PROXY_BASIC_AUTH_SCRYPT_V1;
   return true;
 }
 
@@ -145,16 +176,21 @@ static bool proxy_rule_auth_load(laghu_proxy_rules *rules, const char *path) {
     while (length != 0U && (line[length - 1U] == '\n' || line[length - 1U] == '\r')) line[--length] = '\0';
     if (length == 0U || line[0] == '#') continue;
     separator = strchr(line, ':');
-    if (separator == NULL || separator == line || strncmp(separator + 1U, "sha256:", 7U) != 0) goto failed;
+    if (separator == NULL || separator == line) goto failed;
     *separator = '\0';
-    hash = separator + 8U;
+    hash = separator + 1U;
     username_length = strlen(line);
-    if (username_length >= sizeof(rules->basic_auth_users[0].username) || !proxy_rule_hex(hash, rules->basic_auth_users[count].password_hash))
-      goto failed;
+    if (username_length >= sizeof(rules->basic_auth_users[0].username)) goto failed;
     for (index = 0U; line[index] != '\0'; ++index)
       if ((unsigned char)line[index] <= 32U || line[index] == ':') goto failed;
     for (index = 0U; index < count; ++index)
       if (strcmp(rules->basic_auth_users[index].username, line) == 0) goto failed;
+    if (!strncmp(hash, "sha256:", 7U)) {
+      if (!proxy_rule_hex(hash + 7U, rules->basic_auth_users[count].password_hash, sizeof(rules->basic_auth_users[count].password_hash))) goto failed;
+      rules->basic_auth_users[count].password_kdf = LAGHU_PROXY_BASIC_AUTH_SHA256;
+    } else if (!proxy_rule_scrypt_parse(hash, &rules->basic_auth_users[count])) {
+      goto failed;
+    }
     memcpy(rules->basic_auth_users[count].username, line, username_length + 1U);
     ++count;
   }
@@ -361,6 +397,8 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->connection_queue = LAGHU_PROXY_DEFAULT_QUEUE;
   options->connect_timeout = LAGHU_PROXY_DEFAULT_CONNECT_TIMEOUT;
   options->io_timeout = LAGHU_PROXY_DEFAULT_IO_TIMEOUT;
+  options->request_header_timeout = LAGHU_PROXY_DEFAULT_REQUEST_HEADER_TIMEOUT;
+  options->request_body_timeout = LAGHU_PROXY_DEFAULT_REQUEST_BODY_TIMEOUT;
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
   options->origin_pool_size = LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE;
   options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
@@ -472,7 +510,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool javascript_defer_suggestions_seen = false;
   bool quality_seen = false, workers_seen = false;
   bool connection_queue_seen = false, connect_timeout_seen = false;
-  bool io_timeout_seen = false, drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
+  bool io_timeout_seen = false, request_header_timeout_seen = false, request_body_timeout_seen = false;
+  bool drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
   bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, pid_file_seen = false, forwarded_seen = false;
   bool document_root_seen = false, index_seen = false;
   bool directory_listing_seen = false, access_log_seen = false;
@@ -728,6 +767,16 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (io_timeout_seen || !proxy_uint(value, 1U, 300U, &options->io_timeout))
         return proxy_error(error, error_size, "invalid or duplicate --io-timeout");
       io_timeout_seen = true;
+    } else if (strcmp(name, "--request-header-timeout") == 0) {
+      NEED_VALUE();
+      if (request_header_timeout_seen || !proxy_uint(value, 1U, 300U, &options->request_header_timeout))
+        return proxy_error(error, error_size, "invalid or duplicate --request-header-timeout");
+      request_header_timeout_seen = true;
+    } else if (strcmp(name, "--request-body-timeout") == 0) {
+      NEED_VALUE();
+      if (request_body_timeout_seen || !proxy_uint(value, 1U, 300U, &options->request_body_timeout))
+        return proxy_error(error, error_size, "invalid or duplicate --request-body-timeout");
+      request_body_timeout_seen = true;
     } else if (strcmp(name, "--drain-timeout") == 0) {
       NEED_VALUE();
       if (drain_timeout_seen || !proxy_uint(value, 1U, 300U, &options->drain_timeout))

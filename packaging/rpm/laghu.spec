@@ -72,7 +72,7 @@ contracts as native modules.
 bsdtar -xf %{SOURCE0} --strip-components 1 -C .
 
 %build
-%cmake -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF
+%cmake -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release -DLAGHU_ENABLE_RELEASE_HARDENING=ON
 %cmake_build
 %nginx_modconfigure
 %nginx_modbuild

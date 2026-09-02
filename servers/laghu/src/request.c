@@ -5,14 +5,31 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "laghu/cache.h"
 #include "server_internal.h"
+
+#ifdef O_NOFOLLOW
+#define LAGHU_PROXY_ADMIN_TOKEN_NOFOLLOW O_NOFOLLOW
+#else
+/* POSIX implementations without O_NOFOLLOW still validate that the opened
+ * descriptor is the lstat inode before any token byte is consumed. */
+#define LAGHU_PROXY_ADMIN_TOKEN_NOFOLLOW 0
+#endif
+
+#ifdef O_CLOEXEC
+#define LAGHU_PROXY_ADMIN_TOKEN_CLOEXEC O_CLOEXEC
+#else
+#define LAGHU_PROXY_ADMIN_TOKEN_CLOEXEC 0
+#endif
 
 bool proxy_peer_trusted(const laghu_service_config *service, const proxy_connection *connection) {
   const unsigned char *peer;
@@ -106,31 +123,55 @@ static bool proxy_basic_base64(const char *input, unsigned char *output, size_t 
   return true;
 }
 
-static bool proxy_basic_authorized(const proxy_request *request, const laghu_proxy_rules *rules) {
+static bool proxy_basic_password_matches(const laghu_proxy_basic_auth_user *user, const char *password) {
+  unsigned char derived[32U];
+  unsigned int derived_length = 0U;
+  bool matched = false;
+  if (user == NULL || password == NULL) return false;
+  if (user->password_kdf == LAGHU_PROXY_BASIC_AUTH_SHA256) {
+    if (EVP_Digest(password, strlen(password), derived, &derived_length, EVP_sha256(), NULL) != 1 || derived_length != sizeof(derived)) goto done;
+  } else if (user->password_kdf == LAGHU_PROXY_BASIC_AUTH_SCRYPT_V1) {
+    if (EVP_PBE_scrypt(password, strlen(password), user->password_salt, sizeof(user->password_salt), LAGHU_PROXY_BASIC_AUTH_SCRYPT_N,
+                       LAGHU_PROXY_BASIC_AUTH_SCRYPT_R, LAGHU_PROXY_BASIC_AUTH_SCRYPT_P, LAGHU_PROXY_BASIC_AUTH_SCRYPT_MAX_MEMORY, derived,
+                       sizeof(derived)) != 1)
+      goto done;
+  } else {
+    goto done;
+  }
+  matched = CRYPTO_memcmp(user->password_hash, derived, sizeof(derived)) == 0;
+done:
+  OPENSSL_cleanse(derived, sizeof(derived));
+  return matched;
+}
+
+static bool proxy_basic_authorized(const laghu_config *core, const laghu_service_config *service, const proxy_connection *connection,
+                                   const proxy_request *request, const laghu_proxy_rules *rules) {
   const char *authorization;
   unsigned char decoded[512U];
-  unsigned char digest[EVP_MAX_MD_SIZE];
-  unsigned int digest_length = 0U;
   char *separator;
   size_t decoded_length;
   size_t index;
-  unsigned int matched = 0U;
+  bool matched = false;
   if ((rules->present & LAGHU_PROXY_RULE_BASIC_AUTH) == 0U) return true;
+  if (core == NULL || service == NULL || connection == NULL || strcmp(proxy_effective_scheme(core, service, connection, request), "https") != 0)
+    return false;
   authorization = proxy_single_header(request, "Authorization");
   if (authorization == NULL || strncmp(authorization, "Basic ", 6U) != 0 ||
       !proxy_basic_base64(authorization + 6U, decoded, sizeof(decoded) - 1U, &decoded_length))
-    return false;
+    goto done;
   decoded[decoded_length] = '\0';
   separator = strchr((char *)decoded, ':');
-  if (separator == NULL || separator == (char *)decoded || separator[1] == '\0' || strchr(separator + 1U, ':') != NULL) return false;
+  if (separator == NULL || separator == (char *)decoded || separator[1] == '\0' || strchr(separator + 1U, ':') != NULL) goto done;
   *separator++ = '\0';
-  if (EVP_Digest(separator, strlen(separator), digest, &digest_length, EVP_sha256(), NULL) != 1 || digest_length != 32U) return false;
   for (index = 0U; index < rules->basic_auth_user_count; ++index) {
-    unsigned int username = (unsigned int)(strcmp(rules->basic_auth_users[index].username, (const char *)decoded) == 0);
-    unsigned int password = (unsigned int)(CRYPTO_memcmp(rules->basic_auth_users[index].password_hash, digest, 32U) == 0);
-    matched |= username & password;
+    if (strcmp(rules->basic_auth_users[index].username, (const char *)decoded) == 0) {
+      matched = proxy_basic_password_matches(&rules->basic_auth_users[index], separator);
+      break;
+    }
   }
-  return matched != 0U;
+done:
+  OPENSSL_cleanse(decoded, sizeof(decoded));
+  return matched;
 }
 
 static bool proxy_rate_peer(const proxy_connection *connection, const unsigned char **bytes, size_t *length) {
@@ -212,8 +253,9 @@ static bool proxy_rate_allowed(proxy_queue *queue, const proxy_connection *conne
   return true;
 }
 
-bool proxy_request_access_allowed(proxy_queue *queue, const proxy_connection *connection, const proxy_request *request,
-                                  const laghu_proxy_rules *rules, const char **failure) {
+bool proxy_request_access_allowed(proxy_queue *queue, const laghu_config *core, const laghu_service_config *service,
+                                  const proxy_connection *connection, const proxy_request *request, const laghu_proxy_rules *rules,
+                                  const char **failure) {
   if (failure != NULL) *failure = "none";
   if (rules == NULL || queue == NULL || connection == NULL || request == NULL) return false;
   if (rules->deny_count != 0U && proxy_peer_in_cidrs(connection, rules->deny, rules->deny_count)) {
@@ -224,7 +266,7 @@ bool proxy_request_access_allowed(proxy_queue *queue, const proxy_connection *co
     if (failure != NULL) *failure = "cidr_allow";
     return false;
   }
-  if (!proxy_basic_authorized(request, rules)) {
+  if (!proxy_basic_authorized(core, service, connection, request, rules)) {
     if (failure != NULL) *failure = "basic_auth";
     return false;
   }
@@ -235,25 +277,82 @@ bool proxy_request_access_allowed(proxy_queue *queue, const proxy_connection *co
   return true;
 }
 
+static int proxy_admin_token_open(const char *path) {
+  int descriptor;
+  int flags;
+  if (path == NULL) return -1;
+  flags = O_RDONLY | LAGHU_PROXY_ADMIN_TOKEN_NOFOLLOW | LAGHU_PROXY_ADMIN_TOKEN_CLOEXEC;
+  descriptor = open(path, flags);
+  if (descriptor < 0) return -1;
+#ifndef O_CLOEXEC
+  /* This fallback explicitly sets close-on-exec before metadata validation or
+   * reading. O_NOFOLLOW is optional only because the lstat/fstat inode pairing
+   * below rejects any replacement before consuming a byte. */
+  flags = fcntl(descriptor, F_GETFD);
+  if (flags < 0 || fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != 0) {
+    (void)close(descriptor);
+    return -1;
+  }
+#endif
+  return descriptor;
+}
+
+bool proxy_admin_token_file_read(const char *path, unsigned char output[257U], size_t *length, proxy_admin_token_file_hook before_open,
+                                 proxy_admin_token_file_hook after_open, void *context) {
+  struct stat listed;
+  struct stat opened;
+  int descriptor = -1;
+  size_t used = 0U;
+  bool valid = false;
+  if (output == NULL || length == NULL) return false;
+  *length = 0U;
+  OPENSSL_cleanse(output, 257U);
+  if (path == NULL || lstat(path, &listed) != 0 || !S_ISREG(listed.st_mode) || listed.st_uid != geteuid() ||
+      (listed.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
+    return false;
+  if (before_open != NULL) before_open(path, context);
+  descriptor = proxy_admin_token_open(path);
+  if (descriptor < 0 || fstat(descriptor, &opened) != 0 || opened.st_dev != listed.st_dev || opened.st_ino != listed.st_ino ||
+      !S_ISREG(opened.st_mode) || opened.st_uid != geteuid() || (opened.st_mode & (S_IRWXG | S_IRWXO)) != 0U || opened.st_size <= 0 ||
+      opened.st_size >= (off_t)257U)
+    goto done;
+  if (after_open != NULL) after_open(path, context);
+  while (used < 257U) {
+    ssize_t received = read(descriptor, output + used, 257U - used);
+    if (received > 0) {
+      used += (size_t)received;
+    } else if (received == 0) {
+      break;
+    } else if (errno != EINTR) {
+      goto done;
+    }
+  }
+  if (used != 0U && used != 257U) {
+    *length = used;
+    valid = true;
+  }
+done:
+  if (descriptor >= 0 && close(descriptor) != 0) valid = false;
+  if (!valid) {
+    OPENSSL_cleanse(output, 257U);
+    *length = 0U;
+  }
+  return valid;
+}
+
 bool proxy_admin_token(const laghu_service_config *service, const proxy_request *request) {
-  proxy_header *provided = proxy_find((proxy_header *)request->headers, request->header_count, "X-Laghu-Purge-Token");
+  proxy_header *provided;
   unsigned char expected[257U];
   size_t length, provided_length, index, maximum;
   unsigned char difference = 0U;
-  FILE *file;
-  struct stat status;
-  if (lstat(service->purge_token_file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
-      (status.st_mode & (S_IRWXG | S_IRWXO)) != 0U)
-    return false;
-  if (provided == NULL) return false;
-  file = fopen(service->purge_token_file, "rb");
-  if (file == NULL) return false;
-  length = fread(expected, 1U, sizeof(expected), file);
-  if (fclose(file) != 0 || length == 0U || length == sizeof(expected)) return false;
+  bool authorized = false;
+  if (service == NULL || request == NULL) return false;
+  provided = proxy_find((proxy_header *)request->headers, request->header_count, "X-Laghu-Purge-Token");
+  if (provided == NULL || !proxy_admin_token_file_read(service->purge_token_file, expected, &length, NULL, NULL, NULL)) return false;
   while (length != 0U && (expected[length - 1U] == '\n' || expected[length - 1U] == '\r')) --length;
-  if (length < 16U) return false;
+  if (length < 16U) goto done;
   for (index = 0U; index < length; ++index)
-    if (expected[index] <= 0x20U || expected[index] == 0x7fU) return false;
+    if (expected[index] <= 0x20U || expected[index] == 0x7fU) goto done;
   provided_length = strlen(provided->value);
   maximum = length > provided_length ? length : provided_length;
   difference = (unsigned char)(length ^ provided_length);
@@ -262,7 +361,10 @@ bool proxy_admin_token(const laghu_service_config *service, const proxy_request 
     unsigned char right = index < provided_length ? (unsigned char)provided->value[index] : 0U;
     difference |= (unsigned char)(left ^ right);
   }
-  return difference == 0U;
+  authorized = difference == 0U;
+done:
+  OPENSSL_cleanse(expected, sizeof(expected));
+  return authorized;
 }
 
 void proxy_poll_flush_file(const laghu_proxy_options *options) {

@@ -45,6 +45,12 @@ cd "${build_dir}"
 # Homebrew's Brotli headers are not necessarily in the compiler default path.
 BROTLI_CFLAGS=$(pkg-config --cflags libbrotlienc 2>/dev/null || true)
 BROTLI_LDFLAGS=$(pkg-config --libs-only-L libbrotlienc 2>/dev/null || true)
+hardening_cflags=
+hardening_ldflags=
+if [ "$(uname -s)" = Linux ]; then
+  hardening_cflags='-Wc,-fstack-protector-strong -Wc,-D_FORTIFY_SOURCE=3'
+  hardening_ldflags='-Wl,-z,relro,-z,now'
+fi
 # shellcheck disable=SC2086
 "${APXS}" -c \
   -Wc,-std=c11 \
@@ -57,8 +63,10 @@ BROTLI_LDFLAGS=$(pkg-config --libs-only-L libbrotlienc 2>/dev/null || true)
   -I"${REPO_ROOT}/libs/laghu-http/src" \
   -I"${REPO_ROOT}/libs/laghu-runtime/include" \
   -I"${REPO_ROOT}/libs/laghu-runtime/src" \
+  ${hardening_cflags} \
   ${BROTLI_CFLAGS} \
   ${BROTLI_LDFLAGS} \
+  ${hardening_ldflags} \
   -lz -lbrotlienc \
   mod_laghu.c "$@" \
   laghu_runtime.c

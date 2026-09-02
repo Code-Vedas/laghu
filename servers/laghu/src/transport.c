@@ -25,7 +25,7 @@ void proxy_error_response(laghu_socket client, SSL *tls, unsigned int status, co
 void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char *failure) {
   unsigned char discarded[4096U];
   proxy_access_log access;
-  const laghu_proxy_options *options = proxy_current_options(queue);
+  const laghu_proxy_options *options = proxy_options_acquire(queue);
   proxy_access_init(&access, queue);
   access.status = 503U;
   access.failure = failure;
@@ -34,7 +34,8 @@ void proxy_reject_connection(proxy_queue *queue, laghu_socket client, const char
   while (recv(client, discarded, sizeof(discarded), MSG_DONTWAIT) > 0) {
   }
   laghu_close(client);
-  proxy_access_write(queue, &access);
+  proxy_access_write(queue, options, &access);
+  proxy_options_release(queue);
 }
 
 bool proxy_read_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, size_t expected, bool to_close,
@@ -83,6 +84,33 @@ bool proxy_read_body(laghu_socket socket, SSL *tls, const unsigned char *initial
   *body = data;
   *length = used;
   return true;
+}
+
+bool proxy_read_client_body(laghu_socket socket, SSL *tls, const unsigned char *initial, size_t initial_length, size_t expected,
+                            unsigned int idle_timeout, unsigned int total_timeout, unsigned char **body, size_t *length) {
+  uint64_t deadline = proxy_monotonic_ms() + (uint64_t)total_timeout * 1000U;
+  size_t capacity = expected;
+  size_t used = 0U;
+  unsigned char *data;
+  bool complete = false;
+  if (capacity == 0U || capacity > LAGHU_PROXY_MAX_BODY || initial_length > capacity) return false;
+  data = malloc(capacity);
+  if (data == NULL) return false;
+  memcpy(data, initial, initial_length);
+  used = initial_length;
+  while (used < expected) {
+    int got = proxy_client_recv_until(socket, tls, data + used, expected - used, idle_timeout, deadline);
+    if (got <= 0) goto done;
+    used += (size_t)got;
+  }
+  *body = data;
+  *length = used;
+  data = NULL;
+  complete = true;
+done:
+  proxy_timeout(socket, idle_timeout);
+  free(data);
+  return complete;
 }
 
 typedef enum {

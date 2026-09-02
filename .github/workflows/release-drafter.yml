@@ -25,7 +25,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: release-drafter/release-drafter@v7
+      - uses: release-drafter/release-drafter@d749bd2b1d1e1db5c7a422e645f7e4ec23f604e3 # v7
         with:
           config-name: release-drafter.yml
         env:
@@ -38,6 +38,6 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: release-drafter/release-drafter/autolabeler@v7
+      - uses: release-drafter/release-drafter/autolabeler@d749bd2b1d1e1db5c7a422e645f7e4ec23f604e3 # v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

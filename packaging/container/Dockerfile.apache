@@ -3,7 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-FROM ubuntu:24.04 AS build
+# docker.io/library/ubuntu:24.04; digest updates are managed by Dependabot.
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 AS build
 
 ARG LAGHU_BUILD_REVISION=0.1.0
 ENV DEBIAN_FRONTEND=noninteractive
@@ -15,15 +16,17 @@ RUN apt-get update \
 
 WORKDIR /src
 COPY . .
-COPY --from=rust:1.95-bookworm /usr/local/cargo /usr/local/cargo
-COPY --from=rust:1.95-bookworm /usr/local/rustup /usr/local/rustup
+# docker.io/library/rust:1.95-bookworm; digest updates are managed by Dependabot.
+COPY --from=rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 /usr/local/cargo /usr/local/cargo
+COPY --from=rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 /usr/local/rustup /usr/local/rustup
 ENV PATH=/usr/local/cargo/bin:${PATH} RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 RUN cmake -S . -B build -DLAGHU_WITH_VIPS=ON -DLAGHU_BUILD_TESTS=OFF \
-      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_BUILD_TYPE=Release -DLAGHU_ENABLE_RELEASE_HARDENING=ON \
     && cmake --build build --target laghu-libvips laghu-resource-fetch laghu-html-refresh laghu-asset-upload laghu-js-optimize laghu-chrome-analyze --parallel \
     && APACHE_BUILD_DIR=/src/apache-module scripts/build-apache-module
 
-FROM ubuntu:24.04
+# docker.io/library/ubuntu:24.04; digest updates are managed by Dependabot.
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 
 ARG LAGHU_BUILD_REVISION=0.1.0
 ENV DEBIAN_FRONTEND=noninteractive

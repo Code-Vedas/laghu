@@ -21,6 +21,7 @@ ExecStartPre=/usr/bin/test -x ${LAGHU_CHROME_ANALYSIS_BROWSER}
 ExecStartPre=/usr/bin/laghu-chrome-analyze --init ${LAGHU_CHROME_ANALYSIS_QUEUE} ${LAGHU_CHROME_ANALYSIS_OUTPUT} ${LAGHU_CHROME_ANALYSIS_BROWSER}
 ExecStart=/usr/bin/laghu-chrome-analyze --serve ${LAGHU_CHROME_ANALYSIS_QUEUE} ${LAGHU_CHROME_ANALYSIS_OUTPUT} ${LAGHU_CHROME_ANALYSIS_BROWSER}
 Restart=on-failure
+RestartPreventExitStatus=77
 RestartSec=1
 NoNewPrivileges=true
 PrivateTmp=true

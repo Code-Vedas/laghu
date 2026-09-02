@@ -497,6 +497,7 @@ static bool yaml_load_file(const char *path, laghu_yaml_arguments *arguments, la
   if (!yaml_parser_initialize(&parser)) goto done;
   yaml_parser_set_input_file(&parser, file);
   if (!yaml_parser_load(&parser, &document)) {
+    if (parser.problem != NULL) (void)yaml_error(error, error_size, parser.problem);
     yaml_parser_delete(&parser);
     goto done;
   }

@@ -86,10 +86,13 @@ void *proxy_worker_main(void *argument) {
   while (queue_pop(worker->queue, &connection)) {
     const laghu_proxy_options *options;
     bool timed_out = false;
+    bool accepted;
     proxy_worker_begin(worker, connection.socket);
-    options = proxy_current_options(worker->queue);
-    if (!options->downstream_tls ||
-        (connection.tls = proxy_downstream_tls_handshake(worker, connection.socket, options->io_timeout, &timed_out)) != NULL)
+    options = proxy_options_acquire(worker->queue);
+    accepted = !options->downstream_tls ||
+               (connection.tls = proxy_downstream_tls_handshake(worker, connection.socket, options->io_timeout, &timed_out)) != NULL;
+    proxy_options_release(worker->queue);
+    if (accepted)
       proxy_handle(&connection, worker);
     else
       laghu_close(connection.socket);

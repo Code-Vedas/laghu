@@ -105,6 +105,10 @@ PAGESPEED_WARMUP_PATHS = ("/index.html",)
 PAGESPEED_WARMUP_VUS = 100
 PAGESPEED_WARMUP_ITERATIONS = 1000
 PAGESPEED_WARMUP_WINDOWS = 3
+STANDALONE_ALL_WARMUP_PATHS = ("/index.html",)
+STANDALONE_ALL_WARMUP_VUS = 100
+STANDALONE_ALL_WARMUP_ITERATIONS = 1000
+STANDALONE_ALL_WARMUP_WINDOWS = 3
 LOGGING_EQUIVALENCE = {
     "nginx": "disabled",
     "apache": "disabled",
@@ -417,7 +421,7 @@ def wait_ready(target: Target, lane: ExecutionLane) -> None:
 
 
 def restart_target(target: Target) -> None:
-    """Give each PageSpeed comparator its own cold process activation."""
+    """Give each cache-owning comparator its own cold process activation."""
     for short_name in target.containers:
         docker("restart", target_container_name(short_name))
 
@@ -461,6 +465,27 @@ def warm_pagespeed_target(output: Path, lane: ExecutionLane, docker_network: str
     return {"activation": "docker-restart-per-target", "excluded_from_raw_runs": True,
             "schedule": {"paths": PAGESPEED_WARMUP_PATHS, "vus": PAGESPEED_WARMUP_VUS, "iterations_per_window": PAGESPEED_WARMUP_ITERATIONS,
                          "windows": PAGESPEED_WARMUP_WINDOWS, "request_headers": REQUEST_HEADERS}, "windows": windows}
+
+
+def warm_standalone_all_target(output: Path, lane: ExecutionLane, docker_network: str, target: Target) -> dict[str, Any]:
+    """Give both standalone optimization states equal excluded cache warm-up."""
+    warmup_dir = output / "warmup" / target.name.replace("/", "-")
+    warmup_dir.mkdir(parents=True, exist_ok=True)
+    windows = []
+    for window in range(1, STANDALONE_ALL_WARMUP_WINDOWS + 1):
+        summary = warmup_dir / f"window-{window}.json"
+        subprocess.run([*k6_command(output, lane, docker_network, target, STANDALONE_ALL_WARMUP_PATHS,
+                                     STANDALONE_ALL_WARMUP_VUS, STANDALONE_ALL_WARMUP_ITERATIONS, summary),
+                        "/scripts/k6.js"], check=True)
+        metrics = json.loads(summary.read_text(encoding="utf-8"))["metrics"]
+        errors = int(metrics["checks"]["fails"])
+        require(errors == 0, f"{target.name}: warm-up window {window} errors")
+        windows.append({"window": window, "k6_summary": str(summary.relative_to(output)),
+                        "requests": int(metrics["http_reqs"]["count"]), "rps": metrics["http_reqs"]["rate"], "errors": errors})
+    return {"activation": "docker-restart-per-target", "excluded_from_raw_runs": True,
+            "schedule": {"paths": STANDALONE_ALL_WARMUP_PATHS, "vus": STANDALONE_ALL_WARMUP_VUS,
+                         "iterations_per_window": STANDALONE_ALL_WARMUP_ITERATIONS,
+                         "windows": STANDALONE_ALL_WARMUP_WINDOWS, "request_headers": REQUEST_HEADERS}, "windows": windows}
 
 
 def verify_target1_equivalence(targets: dict[str, Target], lane: ExecutionLane) -> None:
@@ -604,11 +629,13 @@ def main() -> None:
     warmup: dict[str, Any] = {}
     raw = []
     for target in active:
-        if args.target in {"nginx-pagespeed", "apache-pagespeed"}:
+        if args.target in {"nginx-pagespeed", "apache-pagespeed", "standalone-all"}:
             restart_target(target)
             wait_ready(target, lane)
             verify_target_contract(target, lane)
-            warmup[target.name] = warm_pagespeed_target(args.output, lane, docker_network, target)
+            warmup[target.name] = (warm_standalone_all_target(output=args.output, lane=lane, docker_network=docker_network, target=target)
+                                   if args.target == "standalone-all"
+                                   else warm_pagespeed_target(args.output, lane, docker_network, target))
         for scenario, paths, vus, duration in LOAD_MATRIX:
             for run in range(1, 4):
                 raw.append(run_trial(args.output, rail, lane, docker_network, target, scenario, paths, vus, duration, run))

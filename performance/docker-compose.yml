@@ -83,9 +83,11 @@ services:
     build: {context: .., dockerfile: performance/Dockerfile.standalone}
     image: laghu-bench-standalone:local
     container_name: laghu-bench-standalone-all
+    platform: "${LAGHU_BENCH_DOCKER_PLATFORM:-linux/amd64}"
     environment:
       LAGHU_BENCH_ORIGIN: http://benchmark-origin:80
       LAGHU_BENCH_REWRITE_LEVEL: experimental
+      LAGHU_BENCH_ACCESS_LOG: "${LAGHU_BENCH_ACCESS_LOG:-off}"
       LAGHU_BENCH_WORKERS: "${LAGHU_BENCH_WORKERS:-1}"
       LAGHU_BENCH_PASSTHROUGH_PROFILE: production
     ports: ["127.0.0.1:18201:8080"]
