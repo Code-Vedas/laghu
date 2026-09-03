@@ -43,8 +43,25 @@ target "debian-nginx-chrome-analysis" {
     BASE_IMAGE = "debian:13"
     PACKAGE_FAMILY = "apt"
     SERVER = "nginx"
-    LAGHU_WITH_VIPS = "OFF"
     LAGHU_WITH_CHROME = "ON"
+  }
+}
+target "debian-nginx-chrome-analysis-package-proof" {
+  inherits = ["debian-nginx-chrome-analysis"]
+  args = {
+    LAGHU_PACKAGE_PROOF_ONLY = "ON"
+  }
+}
+target "debian-bookworm-chrome-isolation" {
+  inherits = ["base"]
+  args = {
+    BASE_IMAGE = "debian:bookworm"
+    PACKAGE_FAMILY = "apt"
+    SERVER = "nginx"
+    LAGHU_WITH_VIPS = "OFF"
+    LAGHU_SKIP_PACKAGE = "ON"
+    LAGHU_WITH_CHROME = "ON"
+    LAGHU_CHROME_FOCUSED_TESTS = "ON"
   }
 }
 target "ubuntu-apache-event" {

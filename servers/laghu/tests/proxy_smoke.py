@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import concurrent.futures
 import http.server
 import gzip
 import hashlib
@@ -14,6 +15,7 @@ import shutil
 import signal
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -23,6 +25,11 @@ import urllib.parse
 
 
 BODY = b"<!doctype html>\n<html>  <head><!-- remove --></head>  <body>hello</body></html>"
+
+
+def write_secure_yaml(path, contents):
+    path.write_text(contents)
+    path.chmod(0o600)
 
 
 def process_rss_bytes(pid):
@@ -131,6 +138,7 @@ def yaml_runtime_arguments(arguments):
     config = tempfile.NamedTemporaryFile(prefix="laghu-runtime-", suffix=".yaml", mode="w", delete=False)
     config.write("\n".join(lines) + "\n")
     config.close()
+    os.chmod(config.name, 0o600)
     return [arguments[0], "--config", config.name], config.name
 
 
@@ -138,17 +146,27 @@ class Origin(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     connections = 0
     connections_lock = threading.Lock()
+    next_connection = 0
+    requests_by_connection = {}
+    bypass_disconnect_started = threading.Event()
+    bypass_disconnect_continue = threading.Event()
+    bypass_disconnect_response_sent = threading.Event()
     paths = []
     post_paths = []
 
     def setup(self):
         super().setup()
         with self.connections_lock:
+            self.connection_id = type(self).next_connection
+            type(self).next_connection += 1
             type(self).connections += 1
+            type(self).requests_by_connection[self.connection_id] = 0
 
     def do_GET(self):
         request_path = urllib.parse.urlsplit(self.path).path
-        self.__class__.paths.append(request_path)
+        with self.connections_lock:
+            self.__class__.paths.append(request_path)
+            self.__class__.requests_by_connection[self.connection_id] += 1
         if request_path == "/headers":
             body = json.dumps(
                 {
@@ -167,6 +185,16 @@ class Origin(http.server.BaseHTTPRequestHandler):
         elif request_path == "/api/data":
             body = b'{"ok":true}'
             content_type = "application/json"
+        elif request_path == "/bypass-pooled":
+            body = b'{"pooled":true}'
+            content_type = "application/json"
+        elif request_path in ("/bypass-no-content", "/bypass-not-modified"):
+            self.send_response(204 if request_path == "/bypass-no-content" else 304)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            self.close_connection = False
+            return
         elif request_path == "/lcp.html":
             body = (
                 b'<html><body><nav><img src="/logo.png" width="40" '
@@ -258,6 +286,42 @@ class Origin(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"short")
             self.close_connection = True
             return
+        elif request_path == "/bypass-truncated":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            self.wfile.write(b"short")
+            self.close_connection = True
+            return
+        elif request_path == "/bypass-until-close":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"until":"close"}')
+            self.close_connection = True
+            return
+        elif request_path == "/bypass-client-disconnect":
+            type(self).bypass_disconnect_started.set()
+            if not type(self).bypass_disconnect_continue.wait(timeout=2):
+                self.send_error(504)
+                self.close_connection = True
+                return
+            body = b'{"client":"disconnected"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                type(self).bypass_disconnect_response_sent.set()
+            self.close_connection = False
+            return
         elif request_path in ("/chunked", "/chunked-keepalive", "/chunked-trailers", "/bad-chunk", "/oversized-chunk"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
@@ -302,7 +366,7 @@ class Origin(http.server.BaseHTTPRequestHandler):
             "ETag",
             '"trim-v1"' if request_path == "/trim-urls.html" else '"origin-v1"',
         )
-        if request_path != "/pooled":
+        if request_path not in ("/pooled", "/bypass-pooled"):
             self.send_header("Connection", "close")
         if request_path == "/hints.html":
             self.send_header("Link", "<https://origin.example.test>; rel=preload")
@@ -315,7 +379,23 @@ class Origin(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         self.wfile.flush()
-        self.close_connection = request_path != "/pooled"
+        self.close_connection = request_path not in ("/pooled", "/bypass-pooled")
+
+    def do_HEAD(self):
+        request_path = urllib.parse.urlsplit(self.path).path
+        with self.connections_lock:
+            self.__class__.paths.append(request_path)
+            self.__class__.requests_by_connection[self.connection_id] += 1
+        if request_path != "/bypass-pooled":
+            self.send_error(404)
+            return
+        body = b'{"pooled":true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        self.close_connection = False
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -332,6 +412,15 @@ class Origin(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *_args):
         pass
+
+
+def origin_connection_counts_since(connection_id):
+    with Origin.connections_lock:
+        return sorted(
+            count
+            for identifier, count in Origin.requests_by_connection.items()
+            if identifier >= connection_id
+        )
 
 
 class QuietThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -978,6 +1067,175 @@ def create_dns_tls_certificate(root, name, prefix):
     return server_file, server_key
 
 
+def multi_authority_origin_pool_smoke(executable, root, ca_file, server_file, server_key):
+    def handler(label):
+        class PoolOrigin(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            connections = 0
+            next_connection = 0
+            requests_by_connection = {}
+            lock = threading.Lock()
+
+            @classmethod
+            def counts(cls):
+                with cls.lock:
+                    return cls.connections, sorted(cls.requests_by_connection.values())
+
+            def setup(self):
+                super().setup()
+                cls = type(self)
+                with cls.lock:
+                    self.connection_id = cls.next_connection
+                    cls.next_connection += 1
+                    cls.connections += 1
+                    cls.requests_by_connection[self.connection_id] = 0
+
+            def do_GET(self):
+                cls = type(self)
+                with cls.lock:
+                    cls.requests_by_connection[self.connection_id] += 1
+                body = json.dumps({"origin": label}, separators=(",", ":")).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+                self.close_connection = False
+
+            def log_message(self, *_args):
+                pass
+
+        return PoolOrigin
+
+    def serve(origin_handler, tls=False):
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), origin_handler)
+        if tls:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(server_file, server_key)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server
+
+    http_a_handler = handler("http-a")
+    http_b_handler = handler("http-b")
+    tls_a_handler = handler("tls-a")
+    tls_b_handler = handler("tls-b")
+    http_a = serve(http_a_handler)
+    http_b = serve(http_b_handler)
+    tls_a = serve(tls_a_handler, tls=True)
+    tls_b = serve(tls_b_handler, tls=True)
+    process = None
+    log = (root / "multi-authority-origin-pool.log").open("w+b")
+    proxy_port = free_port()
+    failed_primary = free_port()
+    config = root / "multi-authority-origin-pool.yaml"
+    write_secure_yaml(
+        config,
+        ""
+        "runtime:\n"
+        f"  listen: 127.0.0.1:{proxy_port}\n"
+        f"  origin: http://127.0.0.1:{http_a.server_port}\n"
+        f"  origin_ca_file: {ca_file}\n"
+        f"  cache: {root / 'cache'}\n"
+        f"  worker_queue: {root / 'missing.queue'}\n"
+        "  access_log: off\n"
+        "  rewrite_level: passthrough\n"
+        "  workers: 4\n"
+        "  connection_queue: 64\n"
+        "  origin_pool_size: 8\n"
+        "  origin_idle_timeout: 30\n"
+        "routes:\n"
+        "  - match: exact\n"
+        "    pattern: /pool-a\n"
+        f"    proxy_pass: http://127.0.0.1:{http_a.server_port}\n"
+        "  - match: exact\n"
+        "    pattern: /pool-b\n"
+        f"    proxy_pass: http://127.0.0.1:{http_b.server_port}\n"
+        "  - match: exact\n"
+        "    pattern: /pool-failover\n"
+        f"    proxy_pass: http://127.0.0.1:{failed_primary}\n"
+        "    failover:\n"
+        f"      - http://127.0.0.1:{http_b.server_port}\n"
+        "  - match: exact\n"
+        "    pattern: /tls-a\n"
+        f"    proxy_pass: https://127.0.0.1:{tls_a.server_port}\n"
+        "  - match: exact\n"
+        "    pattern: /tls-b\n"
+        f"    proxy_pass: https://127.0.0.1:{tls_b.server_port}\n"
+    )
+    try:
+        process = subprocess.Popen(
+            [str(executable), "--config", str(config)], stdout=subprocess.DEVNULL,
+            stderr=log,
+        )
+        for _ in range(100):
+            try:
+                head, body = request(proxy_port, "/pool-a")
+                break
+            except OSError:
+                if process.poll() is not None:
+                    log.flush()
+                    log.seek(0)
+                    raise AssertionError(
+                        "multi-authority origin-pool proxy failed startup: "
+                        + log.read().decode(errors="replace")
+                    )
+                time.sleep(0.03)
+        else:
+            raise AssertionError("multi-authority origin-pool proxy did not start")
+        assert head.startswith(b"http/1.1 200 ") and body == b'{"origin":"http-a"}'
+        for path, expected in (
+            ("/pool-b", b'{"origin":"http-b"}'),
+            ("/pool-a", b'{"origin":"http-a"}'),
+            ("/pool-b", b'{"origin":"http-b"}'),
+            ("/pool-failover", b'{"origin":"http-b"}'),
+            ("/pool-a", b'{"origin":"http-a"}'),
+        ):
+            head, body = request(proxy_port, path)
+            assert head.startswith(b"http/1.1 200 ") and body == expected, (path, head, body)
+        assert http_a_handler.counts() == (1, [3]), http_a_handler.counts()
+        assert http_b_handler.counts() == (1, [3]), http_b_handler.counts()
+
+        before_http_connections = http_a_handler.counts()[0] + http_b_handler.counts()[0]
+        paths = ["/pool-a" if index % 2 == 0 else "/pool-b" for index in range(64)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            responses = list(executor.map(lambda path: request(proxy_port, path), paths))
+        for path, (head, body) in zip(paths, responses):
+            expected = b'{"origin":"http-a"}' if path == "/pool-a" else b'{"origin":"http-b"}'
+            assert head.startswith(b"http/1.1 200 ") and body == expected, (path, head, body)
+        after_http_connections = http_a_handler.counts()[0] + http_b_handler.counts()[0]
+        assert after_http_connections - before_http_connections <= 8, (
+            before_http_connections,
+            after_http_connections,
+        )
+
+        for path, expected in (
+            ("/tls-a", b'{"origin":"tls-a"}'),
+            ("/tls-b", b'{"origin":"tls-b"}'),
+            ("/tls-a", b'{"origin":"tls-a"}'),
+            ("/tls-b", b'{"origin":"tls-b"}'),
+        ):
+            head, body = request(proxy_port, path)
+            assert head.startswith(b"http/1.1 200 ") and body == expected, (path, head, body)
+        assert tls_a_handler.counts() == (1, [2]), tls_a_handler.counts()
+        assert tls_b_handler.counts() == (1, [2]), tls_b_handler.counts()
+    finally:
+        if process is not None and process.poll() is None:
+            request_shutdown(process)
+            process.wait(timeout=5)
+        log.flush()
+        log.seek(0)
+        logs = log.read().decode(errors="replace")
+        log.close()
+        for server in (http_a, http_b, tls_a, tls_b):
+            server.shutdown()
+            server.server_close()
+    assert process is not None and process.returncode == 0, logs
+
+
 def request(port, path, method="GET", headers=None, body=b"", timeout=10,
             include_interim=False, tls_context=None, server_hostname="127.0.0.1",
             host="example.test"):
@@ -1315,7 +1573,8 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
     auth.chmod(0o600)
     static_port = free_port()
     static_config = root / "standalone-static.yaml"
-    static_config.write_text(
+    write_secure_yaml(
+        static_config,
         ""
         "runtime:\n"
         f"  listen: 127.0.0.1:{static_port}\n"
@@ -1461,7 +1720,8 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
     reentry_server, reentry_handler = reentry_health_server()
     upstream_port = free_port()
     upstream_config = root / "standalone-upstreams.yaml"
-    upstream_config.write_text(
+    write_secure_yaml(
+        upstream_config,
         ""
         "runtime:\n"
         f"  listen: 127.0.0.1:{upstream_port}\n"
@@ -1572,13 +1832,232 @@ def standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_f
         assert f'"upstream_protocol":"{protocol}"' in logs
 
 
+def auth_admission_tls_smoke(executable, root, ca_file, server_file, server_key):
+    static_root = root / "auth-admission-static"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("auth admission public survivor")
+    auth = root / "auth-admission-users"
+    salt = bytes.fromhex("00112233445566778899aabbccddeeff")
+    digest = hashlib.scrypt(b"correct horse", salt=salt, n=16384, r=8, p=1, dklen=32)
+    auth.write_text(f"operator:scrypt-v1:16384:8:1:{salt.hex()}:{digest.hex()}\n")
+    auth.chmod(0o600)
+    token = root / "auth-admission-token"
+    token.write_text("auth-admission-token-0123456789\n")
+    token.chmod(0o600)
+    port = free_port()
+    pid_file = root / "auth-admission.pid"
+    config = root / "auth-admission.yaml"
+    kdf_sites = "".join(
+        f"  - host: private-kdf-{index}.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        for index in range(8)
+    )
+    write_secure_yaml(
+        config,
+        "runtime:\n"
+        f"  listen: 127.0.0.1:{port}\n"
+        f"  cache: {root / 'cache'}\n"
+        f"  worker_queue: {root / 'missing.queue'}\n"
+        f"  tls_certificate: {server_file}\n"
+        f"  tls_private_key: {server_key}\n"
+        f"  pid_file: {pid_file}\n"
+        "  metrics: on\n"
+        "  purge_method: PURGE\n"
+        f"  purge_token_file: {token}\n"
+        "  purge_allow: 127.0.0.1/32\n"
+        "  auth_pre_rate: 1\n"
+        "  auth_pre_burst: 1\n"
+        "  auth_kdf_rate: 100\n"
+        "  auth_kdf_burst: 100\n"
+        "  auth_kdf_concurrency: 1\n"
+        "  workers: 2\n"
+        "  connection_queue: 16\n"
+        "sites:\n"
+        "  - host: public.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "  - host: private-one.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        "  - host: private-two.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        "  - host: private-unknown.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        "  - host: private-malformed.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        "  - host: private-shutdown.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        "  - host: private-load.auth.test\n"
+        f"    document_root: {static_root}\n"
+        "    laghu:\n"
+        f"      basic_auth_file: {auth}\n"
+        + kdf_sites
+    )
+    log = (root / "auth-admission.log").open("w+b")
+    process = subprocess.Popen([str(executable), "--config", str(config)], stdout=subprocess.DEVNULL, stderr=log)
+    context = ssl.create_default_context(cafile=ca_file)
+    wrong = {"Authorization": "Basic b3BlcmF0b3I6d3JvbmcgcGFzc3dvcmQh"}
+    unknown = {"Authorization": "Basic dW5rbm93bjp3cm9uZw=="}
+    valid = {"Authorization": "Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ=="}
+    logs = ""
+
+    def metrics():
+        metrics_head, metrics_body = request(
+            port, "/.laghu/metrics", headers={"X-Laghu-Purge-Token": "auth-admission-token-0123456789"}, tls_context=context
+        )
+        assert metrics_head.startswith(b"http/1.1 200 ")
+        return metrics_body
+
+    def wait_for_kdf_active():
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if b"laghu_auth_kdf_active 1" in metrics():
+                return
+            time.sleep(0.002)
+        raise AssertionError("known-wrong request never exposed active scrypt work")
+
+    def public_latencies(count):
+        def one(_value):
+            started = time.monotonic()
+            head, body = request(port, "/", tls_context=context, host="public.auth.test")
+            return time.monotonic() - started, head, body
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, count)) as executor:
+            values = list(executor.map(one, range(count)))
+        for _latency, head, body in values:
+            assert head.startswith(b"http/1.1 200 ") and body == b"auth admission public survivor"
+        return sorted(latency for latency, _head, _body in values)
+
+    def p95(values):
+        return values[(95 * len(values) + 99) // 100 - 1]
+
+    try:
+        for _ in range(100):
+            try:
+                public_head, public_body = request(port, "/", tls_context=context, host="public.auth.test")
+                break
+            except OSError:
+                time.sleep(0.03)
+        else:
+            raise AssertionError("auth-admission TLS proxy did not start")
+        assert public_head.startswith(b"http/1.1 200 ") and public_body == b"auth admission public survivor"
+        baseline_public = public_latencies(16)
+        baseline_p95 = p95(baseline_public)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            missing_flood = list(executor.map(lambda _value: request(port, "/", tls_context=context, host="private-one.auth.test"), range(8)))
+        missing_statuses = [head.split(b"\r\n", 1)[0] for head, _body in missing_flood]
+        assert missing_statuses == [b"http/1.1 401 unauthorized"] * 8, missing_statuses
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            bearer_flood = list(
+                executor.map(
+                    lambda _value: request(
+                        port, "/", headers={"Authorization": "Bearer not-basic"}, tls_context=context, host="private-one.auth.test"
+                    ),
+                    range(8),
+                )
+            )
+        bearer_statuses = [head.split(b"\r\n", 1)[0] for head, _body in bearer_flood]
+        assert bearer_statuses == [b"http/1.1 401 unauthorized"] * 8, bearer_statuses
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            malformed_flood = list(
+                executor.map(
+                    lambda _value: request(
+                        port, "/", headers={"Authorization": "Basic a==="}, tls_context=context, host="private-malformed.auth.test"
+                    ),
+                    range(8),
+                )
+            )
+        malformed_statuses = [head.split(b"\r\n", 1)[0] for head, _body in malformed_flood]
+        assert malformed_statuses.count(b"http/1.1 401 unauthorized") == 1, malformed_statuses
+        assert malformed_statuses.count(b"http/1.1 429 too many requests") == 7, malformed_statuses
+        malformed_metrics = metrics()
+        assert b"laghu_auth_kdf_starts_total 0" in malformed_metrics
+        assert b'laghu_auth_admissions_total{result="preauth_rejected"} 7' in malformed_metrics
+        assert b'laghu_auth_admissions_total{result="credential_failed"} 17' in malformed_metrics
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            flood = list(executor.map(lambda _value: request(port, "/", headers=wrong, tls_context=context, host="private-one.auth.test"), range(8)))
+        statuses = [head.split(b"\r\n", 1)[0] for head, _body in flood]
+        assert statuses.count(b"http/1.1 401 unauthorized") == 1, statuses
+        assert statuses.count(b"http/1.1 429 too many requests") == 7, statuses
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            active_kdf = executor.submit(request, port, "/", headers=wrong, tls_context=context, host="private-load.auth.test")
+            wait_for_kdf_active()
+            flooded_public = public_latencies(16)
+            active_head, _active_body = active_kdf.result(timeout=5)
+        assert active_head.startswith(b"http/1.1 401 ")
+        flooded_p95 = p95(flooded_public)
+        flooded_limit = max(0.250, baseline_p95 * 8.0 + 0.050)
+        assert flooded_p95 <= flooded_limit, (baseline_p95, flooded_p95, flooded_limit)
+        print(f"auth-admission public p95 baseline={baseline_p95:.4f}s flooded={flooded_p95:.4f}s limit={flooded_limit:.4f}s")
+        valid_head, valid_body = request(port, "/", headers=valid, tls_context=context, host="private-two.auth.test")
+        assert valid_head.startswith(b"http/1.1 200 ") and valid_body == b"auth admission public survivor"
+        unknown_head, _ = request(port, "/", headers=unknown, tls_context=context, host="private-unknown.auth.test")
+        assert unknown_head.startswith(b"http/1.1 401 ")
+        kdf_hosts = [f"private-kdf-{index}.auth.test" for index in range(8)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(kdf_hosts)) as executor:
+            kdf_race = list(executor.map(lambda host: request(port, "/", headers=wrong, tls_context=context, host=host), kdf_hosts))
+        kdf_statuses = [head.split(b"\r\n", 1)[0] for head, _body in kdf_race]
+        kdf_started = kdf_statuses.count(b"http/1.1 401 unauthorized")
+        kdf_saturated = kdf_statuses.count(b"http/1.1 429 too many requests")
+        assert kdf_started >= 1 and kdf_saturated >= 1 and kdf_started + kdf_saturated == len(kdf_hosts), kdf_statuses
+        reload_result = subprocess.run([str(executable), "reload", "--config", str(config)], capture_output=True, text=True)
+        assert reload_result.returncode == 0, reload_result.stderr
+        for _ in range(100):
+            reset_head, _ = request(port, "/", headers=wrong, tls_context=context, host="private-one.auth.test")
+            if reset_head.startswith(b"http/1.1 401 "):
+                break
+            time.sleep(0.03)
+        else:
+            raise AssertionError(f"reload did not clear auth admission state: {reset_head!r}")
+        metrics_body = metrics()
+        assert f"laghu_auth_kdf_starts_total {4 + kdf_started}".encode() in metrics_body
+        assert b'laghu_auth_admissions_total{result="preauth_rejected"} 14' in metrics_body
+        assert f'laghu_auth_admissions_total{{result="kdf_saturated"}} {kdf_saturated}'.encode() in metrics_body
+        assert f'laghu_auth_admissions_total{{result="credential_failed"}} {21 + kdf_started}'.encode() in metrics_body
+        assert b"laghu_auth_kdf_active 0" in metrics_body and b"laghu_auth_kdf_highwater 1" in metrics_body
+        assert b"operator" not in metrics_body and b"correct horse" not in metrics_body and b"127.0.0.1" not in metrics_body
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            shutdown_request = executor.submit(
+                request, port, "/", headers=wrong, tls_context=context, host="private-shutdown.auth.test", timeout=5
+            )
+            wait_for_kdf_active()
+            request_shutdown(process)
+            process.wait(timeout=5)
+            try:
+                shutdown_request.result(timeout=5)
+            except (AssertionError, OSError):
+                pass
+    finally:
+        if process.poll() is None:
+            request_shutdown(process)
+            process.wait(timeout=5)
+        log.flush()
+        log.seek(0)
+        logs = log.read().decode(errors="replace")
+        log.close()
+    assert process.returncode == 0, logs
+    assert '"access":"preauth_rate"' in logs and '"access":"kdf_saturated"' in logs and '"access":"basic_auth"' in logs
+    assert "operator" not in logs and "wrong password" not in logs and "correct horse" not in logs
+
+
 def passthrough_without_transform_infrastructure_smoke(executable, root):
     static_root = root / "passthrough-minimal-static"
     static_root.mkdir()
     (static_root / "index.html").write_text("passthrough without transform infrastructure")
     port = free_port()
     config = root / "passthrough-minimal.yaml"
-    config.write_text(
+    write_secure_yaml(
+        config,
         "runtime:\n"
         f"  listen: 127.0.0.1:{port}\n"
         "  rewrite_level: passthrough\n"
@@ -1617,7 +2096,8 @@ def access_log_runtime_smoke(executable, root):
     (static_root / "index.html").write_text("access-log runtime smoke")
     port = free_port()
     config = root / "access-log-off.yaml"
-    config.write_text(
+    write_secure_yaml(
+        config,
         ""
         "runtime:\n"
         f"  listen: 127.0.0.1:{port}\n"
@@ -1694,6 +2174,8 @@ def main():
         tls_origin.socket = tls_context.wrap_socket(tls_origin.socket, server_side=True)
         tls_thread = threading.Thread(target=tls_origin.serve_forever, daemon=True)
         tls_thread.start()
+        multi_authority_origin_pool_smoke(executable, root, ca_file, server_file, server_key)
+        auth_admission_tls_smoke(executable, root, ca_file, server_file, server_key)
         standalone_parity_smoke(executable, root, origin_port, tls_origin_port, ca_file)
         access_log_runtime_smoke(executable, root)
         slowloris_deadline_smoke(executable, root, origin_port, ca_file, server_file, server_key)
@@ -1719,6 +2201,19 @@ def main():
                 except OSError as error:
                     tls_error = error
                     time.sleep(0.05)
+            if tls_started:
+                assert b" 200 " in tls_head.split(b"\r\n", 1)[0], tls_head
+                assert tls_body == b'{"ok":true}'
+                with Origin.connections_lock:
+                    tls_bypass_start = Origin.next_connection
+                tls_bypass_one_head, tls_bypass_one_body = request(tls_proxy_port, "/bypass-pooled")
+                tls_bypass_two_head, tls_bypass_two_body = request(tls_proxy_port, "/bypass-pooled")
+                assert b"x-laghu: bypass-content-type" in tls_bypass_one_head
+                assert b"x-laghu: bypass-content-type" in tls_bypass_two_head
+                assert tls_bypass_one_body == b'{"pooled":true}'
+                assert tls_bypass_two_body == b'{"pooled":true}'
+                tls_bypass_counts = origin_connection_counts_since(tls_bypass_start)
+                assert tls_bypass_counts == [2], tls_bypass_counts
         finally:
             request_shutdown(tls_process)
             tls_process.wait(timeout=5)
@@ -1842,7 +2337,8 @@ def main():
                 f"    document_root: {one_root}\n"
                 for index in range(24)
             )
-            path.write_text(
+            write_secure_yaml(
+                path,
                 ""
                 "runtime:\n"
                 f"  listen: 127.0.0.1:{sni_port}\n"
@@ -1932,7 +2428,7 @@ def main():
                 server_hostname="one.example.test", host="one.example.test"
             )
             assert b" 200 " in reloaded_root_head.split(b"\r\n", 1)[0] and reloaded_root_body == b"two site"
-            sni_replacement.write_text("runtime: invalid\n")
+            write_secure_yaml(sni_replacement, "runtime: invalid\n")
             invalid_reload = subprocess.run(
                 [str(executable), "reload", "--config", str(sni_replacement)],
                 capture_output=True, text=True,
@@ -1945,7 +2441,7 @@ def main():
             assert b"location: /after" in route_head
             write_sni_config(sni_replacement, "/after")
             write_sni_config(sni_incompatible, "/incompatible")
-            sni_incompatible.write_text(sni_incompatible.read_text().replace("sites:\n", "  workers: 2\nsites:\n", 1))
+            write_secure_yaml(sni_incompatible, sni_incompatible.read_text().replace("sites:\n", "  workers: 2\nsites:\n", 1))
             incompatible_reload = subprocess.run(
                 [str(executable), "reload", "--config", str(sni_incompatible)],
                 capture_output=True, text=True,
@@ -2345,6 +2841,89 @@ def main():
             assert b"<body>hello" in pooled_after_idle
             with Origin.connections_lock:
                 assert Origin.connections == idle_before + 1, Origin.connections
+            _, drained_origin = request(proxy_port, "/api/data")
+            assert drained_origin == b'{"ok":true}'
+            with Origin.connections_lock:
+                bypass_start = Origin.next_connection
+            bypass_one_head, bypass_one_body = request(proxy_port, "/bypass-pooled")
+            bypass_two_head, bypass_two_body = request(proxy_port, "/bypass-pooled")
+            assert b"x-laghu: bypass-content-type" in bypass_one_head
+            assert b"x-laghu: bypass-content-type" in bypass_two_head
+            assert bypass_one_body == b'{"pooled":true}'
+            assert bypass_two_body == b'{"pooled":true}'
+            bypass_counts = origin_connection_counts_since(bypass_start)
+            assert bypass_counts == [2], bypass_counts
+            _, drained_bypass = request(proxy_port, "/api/data")
+            assert drained_bypass == b'{"ok":true}'
+            with Origin.connections_lock:
+                close_start = Origin.next_connection
+            close_head, close_body = request(proxy_port, "/api/data")
+            after_close_head, after_close_body = request(proxy_port, "/bypass-pooled")
+            assert b"x-laghu: bypass-api" in close_head
+            assert close_body == b'{"ok":true}'
+            assert b"x-laghu: bypass-content-type" in after_close_head
+            assert after_close_body == b'{"pooled":true}'
+            close_counts = origin_connection_counts_since(close_start)
+            assert close_counts == [1, 1], close_counts
+            _, drained_close = request(proxy_port, "/api/data")
+            assert drained_close == b'{"ok":true}'
+            with Origin.connections_lock:
+                head_start = Origin.next_connection
+            head_one, head_one_body = request(proxy_port, "/bypass-pooled", method="HEAD")
+            head_two, head_two_body = request(proxy_port, "/bypass-pooled", method="HEAD")
+            assert head_one.startswith(b"http/1.1 200 ") and head_one_body == b""
+            assert head_two.startswith(b"http/1.1 200 ") and head_two_body == b""
+            head_counts = origin_connection_counts_since(head_start)
+            assert head_counts == [2], head_counts
+            for bodyless_path, status in (("/bypass-no-content", b" 204 "), ("/bypass-not-modified", b" 304 ")):
+                _, drained_bodyless = request(proxy_port, "/api/data")
+                assert drained_bodyless == b'{"ok":true}'
+                with Origin.connections_lock:
+                    bodyless_start = Origin.next_connection
+                bodyless_one_head, bodyless_one_body = request(proxy_port, bodyless_path)
+                bodyless_two_head, bodyless_two_body = request(proxy_port, bodyless_path)
+                assert status in bodyless_one_head.split(b"\r\n", 1)[0] and bodyless_one_body == b""
+                assert status in bodyless_two_head.split(b"\r\n", 1)[0] and bodyless_two_body == b""
+                bodyless_counts = origin_connection_counts_since(bodyless_start)
+                assert bodyless_counts == [2], (bodyless_path, bodyless_counts)
+            for nonreusable_path, expected_body in (
+                ("/bypass-truncated", b"short"),
+                ("/bypass-until-close", b'{"until":"close"}'),
+            ):
+                _, drained_nonreusable = request(proxy_port, "/api/data")
+                assert drained_nonreusable == b'{"ok":true}'
+                with Origin.connections_lock:
+                    nonreusable_start = Origin.next_connection
+                nonreusable_head, nonreusable_body = request(proxy_port, nonreusable_path)
+                after_nonreusable_head, after_nonreusable_body = request(proxy_port, "/bypass-pooled")
+                assert nonreusable_head.startswith(b"http/1.1 200 ")
+                assert nonreusable_body == expected_body
+                assert b"x-laghu: bypass-content-type" in after_nonreusable_head
+                assert after_nonreusable_body == b'{"pooled":true}'
+                nonreusable_counts = origin_connection_counts_since(nonreusable_start)
+                assert nonreusable_counts == [1, 1], (nonreusable_path, nonreusable_counts)
+            _, drained_disconnect = request(proxy_port, "/api/data")
+            assert drained_disconnect == b'{"ok":true}'
+            Origin.bypass_disconnect_started.clear()
+            Origin.bypass_disconnect_continue.clear()
+            Origin.bypass_disconnect_response_sent.clear()
+            with Origin.connections_lock:
+                disconnect_start = Origin.next_connection
+            abandoned_bypass = socket.create_connection(("127.0.0.1", proxy_port), timeout=5)
+            abandoned_bypass.sendall(
+                b"GET /bypass-client-disconnect HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+            )
+            assert Origin.bypass_disconnect_started.wait(timeout=2)
+            abandoned_bypass.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            abandoned_bypass.close()
+            Origin.bypass_disconnect_continue.set()
+            assert Origin.bypass_disconnect_response_sent.wait(timeout=2)
+            time.sleep(0.1)
+            after_disconnect_head, after_disconnect_body = request(proxy_port, "/bypass-pooled")
+            assert b"x-laghu: bypass-content-type" in after_disconnect_head
+            assert after_disconnect_body == b'{"pooled":true}'
+            disconnect_counts = origin_connection_counts_since(disconnect_start)
+            assert disconnect_counts == [1, 1], disconnect_counts
             lcp_head, lcp_body, lcp_interim = request(
                 proxy_port, "/lcp.html", include_interim=True
             )

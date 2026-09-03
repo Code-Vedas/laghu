@@ -25,6 +25,8 @@ run_cmd shell-syntax sh -c '
 run_cmd python-syntax env PYTHONPYCACHEPREFIX="${REPO_ROOT}/tmp/pycache" \
   "${PYTHON:-python3}" -m py_compile \
   "${REPO_ROOT}/workers/laghu-chrome-analyze/tests/analysis_test.py" \
+  "${REPO_ROOT}/workers/laghu-chrome-analyze/tests/network_isolation_test.py" \
+  "${REPO_ROOT}/workers/laghu-chrome-analyze/tests/startup_test.py" \
   "${REPO_ROOT}/workers/laghu-libvips/tests/worker_test.py" \
   "${REPO_ROOT}/workers/laghu-html-refresh/tests/refresh_test.py" \
   "${REPO_ROOT}/servers/laghu/tests/execution_rail.py" \

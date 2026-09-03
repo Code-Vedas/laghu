@@ -392,13 +392,37 @@ static void proxy_origin_dispose(proxy_origin_connection *origin) {
   origin->socket = LAGHU_INVALID_SOCKET;
 }
 
-static bool proxy_origin_idle_alive(laghu_socket socket) {
+static bool proxy_origin_idle_alive(const proxy_origin_connection *origin) {
+  laghu_socket socket = origin->socket;
   struct pollfd ready = {(int)socket, POLLIN, 0};
   unsigned char byte;
+  int received;
+  if (origin->tls != NULL && SSL_pending(origin->tls) > 0) return false;
   int selected = poll(&ready, 1U, 0);
   if (selected < 0) return false;
-  if (selected == 0 || (ready.revents & (POLLIN | POLLHUP | POLLERR)) == 0) return true;
-  return recv(socket, &byte, 1U, MSG_PEEK | MSG_DONTWAIT) > 0 ? false : errno == EAGAIN || errno == EWOULDBLOCK;
+  if (selected == 0 || (ready.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) == 0) return true;
+  if ((ready.revents & POLLNVAL) != 0) return false;
+  received = recv(socket, &byte, 1U, MSG_PEEK | MSG_DONTWAIT);
+  if (received > 0) return false;
+  if (received == 0) return false;
+  return errno == EAGAIN || errno == EWOULDBLOCK;
+}
+
+static proxy_origin_connection proxy_origin_pool_remove(proxy_queue *queue, unsigned int index) {
+  proxy_origin_connection candidate = queue->origins[index];
+  unsigned int last = --queue->origin_count;
+  if (index != last) queue->origins[index] = queue->origins[last];
+  memset(&queue->origins[last], 0, sizeof(queue->origins[last]));
+  queue->origins[last].socket = LAGHU_INVALID_SOCKET;
+  return candidate;
+}
+
+static unsigned int proxy_origin_pool_oldest(const proxy_queue *queue) {
+  unsigned int oldest = 0U;
+  unsigned int index;
+  for (index = 1U; index < queue->origin_count; ++index)
+    if (queue->origins[index].idle_since_ms < queue->origins[oldest].idle_since_ms) oldest = index;
+  return oldest;
 }
 
 bool proxy_origin_acquire(proxy_worker *worker, const laghu_proxy_options *options, proxy_origin_connection *origin, const char *host,
@@ -414,17 +438,21 @@ bool proxy_origin_acquire(proxy_worker *worker, const laghu_proxy_options *optio
     proxy_origin_connection candidate = queue->origins[index];
     bool matches = candidate.origin_tls == origin_tls && !strcmp(candidate.authority, authority);
     bool expired = now - candidate.idle_since_ms >= (uint64_t)options->origin_idle_timeout * 1000U;
-    queue->origins[index] = queue->origins[queue->origin_count - 1U];
-    --queue->origin_count;
-    if (matches && !expired && proxy_origin_idle_alive(candidate.socket)) {
-      *origin = candidate;
+    bool alive = !expired && proxy_origin_idle_alive(&candidate);
+    if (matches && alive) {
+      *origin = proxy_origin_pool_remove(queue, index);
       proxy_queue_unlock(queue);
       proxy_worker_origin(worker, origin->socket);
       return true;
     }
-    proxy_queue_unlock(queue);
-    proxy_origin_dispose(&candidate);
-    proxy_queue_lock(queue);
+    if (!alive) {
+      candidate = proxy_origin_pool_remove(queue, index);
+      proxy_queue_unlock(queue);
+      proxy_origin_dispose(&candidate);
+      proxy_queue_lock(queue);
+    } else {
+      ++index;
+    }
   }
   proxy_queue_unlock(queue);
   origin->socket = proxy_connect(worker, host, port, options->connect_timeout);
@@ -445,6 +473,7 @@ bool proxy_origin_acquire(proxy_worker *worker, const laghu_proxy_options *optio
 
 void proxy_origin_release(proxy_worker *worker, const laghu_proxy_options *options, proxy_origin_connection *origin, bool reusable) {
   proxy_queue *queue = worker->queue;
+  proxy_origin_connection evicted = {.socket = LAGHU_INVALID_SOCKET};
   proxy_worker_origin(worker, LAGHU_INVALID_SOCKET);
   if (!reusable || options->origin_pool_size == 0U || proxy_is_forcing(queue)) {
     proxy_origin_dispose(origin);
@@ -456,8 +485,17 @@ void proxy_origin_release(proxy_worker *worker, const laghu_proxy_options *optio
     queue->origins[queue->origin_count++] = *origin;
     origin->socket = LAGHU_INVALID_SOCKET;
     origin->tls = NULL;
+  } else {
+    unsigned int oldest = proxy_origin_pool_oldest(queue);
+    /* Capacity is shared across authorities. Replace the oldest idle entry
+     * deterministically instead of silently dropping the returned authority. */
+    evicted = queue->origins[oldest];
+    queue->origins[oldest] = *origin;
+    origin->socket = LAGHU_INVALID_SOCKET;
+    origin->tls = NULL;
   }
   proxy_queue_unlock(queue);
+  proxy_origin_dispose(&evicted);
   proxy_origin_dispose(origin);
 }
 

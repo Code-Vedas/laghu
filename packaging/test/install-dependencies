@@ -15,10 +15,17 @@ case "${PACKAGE_FAMILY}" in
       libssl-dev nginx nginx-dev pkgconf ruby-dev rustc \
       shellcheck zlib1g-dev
     if [ "${LAGHU_WITH_VIPS}" != OFF ]; then
-      apt-get install --no-install-recommends -y libheif-plugin-aomenc libvips-dev libvips-tools
+      apt-get install --no-install-recommends -y libvips-dev libvips-tools
+      # Debian 12 does not split this optional HEIF encoder plugin, while
+      # Debian 13 does.  Keep the native package proof portable across both
+      # supported Debian test lanes without making the Chrome lane skip
+      # official package construction.
+      if apt-cache show libheif-plugin-aomenc >/dev/null 2>&1; then
+        apt-get install --no-install-recommends -y libheif-plugin-aomenc
+      fi
     fi
     if [ "${LAGHU_WITH_CHROME}" = ON ]; then
-      apt-get install --no-install-recommends -y chromium
+      apt-get install --no-install-recommends -y bubblewrap chromium chromium-sandbox
     fi
     ;;
   dnf)
@@ -26,6 +33,7 @@ case "${PACKAGE_FAMILY}" in
       nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
       tar which
     [ "${LAGHU_WITH_VIPS}" = OFF ] || dnf install -y vips-devel vips-tools
+    [ "${LAGHU_WITH_CHROME}" = OFF ] || dnf install -y bubblewrap chromium
     ;;
   yum)
     yum install -y dnf-plugins-core epel-release
@@ -46,6 +54,7 @@ case "${PACKAGE_FAMILY}" in
         grep -q 'digests signatures OK'
       rm -rf "${signature_dir}"
     fi
+    [ "${LAGHU_WITH_CHROME}" = OFF ] || dnf install -y bubblewrap chromium
     ;;
   *)
     echo "Unknown package family: ${PACKAGE_FAMILY}" >&2

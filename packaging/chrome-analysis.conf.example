@@ -4,8 +4,25 @@
 # LICENSE file in the root directory of this source tree.
 
 # These values must match the enabled Laghu ChromeAnalysisQueue setting.
+#
+# Supported only by the dedicated Debian or compatible-RPM package service. It
+# needs bubblewrap >= 0.8.0, an enabled unprivileged user namespace policy, and
+# a distribution Chromium ELF below /usr/lib or /usr/lib64. It is supported on
+# Linux x86_64 and aarch64 only. The worker mounts only its dedicated Chromium
+# runtime directory, individually discovered ELF dependencies, and fixed
+# read-only Fontconfig roots; it uses the DevTools Fetch domain to abort every
+# non-job request and verifies every interception reply before publishing. EL9 packages
+# intentionally omit this optional worker because their base Bubblewrap is too
+# old. Each job gets a fresh user, mount, network, and PID namespace plus an
+# AF_UNIX-only seccomp filter; startup fails closed with 78 when the boundary
+# or configured Chromium runtime is unavailable. A per-job Chrome/CDP failure
+# produces no report and never falls back to a less-isolated browser.
+# Do not enable this queue in the combined NGINX or Apache containers: use this
+# dedicated service instead.
 LAGHU_CHROME_ANALYSIS_QUEUE=/run/laghu/chrome-analysis.queue
 LAGHU_CHROME_ANALYSIS_OUTPUT=/var/cache/laghu/chrome-analysis
 
-# Set this to the executable provided by the distribution or local policy.
-LAGHU_CHROME_ANALYSIS_BROWSER=/usr/bin/chromium
+# Set this to the distribution's actual Chromium ELF, not a shell launcher.
+# Debian Bookworm's /usr/bin/chromium is a launcher; use this runtime binary.
+# Compatible RPM systems may use a different dedicated /usr/lib*/chromium path.
+LAGHU_CHROME_ANALYSIS_BROWSER=/usr/lib/chromium/chromium

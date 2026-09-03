@@ -25,6 +25,11 @@ def nested_config(depth):
     return "runtime: " + "[" * depth + "]" * depth + "\n"
 
 
+def write_secure_yaml(path, contents):
+    path.write_text(contents)
+    path.chmod(0o600)
+
+
 def run(command):
     return subprocess.run(command, text=True, capture_output=True, timeout=5)
 
@@ -34,7 +39,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="laghu-yaml-nesting-") as raw:
         root = pathlib.Path(raw)
         deep = root / "too-deep.yaml"
-        deep.write_text(nested_config(NESTING_LIMIT + 1))
+        write_secure_yaml(deep, nested_config(NESTING_LIMIT + 1))
         startup = run([executable, "--config", deep])
         assert startup.returncode != 0
         assert "exceeded maximum nesting depth" in startup.stderr
@@ -44,7 +49,8 @@ def main():
         (document_root / "index.html").write_text("yaml nesting reload")
         good = root / "good.yaml"
         pid_file = root / "laghu.pid"
-        good.write_text(
+        write_secure_yaml(
+            good,
             "runtime:\n"
             f"  listen: 127.0.0.1:{free_port()}\n"
             "  rewrite_level: passthrough\n"

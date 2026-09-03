@@ -249,6 +249,7 @@ typedef struct {
 } laghu_candidate_result;
 
 void laghu_config_init(laghu_config *config);
+void laghu_config_dispose(laghu_config *config);
 void laghu_config_merge(laghu_config *result, const laghu_config *parent, const laghu_config *child);
 
 bool laghu_parse_preset(const char *value, laghu_preset *preset);
@@ -270,6 +271,7 @@ bool laghu_resource_allowed(const laghu_config *config, const char *url);
 bool laghu_domain_policy_add_domain(laghu_domain_policy *policy, const char *origin);
 bool laghu_domain_policy_add_mapping(laghu_domain_policy *policy, const char *source_origin, const char *public_origin);
 bool laghu_domain_policy_add_shard(laghu_domain_policy *policy, const char *public_origin, const char *origin);
+void laghu_domain_policy_dispose(laghu_domain_policy *policy);
 bool laghu_domain_policy_validate(const laghu_domain_policy *policy);
 bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent, const laghu_domain_policy *child);
 /* A pure, allocation-free rewrite. The caller supplies storage for the exact

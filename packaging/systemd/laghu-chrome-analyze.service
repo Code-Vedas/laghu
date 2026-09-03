@@ -17,16 +17,28 @@ RuntimeDirectory=laghu
 RuntimeDirectoryMode=0770
 CacheDirectory=laghu/chrome-analysis
 CacheDirectoryMode=0750
+ExecStartPre=/usr/bin/test -x /usr/bin/bwrap
 ExecStartPre=/usr/bin/test -x ${LAGHU_CHROME_ANALYSIS_BROWSER}
 ExecStartPre=/usr/bin/laghu-chrome-analyze --init ${LAGHU_CHROME_ANALYSIS_QUEUE} ${LAGHU_CHROME_ANALYSIS_OUTPUT} ${LAGHU_CHROME_ANALYSIS_BROWSER}
 ExecStart=/usr/bin/laghu-chrome-analyze --serve ${LAGHU_CHROME_ANALYSIS_QUEUE} ${LAGHU_CHROME_ANALYSIS_OUTPUT} ${LAGHU_CHROME_ANALYSIS_BROWSER}
 Restart=on-failure
-RestartPreventExitStatus=77
+RestartPreventExitStatus=77 78
 RestartSec=1
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+PrivateNetwork=true
+PrivateDevices=true
+ProtectSystem=strict
 ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ReadWritePaths=/run/laghu /var/cache/laghu/chrome-analysis
+# bubblewrap needs AF_NETLINK only while it creates the empty namespace.  The
+# worker passes the browser a stricter AF_UNIX-only seccomp program afterward.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

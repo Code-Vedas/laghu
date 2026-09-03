@@ -402,6 +402,11 @@ void laghu_proxy_options_init(laghu_proxy_options *options) {
   options->drain_timeout = LAGHU_PROXY_DEFAULT_DRAIN_TIMEOUT;
   options->origin_pool_size = LAGHU_PROXY_DEFAULT_ORIGIN_POOL_SIZE;
   options->origin_idle_timeout = LAGHU_PROXY_DEFAULT_ORIGIN_IDLE_TIMEOUT;
+  options->auth_pre_rate = LAGHU_PROXY_DEFAULT_AUTH_PRE_RATE;
+  options->auth_pre_burst = LAGHU_PROXY_DEFAULT_AUTH_PRE_BURST;
+  options->auth_kdf_rate = LAGHU_PROXY_DEFAULT_AUTH_KDF_RATE;
+  options->auth_kdf_burst = LAGHU_PROXY_DEFAULT_AUTH_KDF_BURST;
+  options->auth_kdf_concurrency = LAGHU_PROXY_DEFAULT_AUTH_KDF_CONCURRENCY;
   options->access_log = true;
   (void)snprintf(options->index_file, sizeof(options->index_file), "%s", "index.html");
   laghu_service_config_init(&options->service);
@@ -482,13 +487,18 @@ bool proxy_options_lifecycle_requirements(const laghu_proxy_options *options, pr
 void laghu_proxy_options_dispose(laghu_proxy_options *options) {
   size_t index;
   if (options == NULL) return;
+  laghu_config_dispose(&options->config);
   laghu_service_config_dispose(&options->service);
   for (index = 0U; index < options->site_count; ++index) {
     SSL_CTX_free(options->sites[index].downstream_tls_context);
     options->sites[index].downstream_tls_context = NULL;
+    laghu_config_dispose(&options->sites[index].config);
     laghu_service_config_dispose(&options->sites[index].service);
   }
-  for (index = 0U; index < options->route_count; ++index) laghu_service_config_dispose(&options->routes[index].service);
+  for (index = 0U; index < options->route_count; ++index) {
+    laghu_config_dispose(&options->routes[index].config);
+    laghu_service_config_dispose(&options->routes[index].service);
+  }
   free(options->sites);
   free(options->routes);
   options->sites = NULL;
@@ -512,6 +522,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   bool connection_queue_seen = false, connect_timeout_seen = false;
   bool io_timeout_seen = false, request_header_timeout_seen = false, request_body_timeout_seen = false;
   bool drain_timeout_seen = false, origin_pool_size_seen = false, origin_idle_timeout_seen = false;
+  bool auth_pre_rate_seen = false, auth_pre_burst_seen = false, auth_kdf_rate_seen = false, auth_kdf_burst_seen = false,
+       auth_kdf_concurrency_seen = false;
   bool ca_seen = false, tls_certificate_seen = false, tls_private_key_seen = false, pid_file_seen = false, forwarded_seen = false;
   bool document_root_seen = false, index_seen = false;
   bool directory_listing_seen = false, access_log_seen = false;
@@ -792,6 +804,21 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
       if (origin_idle_timeout_seen || !proxy_uint(value, 1U, 3600U, &options->origin_idle_timeout))
         return proxy_error(error, error_size, "invalid or duplicate --origin-idle-timeout");
       origin_idle_timeout_seen = true;
+    } else if (strcmp(name, "--auth-pre-rate") == 0 || strcmp(name, "--auth-pre-burst") == 0 || strcmp(name, "--auth-kdf-rate") == 0 ||
+               strcmp(name, "--auth-kdf-burst") == 0 || strcmp(name, "--auth-kdf-concurrency") == 0) {
+      unsigned int *target = strcmp(name, "--auth-pre-rate") == 0    ? &options->auth_pre_rate
+                             : strcmp(name, "--auth-pre-burst") == 0 ? &options->auth_pre_burst
+                             : strcmp(name, "--auth-kdf-rate") == 0  ? &options->auth_kdf_rate
+                             : strcmp(name, "--auth-kdf-burst") == 0 ? &options->auth_kdf_burst
+                                                                     : &options->auth_kdf_concurrency;
+      bool *seen = strcmp(name, "--auth-pre-rate") == 0    ? &auth_pre_rate_seen
+                   : strcmp(name, "--auth-pre-burst") == 0 ? &auth_pre_burst_seen
+                   : strcmp(name, "--auth-kdf-rate") == 0  ? &auth_kdf_rate_seen
+                   : strcmp(name, "--auth-kdf-burst") == 0 ? &auth_kdf_burst_seen
+                                                           : &auth_kdf_concurrency_seen;
+      NEED_VALUE();
+      if (*seen || !proxy_uint(value, 1U, 100000U, target)) return proxy_error(error, error_size, "invalid or duplicate authentication limit");
+      *seen = true;
     } else if (strcmp(name, "--origin-ca-file") == 0) {
       NEED_VALUE();
       if (ca_seen || !proxy_copy(options->origin_ca_file, sizeof(options->origin_ca_file), value))
@@ -832,6 +859,8 @@ laghu_proxy_parse_result laghu_proxy_parse_options(int argc, char **argv, laghu_
   {
     laghu_config resolved;
     laghu_config_merge(&resolved, &options->config, &shared_config);
+    laghu_config_dispose(&options->config);
+    laghu_config_dispose(&shared_config);
     options->config = resolved;
   }
   {

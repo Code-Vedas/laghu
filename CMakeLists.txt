@@ -51,7 +51,10 @@ if(LAGHU_ENABLE_RELEASE_HARDENING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
 
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-  string(APPEND CMAKE_C_FLAGS_RELEASE " -fstack-protector-strong -D_FORTIFY_SOURCE=3")
+  # Debian hardening flags can already define _FORTIFY_SOURCE.  Undefine it
+  # before selecting the required level so distro CFLAGS do not turn a secure
+  # release build into a warning-as-error failure.
+  string(APPEND CMAKE_C_FLAGS_RELEASE " -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3")
   string(APPEND CMAKE_EXE_LINKER_FLAGS_RELEASE " -Wl,-z,relro,-z,now")
   string(APPEND CMAKE_SHARED_LINKER_FLAGS_RELEASE " -Wl,-z,relro,-z,now")
   string(APPEND CMAKE_MODULE_LINKER_FLAGS_RELEASE " -Wl,-z,relro,-z,now")

@@ -67,6 +67,28 @@ Do not enable that setting for an untrusted network peer. Requests carrying
 Basic credentials over clear HTTP, or forwarded protocol headers from outside
 `trusted_proxy`, are denied.
 
+## Authentication admission limits
+
+Protect each Basic-auth scope from password-derivation floods with these
+runtime YAML values (the CLI uses the same names with `--` instead of `_`):
+
+~~~yaml
+runtime:
+  # Defaults shown. All values must be positive integers.
+  auth_pre_rate: 4
+  auth_pre_burst: 8
+  auth_kdf_rate: 4
+  auth_kdf_burst: 8
+  auth_kdf_concurrency: 2
+~~~
+
+`auth_pre_*` is a bounded token bucket keyed by the direct TCP peer and the
+matched Basic-auth scope; it runs before decoding credentials. `auth_kdf_*`
+is process-global: it limits scrypt starts per second, its startup burst, and
+simultaneous scrypt work. Direct peer identity uses only the IPv4 or IPv6
+socket address, never forwarded headers. Rejections return `429` with
+`preauth_rate` or `kdf_saturated`; invalid credentials remain `401`.
+
 ## Verify
 
 ~~~sh

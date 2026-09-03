@@ -22,37 +22,16 @@ class LaghuChromeAnalyze < Formula
     system "cmake", "--build", "build", "--target",
            "laghu-chrome-analyze", "--parallel"
     bin.install "build/workers/laghu-chrome-analyze/laghu-chrome-analyze"
-    (var/"run/laghu").mkpath
-    (var/"cache/laghu/chrome-analysis").mkpath
-  end
-
-  service do
-    run [opt_bin/"laghu-chrome-analyze", "--init-and-serve",
-         var/"run/laghu/chrome-analysis.queue",
-         var/"cache/laghu/chrome-analysis", "chromium"]
-    keep_alive crashed: true
-    environment_variables PATH: std_service_path_env
-    working_dir var/"cache/laghu"
-    log_path var/"log/laghu-chrome-analyze.log"
-    error_log_path var/"log/laghu-chrome-analyze.log"
   end
 
   def caveats
     <<~EOS
-      This optional worker does not install a browser. Install Chromium first:
-        brew install --cask chromium
+      Chrome analysis is unsupported on macOS. Laghu requires a Linux user,
+      mount, and network namespace plus seccomp boundary before it will run
+      captured HTML, so this formula intentionally provides no service.
 
-      Configure the matching Laghu analysis queue:
-        #{var}/run/laghu/chrome-analysis.queue
-
-      Then start the worker:
-        brew services start laghu-chrome-analyze
-
-      Run `brew info laghu-chrome-analyze` to see these matching paths.
-      The service finds the Chromium cask's `chromium` command through
-      Homebrew's standard service PATH. To use another browser executable,
-      run `laghu-chrome-analyze --init-and-serve QUEUE OUTPUT BROWSER` under
-      your preferred supervisor instead of this default service.
+      Keep ChromeAnalysisQueue disabled on macOS. Use the supported Linux
+      package service with Bubblewrap and a distribution Chromium binary.
     EOS
   end
 

@@ -22,6 +22,25 @@ list_targets() {
     awk 'NR > 1 && $1 != "base" && $1 != "default" { print $1 }'
 }
 
+run_chrome_isolation_canary() {
+  image=$1
+  worker=$2
+  docker run --rm --privileged --network none \
+    -e LAGHU_CHROME_CANARY_WORKER="${worker}" \
+    --entrypoint /bin/sh "${image}" -ec '
+    sentinel=/usr/local/share/laghu-chrome-analyze-host-canary.css
+    chrome=/usr/lib/chromium/chromium
+    worker=${LAGHU_CHROME_CANARY_WORKER}
+    fixture=/workspace/tmp/build/workers/laghu-chrome-analyze/laghu_chrome_analyze_fixture
+    test -x "${chrome}"
+    test -x "${worker}"
+    test -x "${fixture}"
+    printf "%s\\n" ".outside-usr { color: black; }" >"${sentinel}"
+    su --login --shell /bin/sh "${LAGHU_TEST_USER:-laghu-test}" --command \
+      "cd /workspace && LAGHU_CHROME_ANALYSIS_ISOLATION_TEST=1 LAGHU_CHROME_ANALYSIS_USR_SENTINEL=${sentinel} python3 workers/laghu-chrome-analyze/tests/network_isolation_test.py ${worker} ${fixture} ${chrome}"
+  '
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --list)
@@ -71,12 +90,32 @@ for architecture in ${architectures}; do
     mkdir -p "${directory}"
     summary_files="${summary_files} ${directory}/result"
     echo "==> ${current} (${architecture})"
-    if docker buildx bake --file "${REPO_ROOT}/docker-bake.hcl" "${current}" \
+    if docker buildx bake --load --file "${REPO_ROOT}/docker-bake.hcl" "${current}" \
         --set "${current}.platform=linux/${architecture}" \
         --set "${current}.tags=laghu-test:${current}-${architecture}" \
         --progress=plain >"${directory}/build.log" 2>&1; then
       cat "${directory}/build.log"
-      printf '%s\n' PASS >"${directory}/result"
+      case "${current}" in
+        debian-nginx-chrome-analysis|debian-nginx-chrome-analysis-package-proof)
+          chrome_worker=/usr/bin/laghu-chrome-analyze
+          ;;
+        debian-bookworm-chrome-isolation)
+          chrome_worker=/workspace/tmp/build/workers/laghu-chrome-analyze/laghu-chrome-analyze
+          ;;
+        *) chrome_worker= ;;
+      esac
+      if [ -n "${chrome_worker}" ]; then
+        if run_chrome_isolation_canary "laghu-test:${current}-${architecture}" "${chrome_worker}" >"${directory}/canary.log" 2>&1; then
+          cat "${directory}/canary.log"
+          printf '%s\n' PASS >"${directory}/result"
+        else
+          cat "${directory}/canary.log"
+          printf '%s\n' FAIL >"${directory}/result"
+          failed=1
+        fi
+      else
+        printf '%s\n' PASS >"${directory}/result"
+      fi
     else
       cat "${directory}/build.log"
       printf '%s\n' FAIL >"${directory}/result"

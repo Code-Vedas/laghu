@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -16,6 +17,9 @@ HTML = b'''<!doctype html><html><head><style>
 
 
 def main():
+    if os.geteuid() == 0:
+        print("run this Chrome sandbox test as an unprivileged user")
+        return 77
     worker, fixture, chrome = map(pathlib.Path, sys.argv[1:4])
     with tempfile.TemporaryDirectory(prefix="laghu-chrome-analyze-") as raw:
         root = pathlib.Path(raw)
@@ -23,7 +27,11 @@ def main():
         source.write_bytes(HTML)
         subprocess.run([worker, "--init", queue, output, chrome], check=True)
         subprocess.run([fixture, "--publish", queue, source, "5000"], check=True)
-        subprocess.run([worker, "--once", queue, output, chrome], check=True)
+        result = subprocess.run([worker, "--once", queue, output, chrome], text=True, capture_output=True)
+        if result.returncode == 78:
+            print(result.stderr.strip())
+            return 77
+        result.check_returncode()
         report = json.loads((output / ("a" * 64 + ".json")).read_text())
         assert report["version"] == 1
         assert report["viewport"]["width"] >= 1000
@@ -31,7 +39,8 @@ def main():
         assert report["images"] == [{"ordinal": 0, "width": 320, "height": 180}]
         assert ".hero" in report["critical_css"]
         assert ".unused" not in report["critical_css"]
+        assert report["network_requests_blocked"] == 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

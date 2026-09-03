@@ -170,6 +170,16 @@ typedef struct proxy_queue {
   char html_refresh_keys[LAGHU_PROXY_HTML_REFRESH_DEDUP][LAGHU_RUNTIME_KEY_SIZE];
   uint64_t html_refresh_until[LAGHU_PROXY_HTML_REFRESH_DEDUP];
   proxy_rate_bucket rate_buckets[LAGHU_PROXY_RATE_BUCKETS];
+  proxy_rate_bucket auth_buckets[LAGHU_PROXY_AUTH_BUCKETS];
+  uint64_t auth_kdf_updated_ms;
+  uint64_t auth_kdf_tokens_milli;
+  uint64_t auth_kdf_starts;
+  uint64_t auth_preauth_rejected;
+  uint64_t auth_kdf_saturated;
+  uint64_t auth_credential_failed;
+  uint64_t auth_postauth_rejected;
+  unsigned int auth_kdf_active;
+  unsigned int auth_kdf_highwater;
   proxy_upstream_health upstream_health[LAGHU_PROXY_MAX_ROUTES][LAGHU_PROXY_MAX_FAILOVERS + 1U];
   pthread_mutex_t lock;
   pthread_cond_t ready;
@@ -328,8 +338,11 @@ const char *proxy_effective_scheme(const laghu_config *core, const laghu_service
                                    const proxy_request *request);
 bool proxy_peer_in_cidrs(const proxy_connection *connection, const laghu_service_cidr *cidrs, size_t count);
 bool proxy_request_access_allowed(proxy_queue *queue, const laghu_config *core, const laghu_service_config *service,
-                                  const proxy_connection *connection, const proxy_request *request, const laghu_proxy_rules *rules,
-                                  const char **failure);
+                                  const laghu_proxy_options *options, const proxy_connection *connection, const proxy_request *request,
+                                  const laghu_proxy_rules *rules, const char **failure);
+/* Acquires queue->lock; call only after an options generation swap completes. */
+void proxy_auth_state_clear(proxy_queue *queue);
+bool proxy_auth_metrics_append(proxy_queue *queue, char *output, size_t capacity, size_t *length);
 typedef void (*proxy_admin_token_file_hook)(const char *path, void *context);
 bool proxy_admin_token_file_read(const char *path, unsigned char output[257U], size_t *length, proxy_admin_token_file_hook before_open,
                                  proxy_admin_token_file_hook after_open, void *context);

@@ -17,8 +17,12 @@ configure_file(config.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/config.h" COPY
 target_include_directories(laghu_libyaml PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(laghu_libyaml PRIVATE HAVE_CONFIG_H YAML_DECLARE_STATIC)
 target_compile_features(laghu_libyaml PUBLIC c_std_11)
+# libyaml 0.2.5 is vendored upstream code.  Keep useful diagnostics visible,
+# but do not make Laghu's warning-as-error policy apply to this external
+# target: newer platform SDKs can deprecate an upstream API independently of
+# Laghu source correctness.  Sanitizer instrumentation remains global.
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(laghu_libyaml PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_compile_options(laghu_libyaml PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_library(Laghu::Yaml ALIAS laghu_libyaml)
 

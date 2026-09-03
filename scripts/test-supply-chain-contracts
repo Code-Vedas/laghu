@@ -64,4 +64,44 @@ if ! grep -Fq 'package-ecosystem: docker' "${REPO_ROOT}/.github/dependabot.yml" 
   exit 1
 fi
 
+native_dependencies="${REPO_ROOT}/scripts/ci-install-native-build-dependencies"
+if [ ! -x "${native_dependencies}" ]; then
+  echo 'Native CI dependency installer must be executable' >&2
+  exit 1
+fi
+
+expected_native_packages='build-essential
+ca-certificates
+cmake
+curl
+libbrotli-dev
+libpcre2-dev
+libssl-dev
+pkg-config
+zlib1g-dev'
+if [ "$("${native_dependencies}" --print)" != "${expected_native_packages}" ]; then
+  echo 'Native CI dependency package contract changed' >&2
+  exit 1
+fi
+if [ "$("${native_dependencies}" --with-vips --print)" != "${expected_native_packages}
+libvips-dev
+libvips-tools" ]; then
+  echo 'Native CI dependency libvips package contract changed' >&2
+  exit 1
+fi
+
+for workflow in codeql.yml ci.yml release.yml; do
+  if ! grep -Fq 'scripts/ci-install-native-build-dependencies' \
+      "${REPO_ROOT}/.github/workflows/${workflow}"; then
+    echo "Native CI dependency installer is not used by ${workflow}" >&2
+    exit 1
+  fi
+done
+
+codeql_workflow="${REPO_ROOT}/.github/workflows/codeql.yml"
+if grep -Fq 'apt-get' "${codeql_workflow}"; then
+  echo 'CodeQL must use the shared native dependency installer, not an inline apt list' >&2
+  exit 1
+fi
+
 echo 'supply-chain contract tests passed'

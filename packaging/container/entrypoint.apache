@@ -14,9 +14,12 @@ font_config=${LAGHU_FONT_PROVIDER_CONFIG:-/etc/laghu/font-providers.conf}
 html_refresh_queue=${LAGHU_HTML_REFRESH_QUEUE:-/run/laghu/html-refresh.queue}
 html_cache_origin=${LAGHU_HTML_CACHE_ORIGIN:-}
 chrome_analysis_queue=${LAGHU_CHROME_ANALYSIS_QUEUE:-}
-chrome_analysis_output=${LAGHU_CHROME_ANALYSIS_OUTPUT:-/var/cache/laghu/chrome-analysis}
-chrome_analysis_browser=${LAGHU_CHROME_ANALYSIS_BROWSER:-chromium}
 apache_malloc_arenas=${MALLOC_ARENA_MAX:-2}
+
+if [ -n "${chrome_analysis_queue}" ]; then
+  echo "Chrome analysis is unavailable in the combined Apache container. Use the dedicated Linux Bubblewrap service." >&2
+  exit 78
+fi
 
 runuser -u laghu -- laghu-libvips --init "${queue}" "${cache}"
 chmod 0660 "${queue}"
@@ -42,20 +45,6 @@ if [ -f /etc/laghu/asset-offload.conf ]; then
   runuser -u laghu -- laghu-asset-upload --serve /etc/laghu/asset-offload.conf &
   asset_pid=$!
 fi
-chrome_analysis_pid=""
-if [ -n "${chrome_analysis_queue}" ]; then
-  if ! command -v "${chrome_analysis_browser}" >/dev/null 2>&1; then
-    echo "LAGHU_CHROME_ANALYSIS_QUEUE is set, but ${chrome_analysis_browser} is not executable." >&2
-    exit 1
-  fi
-  mkdir -p "${chrome_analysis_output}"
-  chown laghu:laghu "${chrome_analysis_output}"
-  runuser -u laghu -- laghu-chrome-analyze --init "${chrome_analysis_queue}" "${chrome_analysis_output}" "${chrome_analysis_browser}"
-  chmod 0660 "${chrome_analysis_queue}"
-  runuser -u laghu -- laghu-chrome-analyze --serve "${chrome_analysis_queue}" "${chrome_analysis_output}" "${chrome_analysis_browser}" &
-  chrome_analysis_pid=$!
-fi
-
 # Workers initialize shared cache state before Apache children attach their
 # operational registry.  The adapter belongs to the laghu group, so preserve
 # private shared access without making cache state world-writable.
@@ -67,13 +56,11 @@ cleanup() {
   kill "${javascript_pid}" 2>/dev/null || true
   [ "${html_refresh_pid}" = "" ] || kill "${html_refresh_pid}" 2>/dev/null || true
   [ "${asset_pid}" = "" ] || kill "${asset_pid}" 2>/dev/null || true
-  [ "${chrome_analysis_pid}" = "" ] || kill "${chrome_analysis_pid}" 2>/dev/null || true
   wait "${service_pid}" 2>/dev/null || true
   wait "${font_fetch_pid}" 2>/dev/null || true
   wait "${javascript_pid}" 2>/dev/null || true
   [ "${html_refresh_pid}" = "" ] || wait "${html_refresh_pid}" 2>/dev/null || true
   [ "${asset_pid}" = "" ] || wait "${asset_pid}" 2>/dev/null || true
-  [ "${chrome_analysis_pid}" = "" ] || wait "${chrome_analysis_pid}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

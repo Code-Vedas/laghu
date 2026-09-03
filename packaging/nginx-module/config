@@ -6,7 +6,7 @@
 ngx_addon_name=ngx_http_laghu_module
 CFLAGS="${CFLAGS:+${CFLAGS} }-D_GNU_SOURCE"
 if test "$(uname -s)" = Linux; then
-    CFLAGS="${CFLAGS} -fstack-protector-strong -D_FORTIFY_SOURCE=3"
+    CFLAGS="${CFLAGS} -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3"
     NGX_LD_OPT="${NGX_LD_OPT:+${NGX_LD_OPT} }-Wl,-z,relro,-z,now"
 fi
 

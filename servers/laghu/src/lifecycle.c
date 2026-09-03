@@ -525,6 +525,7 @@ static void proxy_reload_configuration(proxy_queue *queue) {
   proxy_queue_lock(queue);
   memset(queue->upstream_health, 0, sizeof(queue->upstream_health));
   proxy_queue_unlock(queue);
+  proxy_auth_state_clear(queue);
   proxy_log_event(queue, "reload", "applied");
 }
 

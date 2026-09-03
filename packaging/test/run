@@ -6,9 +6,20 @@
 
 set -eu
 
+rpm_chrome_analysis_supported=1
+chrome_focused_tests=OFF
+
 if [ "${LAGHU_WITH_CHROME:-OFF}" = ON ]; then
-  command -v chromium >/dev/null 2>&1
-  chromium --version
+  command -v bwrap >/dev/null 2>&1
+  bwrap --version
+  chrome_runtime=/usr/lib/chromium/chromium
+  [ -x "${chrome_runtime}" ] || chrome_runtime=$(command -v chromium)
+  [ -x "${chrome_runtime}" ]
+  "${chrome_runtime}" --version
+fi
+
+if [ "${LAGHU_CHROME_FOCUSED_TESTS:-OFF}" = ON ] || [ "${LAGHU_PACKAGE_PROOF_ONLY:-OFF}" = ON ]; then
+  chrome_focused_tests=ON
 fi
 
 if command -v bsdtar >/dev/null 2>&1; then
@@ -30,7 +41,45 @@ case "${PACKAGE_FAMILY}" in
 esac
 
 scripts/run-build-all
-scripts/run-test-all
+if [ "${LAGHU_WITH_CHROME:-OFF}" = ON ]; then
+  chrome_worker="${BUILD_DIR:-${PWD}/tmp/build}/workers/laghu-chrome-analyze/laghu-chrome-analyze"
+  root_probe=$(mktemp -d)
+  if "${chrome_worker}" --init "${root_probe}/analysis.queue" "${root_probe}"; then
+    echo "laghu-chrome-analyze unexpectedly accepted root" >&2
+    exit 1
+  else
+    root_status=$?
+  fi
+  [ "${root_status}" -eq 77 ]
+  [ ! -e "${root_probe}/analysis.queue" ]
+  rmdir "${root_probe}"
+fi
+if [ -n "${LAGHU_TEST_USER:-}" ]; then
+  [ "$(id -u)" = 0 ]
+  id -u "${LAGHU_TEST_USER}" >/dev/null 2>&1
+  mkdir -p /workspace/tmp
+  chown -R "${LAGHU_TEST_USER}" /workspace/tmp /usr/local/cargo /usr/local/rustup
+  test_command=scripts/run-test-all
+  if [ "${chrome_focused_tests}" = ON ]; then
+    test_command='ctest --test-dir /workspace/tmp/build --output-on-failure -R "^laghu_chrome_analyze_(old_bwrap|startup)_test$"'
+    echo "Running focused Chrome CTest as unprivileged ${LAGHU_TEST_USER}; Docker build remains root."
+  else
+    echo "Running CTest as unprivileged ${LAGHU_TEST_USER}; Docker build remains root."
+  fi
+  su --login --shell /bin/sh "${LAGHU_TEST_USER}" --command \
+    "cd /workspace && CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PYTHONDONTWRITEBYTECODE=1 ${test_command}"
+else
+  if [ "${chrome_focused_tests}" = ON ]; then
+    ctest --test-dir /workspace/tmp/build --output-on-failure -R '^laghu_chrome_analyze_(old_bwrap|startup)_test$'
+  else
+    scripts/run-test-all
+  fi
+fi
+
+if [ "${LAGHU_CHROME_FOCUSED_TESTS:-OFF}" = ON ] && [ "${LAGHU_PACKAGE_PROOF_ONLY:-OFF}" != ON ]; then
+  echo "Focused Chrome isolation build passed; module and package proof are intentionally skipped."
+  exit 0
+fi
 
 if [ "${SERVER}" = standalone ]; then
   scripts/run-standalone-container-smoke
@@ -53,10 +102,23 @@ case "${PACKAGE_FAMILY}" in
   apt)
     cp -R packaging/debian debian
     dpkg-buildpackage --build=binary --no-sign
+    dpkg-deb -f ../laghu-libvips_*.deb Depends | grep -F 'bubblewrap (>= 0.8.0)'
     # Container dependency layers may outlive a mirror publication. Refresh
     # immediately before the clean-host install so package versions referenced
     # by APT still exist on the configured mirror.
     apt-get update
+    # Build/test dependencies can already provide Bubblewrap.  Remove it
+    # before the clean-host install so APT must satisfy the package's declared
+    # versioned runtime dependency rather than inheriting it from the builder.
+    if dpkg-query -W -f='${db:Status-Status}' bubblewrap 2>/dev/null | grep -qx installed; then
+      apt-get purge -y bubblewrap
+    fi
+    # `dash` may retain a command lookup after `apt-get purge`; package state,
+    # rather than a shell cache, proves the clean-host precondition.
+    if dpkg-query -W -f='${db:Status-Status}' bubblewrap 2>/dev/null | grep -qx installed; then
+      echo "Bubblewrap package remained installed before the clean-host package install" >&2
+      exit 1
+    fi
     if [ "${SERVER}" = nginx ]; then
       dependencies=$(dpkg-deb -f ../ngx-laghu_*.deb Depends)
       printf '%s\n' "${dependencies}" | grep -q 'nginx-abi-'
@@ -67,7 +129,10 @@ case "${PACKAGE_FAMILY}" in
         # shellcheck disable=SC2086
         apt-get purge -y ${installed}
       fi
-      ! command -v nginx >/dev/null 2>&1
+      if command -v nginx >/dev/null 2>&1; then
+        echo "NGINX remained installed before the clean-host package install" >&2
+        exit 1
+      fi
       apt-get install -y ../laghu-libvips_*.deb ../ngx-laghu_*.deb
       nginx -t
     else
@@ -80,7 +145,10 @@ case "${PACKAGE_FAMILY}" in
         # shellcheck disable=SC2086
         apt-get purge -y ${installed}
       fi
-      ! command -v apache2 >/dev/null 2>&1
+      if command -v apache2 >/dev/null 2>&1; then
+        echo "Apache remained installed before the clean-host package install" >&2
+        exit 1
+      fi
       apt-get install -y ../laghu-libvips_*.deb ../mod-laghu_*.deb
       apache2ctl configtest
     fi
@@ -97,12 +165,36 @@ case "${PACKAGE_FAMILY}" in
     rm -rf "${staging}"
     cp packaging/rpm/laghu.spec "$HOME/rpmbuild/SPECS/laghu.spec"
     rpmbuild -ba "$HOME/rpmbuild/SPECS/laghu.spec"
+    if [ "$(rpm --eval '%{?rhel}')" = 9 ]; then
+      rpm_chrome_analysis_supported=0
+      chrome_requires=$(rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm)
+      chrome_files=$(rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm)
+      if printf '%s\n' "${chrome_requires}" | grep -q '^bubblewrap >= 0.8.0$'; then
+        echo "EL9 package unexpectedly requires Bubblewrap >= 0.8.0" >&2
+        exit 1
+      fi
+      if printf '%s\n' "${chrome_files}" | grep -q '/laghu-chrome-analyze'; then
+        echo "EL9 package unexpectedly ships laghu-chrome-analyze" >&2
+        exit 1
+      fi
+      if printf '%s\n' "${chrome_files}" | grep -q '/chrome-analysis.conf.example'; then
+        echo "EL9 package unexpectedly ships the Chrome analysis example" >&2
+        exit 1
+      fi
+    else
+      rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '^bubblewrap >= 0.8.0$'
+      rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '/laghu-chrome-analyze'
+      rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '/chrome-analysis.conf.example'
+    fi
     if [ "${SERVER}" = nginx ]; then
       requirements=$(rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm)
       printf '%s\n' "${requirements}" | grep -q 'nginx(abi)'
       printf '%s\n' "${requirements}" | grep -q 'laghu-libvips'
       "${PACKAGE_FAMILY}" remove -y nginx nginx-mod-devel
-      ! command -v nginx >/dev/null 2>&1
+      if command -v nginx >/dev/null 2>&1; then
+        echo "NGINX remained installed before the clean-host RPM install" >&2
+        exit 1
+      fi
       "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
         "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm
       nginx -t
@@ -111,7 +203,10 @@ case "${PACKAGE_FAMILY}" in
       printf '%s\n' "${requirements}" | grep -q 'httpd-mmn'
       printf '%s\n' "${requirements}" | grep -q 'laghu-libvips'
       "${PACKAGE_FAMILY}" remove -y httpd httpd-core httpd-devel
-      ! command -v httpd >/dev/null 2>&1
+      if command -v httpd >/dev/null 2>&1; then
+        echo "Apache remained installed before the clean-host RPM install" >&2
+        exit 1
+      fi
       "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
         "$HOME"/rpmbuild/RPMS/*/mod-laghu-*.rpm
       httpd -t
@@ -132,10 +227,23 @@ else
     "${installed_config}"
 fi
 test -d /var/lib/laghu/rum
-test -x /usr/bin/laghu-chrome-analyze
-chrome_unit=/lib/systemd/system/laghu-chrome-analyze.service
-[ -f "${chrome_unit}" ] || chrome_unit=/usr/lib/systemd/system/laghu-chrome-analyze.service
-grep -q '^EnvironmentFile=/etc/laghu/chrome-analysis.conf$' "${chrome_unit}"
-grep -q 'LAGHU_CHROME_ANALYSIS_QUEUE' "${chrome_unit}"
-grep -q 'LAGHU_CHROME_ANALYSIS_OUTPUT' "${chrome_unit}"
-grep -q 'LAGHU_CHROME_ANALYSIS_BROWSER' "${chrome_unit}"
+if [ "${rpm_chrome_analysis_supported}" = 0 ]; then
+  [ ! -e /usr/bin/laghu-chrome-analyze ]
+  [ ! -e /usr/lib/systemd/system/laghu-chrome-analyze.service ]
+  [ ! -e /usr/share/doc/laghu/chrome-analysis.conf.example ]
+else
+  test -x /usr/bin/laghu-chrome-analyze
+  case "${PACKAGE_FAMILY}" in
+    apt) dpkg-query -W -f='${db:Status-Status}' bubblewrap | grep -qx installed ;;
+    dnf|yum) rpm -q bubblewrap >/dev/null ;;
+  esac
+  test -x /usr/bin/bwrap
+  chrome_unit=/lib/systemd/system/laghu-chrome-analyze.service
+  [ -f "${chrome_unit}" ] || chrome_unit=/usr/lib/systemd/system/laghu-chrome-analyze.service
+  grep -q '^EnvironmentFile=/etc/laghu/chrome-analysis.conf$' "${chrome_unit}"
+  grep -q 'LAGHU_CHROME_ANALYSIS_QUEUE' "${chrome_unit}"
+  grep -q 'LAGHU_CHROME_ANALYSIS_OUTPUT' "${chrome_unit}"
+  grep -q 'LAGHU_CHROME_ANALYSIS_BROWSER' "${chrome_unit}"
+  grep -q '^PrivateNetwork=true$' "${chrome_unit}"
+  grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' "${chrome_unit}"
+fi

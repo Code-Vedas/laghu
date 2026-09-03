@@ -29,6 +29,7 @@ static void usage(FILE *stream) {
       "  --connect-timeout SECONDS --io-timeout SECONDS\n"
       "  --request-header-timeout SECONDS --request-body-timeout SECONDS\n"
       "  --origin-pool-size 0..1024 --origin-idle-timeout SECONDS\n"
+      "  --auth-pre-rate N --auth-pre-burst N --auth-kdf-rate N --auth-kdf-burst N --auth-kdf-concurrency N\n"
       "  --drain-timeout SECONDS\n"
       "  --transform-memory-limit 4m..256m\n"
       "  --transform-deadline-ms 5..1000\n"

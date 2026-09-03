@@ -123,14 +123,124 @@ static bool proxy_basic_base64(const char *input, unsigned char *output, size_t 
   return true;
 }
 
-static bool proxy_basic_password_matches(const laghu_proxy_basic_auth_user *user, const char *password) {
+static bool proxy_rate_peer(const proxy_connection *connection, const unsigned char **bytes, size_t *length);
+static uint64_t proxy_rate_identity(const unsigned char *bytes, size_t length);
+
+static bool proxy_auth_refill(uint64_t *tokens, uint64_t *updated, uint64_t now, unsigned int rate, unsigned int burst) {
+  uint64_t elapsed;
+  uint64_t refill;
+  uint64_t ceiling;
+  if (tokens == NULL || updated == NULL || rate == 0U || burst == 0U) return false;
+  ceiling = (uint64_t)burst * 1000U;
+  if (*updated == 0U || now < *updated) {
+    *updated = now;
+    *tokens = ceiling;
+    return true;
+  }
+  elapsed = now - *updated;
+  refill = elapsed > UINT64_MAX / rate ? UINT64_MAX : elapsed * rate;
+  if (refill != 0U) {
+    uint64_t added = refill > ceiling ? ceiling : refill;
+    *tokens = *tokens > ceiling - added ? ceiling : *tokens + added;
+    *updated = now;
+  }
+  return true;
+}
+
+static bool proxy_auth_preauth_allowed(proxy_queue *queue, const laghu_proxy_options *options, const proxy_connection *connection,
+                                       const laghu_proxy_rules *rules) {
+  const unsigned char *address;
+  size_t address_length;
+  uint64_t identity;
+  uint64_t now;
+  size_t index;
+  size_t candidate = LAGHU_PROXY_AUTH_BUCKETS;
+  size_t oldest = LAGHU_PROXY_AUTH_BUCKETS;
+  proxy_rate_bucket *bucket;
+  if (queue == NULL || options == NULL || rules == NULL || !proxy_rate_peer(connection, &address, &address_length) ||
+      (identity = proxy_rate_identity(address, address_length)) == 0U)
+    return false;
+  now = proxy_monotonic_ms();
+  proxy_queue_lock(queue);
+  if (queue->stopping || queue->state == PROXY_FORCING) goto rejected;
+  for (index = 0U; index < LAGHU_PROXY_AUTH_BUCKETS; ++index) {
+    size_t slot = (identity + rules->scope_id + index) % LAGHU_PROXY_AUTH_BUCKETS;
+    proxy_rate_bucket *current = &queue->auth_buckets[slot];
+    if (current->identity == identity && current->scope_id == rules->scope_id && current->address_length == address_length &&
+        memcmp(current->address, address, address_length) == 0) {
+      candidate = slot;
+      break;
+    }
+    if (current->identity == 0U && candidate == LAGHU_PROXY_AUTH_BUCKETS) candidate = slot;
+    if (current->identity != 0U && (oldest == LAGHU_PROXY_AUTH_BUCKETS || current->updated_ms < queue->auth_buckets[oldest].updated_ms))
+      oldest = slot;
+  }
+  if (candidate == LAGHU_PROXY_AUTH_BUCKETS) candidate = oldest;
+  if (candidate == LAGHU_PROXY_AUTH_BUCKETS) goto rejected;
+  bucket = &queue->auth_buckets[candidate];
+  if (bucket->identity != identity || bucket->scope_id != rules->scope_id || bucket->address_length != address_length ||
+      memcmp(bucket->address, address, address_length) != 0) {
+    memset(bucket, 0, sizeof(*bucket));
+    bucket->identity = identity;
+    bucket->scope_id = rules->scope_id;
+    memcpy(bucket->address, address, address_length);
+    bucket->address_length = (unsigned char)address_length;
+  }
+  if (!proxy_auth_refill(&bucket->tokens_milli, &bucket->updated_ms, now, options->auth_pre_rate, options->auth_pre_burst) ||
+      bucket->tokens_milli < 1000U)
+    goto rejected;
+  bucket->tokens_milli -= 1000U;
+  proxy_queue_unlock(queue);
+  return true;
+rejected:
+  ++queue->auth_preauth_rejected;
+  proxy_queue_unlock(queue);
+  return false;
+}
+
+static bool proxy_auth_kdf_begin(proxy_queue *queue, const laghu_proxy_options *options) {
+  uint64_t now;
+  if (queue == NULL || options == NULL) return false;
+  now = proxy_monotonic_ms();
+  proxy_queue_lock(queue);
+  if (queue->stopping || queue->state == PROXY_FORCING || queue->auth_kdf_active >= options->auth_kdf_concurrency ||
+      !proxy_auth_refill(&queue->auth_kdf_tokens_milli, &queue->auth_kdf_updated_ms, now, options->auth_kdf_rate, options->auth_kdf_burst) ||
+      queue->auth_kdf_tokens_milli < 1000U) {
+    ++queue->auth_kdf_saturated;
+    proxy_queue_unlock(queue);
+    return false;
+  }
+  queue->auth_kdf_tokens_milli -= 1000U;
+  ++queue->auth_kdf_starts;
+  ++queue->auth_kdf_active;
+  if (queue->auth_kdf_active > queue->auth_kdf_highwater) queue->auth_kdf_highwater = queue->auth_kdf_active;
+  proxy_queue_unlock(queue);
+  return true;
+}
+
+static void proxy_auth_kdf_end(proxy_queue *queue) {
+  if (queue == NULL) return;
+  proxy_queue_lock(queue);
+  if (queue->auth_kdf_active != 0U) --queue->auth_kdf_active;
+  proxy_queue_unlock(queue);
+}
+
+static bool proxy_basic_password_matches(proxy_queue *queue, const laghu_proxy_options *options, const laghu_proxy_basic_auth_user *user,
+                                         const char *password, bool *saturated) {
   unsigned char derived[32U];
   unsigned int derived_length = 0U;
   bool matched = false;
+  bool kdf_active = false;
+  if (saturated != NULL) *saturated = false;
   if (user == NULL || password == NULL) return false;
   if (user->password_kdf == LAGHU_PROXY_BASIC_AUTH_SHA256) {
     if (EVP_Digest(password, strlen(password), derived, &derived_length, EVP_sha256(), NULL) != 1 || derived_length != sizeof(derived)) goto done;
   } else if (user->password_kdf == LAGHU_PROXY_BASIC_AUTH_SCRYPT_V1) {
+    if (!proxy_auth_kdf_begin(queue, options)) {
+      if (saturated != NULL) *saturated = true;
+      goto done;
+    }
+    kdf_active = true;
     if (EVP_PBE_scrypt(password, strlen(password), user->password_salt, sizeof(user->password_salt), LAGHU_PROXY_BASIC_AUTH_SCRYPT_N,
                        LAGHU_PROXY_BASIC_AUTH_SCRYPT_R, LAGHU_PROXY_BASIC_AUTH_SCRYPT_P, LAGHU_PROXY_BASIC_AUTH_SCRYPT_MAX_MEMORY, derived,
                        sizeof(derived)) != 1)
@@ -141,11 +251,13 @@ static bool proxy_basic_password_matches(const laghu_proxy_basic_auth_user *user
   matched = CRYPTO_memcmp(user->password_hash, derived, sizeof(derived)) == 0;
 done:
   OPENSSL_cleanse(derived, sizeof(derived));
+  if (kdf_active) proxy_auth_kdf_end(queue);
   return matched;
 }
 
-static bool proxy_basic_authorized(const laghu_config *core, const laghu_service_config *service, const proxy_connection *connection,
-                                   const proxy_request *request, const laghu_proxy_rules *rules) {
+static bool proxy_basic_authorized(proxy_queue *queue, const laghu_proxy_options *options, const laghu_config *core,
+                                   const laghu_service_config *service, const proxy_connection *connection, const proxy_request *request,
+                                   const laghu_proxy_rules *rules, bool *saturated) {
   const char *authorization;
   unsigned char decoded[512U];
   char *separator;
@@ -165,7 +277,7 @@ static bool proxy_basic_authorized(const laghu_config *core, const laghu_service
   *separator++ = '\0';
   for (index = 0U; index < rules->basic_auth_user_count; ++index) {
     if (strcmp(rules->basic_auth_users[index].username, (const char *)decoded) == 0) {
-      matched = proxy_basic_password_matches(&rules->basic_auth_users[index], separator);
+      matched = proxy_basic_password_matches(queue, options, &rules->basic_auth_users[index], separator, saturated);
       break;
     }
   }
@@ -254,8 +366,10 @@ static bool proxy_rate_allowed(proxy_queue *queue, const proxy_connection *conne
 }
 
 bool proxy_request_access_allowed(proxy_queue *queue, const laghu_config *core, const laghu_service_config *service,
-                                  const proxy_connection *connection, const proxy_request *request, const laghu_proxy_rules *rules,
-                                  const char **failure) {
+                                  const laghu_proxy_options *options, const proxy_connection *connection, const proxy_request *request,
+                                  const laghu_proxy_rules *rules, const char **failure) {
+  const char *authorization;
+  bool saturated = false;
   if (failure != NULL) *failure = "none";
   if (rules == NULL || queue == NULL || connection == NULL || request == NULL) return false;
   if (rules->deny_count != 0U && proxy_peer_in_cidrs(connection, rules->deny, rules->deny_count)) {
@@ -266,14 +380,80 @@ bool proxy_request_access_allowed(proxy_queue *queue, const laghu_config *core, 
     if (failure != NULL) *failure = "cidr_allow";
     return false;
   }
-  if (!proxy_basic_authorized(core, service, connection, request, rules)) {
+  if ((rules->present & LAGHU_PROXY_RULE_BASIC_AUTH) != 0U) {
+    /* Only a syntactic Basic candidate spends admission. This remains before
+     * decoding, so malformed Basic credentials cannot bypass the KDF gate. */
+    if (core == NULL || service == NULL || strcmp(proxy_effective_scheme(core, service, connection, request), "https") != 0) {
+      if (failure != NULL) *failure = "basic_auth";
+      return false;
+    }
+    authorization = proxy_single_header(request, "Authorization");
+    if (authorization != NULL && strncmp(authorization, "Basic ", 6U) == 0 && !proxy_auth_preauth_allowed(queue, options, connection, rules)) {
+      if (failure != NULL) *failure = "preauth_rate";
+      return false;
+    }
+  }
+  if (!proxy_basic_authorized(queue, options, core, service, connection, request, rules, &saturated)) {
+    proxy_queue_lock(queue);
+    if (!saturated) ++queue->auth_credential_failed;
+    proxy_queue_unlock(queue);
+    if (saturated) {
+      if (failure != NULL) *failure = "kdf_saturated";
+      return false;
+    }
     if (failure != NULL) *failure = "basic_auth";
     return false;
   }
   if (!proxy_rate_allowed(queue, connection, rules)) {
+    if ((rules->present & LAGHU_PROXY_RULE_BASIC_AUTH) != 0U) {
+      proxy_queue_lock(queue);
+      ++queue->auth_postauth_rejected;
+      proxy_queue_unlock(queue);
+    }
     if (failure != NULL) *failure = "rate_limit";
     return false;
   }
+  return true;
+}
+
+void proxy_auth_state_clear(proxy_queue *queue) {
+  if (queue == NULL) return;
+  proxy_queue_lock(queue);
+  memset(queue->auth_buckets, 0, sizeof(queue->auth_buckets));
+  queue->auth_kdf_updated_ms = 0U;
+  queue->auth_kdf_tokens_milli = 0U;
+  queue->auth_kdf_highwater = 0U;
+  proxy_queue_unlock(queue);
+}
+
+bool proxy_auth_metrics_append(proxy_queue *queue, char *output, size_t capacity, size_t *length) {
+  uint64_t starts, preauth, saturated, credentials, postauth;
+  unsigned int active, highwater;
+  int written;
+  if (queue == NULL || output == NULL || length == NULL || *length >= capacity) return false;
+  proxy_queue_lock(queue);
+  starts = queue->auth_kdf_starts;
+  preauth = queue->auth_preauth_rejected;
+  saturated = queue->auth_kdf_saturated;
+  credentials = queue->auth_credential_failed;
+  postauth = queue->auth_postauth_rejected;
+  active = queue->auth_kdf_active;
+  highwater = queue->auth_kdf_highwater;
+  proxy_queue_unlock(queue);
+  written = snprintf(output + *length, capacity - *length,
+                     "# TYPE laghu_auth_kdf_starts_total counter\n"
+                     "laghu_auth_kdf_starts_total %llu\n"
+                     "# TYPE laghu_auth_admissions_total counter\n"
+                     "laghu_auth_admissions_total{result=\"preauth_rejected\"} %llu\n"
+                     "laghu_auth_admissions_total{result=\"kdf_saturated\"} %llu\n"
+                     "laghu_auth_admissions_total{result=\"credential_failed\"} %llu\n"
+                     "laghu_auth_admissions_total{result=\"postauth_rate_rejected\"} %llu\n"
+                     "# TYPE laghu_auth_kdf_active gauge\nlaghu_auth_kdf_active %u\n"
+                     "# TYPE laghu_auth_kdf_highwater gauge\nlaghu_auth_kdf_highwater %u\n",
+                     (unsigned long long)starts, (unsigned long long)preauth, (unsigned long long)saturated, (unsigned long long)credentials,
+                     (unsigned long long)postauth, active, highwater);
+  if (written < 0 || (size_t)written >= capacity - *length) return false;
+  *length += (size_t)written;
   return true;
 }
 

@@ -29,14 +29,15 @@ Description: native Laghu HTTP optimization module for NGINX
 
 Package: laghu-libvips
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, adduser, ffmpeg
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser, bubblewrap (>= 0.8.0), ffmpeg
 Replaces: laghu-optimizer (<< ${binary:Version})
 Breaks: laghu-optimizer (<< ${binary:Version})
 Description: shared asynchronous libvips service for Laghu
  Converts Laghu image and JavaScript jobs and fetches explicitly configured
  external font stylesheets outside request-serving processes. Also packages the
  optional per-origin HTTPS HTML stale-while-revalidate and headless-Chrome
- analysis workers; the latter requires a separately installed Chromium binary.
+ analysis workers; the latter requires a separately installed Chromium binary
+ and runs each captured document through the packaged Bubblewrap boundary.
  The official Ubuntu 24.04 build requires the distribution libvips runtime and
  its JPEG, PNG, GIF, and WebP codec dependencies plus FFmpeg for bounded,
  asynchronous large animated-GIF video conversion.

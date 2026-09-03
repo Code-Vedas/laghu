@@ -85,6 +85,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify architecture
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
+      - name: Install Linux native build dependencies
+        if: runner.os == 'Linux'
+        run: scripts/ci-install-native-build-dependencies
       - name: Install libvips on Ubuntu
         if: runner.os == 'Linux' && matrix.vips == 'ON'
         run: |
@@ -146,11 +149,7 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential libpcre2-dev libssl-dev zlib1g-dev \
-            libvips-dev libvips-tools
+        run: scripts/ci-install-native-build-dependencies --with-vips
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
         run: brew install pcre2 vips
@@ -191,11 +190,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential libpcre2-dev libssl-dev zlib1g-dev \
-            libvips-dev libvips-tools
+        run: scripts/ci-install-native-build-dependencies --with-vips
       - name: Build libraries and runtime
         run: scripts/run-build-all
         env:
@@ -215,11 +210,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential libpcre2-dev libssl-dev zlib1g-dev \
-            libvips-dev libvips-tools
+        run: scripts/ci-install-native-build-dependencies --with-vips
       - name: Build libraries and runtime
         run: scripts/run-build-all
         env:
@@ -288,8 +279,8 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y apache2 apache2-dev libvips-dev
+          scripts/ci-install-native-build-dependencies --with-vips
+          sudo apt-get install --no-install-recommends -y apache2 apache2-dev
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install httpd vips
@@ -316,6 +307,7 @@ jobs:
           - ubuntu-apache-prefork
           - ubuntu-nginx-no-libvips
           - debian-nginx-chrome-analysis
+          - debian-bookworm-chrome-isolation
           - fedora-nginx
           - fedora-apache
           - rocky-nginx
@@ -364,9 +356,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Install compiler
+      - name: Install compiler and native build dependencies
         run: |
-          sudo apt-get update
+          scripts/ci-install-native-build-dependencies
           sudo apt-get install --no-install-recommends -y clang
       - name: Build sanitizer tests and fuzz harness
         run: >-
@@ -386,12 +378,13 @@ jobs:
     runs-on: ubuntu-24.04
     container: ubuntu:24.04
     steps:
-      - name: Install checkout and build dependencies
+      - name: Install checkout dependency
         run: |
           apt-get update
-          apt-get install --no-install-recommends -y \
-            ca-certificates cmake git libvips-dev pkgconf
+          apt-get install --no-install-recommends -y ca-certificates git
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install native build dependencies
+        run: scripts/ci-install-native-build-dependencies --with-vips
       - run: cmake -S . -B tmp/minimum-vips -DLAGHU_WITH_VIPS=ON
       - run: cmake --build tmp/minimum-vips --parallel
       - run: ctest --test-dir tmp/minimum-vips --output-on-failure
@@ -503,6 +496,12 @@ jobs:
             grep '/usr/lib/apache2/modules/mod_laghu.so'
           dpkg-deb --contents ../laghu-libvips_0.1.0_*.deb | \
             grep '/usr/bin/laghu-libvips'
+          dpkg-deb -f ../laghu-libvips_0.1.0_*.deb Depends | \
+            grep -F 'bubblewrap (>= 0.8.0)'
+          dpkg-deb --contents ../laghu-libvips_0.1.0_*.deb | \
+            grep '/usr/bin/laghu-chrome-analyze'
+          dpkg-deb --contents ../laghu-libvips_0.1.0_*.deb | \
+            grep '/lib/systemd/system/laghu-chrome-analyze.service'
           dpkg-deb --contents ../laghu_0.1.0_*.deb | \
             grep '/usr/bin/laghu$'
           sudo apt-get install -y \
@@ -512,6 +511,10 @@ jobs:
           apache2ctl configtest
           LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
+          test -x /usr/bin/bwrap
+          chrome_unit=/lib/systemd/system/laghu-chrome-analyze.service
+          grep -q '^PrivateNetwork=true$' "${chrome_unit}"
+          grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' "${chrome_unit}"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: laghu-deb-${{ runner.arch }}
@@ -550,6 +553,12 @@ jobs:
             grep '/mod_laghu.so'
           rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
             grep '/usr/bin/laghu-libvips'
+          rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep -q '^bubblewrap >= 0.8.0$'
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep '/usr/bin/laghu-chrome-analyze'
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep '/usr/lib/systemd/system/laghu-chrome-analyze.service'
           rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-*.rpm | \
             grep '/usr/bin/laghu'
           dnf install -y "$HOME"/rpmbuild/RPMS/*/*laghu*.rpm
@@ -557,6 +566,10 @@ jobs:
           httpd -t
           LAGHU_LIBVIPS_BIN=laghu-libvips scripts/check-runtime-dependencies
           laghu --help | grep -q "laghu --listen"
+          test -x /usr/bin/bwrap
+          chrome_unit=/usr/lib/systemd/system/laghu-chrome-analyze.service
+          grep -q '^PrivateNetwork=true$' "${chrome_unit}"
+          grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' "${chrome_unit}"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: laghu-rpm-${{ runner.arch }}

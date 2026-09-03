@@ -49,10 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            build-essential libpcre2-dev libssl-dev zlib1g-dev
+        run: scripts/ci-install-native-build-dependencies
       - run: scripts/run-module-build-all
         env:
           NGINX_VERSION: ${{ matrix.nginx_version }}
@@ -129,6 +126,11 @@ jobs:
         run: |
           cp -R packaging/debian debian
           dpkg-buildpackage --build=binary --no-sign
+          dpkg-deb -f ../laghu-libvips_*.deb Depends | grep -F 'bubblewrap (>= 0.8.0)'
+          dpkg-deb --contents ../laghu-libvips_*.deb | \
+            grep '/usr/bin/laghu-chrome-analyze'
+          dpkg-deb --contents ../laghu-libvips_*.deb | \
+            grep '/lib/systemd/system/laghu-chrome-analyze.service'
           nginx -t
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -163,6 +165,12 @@ jobs:
             "$HOME/rpmbuild/SOURCES/laghu-0.1.0.tar.gz" .
           cp packaging/rpm/laghu.spec "$HOME/rpmbuild/SPECS/laghu.spec"
           rpmbuild -ba "$HOME/rpmbuild/SPECS/laghu.spec"
+          rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep -q '^bubblewrap >= 0.8.0$'
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep '/usr/bin/laghu-chrome-analyze'
+          rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
+            grep '/usr/lib/systemd/system/laghu-chrome-analyze.service'
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-rpm-${{ matrix.architecture }}

@@ -298,7 +298,7 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
   }
   {
     const char *access_failure = "none";
-    if (!proxy_request_access_allowed(worker->queue, config, service, connection, &request, rules, &access_failure)) {
+    if (!proxy_request_access_allowed(worker->queue, config, service, options, connection, &request, rules, &access_failure)) {
       access.access = access_failure;
       if (!strcmp(access_failure, "basic_auth")) {
         const char *realm = rules->basic_auth_realm[0] == '\0' ? "Laghu" : rules->basic_auth_realm;
@@ -311,9 +311,9 @@ void proxy_handle(const proxy_connection *connection, proxy_worker *worker) {
           (void)proxy_client_send_all(client, client_tls, response, (size_t)response_length);
         access.status = 401U;
         access.failure = "basic_auth";
-      } else if (!strcmp(access_failure, "rate_limit")) {
+      } else if (!strcmp(access_failure, "rate_limit") || !strcmp(access_failure, "preauth_rate") || !strcmp(access_failure, "kdf_saturated")) {
         access.rate_limited = true;
-        PROXY_FAIL(429U, "Too Many Requests", "rate_limit");
+        PROXY_FAIL(429U, "Too Many Requests", access_failure);
       } else {
         PROXY_FAIL(403U, "Forbidden", access_failure);
       }
@@ -669,6 +669,9 @@ origin_response_ready:
         access.failure = "client_disconnect";
         goto done;
       }
+      origin_reusable = !strcmp(response.version, "HTTP/1.1") && !proxy_connection_nominates(response.headers, response.header_count, "close") &&
+                        (bodyless ? initial_length == 0U : response.has_content_length && initial_length <= response.content_length) &&
+                        !proxy_is_forcing(worker->queue);
       goto done;
     }
   }
@@ -688,7 +691,7 @@ origin_response_ready:
     }
     origin_reusable = !gateway_buffered && !strcmp(response.version, "HTTP/1.1") &&
                       !proxy_connection_nominates(response.headers, response.header_count, "close") &&
-                      (bodyless ? initial_length == 0U : response.has_content_length || response.chunked);
+                      (bodyless ? initial_length == 0U : response.has_content_length || response.chunked) && !proxy_is_forcing(worker->queue);
   }
   html_cache_response = proxy_html_cache_response_eligible(config, &request, &response, origin_body_length);
   if (!prepared_ok) {

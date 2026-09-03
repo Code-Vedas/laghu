@@ -1,0 +1,71 @@
+#!/bin/sh
+# Copyright Codevedas Inc. 2026-present
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+set -eu
+
+with_vips=0
+print_only=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --with-vips)
+      with_vips=1
+      ;;
+    --print)
+      print_only=1
+      ;;
+    -h|--help)
+      printf '%s\n' 'usage: ci-install-native-build-dependencies [--with-vips] [--print]'
+      exit 0
+      ;;
+    *)
+      printf 'unknown option: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+packages='build-essential
+ca-certificates
+cmake
+curl
+libbrotli-dev
+libpcre2-dev
+libssl-dev
+pkg-config
+zlib1g-dev'
+
+if [ "${with_vips}" -eq 1 ]; then
+  packages="${packages}
+libvips-dev
+libvips-tools"
+fi
+
+if [ "${print_only}" -eq 1 ]; then
+  printf '%s\n' "${packages}"
+  exit 0
+fi
+
+if ! command -v apt-get >/dev/null 2>&1; then
+  echo 'apt-get is required to install Linux native build dependencies' >&2
+  exit 127
+fi
+
+# Package names are repository-controlled bare Debian package names.
+# shellcheck disable=SC2086
+set -- ${packages}
+
+if [ "$(id -u)" -eq 0 ]; then
+  apt-get update
+  apt-get install --no-install-recommends -y "$@"
+elif command -v sudo >/dev/null 2>&1; then
+  sudo apt-get update
+  sudo apt-get install --no-install-recommends -y "$@"
+else
+  echo 'root or sudo is required to install Linux native build dependencies' >&2
+  exit 1
+fi

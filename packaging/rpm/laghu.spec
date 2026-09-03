@@ -24,6 +24,12 @@ BuildRequires: pkgconfig(vips) >= 8.15
 BuildRequires: cargo
 BuildRequires: rust >= 1.86
 Requires: vips >= 8.15
+# EL9 BaseOS only provides Bubblewrap 0.6.x.  Do not ship a browser worker
+# there: this optional feature must be absent rather than run below its tested
+# isolation contract.
+%if 0%{?rhel} != 9
+Requires: bubblewrap >= 0.8.0
+%endif
 Requires: ffmpeg
 Requires(pre): shadow-utils
 Requires(post): shadow-utils
@@ -37,7 +43,11 @@ Consumes bounded Laghu image jobs outside web-server processes and atomically
 publishes validated variants. It also runs the separately isolated,
 provider-allowlisted external font stylesheet fetch service.
 It also runs the HTTPS HTML stale-while-revalidate worker and the locked native
-SWC JavaScript optimization worker.
+SWC JavaScript optimization worker. The optional Chrome analysis worker needs
+an operator-installed Chromium binary and runs each captured document inside
+the packaged Bubblewrap isolation boundary where Bubblewrap 0.8.0 or newer is
+available. EL9 packages intentionally omit the optional Chrome worker because
+their base distribution does not meet that boundary's version requirement.
 
 %package -n ngx-laghu
 Summary: Native Laghu HTTP optimization module for NGINX
@@ -89,8 +99,10 @@ install -D -m 0755 %{__cmake_builddir}/workers/laghu-html-refresh/laghu-html-ref
   %{buildroot}%{_bindir}/laghu-html-refresh
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-js-optimize/cargo/release/laghu-js-optimize \
   %{buildroot}%{_bindir}/laghu-js-optimize
+%if 0%{?rhel} != 9
 install -D -m 0755 %{__cmake_builddir}/workers/laghu-chrome-analyze/laghu-chrome-analyze \
   %{buildroot}%{_bindir}/laghu-chrome-analyze
+%endif
 install -D -m 0755 %{_nginx_modbuilddir}/ngx_http_laghu_module.so \
   %{buildroot}%{nginx_moddir}/ngx_http_laghu_module.so
 install -D -m 0644 packaging/nginx/mod-http-laghu.conf \
@@ -113,14 +125,18 @@ install -D -m 0644 packaging/systemd/laghu-html-refresh@.service \
   %{buildroot}%{_unitdir}/laghu-html-refresh@.service
 install -D -m 0644 packaging/systemd/laghu-js-optimize.service \
   %{buildroot}%{_unitdir}/laghu-js-optimize.service
+%if 0%{?rhel} != 9
 install -D -m 0644 packaging/systemd/laghu-chrome-analyze.service \
   %{buildroot}%{_unitdir}/laghu-chrome-analyze.service
+%endif
 install -D -m 0644 packaging/font-providers.conf \
   %{buildroot}%{_sysconfdir}/laghu/font-providers.conf
 install -D -m 0644 packaging/html-refresh.conf.example \
   %{buildroot}%{_docdir}/laghu/html-refresh.conf.example
+%if 0%{?rhel} != 9
 install -D -m 0644 packaging/chrome-analysis.conf.example \
   %{buildroot}%{_docdir}/laghu/chrome-analysis.conf.example
+%endif
 install -D -m 0644 packaging/javascript-observation.conf \
   %{buildroot}%{_sysconfdir}/laghu/javascript-observation.conf
 install -D -m 0644 packaging/javascript-defer.conf \
@@ -138,7 +154,9 @@ getent passwd laghu >/dev/null || \
 %systemd_post laghu-resource-fetch.service
 %systemd_post laghu-html-refresh@.service
 %systemd_post laghu-js-optimize.service
+%if 0%{?rhel} != 9
 %systemd_post laghu-chrome-analyze.service
+%endif
 for account in nginx apache; do
   if getent passwd "$account" >/dev/null; then
     usermod -a -G laghu "$account"
@@ -151,14 +169,18 @@ systemd-tmpfiles --create laghu.conf >/dev/null 2>&1 || :
 %systemd_preun laghu-resource-fetch.service
 %systemd_preun laghu-html-refresh@.service
 %systemd_preun laghu-js-optimize.service
+%if 0%{?rhel} != 9
 %systemd_preun laghu-chrome-analyze.service
+%endif
 
 %postun
 %systemd_postun_with_restart laghu-libvips.service
 %systemd_postun_with_restart laghu-resource-fetch.service
 %systemd_postun_with_restart laghu-html-refresh@.service
 %systemd_postun_with_restart laghu-js-optimize.service
+%if 0%{?rhel} != 9
 %systemd_postun_with_restart laghu-chrome-analyze.service
+%endif
 
 %post -n ngx-laghu
 nginx -t
@@ -172,15 +194,21 @@ httpd -t
 %{_bindir}/laghu-resource-fetch
 %{_bindir}/laghu-html-refresh
 %{_bindir}/laghu-js-optimize
+%if 0%{?rhel} != 9
 %{_bindir}/laghu-chrome-analyze
+%endif
 %{_unitdir}/laghu-libvips.service
 %{_unitdir}/laghu-resource-fetch.service
 %{_unitdir}/laghu-html-refresh@.service
 %{_unitdir}/laghu-js-optimize.service
+%if 0%{?rhel} != 9
 %{_unitdir}/laghu-chrome-analyze.service
+%endif
 %config(noreplace) %{_sysconfdir}/laghu/font-providers.conf
 %doc %{_docdir}/laghu/html-refresh.conf.example
+%if 0%{?rhel} != 9
 %doc %{_docdir}/laghu/chrome-analysis.conf.example
+%endif
 %config(noreplace) %{_sysconfdir}/laghu/javascript-observation.conf
 %config(noreplace) %{_sysconfdir}/laghu/javascript-defer.conf
 %{_tmpfilesdir}/laghu.conf

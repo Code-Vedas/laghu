@@ -578,16 +578,19 @@ static bool yaml_finalize_scope(const laghu_config *parent_core, const laghu_ser
   laghu_config_merge(&merged_core, parent_core, core);
   finalize_options.respect_x_forwarded_proto = merged_core.respect_x_forwarded_proto == LAGHU_MODE_ON;
   if (!laghu_service_config_merge(&merged_service, parent_service, service, &diagnostic)) {
+    laghu_config_dispose(&merged_core);
     (void)yaml_error(error, error_size, diagnostic.message);
     return false;
   }
   if (!laghu_proxy_rules_merge(&merged_rules, parent_rules, rules, error, error_size)) {
+    laghu_config_dispose(&merged_core);
     laghu_service_config_dispose(&merged_service);
     return false;
   }
   merged_rules.scope_id = scope_id;
   if (!laghu_resolve_config_policy_with_error(&merged_core, &policy, policy_error, sizeof(policy_error)) ||
       !proxy_scope_lifecycle_requirements(&merged_core, &merged_service, &requirements)) {
+    laghu_config_dispose(&merged_core);
     laghu_service_config_dispose(&merged_service);
     (void)yaml_error(error, error_size, policy_error[0] != '\0' ? policy_error : "invalid lifecycle policy");
     return false;
@@ -595,10 +598,12 @@ static bool yaml_finalize_scope(const laghu_config *parent_core, const laghu_ser
   finalize_options.require_cache = requirements.cache;
   finalize_options.require_worker_queue = requirements.image_queue;
   if (!laghu_service_config_finalize(&merged_service, &finalize_options, &diagnostic)) {
+    laghu_config_dispose(&merged_core);
     laghu_service_config_dispose(&merged_service);
     (void)yaml_error(error, error_size, diagnostic.message);
     return false;
   }
+  laghu_config_dispose(core);
   laghu_service_config_dispose(service);
   *core = merged_core;
   *service = merged_service;

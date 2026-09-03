@@ -5,7 +5,11 @@
 
 #include "laghu/proxy.h"
 
+#include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <openssl/ssl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +97,11 @@ static bool write_yaml_fixture(char path[]) {
       "  worker_queue: /tmp/jobs\n"
       "  request_header_timeout: 7\n"
       "  request_body_timeout: 19\n"
+      "  auth_pre_rate: 9\n"
+      "  auth_pre_burst: 10\n"
+      "  auth_kdf_rate: 11\n"
+      "  auth_kdf_burst: 12\n"
+      "  auth_kdf_concurrency: 13\n"
       "  preset: balanced\n"
       "  trusted_proxy:\n"
       "    - 127.0.0.0/8\n"
@@ -414,11 +423,11 @@ static bool static_preopened_root_test(void) {
       !proxy_test_path_join(missing, sizeof(missing), directory, "/missing"))
     return false;
   if (mkdir(root, 0700) != 0) goto done;
-  (void)snprintf(path, sizeof(path), "%s/index.html", root);
+  if (!proxy_test_path_join(path, sizeof(path), root, "/index.html")) goto done;
   file = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
   if (file < 0 || write(file, "pinned root", 11U) != 11 || close(file) != 0) goto done;
   file = -1;
-  (void)snprintf(path, sizeof(path), "%s/linked", root);
+  if (!proxy_test_path_join(path, sizeof(path), root, "/linked")) goto done;
   if (symlink(outside, path) != 0) goto done;
   file = open(outside, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
   if (file < 0 || write(file, "outside", 7U) != 7 || close(file) != 0) goto done;
@@ -432,7 +441,7 @@ static bool static_preopened_root_test(void) {
   queue.static_roots = roots;
   worker.queue = &queue;
   if (rename(root, moved) != 0 || mkdir(replacement, 0700) != 0) goto done_options;
-  (void)snprintf(path, sizeof(path), "%s/index.html", replacement);
+  if (!proxy_test_path_join(path, sizeof(path), replacement, "/index.html")) goto done_options;
   file = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
   if (file < 0 || write(file, "replacement", 11U) != 11 || close(file) != 0) goto done_options;
   file = -1;
@@ -510,13 +519,10 @@ done:
   if (file >= 0) (void)close(file);
   if (sockets[0] >= 0) (void)close(sockets[0]);
   if (sockets[1] >= 0) (void)close(sockets[1]);
-  (void)snprintf(path, sizeof(path), "%s/index.html", replacement);
-  (void)unlink(path);
+  if (proxy_test_path_join(path, sizeof(path), replacement, "/index.html")) (void)unlink(path);
   (void)rmdir(replacement);
-  (void)snprintf(path, sizeof(path), "%s/index.html", moved);
-  (void)unlink(path);
-  (void)snprintf(path, sizeof(path), "%s/linked", moved);
-  (void)unlink(path);
+  if (proxy_test_path_join(path, sizeof(path), moved, "/index.html")) (void)unlink(path);
+  if (proxy_test_path_join(path, sizeof(path), moved, "/linked")) (void)unlink(path);
   (void)rmdir(moved);
   (void)unlink(link);
   (void)unlink(outside);
@@ -752,11 +758,472 @@ static bool basic_auth_format_test(void) {
   return result;
 }
 
+static void auth_admission_peer(proxy_connection *connection, unsigned int value) {
+  struct sockaddr_in *peer = (struct sockaddr_in *)&connection->peer;
+  memset(connection, 0, sizeof(*connection));
+  peer = (struct sockaddr_in *)&connection->peer;
+  peer->sin_family = AF_INET;
+  peer->sin_addr.s_addr = htonl(UINT32_C(0x7f000000) | value);
+  connection->peer_length = (laghu_socklen)sizeof(*peer);
+  connection->tls = (SSL *)(uintptr_t)1U;
+}
+
+static bool auth_admission_test(void) {
+  static const char auth_contents[] =
+      "operator:scrypt-v1:16384:8:1:00112233445566778899aabbccddeeff:f5206d570fcd120bd1f23a8cd186bd87c04ac1db00e9ac1efca589774ae6ecb8\n";
+  static char wrong[] = "Basic b3BlcmF0b3I6d3JvbmcgcGFzc3dvcmQh";
+  static char unknown[] = "Basic dW5rbm93bjp3cm9uZw==";
+  static char valid[] = "Basic b3BlcmF0b3I6Y29ycmVjdCBob3JzZQ==";
+  static char malformed[] = "Basic a===";
+  static char bearer[] = "Bearer not-basic";
+  char auth_path[] = "/tmp/laghu-auth-admission-XXXXXX";
+  char error[128U] = {0};
+  char metrics[2048U] = {0};
+  laghu_proxy_options options;
+  laghu_proxy_rules rules;
+  laghu_config core;
+  laghu_service_config service;
+  proxy_queue queue = {0};
+  proxy_connection connection;
+  proxy_request request = {0};
+  const char *failure = NULL;
+  size_t metrics_length = 0U;
+  size_t index;
+  unsigned int buckets = 0U;
+  int file = mkstemp(auth_path);
+  bool lock_ready = false;
+  bool result = false;
+  if (file < 0 || write(file, auth_contents, sizeof(auth_contents) - 1U) != (ssize_t)(sizeof(auth_contents) - 1U) || close(file) != 0 ||
+      chmod(auth_path, 0600) != 0)
+    return false;
+  laghu_proxy_options_init(&options);
+  options.auth_pre_rate = 100000U;
+  options.auth_pre_burst = 100000U;
+  options.auth_kdf_rate = 100000U;
+  options.auth_kdf_burst = 100000U;
+  options.auth_kdf_concurrency = 1U;
+  laghu_proxy_rules_init(&rules);
+  laghu_config_init(&core);
+  laghu_service_config_init(&service);
+  if (!laghu_proxy_rules_apply(&rules, "basic_auth_file", auth_path, error, sizeof(error)) || pthread_mutex_init(&queue.lock, NULL) != 0) goto done;
+  lock_ready = true;
+  rules.scope_id = 7U;
+  auth_admission_peer(&connection, 1U);
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth") ||
+      queue.auth_kdf_starts != 0U)
+    goto done;
+  request.headers[request.header_count++] = (proxy_header){"Authorization", bearer};
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth") ||
+      queue.auth_kdf_starts != 0U)
+    goto done;
+  for (index = 0U; index < LAGHU_PROXY_AUTH_BUCKETS; ++index)
+    if (queue.auth_buckets[index].identity != 0U) goto done;
+  proxy_auth_state_clear(&queue);
+  options.auth_pre_rate = 1U;
+  options.auth_pre_burst = 1U;
+  request.headers[0].value = malformed;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth") ||
+      queue.auth_kdf_starts != 0U)
+    goto done;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "preauth_rate") ||
+      queue.auth_kdf_starts != 0U)
+    goto done;
+  proxy_auth_state_clear(&queue);
+  options.auth_pre_rate = 100000U;
+  options.auth_pre_burst = 100000U;
+  request.headers[0].value = wrong;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth") ||
+      queue.auth_kdf_starts != 1U || queue.auth_kdf_active != 0U)
+    goto done;
+  request.headers[0].value = unknown;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth") ||
+      queue.auth_kdf_starts != 1U)
+    goto done;
+  request.headers[0].value = valid;
+  if (!proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || queue.auth_kdf_starts != 2U)
+    goto done;
+
+  queue.auth_kdf_highwater = 9U;
+  proxy_auth_state_clear(&queue);
+  if (queue.auth_kdf_highwater != 0U) goto done;
+  options.auth_pre_rate = 1U;
+  options.auth_pre_burst = 1U;
+  request.headers[0].value = wrong;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || queue.auth_kdf_starts != 3U)
+    goto done;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "preauth_rate") ||
+      queue.auth_kdf_starts != 3U)
+    goto done;
+  rules.scope_id = 8U;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || queue.auth_kdf_starts != 4U)
+    goto done;
+  rules.scope_id = 7U;
+  auth_admission_peer(&connection, 2U);
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || queue.auth_kdf_starts != 5U)
+    goto done;
+
+  proxy_auth_state_clear(&queue);
+  options.auth_pre_rate = 100000U;
+  options.auth_pre_burst = 100000U;
+  options.auth_kdf_rate = 1U;
+  options.auth_kdf_burst = 1U;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || queue.auth_kdf_starts != 6U)
+    goto done;
+  auth_admission_peer(&connection, 3U);
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "kdf_saturated") ||
+      queue.auth_kdf_starts != 6U || queue.auth_kdf_active != 0U)
+    goto done;
+  proxy_auth_state_clear(&queue);
+  options.auth_kdf_rate = 100000U;
+  options.auth_kdf_burst = 100000U;
+  proxy_queue_lock(&queue);
+  queue.auth_kdf_active = options.auth_kdf_concurrency;
+  proxy_queue_unlock(&queue);
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "kdf_saturated") ||
+      queue.auth_kdf_starts != 6U)
+    goto done;
+  proxy_queue_lock(&queue);
+  queue.auth_kdf_active = 0U;
+  proxy_queue_unlock(&queue);
+
+  proxy_auth_state_clear(&queue);
+  rules.rate_per_second = 1U;
+  rules.rate_burst = 1U;
+  rules.present |= LAGHU_PROXY_RULE_RATE;
+  request.headers[0].value = valid;
+  if (!proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || queue.auth_kdf_starts != 7U)
+    goto done;
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "rate_limit") ||
+      queue.auth_kdf_starts != 8U)
+    goto done;
+  rules.present &= ~LAGHU_PROXY_RULE_RATE;
+  rules.rate_per_second = 0U;
+  rules.rate_burst = 0U;
+  proxy_auth_state_clear(&queue);
+  request.headers[0].value = unknown;
+  proxy_queue_lock(&queue);
+  for (index = 0U; index < LAGHU_PROXY_AUTH_BUCKETS; ++index) {
+    queue.auth_buckets[index].identity = UINT64_MAX - index;
+    queue.auth_buckets[index].updated_ms = index + 1U;
+    queue.auth_buckets[index].address_length = 4U;
+  }
+  proxy_queue_unlock(&queue);
+  auth_admission_peer(&connection, 4U);
+  if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth") ||
+      queue.auth_buckets[0].identity == UINT64_MAX || queue.auth_buckets[1].identity != UINT64_MAX - 1U)
+    goto done;
+  proxy_auth_state_clear(&queue);
+  for (index = 0U; index <= LAGHU_PROXY_AUTH_BUCKETS; ++index) {
+    auth_admission_peer(&connection, (unsigned int)index + 1U);
+    if (proxy_request_access_allowed(&queue, &core, &service, &options, &connection, &request, &rules, &failure) || strcmp(failure, "basic_auth"))
+      goto done;
+  }
+  for (index = 0U; index < LAGHU_PROXY_AUTH_BUCKETS; ++index)
+    if (queue.auth_buckets[index].identity != 0U) ++buckets;
+  if (buckets != LAGHU_PROXY_AUTH_BUCKETS || !proxy_auth_metrics_append(&queue, metrics, sizeof(metrics), &metrics_length) ||
+      strstr(metrics, "laghu_auth_kdf_starts_total 8") == NULL ||
+      strstr(metrics, "laghu_auth_admissions_total{result=\"preauth_rejected\"} 2") == NULL ||
+      strstr(metrics, "laghu_auth_admissions_total{result=\"kdf_saturated\"} 2") == NULL ||
+      strstr(metrics, "laghu_auth_admissions_total{result=\"credential_failed\"} 267") == NULL ||
+      strstr(metrics, "laghu_auth_admissions_total{result=\"postauth_rate_rejected\"} 1") == NULL ||
+      strstr(metrics, "laghu_auth_kdf_active 0") == NULL || strstr(metrics, "laghu_auth_kdf_highwater 0") == NULL ||
+      strstr(metrics, "operator") != NULL || strstr(metrics, "correct horse") != NULL || strstr(metrics, "127.0.0.") != NULL)
+    goto done;
+  result = true;
+done:
+  if (lock_ready) (void)pthread_mutex_destroy(&queue.lock);
+  (void)unlink(auth_path);
+  return result;
+}
+
+static bool origin_pool_contains(const proxy_queue *queue, const char *authority) {
+  unsigned int index;
+  for (index = 0U; index < queue->origin_count; ++index)
+    if (!strcmp(queue->origins[index].authority, authority)) return true;
+  return false;
+}
+
+static void origin_pool_test_connection(proxy_origin_connection *origin, laghu_socket socket, const char *authority) {
+  memset(origin, 0, sizeof(*origin));
+  origin->socket = socket;
+  (void)snprintf(origin->authority, sizeof(origin->authority), "%s", authority);
+}
+
+static bool origin_pool_wait_for_idle_event(laghu_socket socket) {
+  struct pollfd ready = {(int)socket, POLLIN, 0};
+  return poll(&ready, 1U, 1000) > 0 && (ready.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
+}
+
+/* getaddrinfo rejects this SOCK_STREAM service on macOS and Linux. */
+static const char origin_pool_invalid_port[] = "-1";
+
+typedef struct {
+  SSL *tls;
+  int result;
+} origin_pool_tls_peer;
+
+static unsigned int origin_pool_psk_client(SSL *tls, const char *hint, char *identity, unsigned int identity_length, unsigned char *psk,
+                                           unsigned int psk_length) {
+  static const unsigned char key[] = {0x4cU, 0x61U, 0x67U, 0x68U, 0x75U};
+  static const char name[] = "laghu-pool-test";
+  (void)tls;
+  (void)hint;
+  if (identity_length < sizeof(name) || psk_length < sizeof(key)) return 0U;
+  memcpy(identity, name, sizeof(name));
+  memcpy(psk, key, sizeof(key));
+  return sizeof(key);
+}
+
+static unsigned int origin_pool_psk_server(SSL *tls, const char *identity, unsigned char *psk, unsigned int psk_length) {
+  static const unsigned char key[] = {0x4cU, 0x61U, 0x67U, 0x68U, 0x75U};
+  (void)tls;
+  if (strcmp(identity, "laghu-pool-test") || psk_length < sizeof(key)) return 0U;
+  memcpy(psk, key, sizeof(key));
+  return sizeof(key);
+}
+
+static void *origin_pool_tls_accept(void *argument) {
+  origin_pool_tls_peer *peer = argument;
+  peer->result = SSL_accept(peer->tls);
+  return NULL;
+}
+
+static bool origin_pool_tls_pending_connection(SSL **client, laghu_socket *client_socket, SSL **server, laghu_socket *server_socket) {
+  SSL_CTX *client_context = NULL;
+  SSL_CTX *server_context = NULL;
+  SSL *client_tls = NULL;
+  SSL *server_tls = NULL;
+  origin_pool_tls_peer peer = {0};
+  pthread_t accept_thread;
+  bool accept_started = false;
+  bool result = false;
+  unsigned char byte;
+  int pair[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  client_context = SSL_CTX_new(TLS_client_method());
+  server_context = SSL_CTX_new(TLS_server_method());
+  if (client_context == NULL || server_context == NULL || !SSL_CTX_set_min_proto_version(client_context, TLS1_2_VERSION) ||
+      !SSL_CTX_set_max_proto_version(client_context, TLS1_2_VERSION) || !SSL_CTX_set_min_proto_version(server_context, TLS1_2_VERSION) ||
+      !SSL_CTX_set_max_proto_version(server_context, TLS1_2_VERSION) || !SSL_CTX_set_cipher_list(client_context, "PSK-AES128-GCM-SHA256") ||
+      !SSL_CTX_set_cipher_list(server_context, "PSK-AES128-GCM-SHA256") || socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != 0)
+    goto done;
+  SSL_CTX_set_psk_client_callback(client_context, origin_pool_psk_client);
+  SSL_CTX_set_psk_server_callback(server_context, origin_pool_psk_server);
+  client_tls = SSL_new(client_context);
+  server_tls = SSL_new(server_context);
+  if (client_tls == NULL || server_tls == NULL || !SSL_set_fd(client_tls, (int)pair[0]) || !SSL_set_fd(server_tls, (int)pair[1])) goto done;
+  peer.tls = server_tls;
+  if (pthread_create(&accept_thread, NULL, origin_pool_tls_accept, &peer) != 0) goto done;
+  accept_started = true;
+  if (SSL_connect(client_tls) != 1) goto done;
+  (void)pthread_join(accept_thread, NULL);
+  accept_started = false;
+  if (peer.result != 1 || SSL_write(server_tls, "xy", 2) != 2 || SSL_read(client_tls, &byte, 1U) != 1 || SSL_pending(client_tls) == 0) goto done;
+  {
+    struct pollfd ready = {(int)pair[0], POLLIN, 0};
+    if (poll(&ready, 1U, 0) != 0) goto done;
+  }
+  *client = client_tls;
+  *client_socket = pair[0];
+  *server = server_tls;
+  *server_socket = pair[1];
+  client_tls = NULL;
+  server_tls = NULL;
+  pair[0] = LAGHU_INVALID_SOCKET;
+  pair[1] = LAGHU_INVALID_SOCKET;
+  result = true;
+done:
+  if (accept_started) {
+    if (pair[0] != LAGHU_INVALID_SOCKET) shutdown(pair[0], SHUT_RDWR);
+    if (pair[1] != LAGHU_INVALID_SOCKET) shutdown(pair[1], SHUT_RDWR);
+    (void)pthread_join(accept_thread, NULL);
+  }
+  SSL_free(client_tls);
+  SSL_free(server_tls);
+  SSL_CTX_free(client_context);
+  SSL_CTX_free(server_context);
+  if (pair[0] != LAGHU_INVALID_SOCKET) close(pair[0]);
+  if (pair[1] != LAGHU_INVALID_SOCKET) close(pair[1]);
+  return result;
+}
+
+static bool origin_pool_lifecycle_test(void) {
+  laghu_proxy_options options;
+  proxy_queue queue = {0};
+  proxy_worker worker = {0};
+  proxy_origin_connection acquired = {.socket = LAGHU_INVALID_SOCKET};
+  bool timed_out = false;
+  bool lock_ready = false;
+  bool result = false;
+  unsigned char marker = 'x';
+  int a[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int b[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int expired[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int expired_live[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int dead[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int dead_live[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int unread[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int unread_live[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int full_a[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int full_b[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  int full_c[2] = {LAGHU_INVALID_SOCKET, LAGHU_INVALID_SOCKET};
+  SSL *tls_client = NULL;
+  SSL *tls_server = NULL;
+  laghu_socket dead_socket = LAGHU_INVALID_SOCKET;
+  laghu_socket tls_client_socket = LAGHU_INVALID_SOCKET;
+  laghu_socket tls_server_socket = LAGHU_INVALID_SOCKET;
+#define POOL_REQUIRE(value)  \
+  do {                       \
+    if (!(value)) goto done; \
+  } while (0)
+  laghu_proxy_options_init(&options);
+  options.origin_pool_size = 2U;
+  options.origin_idle_timeout = 60U;
+  queue.origins = calloc(options.origin_pool_size, sizeof(*queue.origins));
+  POOL_REQUIRE(queue.origins != NULL);
+  POOL_REQUIRE(pthread_mutex_init(&queue.lock, NULL) == 0);
+  lock_ready = true;
+  worker.queue = &queue;
+  worker.active_origin = LAGHU_INVALID_SOCKET;
+
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, a) == 0);
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, b) == 0);
+  {
+    proxy_origin_connection origin;
+    origin_pool_test_connection(&origin, a[0], "a");
+    a[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+    origin_pool_test_connection(&origin, b[0], "b");
+    b[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+  }
+  POOL_REQUIRE(queue.origin_count == 2U);
+  POOL_REQUIRE(proxy_origin_acquire(&worker, &options, &acquired, "127.0.0.1", "0", "b", false, &timed_out));
+  POOL_REQUIRE(acquired.socket != LAGHU_INVALID_SOCKET && queue.origin_count == 1U && origin_pool_contains(&queue, "a"));
+  proxy_origin_release(&worker, &options, &acquired, true);
+  POOL_REQUIRE(proxy_origin_acquire(&worker, &options, &acquired, "127.0.0.1", "0", "a", false, &timed_out));
+  POOL_REQUIRE(acquired.socket != LAGHU_INVALID_SOCKET && queue.origin_count == 1U && origin_pool_contains(&queue, "b"));
+  proxy_origin_release(&worker, &options, &acquired, true);
+  proxy_origin_pool_close(&queue);
+
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, expired) == 0);
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, expired_live) == 0);
+  {
+    proxy_origin_connection origin;
+    origin_pool_test_connection(&origin, expired[0], "expired");
+    expired[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+    origin_pool_test_connection(&origin, expired_live[0], "live");
+    expired_live[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+  }
+  queue.origins[0].idle_since_ms = 0U;
+  POOL_REQUIRE(proxy_origin_acquire(&worker, &options, &acquired, "127.0.0.1", "0", "live", false, &timed_out));
+  POOL_REQUIRE(queue.origin_count == 0U && recv(expired[1], &marker, 1U, 0) == 0);
+  proxy_origin_release(&worker, &options, &acquired, true);
+  proxy_origin_pool_close(&queue);
+
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, dead) == 0);
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, dead_live) == 0);
+  {
+    proxy_origin_connection origin;
+    origin_pool_test_connection(&origin, dead[0], "dead");
+    dead_socket = dead[0];
+    dead[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+    origin_pool_test_connection(&origin, dead_live[0], "live");
+    dead_live[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+  }
+  close(dead[1]);
+  dead[1] = LAGHU_INVALID_SOCKET;
+  POOL_REQUIRE(origin_pool_wait_for_idle_event(dead_socket));
+  errno = EAGAIN;
+  POOL_REQUIRE(!proxy_origin_acquire(&worker, &options, &acquired, "127.0.0.1", origin_pool_invalid_port, "dead", false, &timed_out));
+  POOL_REQUIRE(queue.origin_count == 1U && origin_pool_contains(&queue, "live"));
+  proxy_origin_pool_close(&queue);
+
+  POOL_REQUIRE(origin_pool_tls_pending_connection(&tls_client, &tls_client_socket, &tls_server, &tls_server_socket));
+  {
+    proxy_origin_connection origin;
+    origin_pool_test_connection(&origin, tls_client_socket, "tls-unread");
+    origin.tls = tls_client;
+    origin.origin_tls = true;
+    tls_client = NULL;
+    tls_client_socket = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+  }
+  POOL_REQUIRE(!proxy_origin_acquire(&worker, &options, &acquired, "127.0.0.1", origin_pool_invalid_port, "tls-unread", true, &timed_out));
+  POOL_REQUIRE(queue.origin_count == 0U);
+  SSL_free(tls_server);
+  tls_server = NULL;
+  close(tls_server_socket);
+  tls_server_socket = LAGHU_INVALID_SOCKET;
+
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, unread) == 0);
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, unread_live) == 0);
+  {
+    proxy_origin_connection origin;
+    origin_pool_test_connection(&origin, unread[0], "unread");
+    unread[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+    origin_pool_test_connection(&origin, unread_live[0], "live");
+    unread_live[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+  }
+  POOL_REQUIRE(send(unread[1], &marker, 1U, 0) == 1);
+  POOL_REQUIRE(!proxy_origin_acquire(&worker, &options, &acquired, "127.0.0.1", origin_pool_invalid_port, "unread", false, &timed_out));
+  POOL_REQUIRE(queue.origin_count == 1U && origin_pool_contains(&queue, "live"));
+  proxy_origin_pool_close(&queue);
+
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, full_a) == 0);
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, full_b) == 0);
+  POOL_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, full_c) == 0);
+  {
+    proxy_origin_connection origin;
+    origin_pool_test_connection(&origin, full_a[0], "full-a");
+    full_a[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+    queue.origins[0].idle_since_ms = 1U;
+    origin_pool_test_connection(&origin, full_b[0], "full-b");
+    full_b[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+    queue.origins[1].idle_since_ms = 2U;
+    origin_pool_test_connection(&origin, full_c[0], "full-c");
+    full_c[0] = LAGHU_INVALID_SOCKET;
+    proxy_origin_release(&worker, &options, &origin, true);
+  }
+  POOL_REQUIRE(queue.origin_count == 2U && origin_pool_contains(&queue, "full-b") && origin_pool_contains(&queue, "full-c"));
+  POOL_REQUIRE(recv(full_a[1], &marker, 1U, 0) == 0);
+  proxy_origin_pool_close(&queue);
+  result = true;
+done:
+  if (acquired.socket != LAGHU_INVALID_SOCKET) proxy_origin_release(&worker, &options, &acquired, false);
+  if (lock_ready) proxy_origin_pool_close(&queue);
+  free(queue.origins);
+  if (a[1] != LAGHU_INVALID_SOCKET) close(a[1]);
+  if (b[1] != LAGHU_INVALID_SOCKET) close(b[1]);
+  if (expired[1] != LAGHU_INVALID_SOCKET) close(expired[1]);
+  if (expired_live[1] != LAGHU_INVALID_SOCKET) close(expired_live[1]);
+  if (dead[1] != LAGHU_INVALID_SOCKET) close(dead[1]);
+  if (dead_live[1] != LAGHU_INVALID_SOCKET) close(dead_live[1]);
+  if (unread[1] != LAGHU_INVALID_SOCKET) close(unread[1]);
+  if (unread_live[1] != LAGHU_INVALID_SOCKET) close(unread_live[1]);
+  if (full_a[1] != LAGHU_INVALID_SOCKET) close(full_a[1]);
+  if (full_b[1] != LAGHU_INVALID_SOCKET) close(full_b[1]);
+  if (full_c[1] != LAGHU_INVALID_SOCKET) close(full_c[1]);
+  SSL_free(tls_client);
+  SSL_free(tls_server);
+  if (tls_client_socket != LAGHU_INVALID_SOCKET) close(tls_client_socket);
+  if (tls_server_socket != LAGHU_INVALID_SOCKET) close(tls_server_socket);
+  if (lock_ready) (void)pthread_mutex_destroy(&queue.lock);
+  laghu_proxy_options_dispose(&options);
+#undef POOL_REQUIRE
+  return result;
+}
+
 int main(void) {
   laghu_proxy_options *options_storage;
 #define options (*options_storage)
-  proxy_queue queue;
-  proxy_worker worker;
   laghu_service_config expected_service;
   char error[128];
   char yaml_path[] = "/tmp/laghu-yaml-XXXXXX";
@@ -839,6 +1306,25 @@ int main(void) {
   char *bad_header_timeout[] = {"laghu", "--listen", "127.0.0.1:8080", "--origin", "http://127.0.0.1:8000", "--request-header-timeout", "0"};
   char *pool[] = {"laghu",          "--listen",  "127.0.0.1:8080",     "--origin", "http://127.0.0.1:8000", "--cache", "/tmp/cache",
                   "--worker-queue", "/tmp/jobs", "--origin-pool-size", "1",        "--origin-idle-timeout", "9"};
+  char *auth_limits[] = {"laghu",
+                         "--listen",
+                         "127.0.0.1:8080",
+                         "--origin",
+                         "http://127.0.0.1:8000",
+                         "--auth-pre-rate",
+                         "9",
+                         "--auth-pre-burst",
+                         "10",
+                         "--auth-kdf-rate",
+                         "11",
+                         "--auth-kdf-burst",
+                         "12",
+                         "--auth-kdf-concurrency",
+                         "13",
+                         "--cache",
+                         "/tmp/cache",
+                         "--worker-queue",
+                         "/tmp/jobs"};
   char *filters[] = {"laghu",           "--listen",         "127.0.0.1:8080", "--origin",        "http://127.0.0.1:8000",
                      "--cache",         "/tmp/cache",       "--worker-queue", "/tmp/jobs",       "--enable-filter",
                      "resource_inline", "--disable-filter", "html_minify",    "--forbid-filter", "javascript_defer"};
@@ -964,8 +1450,6 @@ int main(void) {
                  "--rum-store-required"};
   static const unsigned char chunked[] = "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
   unsigned char decoded[16];
-  unsigned char marker;
-  int first[2], second[2];
   size_t decoded_length = 0U;
   options_storage = calloc(1U, sizeof(*options_storage));
   CHECK(options_storage != NULL);
@@ -975,6 +1459,8 @@ int main(void) {
   CHECK(!strcmp(options.listen_host, "127.0.0.1") && options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
   CHECK(!options.access_log);
   CHECK(options.request_header_timeout == 7U && options.request_body_timeout == 19U);
+  CHECK(options.auth_pre_rate == 9U && options.auth_pre_burst == 10U && options.auth_kdf_rate == 11U && options.auth_kdf_burst == 12U &&
+        options.auth_kdf_concurrency == 13U);
   CHECK(options.service.trusted_proxy_count == 1U);
   CHECK(options.response_header_count == 2U && !strcmp(options.response_headers[0].name, "X-Static-Policy"));
   CHECK(options.site_count == 1U && !strcmp(options.sites[0].host, "static.example.test"));
@@ -999,6 +1485,7 @@ int main(void) {
   }
   CHECK(unlink(yaml_path) == 0);
   CHECK(write_yaml_fragment_fixture(yaml_directory, yaml_root, yaml_fragment));
+  laghu_proxy_options_dispose(&options);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_load_yaml(yaml_root, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.forwarded_mode == LAGHU_PROXY_FORWARDED_BOTH);
@@ -1020,10 +1507,12 @@ int main(void) {
   CHECK(response_header_batch_test());
   CHECK(scoped_rules_test());
   CHECK(basic_auth_format_test());
+  CHECK(auth_admission_test());
   CHECK(admin_token_file_test());
   CHECK(gateway_health_rejected_test());
   CHECK(health_interval_requires_check_test());
   CHECK(request_line_parse_test());
+  CHECK(origin_pool_lifecycle_test());
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(19, admin, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.service.purge_method && options.service.purge_query && options.service.statistics && options.service.purge_allow_count == 1U);
@@ -1045,31 +1534,10 @@ int main(void) {
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, pool, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(options.origin_pool_size == 1U && options.origin_idle_timeout == 9U);
-  memset(&queue, 0, sizeof(queue));
-#undef options
-  queue.options = options_storage;
-#define options (*options_storage)
-  queue.origins = calloc(options.origin_pool_size, sizeof(*queue.origins));
-  CHECK(queue.origins != NULL);
-  CHECK(pthread_mutex_init(&queue.lock, NULL) == 0);
-  memset(&worker, 0, sizeof(worker));
-  worker.queue = &queue;
-  worker.active_origin = LAGHU_INVALID_SOCKET;
-  CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, first) == 0);
-  CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, second) == 0);
-  {
-    proxy_origin_connection first_origin = {.socket = first[0]};
-    proxy_origin_connection second_origin = {.socket = second[0]};
-    proxy_origin_release(&worker, &options, &first_origin, true);
-    proxy_origin_release(&worker, &options, &second_origin, true);
-  }
-  CHECK(queue.origin_count == 1U);
-  CHECK(recv(second[1], &marker, 1U, 0) == 0);
-  proxy_origin_pool_close(&queue);
-  free(queue.origins);
-  close(first[1]);
-  close(second[1]);
-  CHECK(pthread_mutex_destroy(&queue.lock) == 0);
+  laghu_proxy_options_init(&options);
+  CHECK(laghu_proxy_parse_options(19, auth_limits, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
+  CHECK(options.auth_pre_rate == 9U && options.auth_pre_burst == 10U && options.auth_kdf_rate == 11U && options.auth_kdf_burst == 12U &&
+        options.auth_kdf_concurrency == 13U);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(17, backend, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_OK);
   CHECK(!strcmp(options.service.file_cache_backend, "file:///tmp/cache"));
@@ -1203,6 +1671,7 @@ int main(void) {
   CHECK(options.config.domain_policy.group_count == 1U);
   CHECK(options.config.domain_policy.groups[0].shard_count == 2U);
   CHECK(strcmp(options.config.domain_policy.mappings[0].source_origin, "https://origin.example") == 0);
+  laghu_proxy_options_dispose(&options);
   laghu_proxy_options_init(&options);
   CHECK(laghu_proxy_parse_options(13, filter_conflict, &options, error, sizeof(error)) == LAGHU_PROXY_PARSE_ERROR);
   CHECK(laghu_proxy_decode_chunked((laghu_buffer){chunked, sizeof(chunked) - 1U}, decoded, sizeof(decoded), &decoded_length));

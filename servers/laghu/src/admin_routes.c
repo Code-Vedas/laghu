@@ -71,6 +71,11 @@ bool proxy_handle_administrative_routes(const proxy_connection *connection, prox
         proxy_send_admin_json(client, tls, 503U, "Service Unavailable", "{\"status\":\"unavailable\"}", head);
         access_value->status = 503U;
         access_value->failure = "runtime";
+      } else if (response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS &&
+                 !proxy_auth_metrics_append(worker->queue, operational->output, sizeof(operational->output), &response.length)) {
+        proxy_send_admin_json(client, tls, 503U, "Service Unavailable", "{\"status\":\"unavailable\"}", head);
+        access_value->status = 503U;
+        access_value->failure = "runtime";
       } else if (response.content == LAGHU_HTTP_ADMINISTRATIVE_CONTENT_PROMETHEUS) {
         proxy_send_metrics(client, tls, operational->output, response.length, head);
         access_value->status = response.status;

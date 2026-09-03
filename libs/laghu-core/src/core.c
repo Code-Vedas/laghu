@@ -204,6 +204,11 @@ void laghu_config_init(laghu_config *config) {
   memset(&config->domain_policy, 0, sizeof(config->domain_policy));
 }
 
+void laghu_config_dispose(laghu_config *config) {
+  if (config == NULL) return;
+  laghu_domain_policy_dispose(&config->domain_policy);
+}
+
 void laghu_config_merge(laghu_config *result, const laghu_config *parent, const laghu_config *child) {
   laghu_mode parent_mode = LAGHU_MODE_OFF;
   laghu_preset parent_preset = LAGHU_PRESET_BALANCED;
@@ -622,6 +627,12 @@ bool laghu_domain_policy_add_shard(laghu_domain_policy *policy, const char *publ
   return true;
 }
 
+void laghu_domain_policy_dispose(laghu_domain_policy *policy) {
+  if (policy == NULL) return;
+  free(policy->groups);
+  memset(policy, 0, sizeof(*policy));
+}
+
 bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
   unsigned int index;
   if (policy == NULL || policy->domain_count > LAGHU_DOMAIN_POLICY_MAX_DOMAINS || policy->mapping_count > LAGHU_DOMAIN_POLICY_MAX_MAPPINGS ||
@@ -662,29 +673,32 @@ bool laghu_domain_policy_validate(const laghu_domain_policy *policy) {
 }
 
 bool laghu_domain_policy_merge_valid(const laghu_domain_policy *parent, const laghu_domain_policy *child) {
-  laghu_domain_policy merged;
+  laghu_domain_policy merged = {0};
   unsigned int index;
+  bool valid = false;
   if (parent == NULL || child == NULL) return true;
-  memset(&merged, 0, sizeof(merged));
   for (index = 0U; index < parent->domain_count; ++index)
-    if (!laghu_domain_policy_add_domain(&merged, parent->domains[index])) return false;
+    if (!laghu_domain_policy_add_domain(&merged, parent->domains[index])) goto done;
   for (index = 0U; index < child->domain_count; ++index)
-    if (!laghu_domain_policy_add_domain(&merged, child->domains[index])) return false;
+    if (!laghu_domain_policy_add_domain(&merged, child->domains[index])) goto done;
   for (index = 0U; index < parent->mapping_count; ++index)
-    if (!laghu_domain_policy_add_mapping(&merged, parent->mappings[index].source_origin, parent->mappings[index].public_origin)) return false;
+    if (!laghu_domain_policy_add_mapping(&merged, parent->mappings[index].source_origin, parent->mappings[index].public_origin)) goto done;
   for (index = 0U; index < child->mapping_count; ++index)
-    if (!laghu_domain_policy_add_mapping(&merged, child->mappings[index].source_origin, child->mappings[index].public_origin)) return false;
+    if (!laghu_domain_policy_add_mapping(&merged, child->mappings[index].source_origin, child->mappings[index].public_origin)) goto done;
   for (index = 0U; index < parent->group_count; ++index) {
     unsigned int shard;
     for (shard = 0U; shard < parent->groups[index].shard_count; ++shard)
-      if (!laghu_domain_policy_add_shard(&merged, parent->groups[index].public_origin, parent->groups[index].shards[shard])) return false;
+      if (!laghu_domain_policy_add_shard(&merged, parent->groups[index].public_origin, parent->groups[index].shards[shard])) goto done;
   }
   for (index = 0U; index < child->group_count; ++index) {
     unsigned int shard;
     for (shard = 0U; shard < child->groups[index].shard_count; ++shard)
-      if (!laghu_domain_policy_add_shard(&merged, child->groups[index].public_origin, child->groups[index].shards[shard])) return false;
+      if (!laghu_domain_policy_add_shard(&merged, child->groups[index].public_origin, child->groups[index].shards[shard])) goto done;
   }
-  return laghu_domain_policy_validate(&merged);
+  valid = laghu_domain_policy_validate(&merged);
+done:
+  laghu_domain_policy_dispose(&merged);
+  return valid;
 }
 
 bool laghu_domain_url_rewrite(const laghu_domain_policy *policy, const char *source_url, char *output, size_t output_size) {

@@ -38,6 +38,12 @@ extern "C" {
 #define LAGHU_PROXY_MAX_FAILOVERS 4U
 #define LAGHU_PROXY_MAX_AUTH_USERS 64U
 #define LAGHU_PROXY_RATE_BUCKETS 256U
+#define LAGHU_PROXY_AUTH_BUCKETS 256U
+#define LAGHU_PROXY_DEFAULT_AUTH_PRE_RATE 4U
+#define LAGHU_PROXY_DEFAULT_AUTH_PRE_BURST 8U
+#define LAGHU_PROXY_DEFAULT_AUTH_KDF_RATE 4U
+#define LAGHU_PROXY_DEFAULT_AUTH_KDF_BURST 8U
+#define LAGHU_PROXY_DEFAULT_AUTH_KDF_CONCURRENCY 2U
 #define LAGHU_PROXY_SITE_GLOBAL SIZE_MAX
 
 typedef enum { LAGHU_PROXY_ROUTE_EXACT = 0, LAGHU_PROXY_ROUTE_PREFIX, LAGHU_PROXY_ROUTE_ORDERED_REGEX } laghu_proxy_route_match;
@@ -188,6 +194,11 @@ typedef struct {
   unsigned int drain_timeout;
   unsigned int origin_pool_size;
   unsigned int origin_idle_timeout;
+  unsigned int auth_pre_rate;
+  unsigned int auth_pre_burst;
+  unsigned int auth_kdf_rate;
+  unsigned int auth_kdf_burst;
+  unsigned int auth_kdf_concurrency;
   bool access_log;
   bool directory_listing;
   laghu_proxy_forwarded_mode forwarded_mode;
