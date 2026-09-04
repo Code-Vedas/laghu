@@ -4,6 +4,9 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <errno.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -522,6 +525,13 @@ static void proxy_reload_configuration(proxy_queue *queue) {
   (void)pthread_mutex_unlock(&queue->options_lock);
   proxy_static_roots_dispose(previous_roots);
   proxy_reload_snapshot_dispose(previous_snapshot);
+  /* Reload parses a complete candidate before swapping generations.  Once the
+   * prior generation and parser scratch are released, return wholly-free
+   * glibc heap pages now: reload is administrative work, and retaining those
+   * pages makes bounded generation ownership look like live server growth. */
+#if defined(__GLIBC__)
+  (void)malloc_trim(0);
+#endif
   proxy_queue_lock(queue);
   memset(queue->upstream_health, 0, sizeof(queue->upstream_health));
   proxy_queue_unlock(queue);
@@ -554,7 +564,7 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
   unsigned int index, started = 0U;
   int result = 1;
   bool lock_ready = false, options_lock_ready = false, options_condition_ready = false, pid_created = false;
-  bool health_started = false, health_failed = false;
+  bool health_started = false, health_failed = false, startup_failed = false;
   if (options == NULL || !proxy_options_lifecycle_requirements(options, &requirements)) return 1;
   bool ready_condition = false;
   proxy_static_roots *roots;
@@ -673,11 +683,6 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
     proxy_log_startup_failure(&queue, "listen");
     goto cleanup;
   }
-  if (!proxy_pid_create(options->pid_file)) {
-    proxy_log_startup_failure(&queue, "pid_file");
-    goto cleanup;
-  }
-  pid_created = options->pid_file[0] != '\0';
   proxy_stop_requests = 0;
   proxy_reload_requests = 0;
   {
@@ -702,33 +707,42 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
     proxy_log_event(&queue, "startup_failure", "forcing");
     proxy_stop_requests = 2;
   } else {
-    queue.state = PROXY_RUNNING;
     if (pthread_create(&health_thread, NULL, proxy_health_worker_main, &queue) != 0) {
       proxy_log_startup_failure(&queue, "health_worker");
       health_failed = true;
       proxy_stop_requests = 2;
     } else {
       health_started = true;
-      proxy_log_event(&queue, "startup", "running");
-      while (proxy_stop_requests == 0) {
-        if (proxy_reload_requests != 0) {
-          proxy_reload_requests = 0;
-          proxy_reload_configuration(&queue);
-        }
-        proxy_maintain_queue_attachments(&queue);
-        {
-          const laghu_proxy_options *current = proxy_options_acquire(&queue);
-          (void)laghu_runtime_import_chrome_analysis(queue.rum, current->service.chrome_analysis_output, (uint64_t)time(NULL),
-                                                     current->service.rum_ttl);
-          proxy_options_release(&queue);
-        }
-        if (proxy_listener_ready(listener)) {
-          proxy_connection connection;
-          memset(&connection, 0, sizeof(connection));
-          connection.peer_length = (laghu_socklen)sizeof(connection.peer);
-          connection.socket = accept(listener, (struct sockaddr *)&connection.peer, &connection.peer_length);
-          if (connection.socket != LAGHU_INVALID_SOCKET && !queue_push(&queue, &connection))
-            proxy_reject_connection(&queue, connection.socket, "queue_saturated");
+      queue.state = PROXY_RUNNING;
+      /* A pid file is a readiness contract: SIGHUP now has a handler and
+       * accepted work has initialized worker and health ownership. */
+      if (!proxy_pid_create(options->pid_file)) {
+        proxy_log_startup_failure(&queue, "pid_file");
+        startup_failed = true;
+        proxy_stop_requests = 2;
+      } else {
+        pid_created = options->pid_file[0] != '\0';
+        proxy_log_event(&queue, "startup", "running");
+        while (proxy_stop_requests == 0) {
+          if (proxy_reload_requests != 0) {
+            proxy_reload_requests = 0;
+            proxy_reload_configuration(&queue);
+          }
+          proxy_maintain_queue_attachments(&queue);
+          {
+            const laghu_proxy_options *current = proxy_options_acquire(&queue);
+            (void)laghu_runtime_import_chrome_analysis(queue.rum, current->service.chrome_analysis_output, (uint64_t)time(NULL),
+                                                       current->service.rum_ttl);
+            proxy_options_release(&queue);
+          }
+          if (proxy_listener_ready(listener)) {
+            proxy_connection connection;
+            memset(&connection, 0, sizeof(connection));
+            connection.peer_length = (laghu_socklen)sizeof(connection.peer);
+            connection.socket = accept(listener, (struct sockaddr *)&connection.peer, &connection.peer_length);
+            if (connection.socket != LAGHU_INVALID_SOCKET && !queue_push(&queue, &connection))
+              proxy_reject_connection(&queue, connection.socket, "queue_saturated");
+          }
         }
       }
     }
@@ -751,7 +765,7 @@ int laghu_proxy_run_with_config(const laghu_proxy_options *options, const char *
   }
   queue.state = PROXY_STOPPED;
   proxy_log_event(&queue, "shutdown", "stopped");
-  result = started == options->workers && !health_failed ? 0 : 1;
+  result = started == options->workers && !health_failed && !startup_failed ? 0 : 1;
 cleanup:
   if (lock_ready) proxy_origin_pool_close(&queue);
   laghu_runtime_queue_close(&queue.runtime_queue);

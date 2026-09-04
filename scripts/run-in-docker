@@ -22,23 +22,59 @@ list_targets() {
     awk 'NR > 1 && $1 != "base" && $1 != "default" { print $1 }'
 }
 
-run_chrome_isolation_canary() {
+run_chrome_default_container_fail_closed() {
   image=$1
   worker=$2
-  docker run --rm --privileged --network none \
+  if docker run --rm --network none --cap-drop=ALL --security-opt=no-new-privileges \
     -e LAGHU_CHROME_CANARY_WORKER="${worker}" \
+    -e LAGHU_CHROME_CANARY_USER="${LAGHU_CHROME_CANARY_USER:-laghu-test}" \
     --entrypoint /bin/sh "${image}" -ec '
     sentinel=/usr/local/share/laghu-chrome-analyze-host-canary.css
-    chrome=/usr/lib/chromium/chromium
     worker=${LAGHU_CHROME_CANARY_WORKER}
     fixture=/workspace/tmp/build/workers/laghu-chrome-analyze/laghu_chrome_analyze_fixture
-    test -x "${chrome}"
+    chrome_runtime() {
+      for candidate in \
+        /usr/lib/chromium/chromium \
+        /usr/lib/chromium-browser/chromium \
+        /usr/lib/chromium-browser/chromium-browser \
+        /usr/lib64/chromium/chromium \
+        /usr/lib64/chromium/chromium-browser \
+        /usr/lib64/chromium-browser/chromium \
+        /usr/lib64/chromium-browser/chromium-browser; do
+        if [ -x "${candidate}" ] &&
+            [ "$(dd if="${candidate}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d " \\n")" = 7f454c46 ]; then
+          printf "%s\n" "${candidate}"
+          return 0
+        fi
+      done
+      for command_name in chromium chromium-browser google-chrome google-chrome-stable; do
+        candidate=$(command -v "${command_name}" 2>/dev/null || true)
+        if [ -n "${candidate}" ] && [ -x "${candidate}" ] &&
+            [ "$(dd if="${candidate}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d " \\n")" = 7f454c46 ]; then
+          printf "%s\n" "${candidate}"
+          return 0
+        fi
+      done
+      echo "No Chromium ELF runtime found (refusing command-wrapper path)" >&2
+      return 1
+    }
+    chrome=$(chrome_runtime)
     test -x "${worker}"
     test -x "${fixture}"
     printf "%s\\n" ".outside-usr { color: black; }" >"${sentinel}"
-    su --login --shell /bin/sh "${LAGHU_TEST_USER:-laghu-test}" --command \
+    su --login --shell /bin/sh "${LAGHU_CHROME_CANARY_USER:-laghu-test}" --command \
       "cd /workspace && LAGHU_CHROME_ANALYSIS_ISOLATION_TEST=1 LAGHU_CHROME_ANALYSIS_USR_SENTINEL=${sentinel} python3 workers/laghu-chrome-analyze/tests/network_isolation_test.py ${worker} ${fixture} ${chrome}"
-  '
+  '; then
+    echo "default Docker container unexpectedly ran the positive Chrome canary" >&2
+    return 1
+  else
+    status=$?
+  fi
+  if [ "${status}" -ne 77 ]; then
+    echo "default Docker container did not fail closed (expected test skip 77, got ${status})" >&2
+    return 1
+  fi
+  echo "default_container_fail_closed: unprivileged Docker blocked the worker; native systemd is the positive canary"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -96,16 +132,18 @@ for architecture in ${architectures}; do
         --progress=plain >"${directory}/build.log" 2>&1; then
       cat "${directory}/build.log"
       case "${current}" in
-        debian-nginx-chrome-analysis|debian-nginx-chrome-analysis-package-proof)
+        debian-nginx-chrome-analysis|debian-nginx-chrome-analysis-package-proof|fedora-nginx-chrome-analysis-package-proof)
           chrome_worker=/usr/bin/laghu-chrome-analyze
+          chrome_user=laghu
           ;;
         debian-bookworm-chrome-isolation)
           chrome_worker=/workspace/tmp/build/workers/laghu-chrome-analyze/laghu-chrome-analyze
+          chrome_user=laghu-test
           ;;
-        *) chrome_worker= ;;
+        *) chrome_worker='' chrome_user='' ;;
       esac
       if [ -n "${chrome_worker}" ]; then
-        if run_chrome_isolation_canary "laghu-test:${current}-${architecture}" "${chrome_worker}" >"${directory}/canary.log" 2>&1; then
+        if LAGHU_CHROME_CANARY_USER="${chrome_user}" run_chrome_default_container_fail_closed "laghu-test:${current}-${architecture}" "${chrome_worker}" >"${directory}/canary.log" 2>&1; then
           cat "${directory}/canary.log"
           printf '%s\n' PASS >"${directory}/result"
         else

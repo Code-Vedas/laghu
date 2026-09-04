@@ -246,7 +246,7 @@ static bool laghu_rum_expand_environment(const char *source, char *target, size_
 static bool laghu_rum_redis_uri(laghu_rum_engine *engine, const char *uri) {
   char expanded[LAGHU_RUNTIME_PATH_SIZE];
   char authority[1024U], *host, *at, *colon, *path, *query;
-  const char *cursor;
+  char *cursor;
   size_t authority_length;
   unsigned long value;
   char *end;
@@ -853,6 +853,19 @@ static bool laghu_rum_rotate_retry(laghu_rum_engine *engine) {
   return true;
 }
 
+/* Pending instrumentation records deliberately zero counters before a Redis
+ * merge. They still need the durable Chrome receipt ledger from a newly
+ * pulled record, otherwise a report that correctly retried after replication
+ * can never consume its capability on this process. */
+static void laghu_rum_reconcile_pending_receipts(void *pending, const void *current, size_t length) {
+  laghu_rum_instrumentation_record *target = pending;
+  const laghu_rum_instrumentation_record *source = current;
+  if (pending == NULL || current == NULL || length != sizeof(*target)) return;
+  /* Counters in `pending` remain deltas; the ledger is durable state and is
+   * copied whole so a full local ledger cannot retain stale capabilities. */
+  memcpy(target->chrome_analysis_receipts, source->chrome_analysis_receipts, sizeof(target->chrome_analysis_receipts));
+}
+
 static void laghu_rum_reconcile(laghu_rum_engine *engine, laghu_rum_snapshot_entry *entries, size_t count) {
   size_t index;
   laghu_rum_mutex_lock(&engine->mutex);
@@ -888,7 +901,10 @@ static void laghu_rum_reconcile(laghu_rum_engine *engine, laghu_rum_snapshot_ent
     slot->updated_at = entries[index].updated_at;
     slot->accessed_at = entries[index].updated_at;
     slot->generation = ++engine->generation;
-    if (slot->pending != NULL) (void)laghu_rum_record_merge(slot->type, slot->data, slot->pending, slot->length);
+    if (slot->pending != NULL) {
+      (void)laghu_rum_record_merge(slot->type, slot->data, slot->pending, slot->length);
+      if (slot->type == LAGHU_RUM_RECORD_INSTRUMENTATION) laghu_rum_reconcile_pending_receipts(slot->pending, slot->data, slot->length);
+    }
     slot->dirty = slot->pending != NULL;
     engine->memory_used += slot->length;
   }
@@ -1384,8 +1400,8 @@ bool laghu_rum_engine_publish(laghu_rum_engine *engine, laghu_rum_record_type ty
   return true;
 }
 
-bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, laghu_rum_mutator mutator,
-                             void *context, uint64_t *generation) {
+static bool laghu_rum_engine_update_internal(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at,
+                                             laghu_rum_mutator mutator, void *context, uint64_t *generation, bool preserve_updated_at) {
   laghu_rum_slot *slot;
   bool changed = false;
   if (engine == NULL || !laghu_rum_key_valid(key) || mutator == NULL) return false;
@@ -1404,7 +1420,7 @@ bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type typ
     }
   }
   if (slot != NULL && slot->pending != NULL && mutator(slot->data, slot->length, context) && mutator(slot->pending, slot->pending_length, context)) {
-    slot->updated_at = updated_at;
+    if (!preserve_updated_at) slot->updated_at = updated_at;
     slot->accessed_at = updated_at;
     slot->generation = ++engine->generation;
     slot->dirty = true;
@@ -1413,6 +1429,16 @@ bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type typ
   }
   laghu_rum_mutex_unlock(&engine->mutex);
   return changed;
+}
+
+bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, laghu_rum_mutator mutator,
+                             void *context, uint64_t *generation) {
+  return laghu_rum_engine_update_internal(engine, type, key, updated_at, mutator, context, generation, false);
+}
+
+bool laghu_rum_engine_update_preserving_updated_at(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t accessed_at,
+                                                   laghu_rum_mutator mutator, void *context, uint64_t *generation) {
+  return laghu_rum_engine_update_internal(engine, type, key, accessed_at, mutator, context, generation, true);
 }
 
 laghu_rum_health laghu_rum_engine_health(laghu_rum_engine *engine) {
@@ -1431,4 +1457,14 @@ size_t laghu_rum_engine_memory_used(laghu_rum_engine *engine) {
   used = engine->memory_used;
   laghu_rum_mutex_unlock(&engine->mutex);
   return used;
+}
+
+unsigned int laghu_rum_engine_ttl_seconds(const laghu_rum_engine *engine) {
+  /* This setting is fixed before the sync thread starts. */
+  return engine == NULL ? 0U : engine->ttl_seconds;
+}
+
+unsigned int laghu_rum_engine_sync_interval_seconds(const laghu_rum_engine *engine) {
+  /* This setting is fixed before the sync thread starts. */
+  return engine == NULL ? 0U : engine->sync_interval_seconds;
 }

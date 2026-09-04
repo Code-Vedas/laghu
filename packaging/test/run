@@ -9,16 +9,44 @@ set -eu
 rpm_chrome_analysis_supported=1
 chrome_focused_tests=OFF
 
+chrome_runtime() {
+  for candidate in \
+    /usr/lib/chromium/chromium \
+    /usr/lib/chromium-browser/chromium \
+    /usr/lib/chromium-browser/chromium-browser \
+    /usr/lib64/chromium/chromium \
+    /usr/lib64/chromium/chromium-browser \
+    /usr/lib64/chromium-browser/chromium \
+    /usr/lib64/chromium-browser/chromium-browser; do
+    if [ -x "${candidate}" ] &&
+        [ "$(dd if="${candidate}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n')" = 7f454c46 ]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  for command_name in chromium chromium-browser google-chrome google-chrome-stable; do
+    candidate=$(command -v "${command_name}" 2>/dev/null || true)
+    if [ -n "${candidate}" ] && [ -x "${candidate}" ] &&
+        [ "$(dd if="${candidate}" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n')" = 7f454c46 ]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "No Chromium ELF runtime found (refusing command-wrapper path)" >&2
+  return 1
+}
+
 if [ "${LAGHU_WITH_CHROME:-OFF}" = ON ]; then
   command -v bwrap >/dev/null 2>&1
   bwrap --version
-  chrome_runtime=/usr/lib/chromium/chromium
-  [ -x "${chrome_runtime}" ] || chrome_runtime=$(command -v chromium)
-  [ -x "${chrome_runtime}" ]
-  "${chrome_runtime}" --version
+  chrome_binary=$(chrome_runtime)
+  "${chrome_binary}" --version
 fi
 
-if [ "${LAGHU_CHROME_FOCUSED_TESTS:-OFF}" = ON ] || [ "${LAGHU_PACKAGE_PROOF_ONLY:-OFF}" = ON ]; then
+if [ "${LAGHU_CHROME_FOCUSED_TESTS:-OFF}" = ON ] || \
+   { [ "${LAGHU_PACKAGE_PROOF_ONLY:-OFF}" = ON ] && [ "${LAGHU_WITH_CHROME:-OFF}" = ON ]; }; then
   chrome_focused_tests=ON
 fi
 
@@ -86,11 +114,13 @@ if [ "${SERVER}" = standalone ]; then
   exit 0
 fi
 
-if [ "${SERVER}" = nginx ]; then
-  scripts/run-module-build-all
-  scripts/run-module-smoke-all
-else
-  scripts/run-apache-module-smoke-all
+if [ "${LAGHU_PACKAGE_PROOF_ONLY:-OFF}" != ON ]; then
+  if [ "${SERVER}" = nginx ]; then
+    scripts/run-module-build-all
+    scripts/run-module-smoke-all
+  else
+    scripts/run-apache-module-smoke-all
+  fi
 fi
 
 if [ "${LAGHU_SKIP_PACKAGE:-OFF}" = ON ] || [ "${LAGHU_WITH_VIPS}" = OFF ]; then
@@ -183,6 +213,7 @@ case "${PACKAGE_FAMILY}" in
       fi
     else
       rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '^bubblewrap >= 0.8.0$'
+      rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '^/usr/bin/ffmpeg$'
       rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '/laghu-chrome-analyze'
       rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | grep -q '/chrome-analysis.conf.example'
     fi
@@ -195,8 +226,31 @@ case "${PACKAGE_FAMILY}" in
         echo "NGINX remained installed before the clean-host RPM install" >&2
         exit 1
       fi
-      "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
-        "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm
+      if rpm -q bubblewrap >/dev/null 2>&1; then
+        "${PACKAGE_FAMILY}" remove -y bubblewrap
+      fi
+      if rpm -q bubblewrap >/dev/null 2>&1; then
+        echo "Bubblewrap remained installed before the clean-host RPM install" >&2
+        exit 1
+      fi
+      chrome_package=
+      if [ "${LAGHU_WITH_CHROME:-OFF}" = ON ]; then
+        chrome_package=chromium
+        if rpm -q "${chrome_package}" >/dev/null 2>&1; then
+          "${PACKAGE_FAMILY}" remove -y "${chrome_package}"
+        fi
+        if rpm -q "${chrome_package}" >/dev/null 2>&1; then
+          echo "Chromium remained installed before the clean-host RPM install" >&2
+          exit 1
+        fi
+      fi
+      if [ -n "${chrome_package}" ]; then
+        "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
+          "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm "${chrome_package}"
+      else
+        "${PACKAGE_FAMILY}" install -y "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm \
+          "$HOME"/rpmbuild/RPMS/*/ngx-laghu-*.rpm
+      fi
       nginx -t
     else
       requirements=$(rpm -qp --requires "$HOME"/rpmbuild/RPMS/*/mod-laghu-*.rpm)
@@ -234,10 +288,20 @@ if [ "${rpm_chrome_analysis_supported}" = 0 ]; then
 else
   test -x /usr/bin/laghu-chrome-analyze
   case "${PACKAGE_FAMILY}" in
-    apt) dpkg-query -W -f='${db:Status-Status}' bubblewrap | grep -qx installed ;;
-    dnf|yum) rpm -q bubblewrap >/dev/null ;;
+    apt)
+      dpkg-query -W -f='${db:Status-Status}' bubblewrap | grep -qx installed
+      dpkg-query -S /usr/bin/laghu-chrome-analyze | grep -q '^laghu-libvips:'
+      ;;
+    dnf|yum)
+      rpm -q bubblewrap >/dev/null
+      rpm -q --whatprovides /usr/bin/bwrap >/dev/null
+      rpm -q --whatprovides /usr/bin/ffmpeg >/dev/null
+      rpm -qf /usr/bin/laghu-chrome-analyze 2>/dev/null | grep -q '^laghu-libvips-'
+      ;;
   esac
+  id -u laghu >/dev/null
   test -x /usr/bin/bwrap
+  test -x /usr/bin/ffmpeg
   chrome_unit=/lib/systemd/system/laghu-chrome-analyze.service
   [ -f "${chrome_unit}" ] || chrome_unit=/usr/lib/systemd/system/laghu-chrome-analyze.service
   grep -q '^EnvironmentFile=/etc/laghu/chrome-analysis.conf$' "${chrome_unit}"
@@ -246,4 +310,5 @@ else
   grep -q 'LAGHU_CHROME_ANALYSIS_BROWSER' "${chrome_unit}"
   grep -q '^PrivateNetwork=true$' "${chrome_unit}"
   grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' "${chrome_unit}"
+  systemd-analyze verify "${chrome_unit}"
 fi

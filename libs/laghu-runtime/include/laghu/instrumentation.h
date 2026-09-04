@@ -26,6 +26,15 @@ extern "C" {
 #define LAGHU_INSTRUMENTATION_MAX_PROVIDERS 32U
 #define LAGHU_INSTRUMENTATION_MAX_SCRIPTS 64U
 #define LAGHU_SHA256_DIGEST_SIZE 32U
+#define LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS 8U
+/* A receipt is a worker-only, single-use capability.  It is deliberately
+ * separate from served HTML and bounded inside the record that consumes it. */
+typedef struct {
+  char value[LAGHU_RUNTIME_KEY_SIZE];
+  char snapshot_key[LAGHU_RUNTIME_KEY_SIZE];
+  uint64_t expires_at;
+  unsigned char consumed;
+} laghu_chrome_analysis_receipt;
 typedef struct laghu_rum_instrumentation_record {
   uint32_t version;
   char template_key[LAGHU_RUNTIME_KEY_SIZE];
@@ -52,7 +61,9 @@ typedef struct laghu_rum_instrumentation_record {
   uint16_t lcp_unresolved[4];
   uint16_t lcp_candidates[4][LAGHU_LCP_MAX_CANDIDATES];
   uint16_t lcp_resources[4][LAGHU_LCP_MAX_CANDIDATES][LAGHU_LCP_MAX_RESOURCES];
+  laghu_chrome_analysis_receipt chrome_analysis_receipts[LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS];
 } laghu_rum_instrumentation_record;
+_Static_assert(sizeof(laghu_rum_instrumentation_record) <= LAGHU_RUM_MAX_RECORD_BYTES, "instrumentation record must fit the bounded RUM store");
 typedef struct {
   char key[LAGHU_RUNTIME_KEY_SIZE];
   unsigned int before_dcl;
@@ -97,8 +108,17 @@ bool laghu_instrumentation_apply_beacon(laghu_rum_engine *rum, const char *cache
  * counters.  It never creates a template, adds synthetic timing samples, or
  * changes a response when the report is malformed/stale. */
 bool laghu_runtime_apply_chrome_analysis(laghu_rum_engine *rum, laghu_buffer json, uint64_t now, unsigned int ttl_seconds);
-/* Lifecycle-only bounded importer.  At most eight regular report files are
- * considered per call; successfully applied reports are unlinked. */
+/* Issuing is atomic with the template record and does not refresh its RUM
+ * sample TTL. `analysis_timeout_ms` reserves execution, issuer-to-importer
+ * replication, and one importer pass inside the smaller of the template and
+ * RUM-engine lifetimes. A failed optional queue publish should revoke it. */
+bool laghu_runtime_issue_chrome_analysis_receipt(laghu_rum_engine *rum, const char *template_key, const char *snapshot_key, const char *receipt,
+                                                 uint64_t now, unsigned int ttl_seconds, unsigned int analysis_timeout_ms);
+bool laghu_runtime_revoke_chrome_analysis_receipt(laghu_rum_engine *rum, const char *template_key, const char *receipt, uint64_t now);
+/* Lifecycle-only bounded importer. At most eight regular report files are
+ * considered per call. Canonical unknown receipts survive through their
+ * metadata TTL for an asynchronously synchronized issuer; malformed,
+ * replayed, and mismatched reports are unlinked. */
 unsigned int laghu_runtime_import_chrome_analysis(laghu_rum_engine *rum, const char *directory, uint64_t now, unsigned int ttl_seconds);
 
 #ifdef __cplusplus

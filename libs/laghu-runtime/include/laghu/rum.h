@@ -70,8 +70,16 @@ bool laghu_rum_engine_publish(laghu_rum_engine *engine, laghu_rum_record_type ty
                               size_t length, uint64_t *generation);
 bool laghu_rum_engine_update(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t updated_at, laghu_rum_mutator mutator,
                              void *context, uint64_t *generation);
+/* Updates durable auxiliary state without extending a record's sample TTL. */
+bool laghu_rum_engine_update_preserving_updated_at(laghu_rum_engine *engine, laghu_rum_record_type type, const char *key, uint64_t accessed_at,
+                                                   laghu_rum_mutator mutator, void *context, uint64_t *generation);
 laghu_rum_health laghu_rum_engine_health(laghu_rum_engine *engine);
 size_t laghu_rum_engine_memory_used(laghu_rum_engine *engine);
+/* Immutable after creation. Cross-process capabilities cannot outlive it. */
+unsigned int laghu_rum_engine_ttl_seconds(const laghu_rum_engine *engine);
+/* Immutable after creation. Callers that issue cross-process capabilities use
+ * this to reserve enough lifetime for both periodic replication legs. */
+unsigned int laghu_rum_engine_sync_interval_seconds(const laghu_rum_engine *engine);
 bool laghu_rum_record_merge(laghu_rum_record_type type, void *target, const void *delta, size_t length);
 
 #ifdef __cplusplus

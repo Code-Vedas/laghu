@@ -30,7 +30,9 @@ Requires: vips >= 8.15
 %if 0%{?rhel} != 9
 Requires: bubblewrap >= 0.8.0
 %endif
-Requires: ffmpeg
+# Depend on executable ABI, not a non-portable RPM package name. Fedora ships
+# it in ffmpeg-free; other supported RPM repositories may use ffmpeg.
+Requires: /usr/bin/ffmpeg
 Requires(pre): shadow-utils
 Requires(post): shadow-utils
 Requires(post): systemd
@@ -86,7 +88,8 @@ bsdtar -xf %{SOURCE0} --strip-components 1 -C .
 %cmake_build
 %nginx_modconfigure
 %nginx_modbuild
-APACHE_BUILD_DIR=%{_builddir}/laghu-apache-module scripts/build-apache-module
+APACHE_BUILD_DIR=%{_builddir}/laghu-apache-module \
+  %{_vpath_srcdir}/scripts/build-apache-module
 
 %install
 install -D -m 0755 %{__cmake_builddir}/servers/laghu/laghu \

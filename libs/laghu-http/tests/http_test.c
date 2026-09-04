@@ -578,8 +578,10 @@ static void test_html_javascript_pending_blocks_cache(void) {
 
 static void test_html_chrome_analysis_publication(void) {
   const laghu_http_header headers[] = {{VIEW("Content-Type"), VIEW("text/html")}};
+  static const char forged_template[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   static const unsigned char html[] =
-      "<!doctype html><html><head></head><body>  analysis  "
+      "<!doctype html><html><head><!-- hostile data-laghu-template=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" -->"
+      "</head><body>  analysis  "
       "snapshot  </body></html>";
   laghu_runtime_queue queue;
   laghu_http_environment environment = test_environment(test_cache_path, NULL);
@@ -589,7 +591,6 @@ static void test_html_chrome_analysis_publication(void) {
   laghu_http_response response = test_response(headers, 1U, sizeof(html) - 1U);
   laghu_runtime_job job;
   char snapshot_key[LAGHU_RUNTIME_KEY_SIZE];
-  char template_key[LAGHU_RUNTIME_KEY_SIZE];
   static unsigned char payload[4096U];
   laghu_runtime_queue_init(&queue);
   (void)remove(test_queue_path);
@@ -601,10 +602,6 @@ static void test_html_chrome_analysis_publication(void) {
   CHECK(laghu_http_transaction_prepare(&transaction, &request, &response, &environment, &prepared));
   CHECK(prepared.action == LAGHU_HTTP_ACTION_CAPTURE_HTML);
   laghu_http_transaction_result_release(&prepared);
-  CHECK(laghu_runtime_instrumentation_template_key(environment.rum, environment.cache_path, environment.javascript_observations,
-                                                   (laghu_buffer){html, sizeof(html) - 1U}, "/analysis.html", "https://example.test",
-                                                   transaction.policy_key, environment.now, environment.config.image_metadata_ttl,
-                                                   environment.config.instrumentation_sample_rate, template_key));
   CHECK(laghu_http_transaction_finalize(&transaction, (laghu_buffer){html, sizeof(html) - 1U}, &finalized));
   CHECK(laghu_sha256_hex(finalized.selected, snapshot_key));
   CHECK(laghu_runtime_queue_try_take(&queue, &job, payload, sizeof(payload)));
@@ -614,7 +611,10 @@ static void test_html_chrome_analysis_publication(void) {
   CHECK(strcmp(job.request_path, "/analysis.html") == 0);
   CHECK(strcmp(job.content_type, "text/html") == 0);
   CHECK(strlen(job.validator) == LAGHU_SHA256_HEX_LENGTH);
-  CHECK(strcmp(job.validator, template_key) == 0);
+  /* A marker in origin-controlled markup must never choose the worker/RUM
+   * identity.  This assertion is an exploit regression: old finalization
+   * rescans the snapshot and selects this first forged marker. */
+  CHECK(strcmp(job.validator, forged_template) != 0);
   CHECK(strstr((const char *)finalized.selected.data, job.validator) != NULL);
   CHECK(job.analysis_timeout_ms == 1750U);
   CHECK(job.payload.length == finalized.selected.length && memcmp(payload, finalized.selected.data, job.payload.length) == 0);

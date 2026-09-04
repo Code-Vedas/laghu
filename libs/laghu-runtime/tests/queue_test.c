@@ -104,6 +104,8 @@ int main(void) {
   job.kind = LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS;
   laghu_test_hash(job.index_key, 'a');
   laghu_test_hash(job.policy_key, 'b');
+  laghu_test_hash(job.validator, 'c');
+  laghu_test_hash(job.provider_digest, 'd');
   strcpy(job.request_path, "/fixture.html");
   strcpy(job.content_type, "text/html");
   job.analysis_timeout_ms = 1500U;
@@ -112,6 +114,9 @@ int main(void) {
   assert(laghu_runtime_queue_try_take(&reader, &taken, output, sizeof(output)));
   assert(taken.kind == LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS && taken.analysis_timeout_ms == 1500U);
   job.analysis_timeout_ms = 99U;
+  assert(!laghu_runtime_queue_try_publish(&queue, &job));
+  job.analysis_timeout_ms = 1500U;
+  job.provider_digest[0] = '\0';
   assert(!laghu_runtime_queue_try_publish(&queue, &job));
 
   job = laghu_test_job(payload, sizeof(payload) - 1U);

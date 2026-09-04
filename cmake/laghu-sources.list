@@ -125,6 +125,7 @@ runtime_test|css_critical_integration|libs/laghu-runtime/tests/css_critical_inte
 runtime_test|javascript_integration|libs/laghu-runtime/tests/javascript_integration_test.c
 runtime_test|instrumentation_lcp_integration|libs/laghu-runtime/tests/instrumentation_lcp_integration_test.c
 runtime_test|rum_integration|libs/laghu-runtime/tests/rum_integration_test.c
+runtime_test|chrome_analysis_concurrency|libs/laghu-runtime/tests/chrome_analysis_concurrency_test.c
 runtime_test|source_integration|libs/laghu-runtime/tests/source_integration_test.c
 runtime_test|operational_integration|libs/laghu-runtime/tests/operational_integration_test.c
 runtime_test|persisted_state_conformance|libs/laghu-runtime/tests/persisted_state_conformance_test.c

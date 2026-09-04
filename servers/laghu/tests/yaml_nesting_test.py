@@ -34,6 +34,18 @@ def run(command):
     return subprocess.run(command, text=True, capture_output=True, timeout=5)
 
 
+def serves_http(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2) as connection:
+            connection.settimeout(0.5)
+            connection.sendall(
+                b"GET / HTTP/1.1\r\nHost: yaml-nesting.test\r\nConnection: close\r\n\r\n"
+            )
+            return b" 200 " in connection.recv(4096).split(b"\r\n", 1)[0]
+    except OSError:
+        return False
+
+
 def main():
     executable = pathlib.Path(sys.argv[1])
     with tempfile.TemporaryDirectory(prefix="laghu-yaml-nesting-") as raw:
@@ -49,10 +61,11 @@ def main():
         (document_root / "index.html").write_text("yaml nesting reload")
         good = root / "good.yaml"
         pid_file = root / "laghu.pid"
+        port = free_port()
         write_secure_yaml(
             good,
             "runtime:\n"
-            f"  listen: 127.0.0.1:{free_port()}\n"
+            f"  listen: 127.0.0.1:{port}\n"
             "  rewrite_level: passthrough\n"
             "  access_log: off\n"
             f"  pid_file: {pid_file}\n"
@@ -64,6 +77,7 @@ def main():
         try:
             for _ in range(100):
                 if pid_file.exists():
+                    assert serves_http(port), "Laghu published its PID before it could serve HTTP"
                     break
                 if process.poll() is not None:
                     raise AssertionError(process.stderr.read())

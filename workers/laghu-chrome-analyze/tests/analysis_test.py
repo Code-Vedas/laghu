@@ -11,9 +11,10 @@ import sys
 import tempfile
 
 
-HTML = b'''<!doctype html><html><head><style>
+HTML = b'''<!doctype html><html><head><!-- hostile data-laghu-template="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" -->
+<script>const report = "laghu-analysis"; const close = "</bo" + "dy>";</script><style>
 .hero { color: red; } .unused { color: blue; }
-</style></head><body><img class="hero" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" width="320" height="180"></body></html>'''
+</style></head><body><pre id="laghu-analysis">attacker report</pre><img class="hero" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" width="320" height="180"></body></html>'''
 
 
 def main():
@@ -32,14 +33,17 @@ def main():
             print(result.stderr.strip())
             return 77
         result.check_returncode()
-        report = json.loads((output / ("a" * 64 + ".json")).read_text())
+        report = json.loads((output / ("a" * 64 + "-" + "d" * 64 + ".json")).read_text())
+        assert set(report) == {
+            "version", "width", "lcp_ordinal", "network_requests_blocked", "template", "receipt", "snapshot"
+        }
         assert report["version"] == 1
-        assert report["viewport"]["width"] >= 1000
-        assert report["viewport"]["height"] >= 500
-        assert report["images"] == [{"ordinal": 0, "width": 320, "height": 180}]
-        assert ".hero" in report["critical_css"]
-        assert ".unused" not in report["critical_css"]
+        assert report["width"] >= 1000
+        assert report["lcp_ordinal"] == 0
         assert report["network_requests_blocked"] == 0
+        assert report["template"] == "c" * 64
+        assert report["receipt"] == "d" * 64
+        assert report["snapshot"] == "a" * 64
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ int main(int argc, char **argv) {
   memset(job.index_key, 'a', sizeof(job.index_key) - 1U);
   memset(job.policy_key, 'b', sizeof(job.policy_key) - 1U);
   memset(job.validator, 'c', LAGHU_SHA256_HEX_LENGTH);
+  memset(job.provider_digest, 'd', LAGHU_SHA256_HEX_LENGTH);
   strcpy(job.request_path, "/fixture.html");
   strcpy(job.content_type, "text/html");
   job.analysis_timeout_ms = argc == 5 ? (unsigned int)strtoul(argv[4], NULL, 10) : 1500U;

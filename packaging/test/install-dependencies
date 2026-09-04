@@ -10,7 +10,7 @@ case "${PACKAGE_FAMILY}" in
   apt)
     apt-get update
     apt-get install --no-install-recommends -y \
-      apache2 apache2-dev build-essential bundler clang-format cmake curl \
+      apache2 apache2-dev binutils build-essential bundler clang-format cmake curl \
       cargo debhelper devscripts dh-apache2 dh-sequence-nginx libpcre2-dev \
       libssl-dev nginx nginx-dev pkgconf ruby-dev rustc \
       shellcheck zlib1g-dev
@@ -29,7 +29,7 @@ case "${PACKAGE_FAMILY}" in
     fi
     ;;
   dnf)
-    dnf install -y bsdtar cargo httpd-devel cmake gcc git gzip httpd make openssl-devel rust \
+    dnf install -y binutils bsdtar cargo httpd-devel cmake gcc gcc-c++ git gzip httpd make openssl-devel rust \
       nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
       tar which
     [ "${LAGHU_WITH_VIPS}" = OFF ] || dnf install -y vips-devel vips-tools
@@ -42,7 +42,7 @@ case "${PACKAGE_FAMILY}" in
       yum install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm
       yum config-manager --set-enabled remi-safe
     fi
-    yum install -y bsdtar cargo cmake gcc git gzip httpd httpd-devel make openssl-devel rust \
+    yum install -y binutils bsdtar cargo cmake gcc gcc-c++ git gzip httpd httpd-devel make openssl-devel rust \
       nginx nginx-mod-devel pkgconf-pkg-config rpm-build ruby rubygem-bundler \
       tar which
     if [ "${LAGHU_WITH_VIPS}" != OFF ]; then

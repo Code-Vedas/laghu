@@ -466,10 +466,10 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
    * and request processing must never read a Chrome/RUM file to decide. */
   if (transaction->environment.config.optimization_profiles == LAGHU_MODE_ON ||
       transaction->environment.config.instrumentation_beacon == LAGHU_MODE_ON)
-    (void)laghu_runtime_instrumentation_template_key(
-        transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations, body, transaction->path,
-        transaction->origin, transaction->policy_key, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
-        transaction->environment.config.instrumentation_sample_rate, profile_template_key);
+    (void)laghu_runtime_instrumentation_template_key(transaction->environment.rum, transaction->environment.cache_path, instrumentation_observations,
+                                                     body, transaction->path, transaction->origin, transaction->policy_key,
+                                                     transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+                                                     transaction->environment.config.instrumentation_sample_rate, profile_template_key);
   memcpy(javascript_template_key, profile_template_key, sizeof(javascript_template_key));
   memcpy(lcp_template_key, profile_template_key, sizeof(lcp_template_key));
   memset(&optimization_profile, 0, sizeof(optimization_profile));
@@ -485,15 +485,13 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
     image_filters |= LAGHU_IMAGE_INSERT_DIMENSIONS;
   if (optimization_profile.decision == LAGHU_TEMPLATE_PROFILE_LEARNED && optimization_profile.cls_over_budget &&
       transaction->environment.layout_reservations != NULL) {
-    if (!laghu_layout_reservations_apply(body, transaction->environment.layout_reservations, &csp_policy, &layout))
-      return false;
+    if (!laghu_layout_reservations_apply(body, transaction->environment.layout_reservations, &csp_policy, &layout)) return false;
     if (layout.rewritten) rewrite_source = (laghu_buffer){layout.data, layout.length};
   }
   if (!laghu_runtime_rewrite_html(
           transaction->environment.rum, transaction->environment.cache_path, rewrite_source, transaction->path, transaction->origin,
-          transaction->policy_key,
-          transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl, image_filters,
-          transaction->policy.allow_resource_inlining,
+          transaction->policy_key, transaction->capability_mask, transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+          image_filters, transaction->policy.allow_resource_inlining,
           (transaction->policy.filter_families & LAGHU_FILTER_RESOURCE_INLINE) != 0U && transaction->policy.allow_resource_inlining,
           transaction->policy.allow_structural_rewrite,
           (transaction->policy.filter_families & LAGHU_FILTER_CSS_MINIFY) != 0U && transaction->policy.allow_structural_rewrite,
@@ -788,7 +786,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
       free(current);
     }
     if (!laghu_runtime_insert_instrumentation_template((laghu_buffer){selected, selected_length}, profile_template_key,
-                                                        transaction->environment.config.instrumentation_sample_rate, &csp_policy, &instrumentation)) {
+                                                       transaction->environment.config.instrumentation_sample_rate, &csp_policy, &instrumentation)) {
       laghu_runtime_html_result_release(&hinted);
       laghu_runtime_html_result_release(&finalized);
       laghu_runtime_html_result_release(&rewritten);
@@ -803,6 +801,7 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
       selected = instrumentation.data;
       selected_length = instrumentation.length;
       base_rewritten = true;
+      memcpy(result->chrome_analysis_template, instrumentation.dependency_key, sizeof(result->chrome_analysis_template));
       material_length = snprintf(material, sizeof(material), "%s\n%s", dependency, instrumentation.dependency_key);
       if (material_length > 0 && (size_t)material_length < sizeof(material))
         (void)laghu_sha256_hex((laghu_buffer){(const unsigned char *)material, (size_t)material_length}, dependency);
@@ -875,46 +874,44 @@ static bool laghu_http_finalize_html(laghu_http_transaction *transaction, laghu_
 /* This is deliberately post-finalization: Chrome receives precisely the body
  * that will leave the HTTP layer. Queue contention, saturation, and malformed
  * optional configuration all leave the response untouched. */
-static bool laghu_http_snapshot_template_key(laghu_buffer snapshot, char output[LAGHU_RUNTIME_KEY_SIZE]) {
-  static const char marker[] = "data-laghu-template=\"";
-  size_t index, marker_length = sizeof(marker) - 1U;
-  if (output == NULL) return false;
-  output[0] = '\0';
-  for (index = 0U; index + marker_length + LAGHU_SHA256_HEX_LENGTH < snapshot.length; ++index) {
-    size_t digit;
-    if (memcmp(snapshot.data + index, marker, marker_length) != 0 ||
-        snapshot.data[index + marker_length + LAGHU_SHA256_HEX_LENGTH] != '\"')
-      continue;
-    for (digit = 0U; digit < LAGHU_SHA256_HEX_LENGTH; ++digit)
-      if (!isxdigit(snapshot.data[index + marker_length + digit]) ||
-          isupper(snapshot.data[index + marker_length + digit]))
-        break;
-    if (digit == LAGHU_SHA256_HEX_LENGTH) {
-      memcpy(output, snapshot.data + index + marker_length, LAGHU_SHA256_HEX_LENGTH);
-      output[LAGHU_SHA256_HEX_LENGTH] = '\0';
-      return true;
-    }
-  }
-  return false;
+static bool laghu_http_chrome_analysis_receipt(char output[LAGHU_RUNTIME_KEY_SIZE]) {
+  laghu_trace_context first, second;
+  unsigned char material[LAGHU_TRACE_ID_SIZE * 2U - 2U];
+  if (output == NULL || !laghu_trace_context_root(0U, &first) || !laghu_trace_context_root(0U, &second)) return false;
+  memcpy(material, first.trace_id, LAGHU_TRACE_ID_SIZE - 1U);
+  memcpy(material + LAGHU_TRACE_ID_SIZE - 1U, second.trace_id, LAGHU_TRACE_ID_SIZE - 1U);
+  return laghu_sha256_hex((laghu_buffer){material, sizeof(material)}, output);
 }
 
-static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *transaction, laghu_buffer snapshot) {
+static void laghu_http_publish_chrome_analysis(const laghu_http_transaction *transaction, const laghu_http_transaction_result *result,
+                                               laghu_buffer snapshot) {
   laghu_runtime_job job;
-  if (transaction->environment.chrome_analysis_queue == NULL || snapshot.length == 0U || snapshot.length > LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML)
+  if (transaction == NULL || result == NULL || transaction->environment.chrome_analysis_queue == NULL || snapshot.length == 0U ||
+      snapshot.length > LAGHU_HTTP_CHROME_ANALYSIS_MAX_HTML || transaction->environment.rum == NULL)
     return;
   memset(&job, 0, sizeof(job));
   job.kind = LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS;
   if (!laghu_sha256_hex(snapshot, job.index_key)) return;
   memcpy(job.policy_key, transaction->policy_key, sizeof(job.policy_key));
   memcpy(job.request_path, transaction->path, sizeof(job.request_path));
-  /* Browser reports join the template id injected into the exact served
-   * document. Re-hashing this post-rewrite snapshot would split it from RUM. */
-  if (!laghu_http_snapshot_template_key(snapshot, job.validator)) return;
+  /* Browser reports join the generated instrumentation identity.  This value
+   * is carried through finalization; snapshot markup is attacker-controlled. */
+  if (strlen(result->chrome_analysis_template) != LAGHU_SHA256_HEX_LENGTH || !laghu_http_chrome_analysis_receipt(job.provider_digest)) return;
+  memcpy(job.validator, result->chrome_analysis_template, sizeof(result->chrome_analysis_template));
   memcpy(job.content_type, "text/html", sizeof("text/html"));
   job.analysis_timeout_ms = transaction->environment.chrome_analysis_timeout_ms;
   (void)laghu_trace_context_child(&transaction->trace, &job.trace);
   job.payload = snapshot;
-  (void)laghu_runtime_queue_try_publish(transaction->environment.chrome_analysis_queue, &job);
+  /* Receipt issuance and consumption are in the same RUM record. It binds
+   * this exact snapshot and expires with the template metadata; the opaque
+   * capability is never inserted into origin HTML. */
+  if (!laghu_runtime_issue_chrome_analysis_receipt(transaction->environment.rum, job.validator, job.index_key, job.provider_digest,
+                                                   transaction->environment.now, transaction->environment.config.image_metadata_ttl,
+                                                   job.analysis_timeout_ms))
+    return;
+  if (!laghu_runtime_queue_try_publish(transaction->environment.chrome_analysis_queue, &job))
+    (void)laghu_runtime_revoke_chrome_analysis_receipt(transaction->environment.rum, job.validator, job.provider_digest,
+                                                       transaction->environment.now);
 }
 
 static bool laghu_http_finalize_image(laghu_http_transaction *transaction, laghu_buffer body, laghu_http_transaction_result *result) {
@@ -959,14 +956,14 @@ static bool laghu_http_finalize_javascript(laghu_http_transaction *transaction, 
   laghu_runtime_javascript_result javascript;
   laghu_runtime_javascript_result module;
   if (!laghu_runtime_rewrite_javascript_traced(transaction->environment.javascript_queue, transaction->environment.cache_path, body,
-                                                transaction->path, transaction->policy_key, transaction->environment.javascript_target, false,
-                                                transaction->policy.include_js_source_maps, &transaction->trace, &javascript))
+                                               transaction->path, transaction->policy_key, transaction->environment.javascript_target, false,
+                                               transaction->policy.include_js_source_maps, &transaction->trace, &javascript))
     return true;
   result->job_published = javascript.published;
   memset(&module, 0, sizeof(module));
   if (laghu_runtime_rewrite_javascript_traced(transaction->environment.javascript_queue, transaction->environment.cache_path, body, transaction->path,
-                                       transaction->policy_key, transaction->environment.javascript_target, true,
-                                       transaction->policy.include_js_source_maps, &transaction->trace, &module))
+                                              transaction->policy_key, transaction->environment.javascript_target, true,
+                                              transaction->policy.include_js_source_maps, &transaction->trace, &module))
     result->job_published |= module.published;
   laghu_runtime_javascript_result_release(&module);
   if (!javascript.rewritten) {
@@ -1105,7 +1102,7 @@ bool laghu_http_transaction_finalize(laghu_http_transaction *transaction, laghu_
       (void)laghu_http_add_length(result, rewritten_length);
     }
   }
-  if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML) laghu_http_publish_chrome_analysis(transaction, result->selected);
+  if (transaction->action == LAGHU_HTTP_ACTION_CAPTURE_HTML) laghu_http_publish_chrome_analysis(transaction, result, result->selected);
   if (transaction->query_preview) {
     (void)laghu_http_add_query_preview_report(transaction, result, result);
     result->selected = captured_body;

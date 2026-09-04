@@ -42,15 +42,38 @@ def process_rss_bytes(pid):
     return None
 
 
-def process_cgroup_current_bytes(pid):
+def process_cgroup_path(pid):
     try:
         for line in pathlib.Path(f"/proc/{pid}/cgroup").read_text().splitlines():
             fields = line.split(":", 2)
             if len(fields) == 3 and fields[0] == "0":
-                return int((pathlib.Path("/sys/fs/cgroup") / fields[2].lstrip("/") / "memory.current").read_text())
-    except (FileNotFoundError, ValueError):
+                return fields[2]
+    except FileNotFoundError:
         pass
     return None
+
+
+def process_cgroup_metrics(pid):
+    cgroup = process_cgroup_path(pid)
+    if cgroup is None:
+        return None
+    try:
+        root = pathlib.Path("/sys/fs/cgroup") / cgroup.lstrip("/")
+        stat = dict(line.split(maxsplit=1) for line in (root / "memory.stat").read_text().splitlines())
+        return {
+            "path": cgroup,
+            "current": int((root / "memory.current").read_text()),
+            "anon": int(stat.get("anon", "0")),
+            "file": int(stat.get("file", "0")),
+            "slab": int(stat.get("slab", "0")),
+        }
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def process_cgroup_current_bytes(pid):
+    metrics = process_cgroup_metrics(pid)
+    return None if metrics is None else metrics["current"]
 
 
 def process_open_root_descriptors(pid, roots):
@@ -2373,10 +2396,20 @@ def main():
         write_sni_config(sni_config, "/before")
         write_sni_config(sni_replacement, "/after", two_root, 2, 3)
         pathlib.Path(f"{sni_pid}.reload").write_bytes(str(sni_replacement).encode() + b"\0")
-        sni_process = subprocess.Popen(
-            [str(executable), "--config", str(sni_config)], stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        reload_scope = os.environ.get("LAGHU_TEST_SERVER_SCOPE") == "1"
+        scope_unit = None
+        server_pid = None
+        command = [str(executable), "--config", str(sni_config)]
+        if reload_scope:
+            systemd_run = shutil.which("systemd-run")
+            systemctl = shutil.which("systemctl")
+            assert systemd_run is not None and systemctl is not None, "reload scope requires systemd --user"
+            scope_unit = f"laghu-reload-{os.getpid()}-{time.monotonic_ns()}"
+            command = [
+                systemd_run, "--user", "--scope", "--quiet", "--collect", "--unit", scope_unit,
+                *command,
+            ]
+        sni_process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         sni_context = ssl.create_default_context(cafile=ca_file)
         try:
             for _ in range(warm_attempts):
@@ -2394,6 +2427,15 @@ def main():
                     time.sleep(0.05)
             else:
                 raise AssertionError("SNI virtual hosts did not start")
+            server_pid = int(sni_pid.read_text().strip())
+            assert server_pid > 0
+            if reload_scope:
+                scope_control_group = subprocess.run(
+                    [systemctl, "--user", "show", "--value", "--property=ControlGroup", f"{scope_unit}.scope"],
+                    check=True, text=True, capture_output=True,
+                ).stdout.strip()
+                assert process_cgroup_path(server_pid) == scope_control_group, (server_pid, scope_control_group)
+                assert process_cgroup_path(server_pid) != process_cgroup_path(os.getpid())
             assert b" 200 " in one_head.split(b"\r\n", 1)[0] and one_body == b"one site"
             assert b" 200 " in two_head.split(b"\r\n", 1)[0] and two_body == b"two site"
             route_head, _ = request(
@@ -2401,7 +2443,7 @@ def main():
                 server_hostname="one.example.test", host="one.example.test"
             )
             assert b"location: /before" in route_head
-            os.kill(sni_process.pid, signal.SIGHUP)
+            os.kill(server_pid, signal.SIGHUP)
             time.sleep(0.1)
             route_head, _ = request(
                 sni_port, "/route", tls_context=sni_context,
@@ -2453,7 +2495,7 @@ def main():
                 server_hostname="one.example.test", host="one.example.test"
             )
             assert b"location: /after" in route_head
-            os.kill(sni_process.pid, signal.SIGHUP)
+            os.kill(server_pid, signal.SIGHUP)
             time.sleep(0.1)
             route_head, _ = request(
                 sni_port, "/route", tls_context=sni_context,
@@ -2463,7 +2505,7 @@ def main():
             reload_request = pathlib.Path(f"{sni_pid}.reload")
             reload_request.write_bytes(str(sni_config).encode() + b"\0")
             reload_request.chmod(0o644)
-            os.kill(sni_process.pid, signal.SIGHUP)
+            os.kill(server_pid, signal.SIGHUP)
             time.sleep(0.1)
             route_head, _ = request(
                 sni_port, "/route", tls_context=sni_context,
@@ -2472,7 +2514,7 @@ def main():
             assert b"location: /after" in route_head
             assert not reload_request.exists()
             os.symlink(sni_config, reload_request)
-            os.kill(sni_process.pid, signal.SIGHUP)
+            os.kill(server_pid, signal.SIGHUP)
             time.sleep(0.1)
             route_head, _ = request(
                 sni_port, "/route", tls_context=sni_context,
@@ -2481,6 +2523,8 @@ def main():
             assert b"location: /after" in route_head
             assert not reload_request.exists()
             reload_errors = []
+            reload_samples = []
+            control_samples = []
 
             def reload_reader():
                 try:
@@ -2493,9 +2537,29 @@ def main():
                 except (OSError, AssertionError) as error:
                     reload_errors.append(error)
 
-            rss_before_reloads = process_rss_bytes(sni_process.pid)
-            cgroup_before_reloads = process_cgroup_current_bytes(sni_process.pid)
-            roots_before_reloads = process_open_root_descriptors(sni_process.pid, [one_root, two_root])
+            # The reload measurement must begin after the same concurrent TLS
+            # request shape used by every reload iteration. Otherwise a first
+            # worker-side allocation is falsely attributed to generation swap.
+            for control_index in range(2):
+                readers = [threading.Thread(target=reload_reader) for _ in range(4)]
+                for reader in readers:
+                    reader.start()
+                for reader in readers:
+                    reader.join(timeout=5)
+                assert not any(reader.is_alive() for reader in readers)
+                assert not reload_errors, reload_errors
+                if reload_scope:
+                    control_samples.append(
+                        {
+                            "index": control_index,
+                            "rss": process_rss_bytes(server_pid),
+                            "memory": process_cgroup_metrics(server_pid),
+                        }
+                    )
+            rss_before_reloads = process_rss_bytes(server_pid)
+            cgroup_before_metrics = process_cgroup_metrics(server_pid)
+            cgroup_before_reloads = None if cgroup_before_metrics is None else cgroup_before_metrics["current"]
+            roots_before_reloads = process_open_root_descriptors(server_pid, [one_root, two_root])
             for index in range(8):
                 target = f"/reload-{index}"
                 readers = [threading.Thread(target=reload_reader) for _ in range(4)]
@@ -2520,10 +2584,38 @@ def main():
                     time.sleep(0.02)
                 else:
                     raise AssertionError("reload stress did not publish the requested generation")
+                if reload_scope:
+                    metrics = process_cgroup_metrics(server_pid)
+                    reload_samples.append(
+                        {
+                            "index": index,
+                            "rss": process_rss_bytes(server_pid),
+                            "memory": metrics,
+                        }
+                    )
             assert not reload_errors, reload_errors
-            rss_after_reloads = process_rss_bytes(sni_process.pid)
-            cgroup_after_reloads = process_cgroup_current_bytes(sni_process.pid)
-            roots_after_reloads = process_open_root_descriptors(sni_process.pid, [one_root, two_root])
+            rss_after_reloads = process_rss_bytes(server_pid)
+            cgroup_after_metrics = process_cgroup_metrics(server_pid)
+            cgroup_after_reloads = None if cgroup_after_metrics is None else cgroup_after_metrics["current"]
+            roots_after_reloads = process_open_root_descriptors(server_pid, [one_root, two_root])
+            if reload_scope:
+                assert cgroup_before_metrics is not None and cgroup_after_metrics is not None
+                print(
+                    json.dumps(
+                        {
+                            "laghu_reload_scope": {
+                                "control_group": cgroup_before_metrics["path"],
+                                "rss_before": rss_before_reloads,
+                                "rss_after": rss_after_reloads,
+                                "memory_before": cgroup_before_metrics,
+                                "memory_after": cgroup_after_metrics,
+                                "control_samples": control_samples,
+                                "samples": reload_samples,
+                            }
+                        },
+                        sort_keys=True,
+                    )
+                )
             if rss_before_reloads is not None and rss_after_reloads is not None:
                 assert rss_after_reloads <= rss_before_reloads + 2 * 1024 * 1024, (
                     rss_before_reloads,
@@ -2540,7 +2632,12 @@ def main():
                     roots_after_reloads,
                 )
         finally:
-            request_shutdown(sni_process)
+            if server_pid is not None and sni_process.poll() is None:
+                os.kill(server_pid, signal.SIGTERM)
+            elif reload_scope and sni_process.poll() is None:
+                subprocess.run([systemctl, "--user", "stop", f"{scope_unit}.scope"], check=False)
+            else:
+                request_shutdown(sni_process)
             sni_process.wait(timeout=5)
             sni_logs = sni_process.stderr.read().decode()
             sni_process.stderr.close()

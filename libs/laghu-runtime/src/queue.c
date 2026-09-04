@@ -51,7 +51,9 @@ static bool laghu_queue_sprite_valid(const laghu_runtime_job *job) {
 }
 
 static bool laghu_queue_font_valid(const laghu_runtime_job *job) {
-  if (job->kind != LAGHU_RUNTIME_JOB_FONT_CSS) return job->provider_id[0] == '\0' && job->provider_digest[0] == '\0';
+  if (job->kind != LAGHU_RUNTIME_JOB_FONT_CSS)
+    return job->provider_id[0] == '\0' &&
+           (job->kind == LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS ? laghu_queue_hash_valid(job->provider_digest) : job->provider_digest[0] == '\0');
   return job->payload.length == 0U && job->request_path[0] != '\0' && job->provider_id[0] != '\0' &&
          memchr(job->provider_id, '\0', sizeof(job->provider_id)) != NULL && laghu_queue_hash_valid(job->provider_digest);
 }
@@ -65,7 +67,7 @@ static bool laghu_queue_javascript_valid(const laghu_runtime_job *job) {
 static bool laghu_queue_browser_analysis_valid(const laghu_runtime_job *job) {
   if (job->kind != LAGHU_RUNTIME_JOB_BROWSER_ANALYSIS) return job->analysis_timeout_ms == 0U;
   return job->payload.length > 0U && job->payload.length <= 1024U * 1024U && job->analysis_timeout_ms >= 100U && job->analysis_timeout_ms <= 10000U &&
-         strcmp(job->content_type, "text/html") == 0;
+         strcmp(job->content_type, "text/html") == 0 && laghu_queue_hash_valid(job->validator) && laghu_queue_hash_valid(job->provider_digest);
 }
 
 static bool laghu_queue_trace_valid(const laghu_runtime_job *job) {

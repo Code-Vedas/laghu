@@ -315,6 +315,9 @@ typedef struct {
   laghu_http_header_operation header_operations[LAGHU_HTTP_MAX_HEADER_OPERATIONS];
   size_t header_operation_count;
   char dependency_key[LAGHU_RUNTIME_KEY_SIZE];
+  /* Private provenance from successful instrumentation injection.  Optional
+   * browser jobs must use this generated key, never re-parse served markup. */
+  char chrome_analysis_template[LAGHU_RUNTIME_KEY_SIZE];
   char cache_key[LAGHU_RUNTIME_KEY_SIZE];
   bool dependencies_pending;
   bool job_published;

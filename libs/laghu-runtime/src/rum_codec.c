@@ -146,6 +146,17 @@ static bool laghu_rum_codec_record(laghu_rum_record_type type, void *record, lag
       for (j = 0U; j < LAGHU_LCP_MAX_CANDIDATES; ++j)
         for (k = 0U; k < LAGHU_LCP_MAX_RESOURCES; ++k) U16(r->lcp_resources[i][j][k]);
     }
+    /* Receipt state was appended after the v2 payload.  EOF here is a valid
+     * legacy record: its bounded ledger simply starts empty. */
+    if (!write && codec->offset == codec->capacity) return true;
+    for (i = 0U; i < LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS; ++i) {
+      BYTES(r->chrome_analysis_receipts[i].value);
+      BYTES(r->chrome_analysis_receipts[i].snapshot_key);
+      U64(r->chrome_analysis_receipts[i].expires_at);
+      if (!laghu_rum_codec_bytes(codec, &r->chrome_analysis_receipts[i].consumed, 1U, write) ||
+          r->chrome_analysis_receipts[i].consumed > 1U)
+        return false;
+    }
   } else {
     return laghu_rum_codec_bytes(codec, record, codec->capacity, write);
   }
@@ -279,6 +290,28 @@ bool laghu_rum_record_merge(laghu_rum_record_type type, void *target, const void
         }
       }
     }
+    for (i = 0U; i < LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS; ++i) {
+      const laghu_chrome_analysis_receipt *receipt = &b->chrome_analysis_receipts[i];
+      unsigned int target = LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS;
+      if (receipt->value[0] == '\0') continue;
+      for (j = 0U; j < LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS; ++j) {
+        laghu_chrome_analysis_receipt *existing = &a->chrome_analysis_receipts[j];
+        if (memcmp(existing->value, receipt->value, sizeof(receipt->value)) == 0) {
+          if (memcmp(existing->snapshot_key, receipt->snapshot_key, sizeof(receipt->snapshot_key)) != 0 ||
+              existing->expires_at != receipt->expires_at)
+            return false;
+          if (receipt->consumed != 0U) existing->consumed = 1U;
+          target = LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS;
+          break;
+        }
+        if (target == LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS && existing->value[0] == '\0') target = j;
+      }
+      if (target < LAGHU_CHROME_ANALYSIS_MAX_RECEIPTS)
+        a->chrome_analysis_receipts[target] = *receipt;
+      /* A full ledger never evicts a live receipt.  Dropping this remote
+       * optional capability can only reject its report; it cannot make a
+       * replay acceptable. */
+    }
     return true;
   }
   return false;
@@ -297,6 +330,8 @@ void laghu_rum_zero_observations(laghu_rum_record_type type, void *data, size_t 
     record->generation = 0U;
   } else if (type == LAGHU_RUM_RECORD_INSTRUMENTATION && length == sizeof(laghu_rum_instrumentation_record)) {
     laghu_rum_instrumentation_record *record = data;
-    memset(record->observations, 0, sizeof(*record) - offsetof(laghu_rum_instrumentation_record, observations));
+    memset(record->observations, 0,
+           offsetof(laghu_rum_instrumentation_record, chrome_analysis_receipts) -
+               offsetof(laghu_rum_instrumentation_record, observations));
   }
 }

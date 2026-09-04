@@ -16,6 +16,13 @@ if(LAGHU_BUILD_TESTS)
   target_link_libraries(laghu_chrome_analyze_root_test PRIVATE Laghu::Runtime)
   target_compile_features(laghu_chrome_analyze_root_test PRIVATE c_std_11)
   target_compile_definitions(laghu_chrome_analyze_root_test PRIVATE LAGHU_CHROME_ANALYZE_TEST_EUID=0)
+  # Native systemd canary only: its unit owns a new no-route network namespace
+  # while this binary leaves AF_INET/AF_INET6 available long enough for CDP
+  # Fetch to prove it fails every resource. Production remains AF_UNIX-only.
+  add_executable(laghu_chrome_analyze_systemd_network_test main.c)
+  target_link_libraries(laghu_chrome_analyze_systemd_network_test PRIVATE Laghu::Runtime)
+  target_compile_features(laghu_chrome_analyze_systemd_network_test PRIVATE c_std_11)
+  target_compile_definitions(laghu_chrome_analyze_systemd_network_test PRIVATE LAGHU_CHROME_ANALYZE_TEST_SYSTEMD_NETWORK=1)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(laghu_chrome_analyze_old_bwrap_test main.c)
     target_link_libraries(laghu_chrome_analyze_old_bwrap_test PRIVATE Laghu::Runtime)
@@ -35,8 +42,8 @@ if(LAGHU_BUILD_TESTS)
   set_tests_properties(laghu_chrome_analyze_startup_test PROPERTIES SKIP_RETURN_CODE 77)
   find_program(
     LAGHU_CHROME_RUNTIME_EXECUTABLE
-    NAMES chromium chromium-browser
-    PATHS /usr/lib/chromium /usr/lib/chromium-browser /usr/lib64/chromium /usr/lib64/chromium-browser
+    NAMES chromium chromium-browser chrome
+    PATHS /usr/lib/chromium /usr/lib/chromium-browser /usr/lib64/chromium /usr/lib64/chromium-browser /opt/google/chrome
     NO_DEFAULT_PATH)
   find_program(LAGHU_CHROME_EXECUTABLE NAMES chromium chromium-browser google-chrome)
   if(LAGHU_CHROME_RUNTIME_EXECUTABLE)
@@ -64,6 +71,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   if(LAGHU_BUILD_TESTS)
     target_compile_options(laghu_chrome_analyze_fixture PRIVATE -Wall -Wextra -Wpedantic -Werror)
     target_compile_options(laghu_chrome_analyze_root_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(laghu_chrome_analyze_systemd_network_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     if(TARGET laghu_chrome_analyze_old_bwrap_test)
       target_compile_options(laghu_chrome_analyze_old_bwrap_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()

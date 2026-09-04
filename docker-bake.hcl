@@ -103,6 +103,13 @@ target "fedora-nginx" {
   inherits = ["base"]
   args = { BASE_IMAGE = "fedora:44", PACKAGE_FAMILY = "dnf", SERVER = "nginx" }
 }
+target "fedora-nginx-chrome-analysis-package-proof" {
+  inherits = ["fedora-nginx"]
+  args = {
+    LAGHU_WITH_CHROME = "ON"
+    LAGHU_PACKAGE_PROOF_ONLY = "ON"
+  }
+}
 target "fedora-apache" {
   inherits = ["base"]
   args = { BASE_IMAGE = "fedora:44", PACKAGE_FAMILY = "dnf", SERVER = "apache" }
@@ -110,6 +117,12 @@ target "fedora-apache" {
 target "rocky-nginx" {
   inherits = ["base"]
   args = { BASE_IMAGE = "rockylinux:9", PACKAGE_FAMILY = "yum", SERVER = "nginx" }
+}
+target "rocky-nginx-el9-rpm-proof" {
+  inherits = ["rocky-nginx"]
+  args = {
+    LAGHU_PACKAGE_PROOF_ONLY = "ON"
+  }
 }
 target "rocky-apache" {
   inherits = ["base"]

@@ -360,22 +360,19 @@ bool laghu_runtime_instrumentation_template_key(laghu_rum_engine *rum, const cha
                                                 laghu_buffer html, const char *page_path, const char *page_origin, const char *policy_key,
                                                 uint64_t now, unsigned int ttl_seconds, unsigned int sample_rate,
                                                 char output[LAGHU_RUNTIME_KEY_SIZE]) {
-  static const char marker[] = "data-laghu-template=\"";
   laghu_runtime_html_result result;
-  const unsigned char *found;
   bool success = false;
   if (output == NULL) return false;
   output[0] = '\0';
   if (!laghu_runtime_add_instrumentation(rum, cache_path, providers, html, page_path, page_origin, policy_key, now, ttl_seconds, sample_rate, NULL,
                                          &result))
     return false;
-  if (result.rewritten && (found = laghu_rum_find(result.data, result.length, marker)) != NULL) {
-    found += sizeof(marker) - 1U;
-    if ((size_t)(result.data + result.length - found) >= LAGHU_SHA256_HEX_LENGTH + 1U && found[LAGHU_SHA256_HEX_LENGTH] == '\"') {
-      memcpy(output, found, LAGHU_SHA256_HEX_LENGTH);
-      output[LAGHU_SHA256_HEX_LENGTH] = '\0';
-      success = laghu_rum_hash(output);
-    }
+  /* `result.dependency_key` is generated before markup is emitted.  Do not
+   * discover it again by scanning origin-controlled HTML: a duplicate marker
+   * in a comment, script, or element would otherwise replace this identity. */
+  if (result.rewritten && laghu_rum_hash(result.dependency_key)) {
+    memcpy(output, result.dependency_key, sizeof(result.dependency_key));
+    success = true;
   }
   laghu_runtime_html_result_release(&result);
   return success;
