@@ -234,7 +234,7 @@ jobs:
           NGINX_BASELINE_IMAGE_MANIFEST: tmp/legacy-baseline-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-linux-amd64.json
           BASELINE_IMAGE_TAG: laghu-baseline-compatibility-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-amd64
         run: scripts/run-nginx-baseline-image
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: legacy-baseline-nginx-${{ needs.nginx_compatibility_probe.outputs.baseline_nginx_version }}-amd64
           path: |
@@ -327,7 +327,7 @@ jobs:
       - run: >-
           scripts/run-in-docker --target ${{ matrix.target }}
           --architectures ${{ matrix.architecture }}
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: docker-${{ matrix.target }}-${{ matrix.architecture }}
@@ -345,7 +345,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y apache2 apache2-dev libvips-dev
       - run: scripts/run-execution-rail
       - run: scripts/run-amd64-container-parity-rail
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: execution-rail
@@ -515,7 +515,7 @@ jobs:
           chrome_unit=/lib/systemd/system/laghu-chrome-analyze.service
           grep -q '^PrivateNetwork=true$' "${chrome_unit}"
           grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' "${chrome_unit}"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: laghu-deb-${{ runner.arch }}
           path: ../*laghu*.deb
@@ -570,7 +570,7 @@ jobs:
           chrome_unit=/usr/lib/systemd/system/laghu-chrome-analyze.service
           grep -q '^PrivateNetwork=true$' "${chrome_unit}"
           grep -q '^RestrictAddressFamilies=AF_UNIX AF_NETLINK$' "${chrome_unit}"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: laghu-rpm-${{ runner.arch }}
           path: ~/rpmbuild/RPMS/**/*.rpm

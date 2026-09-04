@@ -65,7 +65,7 @@ jobs:
           cp packaging/nginx/mod-http-laghu.conf packaging/nginx/laghu.conf \
             "tmp/release/${archive}/"
           tar -C tmp/release -czf "tmp/release/${archive}.tar.gz" "${archive}"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-module-${{ matrix.nginx_version }}-${{ matrix.architecture }}
           path: tmp/release/*.tar.gz
@@ -97,7 +97,7 @@ jobs:
           cp tmp/apache-module/.libs/mod_laghu.so packaging/apache/laghu.load \
             packaging/apache/laghu.conf "tmp/release/${archive}/"
           tar -C tmp/release -czf "tmp/release/${archive}.tar.gz" "${archive}"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-apache-${{ matrix.architecture }}
           path: tmp/release/*.tar.gz
@@ -132,7 +132,7 @@ jobs:
           dpkg-deb --contents ../laghu-libvips_*.deb | \
             grep '/lib/systemd/system/laghu-chrome-analyze.service'
           nginx -t
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-deb-${{ matrix.architecture }}
           path: ../*laghu*.deb
@@ -171,7 +171,7 @@ jobs:
             grep '/usr/bin/laghu-chrome-analyze'
           rpm -qlp "$HOME"/rpmbuild/RPMS/*/laghu-libvips-*.rpm | \
             grep '/usr/lib/systemd/system/laghu-chrome-analyze.service'
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-rpm-${{ matrix.architecture }}
           path: ~/rpmbuild/RPMS/**/*.rpm
@@ -218,7 +218,7 @@ jobs:
           printf '%s\n' "${image}" >"tmp/release/${{ matrix.offering }}.image-digest.txt"
           printf 'ref=%s\n' "${image}" >>"${GITHUB_OUTPUT}"
       - name: Record complete CVE findings for published image
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.image.outputs.ref }}
           version: v0.74.0
@@ -230,7 +230,7 @@ jobs:
           scanners: vuln
           exit-code: 0
       - name: Gate fixed high and critical CVEs
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.image.outputs.ref }}
           version: v0.74.0
@@ -249,7 +249,7 @@ jobs:
             "${{ steps.image.outputs.ref }}"
       - name: Retain image digest and CVE findings
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-container-security-${{ matrix.offering }}
           path: |
@@ -262,12 +262,12 @@ jobs:
     needs: [modules, apache_module, deb, rpm, container]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: release-assets
           format: spdx-json
@@ -284,6 +284,6 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
             gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes
           gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
-      - uses: actions/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4 # v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: release-assets/*
