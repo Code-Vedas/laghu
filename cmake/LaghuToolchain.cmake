@@ -148,7 +148,7 @@ function(laghu_require_core_profile_sources)
       list(GET rule_pattern_parts 0 rule)
       list(REMOVE_AT rule_pattern_parts 0)
       list(JOIN rule_pattern_parts "|" pattern)
-      if(contents MATCHES "${pattern}")
+      if(contents MATCHES "(^|[^A-Za-z0-9_])(${pattern})([^A-Za-z0-9_]|$)")
         laghu_fail("restricted_profile_${rule}" "file=${relative_source}")
       endif()
     endforeach()
@@ -614,6 +614,15 @@ function(laghu_add_validation_tests)
       "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/api-boundaries/contract-consumer.cpp"
       "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
       -DEXPECT_FAIL=OFF
+      -P "${expect_compile}")
+  add_test(NAME laghu.core.result_errors.negative_implicit_native
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/error-implicit-native.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
       -P "${expect_compile}")
   add_test(NAME laghu.api.private_header_leak_rejected
     COMMAND "${CMAKE_COMMAND}"
