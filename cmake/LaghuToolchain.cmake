@@ -460,6 +460,19 @@ function(laghu_add_validation_tests)
         -DEXPECT_FAIL=OFF
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()
+  add_test(NAME laghu.dependencies.vendored_http3_transport
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+      "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+      "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+      -DSCENARIO=mode_vendored_http3_transport
+      -DSOURCE=VENDORED
+      -DLINK_MODE=STATIC
+      -DTLS_PROVIDER=OPENSSL
+      -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   foreach(mode_case IN ITEMS source link_mode tls_provider static_artifact)
     if(mode_case STREQUAL source)
       set(mode_fixture mode_invalid_source)

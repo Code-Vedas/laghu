@@ -549,6 +549,13 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
       set(ENABLE_SHARED_LIB ON)
     endif()
   endif()
+  if(id STREQUAL ngtcp2)
+    # Laghu owns TLS-provider selection.  ngtcp2's optional crypto backend
+    # defaults to ON and otherwise discovers an unrelated host OpenSSL during
+    # configuration, which can reject a non-QUIC host provider.  Build only
+    # its transport library; the selected Laghu TLS provider remains separate.
+    set(ENABLE_OPENSSL OFF)
+  endif()
   if(id STREQUAL c_ares)
     set(CARES_BUILD_TOOLS OFF CACHE BOOL "Build c-ares tools" FORCE)
     if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
