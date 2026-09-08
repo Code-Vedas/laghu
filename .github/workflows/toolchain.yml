@@ -66,3 +66,20 @@ jobs:
           usesh: true
           prepare: pkg install -y cmake ninja
           run: scripts/check-toolchain --cxx clang++ --out /tmp/laghu-toolchain
+  linux-aarch64-cross:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 GCC cross toolchain
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build g++-14-aarch64-linux-gnu
+      - name: Configure, compile, archive, and validate ARM64 contract
+        run: |
+          cmake --preset linux-aarch64-gcc
+          cmake --build build/linux-aarch64-gcc --target laghu_verify_toolchain
+      - name: Verify ARM64 archive
+        run: |
+          test -f build/linux-aarch64-gcc/liblaghu_core.a
+          aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_core.a
