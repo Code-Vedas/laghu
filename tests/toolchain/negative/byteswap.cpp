@@ -1,0 +1,2 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#error "laghu forced-negative capability=byteswap"

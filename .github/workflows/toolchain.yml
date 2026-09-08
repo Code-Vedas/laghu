@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Toolchain
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  toolchain:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc-14-libstdc++
+            compiler: g++-14
+            packages: g++-14
+          - name: clang-19-libc++
+            compiler: clang++-19
+            packages: clang-19 libc++-19-dev libc++abi-19-dev
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler and standard library
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install --yes ${{ matrix.packages }}
+      - name: Verify C++23 toolchain contract
+        run: scripts/check-toolchain --cxx "${{ matrix.compiler }}" --out "$RUNNER_TEMP/laghu-toolchain"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-capabilities-${{ matrix.name }}
+          path: ${{ runner.temp }}/laghu-toolchain/toolchain-capabilities-v1.json
+          if-no-files-found: error

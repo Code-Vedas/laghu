@@ -14,6 +14,6 @@ This repository is at its initial source-tree bootstrap. It intentionally has no
 
 ## Licensing
 
-Project-authored files are licensed under the GNU Affero General Public License version 3 or later (AGPL-3.0-or-later), unless a file explicitly declares a different license.
+Project-authored files are licensed under the GNU Affero General Public License version 3 only (AGPL-3.0-only), unless a file explicitly declares a different license.
 
 Standalone sample configuration files, when introduced, are licensed under 0BSD and explicitly declare that license.
