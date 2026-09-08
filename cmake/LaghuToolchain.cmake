@@ -368,6 +368,8 @@ function(laghu_add_validation_tests)
         "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
         "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
         "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
         "-DSCENARIO=${fixture}"
         "-DEXPECT_FAIL=${expected_fail}"
         "-DEXPECT_TEXT=${expected_text}"
@@ -379,6 +381,8 @@ function(laghu_add_validation_tests)
         "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
         "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
         "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
         "-DSCENARIO=${fixture}"
         -DEXPECT_FAIL=OFF
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
@@ -389,6 +393,8 @@ function(laghu_add_validation_tests)
         "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
         "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
         "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
         -DSCENARIO=mode_vendored_yyjson
         -DSOURCE=VENDORED
         "-DLINK_MODE=${link_mode}"
@@ -419,6 +425,8 @@ function(laghu_add_validation_tests)
         "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
         "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
         "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
         "-DSCENARIO=${mode_fixture}"
         -DEXPECT_FAIL=ON
         "-DEXPECT_TEXT=${mode_text}"

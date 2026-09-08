@@ -7,6 +7,10 @@ endif()
 set(mode_suffix "${SOURCE}-${LINK_MODE}-${TLS_PROVIDER}")
 set(binary_directory "${CMAKE_CURRENT_BINARY_DIR}/dependency-${SCENARIO}-${mode_suffix}")
 set(mode_arguments)
+set(toolchain_arguments)
+if(DEFINED LAGHU_TOOLCHAIN_FILE AND NOT LAGHU_TOOLCHAIN_FILE STREQUAL "")
+  list(APPEND toolchain_arguments "-DCMAKE_TOOLCHAIN_FILE=${LAGHU_TOOLCHAIN_FILE}")
+endif()
 foreach(mode IN ITEMS SOURCE LINK_MODE TLS_PROVIDER)
   if(DEFINED ${mode})
     if("${mode}" STREQUAL "SOURCE")
@@ -26,7 +30,9 @@ execute_process(
     "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
     "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
     "-DCMAKE_CXX_SCAN_FOR_MODULES=ON"
+    "-DLAGHU_EXPECT_CROSSCOMPILING=${LAGHU_EXPECT_CROSSCOMPILING}"
     "-DSCENARIO=${SCENARIO}"
+    ${toolchain_arguments}
     ${mode_arguments}
   RESULT_VARIABLE configure_result
   OUTPUT_VARIABLE configure_output
