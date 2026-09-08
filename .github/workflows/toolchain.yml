@@ -39,6 +39,14 @@ jobs:
             -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
             -DLAGHU_BUILD_PROFILE=FULL
           cmake --build "$RUNNER_TEMP/laghu-full" --target laghu_core
+      - name: Verify GCC 14 release reproducibility
+        if: matrix.name == 'gcc-14-libstdc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-reproducible" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DCMAKE_BUILD_TYPE=Release
+          ctest --test-dir "$RUNNER_TEMP/laghu-reproducible" \
+            --output-on-failure -R '^laghu.build.reproducible_staging$'
       - uses: actions/upload-artifact@v4
         with:
           name: toolchain-capabilities-${{ matrix.name }}

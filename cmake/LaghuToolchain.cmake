@@ -652,4 +652,14 @@ function(laghu_add_install_layout_test)
       "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
       "-DSTAGE_DIRECTORY=${CMAKE_BINARY_DIR}/tests/install-stage"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectInstallLayout.cmake")
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+      NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME laghu.build.reproducible_staging
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectReproducibleStaging.cmake")
+  endif()
 endfunction()
