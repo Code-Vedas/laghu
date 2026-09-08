@@ -8,8 +8,13 @@ endif()
 if(NOT DEFINED FLAGS)
   set(FLAGS)
 endif()
+if(DEFINED CXXFLAGS)
+  separate_arguments(cxxflags NATIVE_COMMAND "${CXXFLAGS}")
+else()
+  set(cxxflags)
+endif()
 execute_process(
-  COMMAND "${CXX}" "-std=${STANDARD}" -pedantic-errors ${FLAGS} -c "${SOURCE}" -o "${CMAKE_CURRENT_BINARY_DIR}/expect-compile.o"
+  COMMAND "${CXX}" "-std=${STANDARD}" ${cxxflags} -pedantic-errors ${FLAGS} -c "${SOURCE}" -o "${CMAKE_CURRENT_BINARY_DIR}/expect-compile.o"
   RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
 set(diagnostics "${stdout}${stderr}")
 if(EXPECT_FAIL)
