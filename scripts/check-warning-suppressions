@@ -1,0 +1,104 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+
+usage() {
+  printf '%s\n' 'usage: scripts/check-warning-suppressions --manifest <tsv> --compiler <gcc|clang> --enabled-flags <flags> [--source <source>]' >&2
+  exit 64
+}
+
+manifest=
+compiler=
+enabled_flags=
+source_filter=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --manifest)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+      manifest=$2
+      shift 2
+      ;;
+    --compiler)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+      compiler=$2
+      shift 2
+      ;;
+    --enabled-flags)
+      [ "$#" -ge 2 ] || usage
+      enabled_flags=$2
+      shift 2
+      ;;
+    --source)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+      source_filter=$2
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+[ -n "$manifest" ] && [ -n "$compiler" ] || usage
+[ -r "$manifest" ] || {
+  printf 'error: Laghu warning suppression cannot read manifest: %s\n' "$manifest" >&2
+  exit 66
+}
+case "$compiler" in gcc|clang) ;; *) usage ;; esac
+
+violation() {
+  printf 'error: Laghu warning suppression violation: %s\n' "$1" >&2
+  exit 1
+}
+
+owned_source() {
+  case "$1" in
+    src/core/*.cpp|src/core/*.cc|src/core/*.cxx|src/config/*.cpp|src/config/*.cc|src/config/*.cxx|src/protocol/*.cpp|src/protocol/*.cc|src/protocol/*.cxx|src/tls/*.cpp|src/tls/*.cc|src/tls/*.cxx|src/proxy/*.cpp|src/proxy/*.cc|src/proxy/*.cxx|src/cache/*.cpp|src/cache/*.cc|src/cache/*.cxx|src/control/*.cpp|src/control/*.cc|src/control/*.cxx|src/cli/*.cpp|src/cli/*.cc|src/cli/*.cxx|src/observability/*.cpp|src/observability/*.cc|src/observability/*.cxx|src/os/*.cpp|src/os/*.cc|src/os/*.cxx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+approved_warning() {
+  case "$1" in
+    -Wno-conversion|-Wno-sign-conversion|-Wno-shadow|-Wno-format|-Wno-format-security|-Wno-null-dereference|-Wno-double-promotion|-Wno-implicit-fallthrough|-Wno-cast-align|-Wno-cast-qual|-Wno-old-style-cast|-Wno-overloaded-virtual|-Wno-non-virtual-dtor|-Wno-zero-as-null-pointer-constant|-Wno-undef|-Wno-uninitialized|-Wno-arith-conversion|-Wno-dangling-pointer|-Wno-format-overflow|-Wno-format-truncation|-Wno-array-bounds|-Wno-stringop-overflow|-Wno-duplicated-cond|-Wno-logical-op|-Wno-useless-cast|-Wno-shadow-all|-Wno-implicit-int-conversion|-Wno-shorten-64-to-32|-Wno-dangling|-Wno-unsafe-buffer-usage) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+base_warning() {
+  printf '%s\n' "$1" | sed 's/^-Wno-/-W/'
+}
+
+enabled() {
+  wanted=$1
+  for flag in $enabled_flags; do
+    case "$flag" in
+      "$wanted"|"$wanted="*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+tab=$(printf '\t')
+seen=' '
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|'#'*) continue ;; esac
+  fields=$(printf '%s\n' "$line" | awk -F '\t' '{ print NF }')
+  [ "$fields" = 4 ] || violation 'each entry must contain source, warning, compiler condition, and reason'
+  IFS="$tab" read -r source warning condition reason <<EOF
+$line
+EOF
+  owned_source "$source" || violation "source must name one governed source file: $source"
+  [ -f "$source" ] || violation "source does not exist: $source"
+  approved_warning "$warning" || violation "warning is not an approved source-level suppression: $warning"
+  case "$condition" in all|gcc|clang) ;; *) violation "compiler condition must be all, gcc, or clang: $condition" ;; esac
+  [ -n "$reason" ] || violation "technical reason is required: $source"
+  key="$source|$warning|$condition"
+  case "$seen" in *" $key "*) violation "duplicate suppression: $key" ;; esac
+  seen="$seen$key "
+
+  if [ -n "$source_filter" ] && [ "$source_filter" = "$source" ] && { [ "$condition" = all ] || [ "$condition" = "$compiler" ]; }; then
+    base=$(base_warning "$warning")
+    if enabled "$base"; then
+      printf '%s\n' "$warning"
+    fi
+  fi
+done <"$manifest"
