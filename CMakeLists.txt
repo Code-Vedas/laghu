@@ -21,6 +21,7 @@ endif()
 include(CTest)
 include(cmake/LaghuCapabilities.cmake)
 include(cmake/LaghuDependencyDag.cmake)
+include(cmake/LaghuApiBoundaries.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
@@ -28,17 +29,21 @@ laghu_configure_capability_header()
 
 add_library(laghu_core STATIC src/core/contract.cpp)
 laghu_apply_first_party_contract(laghu_core)
-target_include_directories(laghu_core PRIVATE
-  src/core
-  "${CMAKE_BINARY_DIR}/generated")
 
 laghu_declare_subsystem_graph()
+laghu_configure_api_boundaries()
 
 add_executable(laghu_core_smoke src/core/smoke.cpp)
 laghu_apply_first_party_contract(laghu_core_smoke)
+laghu_configure_api_consumer(laghu_core_smoke core)
 target_link_libraries(laghu_core_smoke PRIVATE laghu_core)
 
 laghu_add_capability_header_parity_target()
+laghu_add_visibility_probe()
+add_library(visibility_negative_fixture SHARED
+  tests/api-boundaries/negative/visible-symbol.cpp)
+set_property(TARGET visibility_negative_fixture PROPERTY CXX_VISIBILITY_PRESET hidden)
+set_property(TARGET visibility_negative_fixture PROPERTY VISIBILITY_INLINES_HIDDEN YES)
 
 laghu_add_validation_tests()
 laghu_add_install_layout_test()
@@ -48,6 +53,6 @@ install(TARGETS laghu_core
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_core_smoke laghu_capability_header_parity
+  DEPENDS laghu_core laghu_core_smoke laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")

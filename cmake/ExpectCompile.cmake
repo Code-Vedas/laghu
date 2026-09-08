@@ -13,8 +13,16 @@ if(DEFINED CXXFLAGS)
 else()
   set(cxxflags)
 endif()
+if(DEFINED INCLUDE_DIRECTORIES)
+  set(include_flags)
+  foreach(include_directory IN LISTS INCLUDE_DIRECTORIES)
+    list(APPEND include_flags "-I${include_directory}")
+  endforeach()
+else()
+  set(include_flags)
+endif()
 execute_process(
-  COMMAND "${CXX}" "-std=${STANDARD}" ${cxxflags} -pedantic-errors ${FLAGS} -c "${SOURCE}" -o "${CMAKE_CURRENT_BINARY_DIR}/expect-compile.o"
+  COMMAND "${CXX}" "-std=${STANDARD}" ${cxxflags} -pedantic-errors ${FLAGS} ${include_flags} -c "${SOURCE}" -o "${CMAKE_CURRENT_BINARY_DIR}/expect-compile.o"
   RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
 set(diagnostics "${stdout}${stderr}")
 if(EXPECT_FAIL)

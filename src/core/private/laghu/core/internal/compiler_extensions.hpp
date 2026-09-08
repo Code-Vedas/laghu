@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-namespace laghu::core::compiler_extensions {
-[[nodiscard]] constexpr int family_id() noexcept {
+
+namespace laghu::core::internal {
+[[nodiscard]] constexpr int compiler_family_id() noexcept {
 #if defined(__clang__)
   return 2;
 #elif defined(__GNUC__)
@@ -10,6 +11,7 @@ namespace laghu::core::compiler_extensions {
   return 0;
 #endif
 }
+
 [[noreturn]] inline void unreachable() noexcept {
 #if defined(__clang__) || defined(__GNUC__)
   __builtin_unreachable();
@@ -17,4 +19,4 @@ namespace laghu::core::compiler_extensions {
   __builtin_trap();
 #endif
 }
-}  // namespace laghu::core::compiler_extensions
+}  // namespace laghu::core::internal
