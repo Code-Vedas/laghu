@@ -319,6 +319,46 @@ function(laghu_add_validation_tests)
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
       "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFeatureMetadata.cmake")
+  add_test(NAME laghu.dependencies.metadata
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMETADATA=${LAGHU_DEPENDENCY_REGISTRY_METADATA}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyMetadata.cmake")
+  foreach(fixture IN ITEMS positive_symbol positive_http3 version_too_old unknown_dependency http3_incomplete http3_mixed_provider http3_tls_too_old zlib_compat_enabled capability_mismatch)
+    if(fixture STREQUAL "positive_symbol" OR fixture STREQUAL "positive_http3")
+      set(expected_fail OFF)
+      set(expected_text "")
+    elseif(fixture STREQUAL "version_too_old")
+      set(expected_fail ON)
+      set(expected_text "dependency=yyjson rule=version_too_old found=0.7.9 required=0.8.0")
+    elseif(fixture STREQUAL "unknown_dependency")
+      set(expected_fail ON)
+      set(expected_text "dependency=unknown rule=unknown_dependency")
+    elseif(fixture STREQUAL "zlib_compat_enabled")
+      set(expected_fail ON)
+      set(expected_text "dependency=zlib_ng rule=zlib_compat_must_be_off")
+    elseif(fixture STREQUAL "http3_incomplete")
+      set(expected_fail ON)
+      set(expected_text "dependency=http3 rule=atomic_group_incomplete provider=openssl")
+    elseif(fixture STREQUAL "http3_mixed_provider")
+      set(expected_fail ON)
+      set(expected_text "dependency=http3 rule=tls_provider_mixed")
+    elseif(fixture STREQUAL "http3_tls_too_old")
+      set(expected_fail ON)
+      set(expected_text "dependency=openssl rule=version_too_old found=3.4.9 required=3.5.0")
+    else()
+      set(expected_fail ON)
+      set(expected_text "yyjson_read_opts")
+    endif()
+    add_test(NAME "laghu.dependencies.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DSCENARIO=${fixture}"
+        "-DEXPECT_FAIL=${expected_fail}"
+        "-DEXPECT_TEXT=${expected_text}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
   add_test(NAME laghu.features.positive.http3
     COMMAND "${CMAKE_COMMAND}"
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
