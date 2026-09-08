@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+
+usage() {
+  printf '%s\n' 'usage: scripts/audit-core-profile-invocations <invocation-trace>' >&2
+  exit 64
+}
+
+[ "$#" -eq 1 ] || usage
+trace=$1
+[ -r "$trace" ] || {
+  printf 'error: Laghu restricted C++ profile cannot read invocation trace: %s\n' "$trace" >&2
+  exit 66
+}
+
+tab=$(printf '\t')
+while IFS=$tab read -r target source flags; do
+  [ -n "$target" ] || continue
+  [ -n "$source" ] && [ -n "$flags" ] || {
+    printf 'error: Laghu restricted C++ profile malformed invocation: target=%s\n' "$target" >&2
+    exit 1
+  }
+
+  exceptions=enabled
+  rtti=enabled
+  for flag in $flags; do
+    case "$flag" in
+      -fno-exceptions) exceptions=disabled ;;
+      -fexceptions) exceptions=enabled ;;
+      -fno-rtti) rtti=disabled ;;
+      -frtti) rtti=enabled ;;
+    esac
+  done
+
+  [ "$exceptions" = disabled ] || {
+    printf 'error: Laghu restricted C++ profile violation: target=%s source=%s effective_exceptions=enabled\n' "$target" "$source" >&2
+    exit 1
+  }
+  [ "$rtti" = disabled ] || {
+    printf 'error: Laghu restricted C++ profile violation: target=%s source=%s effective_rtti=enabled\n' "$target" "$source" >&2
+    exit 1
+  }
+done <"$trace"
