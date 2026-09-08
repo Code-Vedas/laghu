@@ -311,6 +311,37 @@ function(laghu_add_validation_tests)
       "-DCONFIG_JSON=${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
       "-DPROBE_JSON=${LAGHU_PROBE_DIRECTORY}/toolchain-capabilities-v1.json"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCapabilityParity.cmake")
+  foreach(fixture IN ITEMS positive_leaf positive_protocol positive_top_and_adapter)
+    add_test(NAME "laghu.dag.positive.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=OFF
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDagConfigure.cmake")
+  endforeach()
+  foreach(fixture IN ITEMS core_outward os_protocol forbidden_peer cycle adapter_direction generic_utility)
+    string(REPLACE "_" "-" fixture_name "${fixture}")
+    if(fixture STREQUAL "core_outward")
+      set(expected_text "consumer=core provider=config rule=core_has_no_outward_dependencies")
+    elseif(fixture STREQUAL "os_protocol")
+      set(expected_text "consumer=os provider=protocol rule=os_may_depend_only_on_core")
+    elseif(fixture STREQUAL "forbidden_peer")
+      set(expected_text "consumer=cache provider=tls rule=edge_not_allowed")
+    elseif(fixture STREQUAL "cycle")
+      set(expected_text "consumer=core provider=config rule=cycle_forbidden")
+    elseif(fixture STREQUAL "adapter_direction")
+      set(expected_text "consumer=proxy provider=adapters rule=adapter_direction_inward_only")
+    else()
+      set(expected_text "subsystem=common rule=no_generic_utility_sink")
+    endif()
+    add_test(NAME "laghu.dag.negative.${fixture_name}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=ON
+        "-DEXPECT_TEXT=${expected_text}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDagConfigure.cmake")
+  endforeach()
 endfunction()
 
 function(laghu_add_install_layout_test)

@@ -20,6 +20,7 @@ endif()
 
 include(CTest)
 include(cmake/LaghuCapabilities.cmake)
+include(cmake/LaghuDependencyDag.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
@@ -30,6 +31,8 @@ laghu_apply_first_party_contract(laghu_core)
 target_include_directories(laghu_core PRIVATE
   src/core
   "${CMAKE_BINARY_DIR}/generated")
+
+laghu_declare_subsystem_graph()
 
 add_executable(laghu_core_smoke src/core/smoke.cpp)
 laghu_apply_first_party_contract(laghu_core_smoke)
