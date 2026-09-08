@@ -53,7 +53,7 @@ function(laghu_detect_standard_library)
   endif()
 endfunction()
 
-function(laghu_compile_probe capability source require_link)
+function(laghu_compile_probe capability source require_link result_variable)
   set(probe_binary_dir "${LAGHU_PROBE_DIRECTORY}/try-${capability}")
   set(probe_flags
     "-DCMAKE_CXX_STANDARD=23"
@@ -79,6 +79,7 @@ function(laghu_compile_probe capability source require_link)
   if(NOT result)
     laghu_fail("${capability}" "retained_log=probes/${capability}.log")
   endif()
+  set(${result_variable} true PARENT_SCOPE)
 endfunction()
 
 function(laghu_warning_probe warning)
@@ -197,11 +198,12 @@ endfunction()
 
 function(laghu_write_metadata)
   list(JOIN LAGHU_EFFECTIVE_WARNING_FLAGS "\", \"" warnings_json)
+  laghu_capability_json_members(capabilities_json)
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
   file(WRITE "${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
-"{\n  \"schema_version\": \"laghu-config-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"generator\": \"Ninja\"\n}\n")
+"{\n  \"schema_version\": \"laghu-config-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"capabilities\": {\n${capabilities_json}\n  },\n  \"generator\": \"Ninja\"\n}\n")
   file(WRITE "${LAGHU_PROBE_DIRECTORY}/toolchain-capabilities-v1.json"
-"{\n  \"schema_version\": \"toolchain-capabilities-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"warning_gates\": [\"${warnings_json}\"],\n  \"capabilities\": {\"if_consteval\": true, \"expected\": true, \"byteswap\": true, \"to_underlying\": true, \"unreachable\": true, \"sockets\": true, \"bind_listen_accept\": true, \"nonblocking_fcntl\": true, \"poll\": true, \"close\": true, \"clock_gettime_monotonic\": true}\n}\n")
+"{\n  \"schema_version\": \"toolchain-capabilities-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"warning_gates\": [\"${warnings_json}\"],\n  \"capabilities\": {\n${capabilities_json}\n  }\n}\n")
 endfunction()
 
 function(laghu_configure_toolchain)
@@ -225,11 +227,19 @@ function(laghu_configure_toolchain)
     set(LAGHU_POSIX_BASELINE posix_2008 CACHE INTERNAL "Laghu POSIX baseline")
   endif()
   foreach(capability IN ITEMS if_consteval expected byteswap to_underlying unreachable)
-    laghu_compile_probe("${capability}" "${CMAKE_SOURCE_DIR}/tests/toolchain/probes/${capability}.cpp" FALSE)
+    string(TOUPPER "${capability}" capability_upper)
+    laghu_compile_probe("${capability}" "${CMAKE_SOURCE_DIR}/tests/toolchain/probes/${capability}.cpp" FALSE "LAGHU_CAPABILITY_${capability_upper}")
   endforeach()
   foreach(posix_probe IN ITEMS posix_2008 sockets bind_listen_accept nonblocking_fcntl poll close clock_gettime_monotonic)
-    laghu_compile_probe("${posix_probe}" "${CMAKE_SOURCE_DIR}/tests/configure/probes/${posix_probe}.cpp" TRUE)
+    if(posix_probe STREQUAL "posix_2008")
+      set(posix_result_variable LAGHU_POSIX_2008_PROBE)
+    else()
+      string(TOUPPER "${posix_probe}" posix_probe_upper)
+      set(posix_result_variable "LAGHU_CAPABILITY_${posix_probe_upper}")
+    endif()
+    laghu_compile_probe("${posix_probe}" "${CMAKE_SOURCE_DIR}/tests/configure/probes/${posix_probe}.cpp" TRUE "${posix_result_variable}")
   endforeach()
+  set(LAGHU_CAPABILITY_POSIX_BASELINE true)
   set(LAGHU_EFFECTIVE_WARNING_FLAGS)
   foreach(warning IN ITEMS -Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wformat-security -Wnull-dereference -Wdouble-promotion -Wimplicit-fallthrough -Wcast-align -Wcast-qual -Wold-style-cast -Woverloaded-virtual -Wnon-virtual-dtor -Wzero-as-null-pointer-constant -Wundef -Wuninitialized)
     laghu_warning_probe("${warning}")
@@ -247,6 +257,7 @@ function(laghu_configure_toolchain)
   laghu_require_no_raw_extensions()
   laghu_require_core_profile_sources()
   laghu_validate_warning_suppressions("${CMAKE_SOURCE_DIR}/tests/warnings/suppressions.tsv")
+  laghu_publish_capability_values()
   laghu_write_metadata()
 endfunction()
 
@@ -284,4 +295,20 @@ function(laghu_add_validation_tests)
   foreach(fixture IN ITEMS broad-source invalid-warning missing-reason)
     add_test(NAME "laghu.warning.suppression_negative.${fixture}" COMMAND "${CMAKE_COMMAND}" -DMANIFEST=${CMAKE_SOURCE_DIR}/tests/warnings/negative/${fixture}.tsv -P "${CMAKE_SOURCE_DIR}/cmake/ExpectWarningSuppression.cmake")
   endforeach()
+  foreach(mode IN ITEMS all_enabled baseline_unavailable)
+    string(REPLACE "_" "-" golden_mode "${mode}")
+    add_test(NAME "laghu.capabilities.golden.${mode}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DMODE=${mode}"
+        "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuCapabilities.cmake"
+        "-DOUTPUT=${CMAKE_BINARY_DIR}/tests/capabilities-${mode}.hpp"
+        "-DGOLDEN=${CMAKE_SOURCE_DIR}/tests/configure/golden/capabilities-${golden_mode}.hpp"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCapabilityRender.cmake")
+  endforeach()
+  add_test(NAME laghu.capabilities.parity
+    COMMAND "${CMAKE_COMMAND}"
+      "-DHEADER=${LAGHU_CAPABILITY_HEADER}"
+      "-DCONFIG_JSON=${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
+      "-DPROBE_JSON=${LAGHU_PROBE_DIRECTORY}/toolchain-capabilities-v1.json"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCapabilityParity.cmake")
 endfunction()

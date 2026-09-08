@@ -14,18 +14,21 @@ if(NOT CMAKE_GENERATOR MATCHES "Ninja")
 endif()
 
 include(CTest)
+include(cmake/LaghuCapabilities.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
+laghu_configure_capability_header()
 
 add_library(laghu_core_contract OBJECT src/core/contract.cpp)
 laghu_apply_first_party_contract(laghu_core_contract)
 target_include_directories(laghu_core_contract PRIVATE src/core)
+laghu_add_capability_header_parity_target()
 
 laghu_add_validation_tests()
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core_contract
+  DEPENDS laghu_core_contract laghu_capability_header_parity
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")
