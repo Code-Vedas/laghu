@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+if(NOT DEFINED TRACE OR NOT DEFINED REENABLE)
+  message(FATAL_ERROR "Laghu profile audit expectation requires TRACE and REENABLE")
+endif()
+file(READ "${TRACE}" trace)
+if(NOT trace MATCHES "-fno-exceptions" OR NOT trace MATCHES "-fno-rtti")
+  message(FATAL_ERROR "Laghu profile audit expectation failed: missing restricted flags")
+endif()
+if(NOT trace MATCHES "${REENABLE}")
+  message(FATAL_ERROR "Laghu profile audit expectation failed: expected reenable=${REENABLE}")
+endif()

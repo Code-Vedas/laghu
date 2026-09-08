@@ -7,9 +7,9 @@ Laghu-owned source in `src/core`, `src/config`, `src/protocol`, `src/tls`,
 `src/os` is compiled as C++23 with compiler extensions disabled,
 `-fno-exceptions`, and `-fno-rtti`.
 
-The direct-compiler toolchain runner records each governed invocation and
-audits its final exception and RTTI modes. A later `-fexceptions` or `-frtti`
-is a profile violation.
+CMake owns the governed target options and verifies that its configured Laghu
+targets cannot re-enable exceptions or RTTI. A later `-fexceptions` or
+`-frtti` is a profile violation.
 
 Governed code uses value semantics, RAII, composition, strong types, and
 zero-cost abstractions. It must not use exception handling, RTTI, coroutines,

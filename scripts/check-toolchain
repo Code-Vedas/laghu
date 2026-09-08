@@ -1,9 +1,14 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 set -eu
-usage() { printf '%s\n' 'usage: scripts/check-toolchain --cxx <compiler> --out <temporary-directory>' >&2; exit 64; }
-json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+usage() {
+  printf '%s\n' 'usage: scripts/check-toolchain --cxx <compiler> --out <build-directory>' >&2
+  exit 64
+}
+
 require_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
+
 cxx=
 out=
 while [ "$#" -gt 0 ]; do
@@ -13,212 +18,14 @@ while [ "$#" -gt 0 ]; do
     *) usage ;;
   esac
 done
+
 [ -n "$cxx" ] && [ -n "$out" ] || usage
-command -v "$cxx" >/dev/null 2>&1 || { printf 'error: Laghu toolchain check cannot find compiler: %s\n' "$cxx" >&2; exit 69; }
-mkdir -p "$out"
-compiler_version=$("$cxx" --version | sed -n '1p')
-case "$compiler_version" in *[Cc]lang*) compiler_id=clang ;; *[Gg][Cc][Cc]*|*GCC*) compiler_id=gcc ;; *) compiler_id=unknown ;; esac
-identity_source=$out/toolchain-identity.cpp
-identity_binary=$out/toolchain-identity
-cat >"$identity_source" <<'EOF'
-#include <cstdio>
-#if defined(_LIBCPP_VERSION)
-int main() { std::printf("libc++|%d\n", _LIBCPP_VERSION); }
-#elif defined(_GLIBCXX_RELEASE)
-int main() { std::printf("libstdc++|%d\n", _GLIBCXX_RELEASE); }
-#elif defined(__GLIBCXX__)
-int main() { std::printf("libstdc++|%ld\n", static_cast<long>(__GLIBCXX__)); }
-#else
-int main() { std::printf("unknown|unknown\n"); }
-#endif
-EOF
-strict_flags='-std=c++23 -pedantic-errors'
-profile_flags="$strict_flags -fno-exceptions -fno-rtti"
-if ! "$cxx" $strict_flags "$identity_source" -o "$identity_binary" >"$out/identity.log" 2>&1; then
-  printf 'error: Laghu C++23 identity probe failed: compiler=%s compiler_version=%s\n' "$cxx" "$compiler_version" >&2; cat "$out/identity.log" >&2; exit 1
-fi
-stdlib_identity=$("$identity_binary")
-stdlib_id=$(printf '%s' "$stdlib_identity" | sed 's/|.*//')
-stdlib_version=$(printf '%s' "$stdlib_identity" | sed 's/^[^|]*|//')
-fail() {
-  capability=$1; log=$2
-  printf 'error: Laghu C++23 capability probe failed: capability=%s compiler=%s compiler_version=%s standard_library=%s standard_library_version=%s\n' "$capability" "$cxx" "$compiler_version" "$stdlib_id" "$stdlib_version" >&2
-  cat "$log" >&2; exit 1
+command -v "$cxx" >/dev/null 2>&1 || {
+  printf 'error: Laghu toolchain check cannot find compiler: %s\n' "$cxx" >&2
+  exit 69
 }
-probe() {
-  capability=$1; source=$2; log=$out/"$capability".log
-  "$cxx" $strict_flags -c "$source" -o "$out/$capability.o" >"$log" 2>&1 || fail "$capability" "$log"
-}
-probe if_consteval tests/toolchain/probes/if_consteval.cpp
-probe expected tests/toolchain/probes/expected.cpp
-probe byteswap tests/toolchain/probes/byteswap.cpp
-probe to_underlying tests/toolchain/probes/to_underlying.cpp
-probe unreachable tests/toolchain/probes/unreachable.cpp
+command -v cmake >/dev/null 2>&1 || { printf '%s\n' 'error: Laghu toolchain check requires CMake' >&2; exit 69; }
+command -v ninja >/dev/null 2>&1 || { printf '%s\n' 'error: Laghu toolchain check requires Ninja' >&2; exit 69; }
 
-# Each candidate is probed with -Werror and the minimal -Wall prerequisite.
-# A compiler-specific warning is never enabled merely because another compiler
-# accepts a similarly named flag.
-common_warning_candidates='-Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wformat-security -Wnull-dereference -Wdouble-promotion -Wimplicit-fallthrough -Wcast-align -Wcast-qual -Wold-style-cast -Woverloaded-virtual -Wnon-virtual-dtor -Wzero-as-null-pointer-constant -Wundef -Wuninitialized'
-gcc_warning_candidates='-Warith-conversion -Wcast-align=strict -Wdangling-pointer=2 -Wformat-overflow=2 -Wformat-truncation=2 -Warray-bounds=2 -Wstringop-overflow=4 -Wduplicated-cond -Wlogical-op -Wuseless-cast'
-clang_warning_candidates='-Wshadow-all -Wimplicit-int-conversion -Wshorten-64-to-32 -Wdangling -Warray-bounds -Wunsafe-buffer-usage'
-common_warnings=
-compiler_warnings=
-warning_probe_index=0
-probe_warning() {
-  family=$1
-  warning=$2
-  warning_probe_index=$((warning_probe_index + 1))
-  log=$out/warning-probe-$warning_probe_index.log
-  if "$cxx" $strict_flags -Wall -Werror "$warning" -c tests/warnings/probes/clean.cpp -o "$out/warning-probe-$warning_probe_index.o" >"$log" 2>&1; then
-    case "$family" in
-      common) common_warnings="$common_warnings $warning" ;;
-      compiler) compiler_warnings="$compiler_warnings $warning" ;;
-      *) printf 'error: Laghu warning probe has an unknown family: %s\n' "$family" >&2; exit 70 ;;
-    esac
-  fi
-}
-for warning in $common_warning_candidates; do
-  probe_warning common "$warning"
-done
-case "$compiler_id" in
-  gcc) compiler_warning_candidates=$gcc_warning_candidates ;;
-  clang) compiler_warning_candidates=$clang_warning_candidates ;;
-  *) compiler_warning_candidates= ;;
-esac
-for warning in $compiler_warning_candidates; do
-  probe_warning compiler "$warning"
-done
-warning_flags="$common_warnings $compiler_warnings"
-warning_flags=$(printf '%s\n' "$warning_flags" | sed 's/^ *//; s/ *$//')
-
-json_array() {
-  first=true
-  printf '['
-  for item in "$@"; do
-    if [ "$first" = true ]; then
-      first=false
-    else
-      printf ', '
-    fi
-    printf '"%s"' "$(json_escape "$item")"
-  done
-  printf ']'
-}
-if "$cxx" -std=c++20 -pedantic-errors -c tests/toolchain/negative/cxx20-rejected.cpp -o "$out/cxx20.o" >"$out/cxx20.log" 2>&1; then
-  printf 'error: Laghu C++20 rejection fixture unexpectedly compiled: compiler=%s\n' "$cxx" >&2; exit 1
-fi
-for capability in if_consteval expected byteswap to_underlying unreachable; do
-  log=$out/forced-negative-"$capability".log
-  if "$cxx" $strict_flags -c "tests/toolchain/negative/$capability.cpp" -o "$out/negative-$capability.o" >"$log" 2>&1; then
-    printf 'error: Laghu forced-negative fixture unexpectedly compiled: capability=%s compiler=%s\n' "$capability" "$cxx" >&2; exit 1
-  fi
-  grep -F "laghu forced-negative capability=$capability" "$log" >/dev/null || fail "$capability" "$log"
-done
-if find src -type f ! -path 'src/core/compiler_extensions.hpp' -exec grep -nE '(__builtin_[[:alnum:]_]+|__attribute__[[:space:]]*\(|__declspec[[:space:]]*\()' {} + >"$out/raw-extensions.log"; then
-  printf 'error: raw compiler builtin or attribute outside src/core/compiler_extensions.hpp\n' >&2; cat "$out/raw-extensions.log" >&2; exit 1
-fi
-"$cxx" $strict_flags -I src/core -c src/core/contract.cpp -o "$out/laghu-core-contract.o"
-scripts/check-core-profile-source
-profile_trace=$out/core-profile-invocations.tsv
-profile_sources=$out/core-profile-sources.txt
-find \
-  src/core src/config src/protocol src/tls src/proxy src/cache src/control \
-  src/cli src/observability src/os \
-  -type f \( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' \) -print | sort >"$profile_sources"
-[ -s "$profile_sources" ] || {
-  printf 'error: Laghu restricted C++ profile found no governed first-party sources\n' >&2
-  exit 1
-}
-: >"$profile_trace"
-profile_index=0
-while IFS= read -r source; do
-  profile_index=$((profile_index + 1))
-  printf 'laghu-core\t%s\t%s\n' "$source" "$profile_flags" >>"$profile_trace"
-  "$cxx" $profile_flags -I src/core -c "$source" -o "$out/laghu-core-profile-$profile_index.o"
-done <"$profile_sources"
-scripts/audit-core-profile-invocations "$profile_trace"
-
-for fixture in exceptions rtti coroutines futures iostream virtual; do
-  log=$out/profile-negative-"$fixture".log
-  if scripts/check-core-profile-source --path "tests/profile/negative/$fixture.cpp" >"$log" 2>&1; then
-    printf 'error: Laghu restricted C++ profile negative fixture unexpectedly passed: rule=%s\n' "$fixture" >&2
-    exit 1
-  fi
-  grep -F "rule=$fixture" "$log" >/dev/null || {
-    printf 'error: Laghu restricted C++ profile negative fixture had the wrong diagnostic: rule=%s\n' "$fixture" >&2
-    cat "$log" >&2
-    exit 1
-  }
-done
-scripts/check-core-profile-source --path tests/profile/positive/value_type.cpp
-
-for fixture in throw dynamic-cast; do
-  log=$out/profile-compile-negative-"$fixture".log
-  if "$cxx" $profile_flags -c "tests/profile/compile-negative/$fixture.cpp" -o "$out/profile-compile-negative-$fixture.o" >"$log" 2>&1; then
-    printf 'error: Laghu restricted C++ profile compile-negative fixture unexpectedly compiled: fixture=%s\n' "$fixture" >&2
-    exit 1
-  fi
-done
-
-for fixture in re-enable-exceptions re-enable-rtti; do
-  log=$out/profile-audit-negative-"$fixture".log
-  if scripts/audit-core-profile-invocations "tests/profile/audit/$fixture.tsv" >"$log" 2>&1; then
-    printf 'error: Laghu restricted C++ profile audit fixture unexpectedly passed: fixture=%s\n' "$fixture" >&2
-    exit 1
-  fi
-  grep -F 'effective_' "$log" >/dev/null || {
-    printf 'error: Laghu restricted C++ profile audit fixture had no effective-mode diagnostic: fixture=%s\n' "$fixture" >&2
-    cat "$log" >&2
-    exit 1
-  }
-done
-
-"$cxx" $strict_flags -c tests/profile/third-party/throws.cpp -o "$out/third-party-throws.o"
-
-warning_suppressions=tests/warnings/suppressions.tsv
-scripts/check-warning-suppressions --manifest "$warning_suppressions" --compiler "$compiler_id" --enabled-flags "$warning_flags"
-warning_trace=$out/warning-invocations.tsv
-: >"$warning_trace"
-warning_source=src/core/contract.cpp
-warning_source_flags=$(scripts/check-warning-suppressions --manifest "$warning_suppressions" --compiler "$compiler_id" --enabled-flags "$warning_flags" --source "$warning_source")
-printf 'laghu-first-party\t%s\t%s\n' "$warning_source" "$strict_flags $warning_flags $warning_source_flags" >>"$warning_trace"
-"$cxx" $strict_flags $warning_flags $warning_source_flags -I src/core -c "$warning_source" -o "$out/laghu-core-warnings.o"
-
-warning_negative_log=$out/warning-negative-conversion.log
-if "$cxx" $strict_flags $warning_flags -c tests/warnings/first-party/conversion.cpp -o "$out/warning-negative-conversion.o" >"$warning_negative_log" 2>&1; then
-  printf 'error: Laghu warning-gate negative fixture unexpectedly compiled: fixture=conversion\n' >&2
-  exit 1
-fi
-
-warning_third_party=tests/warnings/third-party/conversion.cpp
-printf 'third-party\t%s\t%s\n' "$warning_third_party" "$strict_flags" >>"$warning_trace"
-"$cxx" $strict_flags -c "$warning_third_party" -o "$out/third-party-warning-isolation.o"
-scripts/audit-warning-invocations "$warning_trace"
-
-for fixture in broad-source invalid-warning missing-reason; do
-  log=$out/warning-suppression-negative-$fixture.log
-  if scripts/check-warning-suppressions --manifest "tests/warnings/negative/$fixture.tsv" --compiler "$compiler_id" --enabled-flags "$warning_flags" >"$log" 2>&1; then
-    printf 'error: Laghu warning suppression negative fixture unexpectedly passed: fixture=%s\n' "$fixture" >&2
-    exit 1
-  fi
-  grep -F 'error: Laghu warning suppression violation:' "$log" >/dev/null || {
-    printf 'error: Laghu warning suppression negative fixture had the wrong diagnostic: fixture=%s\n' "$fixture" >&2
-    cat "$log" >&2
-    exit 1
-  }
-done
-{
-  printf '{\n'
-  printf '  "schema_version": "toolchain-capabilities-v1",\n'
-  printf '  "compiler": {"executable": "%s", "id": "%s", "version": "%s"},\n' "$(json_escape "$cxx")" "$(json_escape "$compiler_id")" "$(json_escape "$compiler_version")"
-  printf '  "standard_library": {"id": "%s", "version": "%s"},\n' "$(json_escape "$stdlib_id")" "$(json_escape "$stdlib_version")"
-  printf '  "language": {"standard": "c++23", "compiler_extensions": false},\n'
-  printf '  "restricted_profile": {"exceptions": false, "rtti": false},\n'
-  printf '  "warning_gates": {"common": '
-  json_array $common_warnings
-  printf ', "compiler_specific": '
-  json_array $compiler_warnings
-  printf '},\n'
-  printf '  "capabilities": {"if_consteval": true, "expected": true, "byteswap": true, "to_underlying": true, "unreachable": true}\n'
-  printf '}\n'
-} >"$out/toolchain-capabilities-v1.json"
+cmake -S . -B "$out" -G Ninja -DCMAKE_CXX_COMPILER="$cxx"
+cmake --build "$out" --target laghu_verify_toolchain
