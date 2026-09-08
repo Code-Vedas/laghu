@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+if(NOT DEFINED METADATA OR NOT DEFINED LAGHU_SOURCE OR NOT DEFINED LAGHU_BINARY)
+  message(FATAL_ERROR "Laghu dependency selection metadata expectation requires METADATA, LAGHU_SOURCE, and LAGHU_BINARY")
+endif()
+if(NOT EXISTS "${METADATA}")
+  message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: missing_output=${METADATA}")
+endif()
+file(READ "${METADATA}" metadata)
+foreach(requirement IN ITEMS
+    "\"schema_version\": \"laghu-dependency-selection-v1\""
+    "\"source\": \"VENDORED\""
+    "\"link_mode\": \"STATIC\""
+    "\"tls_provider\": \"OPENSSL\""
+    "\"active_dependencies\": [")
+  string(FIND "${metadata}" "${requirement}" requirement_offset)
+  if(requirement_offset EQUAL -1)
+    message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: missing_requirement=${requirement}")
+  endif()
+endforeach()
+string(JSON active_dependency_count LENGTH "${metadata}" active_dependencies)
+if(NOT active_dependency_count EQUAL 0)
+  message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: minimal_dependencies_not_empty")
+endif()
+if(metadata MATCHES "${LAGHU_SOURCE}" OR metadata MATCHES "${LAGHU_BINARY}")
+  message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: filesystem_path_leak")
+endif()
