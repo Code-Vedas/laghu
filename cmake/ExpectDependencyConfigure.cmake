@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-if(NOT DEFINED LAGHU_SOURCE OR NOT DEFINED SCENARIO OR NOT DEFINED EXPECT_FAIL)
-  message(FATAL_ERROR "ExpectDependencyConfigure requires LAGHU_SOURCE, SCENARIO, and EXPECT_FAIL")
+if(NOT DEFINED LAGHU_SOURCE OR NOT DEFINED CMAKE_CXX_COMPILER OR
+    NOT DEFINED CMAKE_CXX_FLAGS OR NOT DEFINED SCENARIO OR NOT DEFINED EXPECT_FAIL)
+  message(FATAL_ERROR "ExpectDependencyConfigure requires LAGHU_SOURCE, CMAKE_CXX_COMPILER, CMAKE_CXX_FLAGS, SCENARIO, and EXPECT_FAIL")
 endif()
 
 set(binary_directory "${CMAKE_CURRENT_BINARY_DIR}/dependency-${SCENARIO}")
@@ -9,6 +10,8 @@ execute_process(
     -S "${LAGHU_SOURCE}/tests/dependencies/fixture"
     -B "${binary_directory}"
     "-DLAGHU_SOURCE=${LAGHU_SOURCE}"
+    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
     "-DSCENARIO=${SCENARIO}"
   RESULT_VARIABLE configure_result
   OUTPUT_VARIABLE configure_output
