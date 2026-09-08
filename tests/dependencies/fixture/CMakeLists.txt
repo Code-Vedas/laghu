@@ -2,6 +2,10 @@
 cmake_minimum_required(VERSION 3.28)
 project(laghu_dependency_fixture LANGUAGES CXX)
 
+# Dependency fixtures compile ordinary C++23 sources, never C++ modules. Keep
+# this local because nested CMake configurations do not inherit the root setting.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 if(NOT DEFINED LAGHU_SOURCE OR NOT DEFINED SCENARIO)
   message(FATAL_ERROR "Laghu dependency fixture requires LAGHU_SOURCE and SCENARIO")
 endif()
