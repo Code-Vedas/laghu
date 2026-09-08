@@ -3,7 +3,8 @@
 # Build configuration
 
 Laghu uses CMake 3.28 or newer as its sole normative configure and build
-authority. Ninja is the canonical generator. Configure an out-of-tree build
+authority. Ninja is the canonical generator. In-source configuration is
+rejected. Configure an out-of-tree build
 with a supported C++ compiler:
 
 ```sh
@@ -36,3 +37,36 @@ never executes a target binary.
 The earlier hand-written Make wording in task #23 is superseded by this CMake
 contract. Task #23 retains its out-of-tree build behavior, but does not
 introduce a second configure system.
+
+## Build targets and installation
+
+The canonical private archive target is `laghu_core`. `laghu_core_smoke` is a
+native, non-installed smoke executable. `laghu_verify_toolchain` builds both
+and runs the configured validation suite. All generated files, object files,
+archives, executables, probe logs, and metadata remain in the chosen binary
+directory, so independent binary directories may build concurrently.
+
+Install with standard CMake prefix and staging semantics:
+
+```sh
+cmake --install build --prefix /usr/local
+DESTDIR=/tmp/laghu-stage cmake --install build --prefix /usr/local
+```
+
+The sole installed payload at this milestone is
+`lib/laghu/liblaghu_core.a`; headers and `laghu_core_smoke` are not installed.
+`cmake --build build --target clean` removes generated products from that
+binary directory only and never mutates source files.
+
+## Presets and ARM64 cross-builds
+
+`CMakePresets.json` provides the unversioned `linux-gcc`, `linux-clang`,
+`macos-appleclang`, `freebsd-clang`, and `linux-aarch64-gcc` configure
+presets. Repository release metadata owns versioning; preset names do not
+repeat it.
+
+The ARM64 preset uses `cmake/toolchains/aarch64-linux-gnu.cmake` and the
+Ubuntu package `g++-14-aarch64-linux-gnu`, which provides
+`aarch64-linux-gnu-g++-14`, `aarch64-linux-gnu-ar`, and
+`aarch64-linux-gnu-ranlib`. Its `try_compile` checks create static libraries,
+and no cross-built executable is run.

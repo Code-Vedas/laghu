@@ -60,7 +60,7 @@ function(laghu_compile_probe capability source require_link result_variable)
     "-DCMAKE_CXX_STANDARD_REQUIRED=ON"
     "-DCMAKE_CXX_EXTENSIONS=OFF"
     "-DCMAKE_CXX_SCAN_FOR_MODULES=OFF")
-  if(NOT require_link)
+  if(NOT require_link OR CMAKE_CROSSCOMPILING)
     set(saved_try_compile_target_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
     set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
   endif()
@@ -311,4 +311,12 @@ function(laghu_add_validation_tests)
       "-DCONFIG_JSON=${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
       "-DPROBE_JSON=${LAGHU_PROBE_DIRECTORY}/toolchain-capabilities-v1.json"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCapabilityParity.cmake")
+endfunction()
+
+function(laghu_add_install_layout_test)
+  add_test(NAME laghu.build.install_layout
+    COMMAND "${CMAKE_COMMAND}"
+      "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+      "-DSTAGE_DIRECTORY=${CMAKE_BINARY_DIR}/tests/install-stage"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectInstallLayout.cmake")
 endfunction()
