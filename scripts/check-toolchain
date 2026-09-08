@@ -1,0 +1,78 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+usage() { printf '%s\n' 'usage: scripts/check-toolchain --cxx <compiler> --out <temporary-directory>' >&2; exit 64; }
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+require_value() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage; }
+cxx=
+out=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --cxx) require_value "$@"; cxx=$2; shift 2 ;;
+    --out) require_value "$@"; out=$2; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[ -n "$cxx" ] && [ -n "$out" ] || usage
+command -v "$cxx" >/dev/null 2>&1 || { printf 'error: Laghu toolchain check cannot find compiler: %s\n' "$cxx" >&2; exit 69; }
+mkdir -p "$out"
+compiler_version=$("$cxx" --version | sed -n '1p')
+case "$compiler_version" in *[Cc]lang*) compiler_id=clang ;; *[Gg][Cc][Cc]*|*GCC*) compiler_id=gcc ;; *) compiler_id=unknown ;; esac
+identity_source=$out/toolchain-identity.cpp
+identity_binary=$out/toolchain-identity
+cat >"$identity_source" <<'EOF'
+#include <cstdio>
+#if defined(_LIBCPP_VERSION)
+int main() { std::printf("libc++|%d\n", _LIBCPP_VERSION); }
+#elif defined(_GLIBCXX_RELEASE)
+int main() { std::printf("libstdc++|%d\n", _GLIBCXX_RELEASE); }
+#elif defined(__GLIBCXX__)
+int main() { std::printf("libstdc++|%ld\n", static_cast<long>(__GLIBCXX__)); }
+#else
+int main() { std::printf("unknown|unknown\n"); }
+#endif
+EOF
+strict_flags='-std=c++23 -pedantic-errors'
+if ! "$cxx" $strict_flags "$identity_source" -o "$identity_binary" >"$out/identity.log" 2>&1; then
+  printf 'error: Laghu C++23 identity probe failed: compiler=%s compiler_version=%s\n' "$cxx" "$compiler_version" >&2; cat "$out/identity.log" >&2; exit 1
+fi
+stdlib_identity=$("$identity_binary")
+stdlib_id=$(printf '%s' "$stdlib_identity" | sed 's/|.*//')
+stdlib_version=$(printf '%s' "$stdlib_identity" | sed 's/^[^|]*|//')
+fail() {
+  capability=$1; log=$2
+  printf 'error: Laghu C++23 capability probe failed: capability=%s compiler=%s compiler_version=%s standard_library=%s standard_library_version=%s\n' "$capability" "$cxx" "$compiler_version" "$stdlib_id" "$stdlib_version" >&2
+  cat "$log" >&2; exit 1
+}
+probe() {
+  capability=$1; source=$2; log=$out/"$capability".log
+  "$cxx" $strict_flags -c "$source" -o "$out/$capability.o" >"$log" 2>&1 || fail "$capability" "$log"
+}
+probe if_consteval tests/toolchain/probes/if_consteval.cpp
+probe expected tests/toolchain/probes/expected.cpp
+probe byteswap tests/toolchain/probes/byteswap.cpp
+probe to_underlying tests/toolchain/probes/to_underlying.cpp
+probe unreachable tests/toolchain/probes/unreachable.cpp
+if "$cxx" -std=c++20 -pedantic-errors -c tests/toolchain/negative/cxx20-rejected.cpp -o "$out/cxx20.o" >"$out/cxx20.log" 2>&1; then
+  printf 'error: Laghu C++20 rejection fixture unexpectedly compiled: compiler=%s\n' "$cxx" >&2; exit 1
+fi
+for capability in if_consteval expected byteswap to_underlying unreachable; do
+  log=$out/forced-negative-"$capability".log
+  if "$cxx" $strict_flags -c "tests/toolchain/negative/$capability.cpp" -o "$out/negative-$capability.o" >"$log" 2>&1; then
+    printf 'error: Laghu forced-negative fixture unexpectedly compiled: capability=%s compiler=%s\n' "$capability" "$cxx" >&2; exit 1
+  fi
+  grep -F "laghu forced-negative capability=$capability" "$log" >/dev/null || fail "$capability" "$log"
+done
+if find src -type f ! -path 'src/core/compiler_extensions.hpp' -exec grep -nE '(__builtin_[[:alnum:]_]+|__attribute__[[:space:]]*\(|__declspec[[:space:]]*\()' {} + >"$out/raw-extensions.log"; then
+  printf 'error: raw compiler builtin or attribute outside src/core/compiler_extensions.hpp\n' >&2; cat "$out/raw-extensions.log" >&2; exit 1
+fi
+"$cxx" $strict_flags -I src/core -c src/core/contract.cpp -o "$out/laghu-core-contract.o"
+{
+  printf '{\n'
+  printf '  "schema_version": "toolchain-capabilities-v1",\n'
+  printf '  "compiler": {"executable": "%s", "id": "%s", "version": "%s"},\n' "$(json_escape "$cxx")" "$(json_escape "$compiler_id")" "$(json_escape "$compiler_version")"
+  printf '  "standard_library": {"id": "%s", "version": "%s"},\n' "$(json_escape "$stdlib_id")" "$(json_escape "$stdlib_version")"
+  printf '  "language": {"standard": "c++23", "compiler_extensions": false},\n'
+  printf '  "capabilities": {"if_consteval": true, "expected": true, "byteswap": true, "to_underlying": true, "unreachable": true}\n'
+  printf '}\n'
+} >"$out/toolchain-capabilities-v1.json"
