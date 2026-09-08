@@ -1,0 +1,59 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+
+usage() {
+  printf '%s\n' 'usage: scripts/check-core-profile-source [--path <source>]...' >&2
+  exit 64
+}
+
+violation() {
+  file=$1
+  rule=$2
+  pattern=$3
+  if grep -nE "$pattern" "$file" >"$matches"; then
+    printf 'error: Laghu restricted C++ profile violation: rule=%s file=%s\n' "$rule" "$file" >&2
+    cat "$matches" >&2
+    return 1
+  fi
+}
+
+matches=$(mktemp "${TMPDIR:-/tmp}/laghu-profile-matches.XXXXXX")
+trap 'rm -f "$matches"' EXIT HUP INT TERM
+
+if [ "$#" -eq 0 ]; then
+  set -- $(find \
+    src/core src/config src/protocol src/tls src/proxy src/cache src/control \
+    src/cli src/observability src/os \
+    -type f \( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' -o -name '*.hpp' -o -name '*.hh' -o -name '*.hxx' \) \
+    -print | sort)
+else
+  selected=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --path)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+        selected="$selected $2"
+        shift 2
+        ;;
+      *) usage ;;
+    esac
+  done
+  set -- $selected
+fi
+
+for file in "$@"; do
+  [ -f "$file" ] || {
+    printf 'error: Laghu restricted C++ profile cannot read source: %s\n' "$file" >&2
+    exit 66
+  }
+  violation "$file" exceptions '(^|[^[:alnum:]_])(throw|try|catch)([[:space:]]|\(|\{|;)' || exit 1
+  violation "$file" rtti '(^|[^[:alnum:]_])(dynamic_cast|typeid|std::type_info|type_info)([[:space:]]|<|\()' || exit 1
+  violation "$file" rtti '#[[:space:]]*include[[:space:]]*[<"]typeinfo[>"]' || exit 1
+  violation "$file" coroutines '(^|[^[:alnum:]_])(co_await|co_return|co_yield)([[:space:]]|\(|;)' || exit 1
+  violation "$file" coroutine-header '#[[:space:]]*include[[:space:]]*[<"]coroutine[>"]' || exit 1
+  violation "$file" futures '(^|[^[:alnum:]_])(std::(future|shared_future|promise|async|packaged_task)|future|shared_future|promise)([[:space:]]|<|\()' || exit 1
+  violation "$file" futures '#[[:space:]]*include[[:space:]]*[<"]future[>"]' || exit 1
+  violation "$file" iostream '#[[:space:]]*include[[:space:]]*[<"]iostream[>"]' || exit 1
+  violation "$file" virtual '(^|[^[:alnum:]_])virtual[[:space:]]' || exit 1
+done

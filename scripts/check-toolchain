@@ -33,6 +33,7 @@ int main() { std::printf("unknown|unknown\n"); }
 #endif
 EOF
 strict_flags='-std=c++23 -pedantic-errors'
+profile_flags="$strict_flags -fno-exceptions -fno-rtti"
 if ! "$cxx" $strict_flags "$identity_source" -o "$identity_binary" >"$out/identity.log" 2>&1; then
   printf 'error: Laghu C++23 identity probe failed: compiler=%s compiler_version=%s\n' "$cxx" "$compiler_version" >&2; cat "$out/identity.log" >&2; exit 1
 fi
@@ -67,12 +68,69 @@ if find src -type f ! -path 'src/core/compiler_extensions.hpp' -exec grep -nE '(
   printf 'error: raw compiler builtin or attribute outside src/core/compiler_extensions.hpp\n' >&2; cat "$out/raw-extensions.log" >&2; exit 1
 fi
 "$cxx" $strict_flags -I src/core -c src/core/contract.cpp -o "$out/laghu-core-contract.o"
+scripts/check-core-profile-source
+profile_trace=$out/core-profile-invocations.tsv
+profile_sources=$out/core-profile-sources.txt
+find \
+  src/core src/config src/protocol src/tls src/proxy src/cache src/control \
+  src/cli src/observability src/os \
+  -type f \( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' \) -print | sort >"$profile_sources"
+[ -s "$profile_sources" ] || {
+  printf 'error: Laghu restricted C++ profile found no governed first-party sources\n' >&2
+  exit 1
+}
+: >"$profile_trace"
+profile_index=0
+while IFS= read -r source; do
+  profile_index=$((profile_index + 1))
+  printf 'laghu-core\t%s\t%s\n' "$source" "$profile_flags" >>"$profile_trace"
+  "$cxx" $profile_flags -I src/core -c "$source" -o "$out/laghu-core-profile-$profile_index.o"
+done <"$profile_sources"
+scripts/audit-core-profile-invocations "$profile_trace"
+
+for fixture in exceptions rtti coroutines futures iostream virtual; do
+  log=$out/profile-negative-"$fixture".log
+  if scripts/check-core-profile-source --path "tests/profile/negative/$fixture.cpp" >"$log" 2>&1; then
+    printf 'error: Laghu restricted C++ profile negative fixture unexpectedly passed: rule=%s\n' "$fixture" >&2
+    exit 1
+  fi
+  grep -F "rule=$fixture" "$log" >/dev/null || {
+    printf 'error: Laghu restricted C++ profile negative fixture had the wrong diagnostic: rule=%s\n' "$fixture" >&2
+    cat "$log" >&2
+    exit 1
+  }
+done
+scripts/check-core-profile-source --path tests/profile/positive/value_type.cpp
+
+for fixture in throw dynamic-cast; do
+  log=$out/profile-compile-negative-"$fixture".log
+  if "$cxx" $profile_flags -c "tests/profile/compile-negative/$fixture.cpp" -o "$out/profile-compile-negative-$fixture.o" >"$log" 2>&1; then
+    printf 'error: Laghu restricted C++ profile compile-negative fixture unexpectedly compiled: fixture=%s\n' "$fixture" >&2
+    exit 1
+  fi
+done
+
+for fixture in re-enable-exceptions re-enable-rtti; do
+  log=$out/profile-audit-negative-"$fixture".log
+  if scripts/audit-core-profile-invocations "tests/profile/audit/$fixture.tsv" >"$log" 2>&1; then
+    printf 'error: Laghu restricted C++ profile audit fixture unexpectedly passed: fixture=%s\n' "$fixture" >&2
+    exit 1
+  fi
+  grep -F 'effective_' "$log" >/dev/null || {
+    printf 'error: Laghu restricted C++ profile audit fixture had no effective-mode diagnostic: fixture=%s\n' "$fixture" >&2
+    cat "$log" >&2
+    exit 1
+  }
+done
+
+"$cxx" $strict_flags -c tests/profile/third-party/throws.cpp -o "$out/third-party-throws.o"
 {
   printf '{\n'
   printf '  "schema_version": "toolchain-capabilities-v1",\n'
   printf '  "compiler": {"executable": "%s", "id": "%s", "version": "%s"},\n' "$(json_escape "$cxx")" "$(json_escape "$compiler_id")" "$(json_escape "$compiler_version")"
   printf '  "standard_library": {"id": "%s", "version": "%s"},\n' "$(json_escape "$stdlib_id")" "$(json_escape "$stdlib_version")"
   printf '  "language": {"standard": "c++23", "compiler_extensions": false},\n'
+  printf '  "restricted_profile": {"exceptions": false, "rtti": false},\n'
   printf '  "capabilities": {"if_consteval": true, "expected": true, "byteswap": true, "to_underlying": true, "unreachable": true}\n'
   printf '}\n'
 } >"$out/toolchain-capabilities-v1.json"

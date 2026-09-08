@@ -1,0 +1,1 @@
+laghu-core	src/core/contract.cpp	-std=c++23 -pedantic-errors -fno-exceptions -fno-rtti -fexceptions
