@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#include <laghu/capabilities.hpp>
+
+static_assert(laghu::capability::has_if_consteval == @LAGHU_CAPABILITY_IF_CONSTEVAL@);
+static_assert(laghu::capability::has_expected == @LAGHU_CAPABILITY_EXPECTED@);
+static_assert(laghu::capability::has_byteswap == @LAGHU_CAPABILITY_BYTESWAP@);
+static_assert(laghu::capability::has_to_underlying == @LAGHU_CAPABILITY_TO_UNDERLYING@);
+static_assert(laghu::capability::has_unreachable == @LAGHU_CAPABILITY_UNREACHABLE@);
+static_assert(laghu::capability::has_posix_baseline == @LAGHU_CAPABILITY_POSIX_BASELINE@);
