@@ -54,6 +54,56 @@ probe expected tests/toolchain/probes/expected.cpp
 probe byteswap tests/toolchain/probes/byteswap.cpp
 probe to_underlying tests/toolchain/probes/to_underlying.cpp
 probe unreachable tests/toolchain/probes/unreachable.cpp
+
+# Each candidate is probed with -Werror and the minimal -Wall prerequisite.
+# A compiler-specific warning is never enabled merely because another compiler
+# accepts a similarly named flag.
+common_warning_candidates='-Wall -Wextra -Wpedantic -Werror -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wformat-security -Wnull-dereference -Wdouble-promotion -Wimplicit-fallthrough -Wcast-align -Wcast-qual -Wold-style-cast -Woverloaded-virtual -Wnon-virtual-dtor -Wzero-as-null-pointer-constant -Wundef -Wuninitialized'
+gcc_warning_candidates='-Warith-conversion -Wcast-align=strict -Wdangling-pointer=2 -Wformat-overflow=2 -Wformat-truncation=2 -Warray-bounds=2 -Wstringop-overflow=4 -Wduplicated-cond -Wlogical-op -Wuseless-cast'
+clang_warning_candidates='-Wshadow-all -Wimplicit-int-conversion -Wshorten-64-to-32 -Wdangling -Warray-bounds -Wunsafe-buffer-usage'
+common_warnings=
+compiler_warnings=
+warning_probe_index=0
+probe_warning() {
+  family=$1
+  warning=$2
+  warning_probe_index=$((warning_probe_index + 1))
+  log=$out/warning-probe-$warning_probe_index.log
+  if "$cxx" $strict_flags -Wall -Werror "$warning" -c tests/warnings/probes/clean.cpp -o "$out/warning-probe-$warning_probe_index.o" >"$log" 2>&1; then
+    case "$family" in
+      common) common_warnings="$common_warnings $warning" ;;
+      compiler) compiler_warnings="$compiler_warnings $warning" ;;
+      *) printf 'error: Laghu warning probe has an unknown family: %s\n' "$family" >&2; exit 70 ;;
+    esac
+  fi
+}
+for warning in $common_warning_candidates; do
+  probe_warning common "$warning"
+done
+case "$compiler_id" in
+  gcc) compiler_warning_candidates=$gcc_warning_candidates ;;
+  clang) compiler_warning_candidates=$clang_warning_candidates ;;
+  *) compiler_warning_candidates= ;;
+esac
+for warning in $compiler_warning_candidates; do
+  probe_warning compiler "$warning"
+done
+warning_flags="$common_warnings $compiler_warnings"
+warning_flags=$(printf '%s\n' "$warning_flags" | sed 's/^ *//; s/ *$//')
+
+json_array() {
+  first=true
+  printf '['
+  for item in "$@"; do
+    if [ "$first" = true ]; then
+      first=false
+    else
+      printf ', '
+    fi
+    printf '"%s"' "$(json_escape "$item")"
+  done
+  printf ']'
+}
 if "$cxx" -std=c++20 -pedantic-errors -c tests/toolchain/negative/cxx20-rejected.cpp -o "$out/cxx20.o" >"$out/cxx20.log" 2>&1; then
   printf 'error: Laghu C++20 rejection fixture unexpectedly compiled: compiler=%s\n' "$cxx" >&2; exit 1
 fi
@@ -124,6 +174,39 @@ for fixture in re-enable-exceptions re-enable-rtti; do
 done
 
 "$cxx" $strict_flags -c tests/profile/third-party/throws.cpp -o "$out/third-party-throws.o"
+
+warning_suppressions=tests/warnings/suppressions.tsv
+scripts/check-warning-suppressions --manifest "$warning_suppressions" --compiler "$compiler_id" --enabled-flags "$warning_flags"
+warning_trace=$out/warning-invocations.tsv
+: >"$warning_trace"
+warning_source=src/core/contract.cpp
+warning_source_flags=$(scripts/check-warning-suppressions --manifest "$warning_suppressions" --compiler "$compiler_id" --enabled-flags "$warning_flags" --source "$warning_source")
+printf 'laghu-first-party\t%s\t%s\n' "$warning_source" "$strict_flags $warning_flags $warning_source_flags" >>"$warning_trace"
+"$cxx" $strict_flags $warning_flags $warning_source_flags -I src/core -c "$warning_source" -o "$out/laghu-core-warnings.o"
+
+warning_negative_log=$out/warning-negative-conversion.log
+if "$cxx" $strict_flags $warning_flags -c tests/warnings/first-party/conversion.cpp -o "$out/warning-negative-conversion.o" >"$warning_negative_log" 2>&1; then
+  printf 'error: Laghu warning-gate negative fixture unexpectedly compiled: fixture=conversion\n' >&2
+  exit 1
+fi
+
+warning_third_party=tests/warnings/third-party/conversion.cpp
+printf 'third-party\t%s\t%s\n' "$warning_third_party" "$strict_flags" >>"$warning_trace"
+"$cxx" $strict_flags -c "$warning_third_party" -o "$out/third-party-warning-isolation.o"
+scripts/audit-warning-invocations "$warning_trace"
+
+for fixture in broad-source invalid-warning missing-reason; do
+  log=$out/warning-suppression-negative-$fixture.log
+  if scripts/check-warning-suppressions --manifest "tests/warnings/negative/$fixture.tsv" --compiler "$compiler_id" --enabled-flags "$warning_flags" >"$log" 2>&1; then
+    printf 'error: Laghu warning suppression negative fixture unexpectedly passed: fixture=%s\n' "$fixture" >&2
+    exit 1
+  fi
+  grep -F 'error: Laghu warning suppression violation:' "$log" >/dev/null || {
+    printf 'error: Laghu warning suppression negative fixture had the wrong diagnostic: fixture=%s\n' "$fixture" >&2
+    cat "$log" >&2
+    exit 1
+  }
+done
 {
   printf '{\n'
   printf '  "schema_version": "toolchain-capabilities-v1",\n'
@@ -131,6 +214,11 @@ done
   printf '  "standard_library": {"id": "%s", "version": "%s"},\n' "$(json_escape "$stdlib_id")" "$(json_escape "$stdlib_version")"
   printf '  "language": {"standard": "c++23", "compiler_extensions": false},\n'
   printf '  "restricted_profile": {"exceptions": false, "rtti": false},\n'
+  printf '  "warning_gates": {"common": '
+  json_array $common_warnings
+  printf ', "compiler_specific": '
+  json_array $compiler_warnings
+  printf '},\n'
   printf '  "capabilities": {"if_consteval": true, "expected": true, "byteswap": true, "to_underlying": true, "unreachable": true}\n'
   printf '}\n'
 } >"$out/toolchain-capabilities-v1.json"

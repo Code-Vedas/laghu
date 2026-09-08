@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+src/core/contract.cpp\t-Wno-conversion\tall\t
