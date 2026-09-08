@@ -337,6 +337,38 @@ function(laghu_add_validation_tests)
       -DDEPENDENCY=laghu_core
       "-DAR=${CMAKE_AR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/VerifyStaticArtifact.cmake")
+  foreach(fixture IN ITEMS minimal full custom_closure)
+    add_test(NAME "laghu.build_variants.positive.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=OFF
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBuildVariantConfigure.cmake")
+  endforeach()
+  foreach(fixture IN ITEMS unknown duplicate unavailable conflict minimal_selector full_selector invalid_profile)
+    if(fixture STREQUAL "unknown")
+      set(expected_text "Laghu build capability failed: feature=unknown rule=unknown_feature")
+    elseif(fixture STREQUAL "duplicate")
+      set(expected_text "Laghu build capability failed: feature=tls rule=duplicate_request")
+    elseif(fixture STREQUAL "unavailable")
+      set(expected_text "Laghu build capability failed: feature=tls rule=feature_unavailable")
+    elseif(fixture STREQUAL "conflict")
+      set(expected_text "Laghu build capability failed: feature=http2 conflict=http3 rule=feature_conflict")
+    elseif(fixture STREQUAL "minimal_selector")
+      set(expected_text "Laghu build capability failed: profile=MINIMAL rule=feature_selector_not_allowed")
+    elseif(fixture STREQUAL "full_selector")
+      set(expected_text "Laghu build capability failed: profile=FULL rule=feature_selector_not_allowed")
+    else()
+      set(expected_text "Laghu build capability failed: profile=INVALID rule=profile_invalid")
+    endif()
+    add_test(NAME "laghu.build_variants.negative.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=ON
+        "-DEXPECT_TEXT=${expected_text}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBuildVariantConfigure.cmake")
+  endforeach()
   foreach(fixture IN ITEMS positive_symbol positive_http3 version_too_old unknown_dependency http3_incomplete http3_mixed_provider http3_tls_too_old zlib_compat_enabled capability_mismatch)
     if(fixture STREQUAL "positive_symbol" OR fixture STREQUAL "positive_http3")
       set(expected_fail OFF)
@@ -384,6 +416,32 @@ function(laghu_add_validation_tests)
         "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
         "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
         "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
+  add_test(NAME laghu.dependencies.mode_minimal_ignored_selectors
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+      "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+      "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+      -DSCENARIO=mode_minimal_ignored_selectors
+      -DSOURCE=SYSTEM
+      -DLINK_MODE=DYNAMIC
+      -DTLS_PROVIDER=LIBRESSL
+      -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  foreach(provider IN ITEMS OPENSSL LIBRESSL)
+    add_test(NAME "laghu.dependencies.mode_full_selection_${provider}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+        -DSCENARIO=mode_full_selection
+        "-DTLS_PROVIDER=${provider}"
         -DEXPECT_FAIL=OFF
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()

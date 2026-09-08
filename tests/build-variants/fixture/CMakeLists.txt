@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+cmake_minimum_required(VERSION 3.28)
+project(laghu_build_variant_fixture LANGUAGES NONE)
+
+if(NOT DEFINED LAGHU_SOURCE OR NOT DEFINED SCENARIO)
+  message(FATAL_ERROR "Laghu build variant fixture requires LAGHU_SOURCE and SCENARIO")
+endif()
+
+include("${LAGHU_SOURCE}/cmake/LaghuFeatures.cmake")
+include("${LAGHU_SOURCE}/cmake/LaghuBuildVariants.cmake")
+
+function(laghu_fixture_expect_features expected_requested expected_effective)
+  if(NOT LAGHU_BUILD_REQUESTED_FEATURES STREQUAL expected_requested)
+    message(FATAL_ERROR
+      "Laghu build variant fixture requested features mismatch: expected=${expected_requested} actual=${LAGHU_BUILD_REQUESTED_FEATURES}")
+  endif()
+  if(NOT LAGHU_BUILD_EFFECTIVE_FEATURES STREQUAL expected_effective)
+    message(FATAL_ERROR
+      "Laghu build variant fixture effective features mismatch: expected=${expected_effective} actual=${LAGHU_BUILD_EFFECTIVE_FEATURES}")
+  endif()
+endfunction()
+
+function(laghu_fixture_expect_target feature expected)
+  laghu_feature_target_name("${feature}" target)
+  if(expected AND NOT TARGET "${target}")
+    message(FATAL_ERROR
+      "Laghu build variant fixture selected target missing: feature=${feature}")
+  elseif(NOT expected AND TARGET "${target}")
+    message(FATAL_ERROR
+      "Laghu build variant fixture disabled target created: feature=${feature}")
+  endif()
+endfunction()
+
+function(laghu_fixture_expect_metadata profile requested effective)
+  if(NOT EXISTS "${LAGHU_BUILD_VARIANT_METADATA}")
+    message(FATAL_ERROR "Laghu build variant fixture metadata is missing")
+  endif()
+  file(READ "${LAGHU_BUILD_VARIANT_METADATA}" metadata)
+  laghu_feature_json_array(requested_json ${requested})
+  laghu_feature_json_array(effective_json ${effective})
+  foreach(requirement IN ITEMS
+      "\"profile\": \"${profile}\""
+      "\"requested_features\": ${requested_json}"
+      "\"effective_features\": ${effective_json}")
+    string(FIND "${metadata}" "${requirement}" requirement_offset)
+    if(requirement_offset EQUAL -1)
+      message(FATAL_ERROR
+        "Laghu build variant fixture metadata mismatch: requirement=${requirement}")
+    endif()
+  endforeach()
+endfunction()
+
+if(SCENARIO STREQUAL "minimal")
+  set(LAGHU_BUILD_PROFILE MINIMAL)
+  set(LAGHU_FEATURES "")
+  laghu_configure_build_variant()
+  laghu_fixture_expect_features("core" "core")
+  laghu_fixture_expect_metadata(MINIMAL "core" "core")
+  laghu_fixture_expect_target(core ON)
+  laghu_fixture_expect_target(tls OFF)
+elseif(SCENARIO STREQUAL "full")
+  set(LAGHU_BUILD_PROFILE FULL)
+  set(LAGHU_FEATURES "")
+  laghu_configure_build_variant()
+  laghu_fixture_expect_features(
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip"
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip")
+  laghu_fixture_expect_metadata(FULL
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip"
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip")
+  foreach(feature IN LISTS LAGHU_FEATURE_IDS)
+    laghu_fixture_expect_target("${feature}" ON)
+  endforeach()
+elseif(SCENARIO STREQUAL "custom_closure")
+  set(LAGHU_BUILD_PROFILE CUSTOM)
+  set(LAGHU_FEATURES http3)
+  laghu_configure_build_variant()
+  laghu_fixture_expect_features("http3" "core;tls;http3")
+  laghu_fixture_expect_metadata(CUSTOM "http3" "core;tls;http3")
+  foreach(feature IN ITEMS core tls http3)
+    laghu_fixture_expect_target("${feature}" ON)
+  endforeach()
+  laghu_fixture_expect_target(http2 OFF)
+elseif(SCENARIO STREQUAL "unknown")
+  set(LAGHU_BUILD_PROFILE CUSTOM)
+  set(LAGHU_FEATURES unknown)
+  laghu_configure_build_variant()
+elseif(SCENARIO STREQUAL "duplicate")
+  set(LAGHU_BUILD_PROFILE CUSTOM)
+  set(LAGHU_FEATURES "tls;tls")
+  laghu_configure_build_variant()
+elseif(SCENARIO STREQUAL "unavailable")
+  set(LAGHU_BUILD_PROFILE CUSTOM)
+  set(LAGHU_FEATURES tls)
+  laghu_configure_build_variant(AVAILABLE core)
+elseif(SCENARIO STREQUAL "conflict")
+  laghu_feature_registry_initialize()
+  set_property(GLOBAL PROPERTY LAGHU_FEATURE_CONFLICTS_http2 http3)
+  laghu_resolve_features(effective
+    REQUESTED http2 http3
+    AVAILABLE ${LAGHU_FEATURE_IDS}
+    DIAGNOSTIC_PREFIX "Laghu build capability failed")
+elseif(SCENARIO STREQUAL "minimal_selector")
+  set(LAGHU_BUILD_PROFILE MINIMAL)
+  set(LAGHU_FEATURES tls)
+  laghu_configure_build_variant()
+elseif(SCENARIO STREQUAL "full_selector")
+  set(LAGHU_BUILD_PROFILE FULL)
+  set(LAGHU_FEATURES tls)
+  laghu_configure_build_variant()
+elseif(SCENARIO STREQUAL "invalid_profile")
+  set(LAGHU_BUILD_PROFILE INVALID)
+  set(LAGHU_FEATURES "")
+  laghu_configure_build_variant()
+else()
+  message(FATAL_ERROR "Laghu build variant fixture requires a known scenario; scenario=${SCENARIO}")
+endif()

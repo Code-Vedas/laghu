@@ -9,9 +9,6 @@ endif()
 file(READ "${METADATA}" metadata)
 foreach(requirement IN ITEMS
     "\"schema_version\": \"laghu-dependency-selection-v1\""
-    "\"source\": \"VENDORED\""
-    "\"link_mode\": \"STATIC\""
-    "\"tls_provider\": \"OPENSSL\""
     "\"active_dependencies\": [")
   string(FIND "${metadata}" "${requirement}" requirement_offset)
   if(requirement_offset EQUAL -1)
@@ -22,6 +19,12 @@ string(JSON active_dependency_count LENGTH "${metadata}" active_dependencies)
 if(NOT active_dependency_count EQUAL 0)
   message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: minimal_dependencies_not_empty")
 endif()
+foreach(selector IN ITEMS source link_mode tls_provider)
+  string(FIND "${metadata}" "\"${selector}\":" selector_offset)
+  if(NOT selector_offset EQUAL -1)
+    message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: inactive_selector_recorded=${selector}")
+  endif()
+endforeach()
 if(metadata MATCHES "${LAGHU_SOURCE}" OR metadata MATCHES "${LAGHU_BINARY}")
   message(FATAL_ERROR "Laghu dependency selection metadata expectation failed: filesystem_path_leak")
 endif()
