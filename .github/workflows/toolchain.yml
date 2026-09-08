@@ -19,6 +19,7 @@ jobs:
           - name: clang-19-libc++
             compiler: clang++-19
             packages: clang-19 libc++-19-dev libc++abi-19-dev
+            cxxflags: -stdlib=libc++
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +27,42 @@ jobs:
         run: |
           sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install --yes ${{ matrix.packages }}
+          sudo apt-get install --yes ninja-build ${{ matrix.packages }}
       - name: Verify C++23 toolchain contract
+        env:
+          CXXFLAGS: ${{ matrix.cxxflags }}
         run: scripts/check-toolchain --cxx "${{ matrix.compiler }}" --out "$RUNNER_TEMP/laghu-toolchain"
       - uses: actions/upload-artifact@v4
         with:
           name: toolchain-capabilities-${{ matrix.name }}
-          path: ${{ runner.temp }}/laghu-toolchain/toolchain-capabilities-v1.json
+          path: |
+            ${{ runner.temp }}/laghu-toolchain/config/laghu-config-v1.json
+            ${{ runner.temp }}/laghu-toolchain/probes/toolchain-capabilities-v1.json
+            ${{ runner.temp }}/laghu-toolchain/probes/*.log
           if-no-files-found: error
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install canonical generator
+        run: brew install ninja
+      - name: Verify Apple Clang toolchain contract
+        run: scripts/check-toolchain --cxx clang++ --out "$RUNNER_TEMP/laghu-toolchain"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-capabilities-macos-appleclang
+          path: |
+            ${{ runner.temp }}/laghu-toolchain/config/laghu-config-v1.json
+            ${{ runner.temp }}/laghu-toolchain/probes/toolchain-capabilities-v1.json
+            ${{ runner.temp }}/laghu-toolchain/probes/*.log
+          if-no-files-found: error
+  freebsd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1
+        with:
+          release: '15.1'
+          usesh: true
+          prepare: pkg install -y cmake ninja
+          run: scripts/check-toolchain --cxx clang++ --out /tmp/laghu-toolchain
