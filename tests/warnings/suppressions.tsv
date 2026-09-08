@@ -1,2 +1,3 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # source\twarning\tcompiler\ttechnical reason
+src/cli/main.cpp	-Wno-unsafe-buffer-usage	clang	The POSIX process-entry ABI and write(2) require bounded pointer interfaces unavailable as C++ span parameters.

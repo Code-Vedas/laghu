@@ -25,6 +25,7 @@ include(cmake/LaghuApiBoundaries.cmake)
 include(cmake/LaghuDependencies.cmake)
 include(cmake/LaghuFeatures.cmake)
 include(cmake/LaghuBuildVariants.cmake)
+include(cmake/LaghuBuildIdentity.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
@@ -32,6 +33,7 @@ laghu_configure_build_variant()
 laghu_configure_dependency_registry()
 laghu_configure_dependency_modes()
 laghu_configure_capability_header()
+laghu_configure_build_identity()
 
 add_library(laghu_core STATIC src/core/contract.cpp)
 laghu_apply_first_party_contract(laghu_core)
@@ -45,6 +47,18 @@ laghu_apply_first_party_contract(laghu_core_smoke)
 laghu_configure_api_consumer(laghu_core_smoke core)
 target_link_libraries(laghu_core_smoke PRIVATE laghu_core)
 
+add_executable(laghu
+  src/cli/main.cpp
+  "${LAGHU_BUILD_MANIFEST_SOURCE}")
+laghu_apply_first_party_contract(laghu)
+laghu_configure_api_consumer(laghu cli)
+target_include_directories(laghu PRIVATE "${CMAKE_SOURCE_DIR}/src/cli/private")
+target_link_libraries(laghu PRIVATE laghu_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(src/cli/main.cpp PROPERTIES
+    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
+
 laghu_add_capability_header_parity_target()
 laghu_add_visibility_probe()
 add_library(visibility_negative_fixture SHARED
@@ -57,9 +71,11 @@ laghu_add_install_layout_test()
 
 install(TARGETS laghu_core
   ARCHIVE DESTINATION lib/laghu)
+install(TARGETS laghu
+  RUNTIME DESTINATION bin)
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_core_smoke laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
+  DEPENDS laghu_core laghu_core_smoke laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")

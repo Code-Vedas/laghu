@@ -187,8 +187,9 @@ function(laghu_validate_warning_suppressions manifest)
     if(NOT warning MATCHES "^-Wno-(conversion|sign-conversion|shadow|format|format-security|null-dereference|double-promotion|implicit-fallthrough|cast-align|cast-qual|old-style-cast|overloaded-virtual|non-virtual-dtor|zero-as-null-pointer-constant|undef|uninitialized|arith-conversion|dangling-pointer|format-overflow|format-truncation|array-bounds|stringop-overflow|duplicated-cond|logical-op|useless-cast|shadow-all|implicit-int-conversion|shorten-64-to-32|dangling|unsafe-buffer-usage)$")
       laghu_fail(warning_suppression "warning=${warning}; warning is not an approved source-level suppression")
     endif()
-    if(NOT compiler_condition STREQUAL "all" AND NOT compiler_condition STREQUAL "${LAGHU_COMPILER_FAMILY}")
-      laghu_fail(warning_suppression "compiler_condition=${compiler_condition}; expected=all-or-current-compiler")
+    if(NOT compiler_condition STREQUAL "all" AND NOT compiler_condition STREQUAL "gcc" AND
+        NOT compiler_condition STREQUAL "clang")
+      laghu_fail(warning_suppression "compiler_condition=${compiler_condition}; expected=all-gcc-or-clang")
     endif()
     if(reason STREQUAL "")
       laghu_fail(warning_suppression "source=${source}; technical reason is required")
@@ -331,6 +332,32 @@ function(laghu_add_validation_tests)
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
       "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencySelectionMetadata.cmake")
+  if(CMAKE_CROSSCOMPILING)
+    set(laghu_build_identity_run_cli OFF)
+  else()
+    set(laghu_build_identity_run_cli ON)
+  endif()
+  add_test(NAME laghu.build_identity.manifest
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMANIFEST=${LAGHU_BUILD_MANIFEST}"
+      "-DPREIMAGE=${LAGHU_BUILD_IDENTITY_PREIMAGE}"
+      "-DCLI=$<TARGET_FILE:laghu>"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
+      "-DRUN_CLI=${laghu_build_identity_run_cli}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBuildIdentity.cmake")
+  add_test(NAME laghu.build_identity.dependencies
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBuildIdentityDependencies.cmake")
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME laghu.build_identity.determinism
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBuildIdentityDeterminism.cmake")
+  endif()
   add_test(NAME laghu.dependencies.static_artifact_proof
     COMMAND "${CMAKE_COMMAND}"
       "-DARTIFACT=$<TARGET_FILE:laghu_core>"
