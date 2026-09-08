@@ -115,13 +115,13 @@ function(laghu_require_no_raw_extensions)
     "${CMAKE_SOURCE_DIR}/src/*.cxx" "${CMAKE_SOURCE_DIR}/src/*.hpp"
     "${CMAKE_SOURCE_DIR}/src/*.hh" "${CMAKE_SOURCE_DIR}/src/*.hxx")
   foreach(source IN LISTS owned_sources)
-    if(source STREQUAL "${CMAKE_SOURCE_DIR}/src/core/compiler_extensions.hpp")
+    if(source STREQUAL "${CMAKE_SOURCE_DIR}/src/core/private/laghu/core/internal/compiler_extensions.hpp")
       continue()
     endif()
     file(READ "${source}" contents)
     if(contents MATCHES "__builtin_[A-Za-z0-9_]+|__attribute__[ \t\r\n]*\\(|__declspec[ \t\r\n]*\\(")
       file(RELATIVE_PATH relative_source "${CMAKE_SOURCE_DIR}" "${source}")
-      laghu_fail(raw_compiler_extension "file=${relative_source}; only src/core/compiler_extensions.hpp is allowed")
+      laghu_fail(raw_compiler_extension "file=${relative_source}; only src/core/private/laghu/core/internal/compiler_extensions.hpp is allowed")
     endif()
   endforeach()
 endfunction()
@@ -265,6 +265,8 @@ function(laghu_apply_first_party_contract target)
   set_property(TARGET "${target}" PROPERTY CXX_STANDARD 23)
   set_property(TARGET "${target}" PROPERTY CXX_STANDARD_REQUIRED ON)
   set_property(TARGET "${target}" PROPERTY CXX_EXTENSIONS OFF)
+  set_property(TARGET "${target}" PROPERTY CXX_VISIBILITY_PRESET hidden)
+  set_property(TARGET "${target}" PROPERTY VISIBILITY_INLINES_HIDDEN YES)
   target_compile_options("${target}" PRIVATE -pedantic-errors -fno-exceptions -fno-rtti ${LAGHU_EFFECTIVE_WARNING_FLAGS})
   get_target_property(effective_options "${target}" COMPILE_OPTIONS)
   list(FIND effective_options -fexceptions enables_exceptions)
@@ -342,6 +344,62 @@ function(laghu_add_validation_tests)
         "-DEXPECT_TEXT=${expected_text}"
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDagConfigure.cmake")
   endforeach()
+  foreach(header IN LISTS LAGHU_API_HEADERS)
+    laghu_api_header_test_name("${header}" header_test_name)
+    laghu_api_header_include_name("${header}" header_include_name)
+    laghu_api_header_include_directories("${header}" header_include_directories)
+    add_test(NAME "laghu.api.header_self_contained.${header_test_name}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+        "-DHEADER=${header_include_name}"
+        "-DINCLUDE_DIRECTORIES=${header_include_directories}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectHeaderCompile.cmake")
+  endforeach()
+  add_test(NAME laghu.api.header_self_contained.generated_capabilities
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DHEADER=laghu/capabilities.hpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_BINARY_DIR}/generated"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectHeaderCompile.cmake")
+  add_test(NAME laghu.api.contract_consumer
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/api-boundaries/contract-consumer.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      -DEXPECT_FAIL=OFF
+      -P "${expect_compile}")
+  add_test(NAME laghu.api.private_header_leak_rejected
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/api-boundaries/private-header-leak.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
+  foreach(fixture IN ITEMS external-c-type external-c-type-token private-namespace private-include cross-private-source direct-private-path legacy-global-symbol)
+    add_test(NAME "laghu.api.policy_negative.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuApiBoundaries.cmake"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DFIXTURE=${CMAKE_SOURCE_DIR}/tests/api-boundaries/negative/${fixture}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectApiBoundaryPolicy.cmake")
+  endforeach()
+  add_test(NAME laghu.api.visibility.dynamic_exports
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLIBRARY=$<TARGET_FILE:laghu_visibility_probe>"
+      "-DNM=${CMAKE_NM}"
+      "-DPLATFORM=${CMAKE_SYSTEM_NAME}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectNoLaghuDynamicSymbols.cmake")
+  add_test(NAME laghu.api.visibility.negative_exposed_symbol
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLIBRARY=$<TARGET_FILE:visibility_negative_fixture>"
+      "-DNM=${CMAKE_NM}"
+      "-DPLATFORM=${CMAKE_SYSTEM_NAME}"
+      -DEXPECT_FAIL=ON
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectNoLaghuDynamicSymbols.cmake")
 endfunction()
 
 function(laghu_add_install_layout_test)

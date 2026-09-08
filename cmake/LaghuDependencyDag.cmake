@@ -156,6 +156,8 @@ function(laghu_declare_subsystem_graph)
   laghu_register_subsystem_target(laghu_core core)
   foreach(node IN ITEMS config os protocol tls cache observability proxy control cli adapters)
     add_library("laghu_${node}" INTERFACE)
+    set_property(TARGET "laghu_${node}" PROPERTY CXX_VISIBILITY_PRESET hidden)
+    set_property(TARGET "laghu_${node}" PROPERTY VISIBILITY_INLINES_HIDDEN YES)
     laghu_register_subsystem_target("laghu_${node}" "${node}")
   endforeach()
 
