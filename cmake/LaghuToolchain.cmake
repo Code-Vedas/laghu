@@ -681,6 +681,15 @@ function(laghu_add_validation_tests)
       "-DFLAGS=-fno-exceptions;-fno-rtti"
       -DEXPECT_FAIL=ON
       -P "${expect_compile}")
+  add_test(NAME laghu.core.bounded_buffer.negative.copy
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/bounded-buffer-copy.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
   foreach(fixture IN ITEMS slab-pool-copy slab-pool-throwing slab-pool-throwing-destructor)
     add_test(NAME "laghu.core.slab_pools.negative.${fixture}"
       COMMAND "${CMAKE_COMMAND}"
