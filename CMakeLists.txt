@@ -52,6 +52,19 @@ laghu_apply_first_party_contract(laghu_os)
 laghu_configure_api_consumer(laghu_os os)
 target_include_directories(laghu_os PRIVATE "${CMAKE_SOURCE_DIR}/src/os/private")
 
+list(FIND LAGHU_EFFECTIVE_FEATURES tls laghu_tls_feature_index)
+if(NOT laghu_tls_feature_index EQUAL -1)
+  add_library(laghu_crypto STATIC
+    src/adapters/crypto_provider.cpp
+    src/adapters/entropy.cpp)
+  laghu_apply_first_party_contract(laghu_crypto)
+  laghu_configure_api_consumer(laghu_crypto adapters)
+  target_include_directories(laghu_crypto PRIVATE "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  laghu_register_subsystem_target(laghu_crypto adapters)
+  laghu_link_subsystems(laghu_crypto laghu_core)
+  target_link_libraries(laghu_crypto PRIVATE laghu_feature_tls)
+endif()
+
 add_executable(laghu_core_smoke src/core/smoke.cpp)
 laghu_apply_first_party_contract(laghu_core_smoke)
 laghu_configure_api_consumer(laghu_core_smoke core)
@@ -148,6 +161,16 @@ laghu_configure_api_consumer(laghu_core_binary_envelope_test core)
 target_link_libraries(laghu_core_binary_envelope_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.binary_envelope laghu_core_binary_envelope_test)
 
+if(TARGET laghu_crypto)
+  add_executable(laghu_crypto_provider_test tests/adapters/crypto_provider.cpp)
+  laghu_apply_first_party_contract(laghu_crypto_provider_test)
+  laghu_configure_api_consumer(laghu_crypto_provider_test adapters)
+  target_include_directories(laghu_crypto_provider_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  target_link_libraries(laghu_crypto_provider_test PRIVATE laghu_crypto)
+  laghu_add_native_test(laghu.crypto.provider laghu_crypto_provider_test)
+endif()
+
 if(LAGHU_ENABLE_TSAN)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "Laghu TSan target requires Linux Clang")
@@ -198,8 +221,22 @@ install(TARGETS laghu
 install(FILES "${LAGHU_BUILD_MANIFEST}"
   DESTINATION share/laghu)
 
+set(laghu_verify_targets
+  laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test
+  laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test
+  laghu_core_byte_text_views_test laghu_core_fd_handles_test
+  laghu_core_memory_budgets_test laghu_core_bounded_arena_test
+  laghu_core_slab_pools_test laghu_core_bounded_buffer_test
+  laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
+  laghu_core_shared_offsets_test laghu_core_mapped_regions_test
+  laghu_core_binary_envelope_test laghu_os_iovec_translation_test laghu
+  laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
+if(TARGET laghu_crypto_provider_test)
+  list(APPEND laghu_verify_targets laghu_crypto laghu_crypto_provider_test)
+endif()
+
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu_core_bounded_arena_test laghu_core_slab_pools_test laghu_core_bounded_buffer_test laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test laghu_core_shared_offsets_test laghu_core_mapped_regions_test laghu_core_binary_envelope_test laghu_os_iovec_translation_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
+  DEPENDS ${laghu_verify_targets}
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")

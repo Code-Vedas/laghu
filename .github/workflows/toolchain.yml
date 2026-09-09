@@ -40,7 +40,45 @@ jobs:
           cmake -S . -B "$RUNNER_TEMP/laghu-full" -G Ninja \
             -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
             -DLAGHU_BUILD_PROFILE=FULL
-          cmake --build "$RUNNER_TEMP/laghu-full" --target laghu_core
+          cmake --build "$RUNNER_TEMP/laghu-full" --target laghu_crypto_provider_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-full" --output-on-failure \
+            -R '^laghu.crypto.provider$'
+      - name: Verify Clang 19 crypto adapter
+        if: matrix.name == 'clang-19-libc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-clang-crypto" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }}" \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
+          cmake --build "$RUNNER_TEMP/laghu-clang-crypto" \
+            --target laghu_crypto_provider_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-clang-crypto" --output-on-failure \
+            -R '^laghu.crypto.provider$'
+      - name: Verify Clang 19 crypto adapter under ASan and UBSan
+        if: matrix.name == 'clang-19-libc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-clang-crypto-sanitized" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }} -fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
+          cmake --build "$RUNNER_TEMP/laghu-clang-crypto-sanitized" \
+            --target laghu_crypto_provider_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-clang-crypto-sanitized" --output-on-failure \
+            -R '^laghu.crypto.provider$'
+      - name: Verify LibreSSL crypto adapter
+        if: matrix.name == 'gcc-14-libstdc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-libressl" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls \
+            -DLAGHU_TLS_PROVIDER=LIBRESSL
+          cmake --build "$RUNNER_TEMP/laghu-libressl" \
+            --target laghu_crypto_provider_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-libressl" --output-on-failure \
+            -R '^laghu.crypto.provider$'
       - name: Verify GCC 14 release reproducibility
         if: matrix.name == 'gcc-14-libstdc++'
         run: |
@@ -62,9 +100,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install canonical generator
-        run: brew install ninja
+        run: brew install ninja openssl@3
       - name: Verify Apple Clang toolchain contract
         run: scripts/check-toolchain --cxx clang++ --out "$RUNNER_TEMP/laghu-toolchain"
+      - name: Verify Apple Clang crypto adapter
+        run: |
+          export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig"
+          cmake -S . -B "$RUNNER_TEMP/laghu-crypto" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls \
+            -DLAGHU_DEPENDENCY_SOURCE=SYSTEM \
+            -DLAGHU_DEPENDENCY_LINK_MODE=DYNAMIC
+          cmake --build "$RUNNER_TEMP/laghu-crypto" \
+            --target laghu_crypto_provider_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-crypto" --output-on-failure \
+            -R '^laghu.crypto.provider$'
       - uses: actions/upload-artifact@v4
         with:
           name: toolchain-capabilities-macos-appleclang
@@ -81,8 +132,16 @@ jobs:
         with:
           release: '15.1'
           usesh: true
-          prepare: pkg install -y cmake ninja
-          run: scripts/check-toolchain --cxx clang++ --out /tmp/laghu-toolchain
+          prepare: pkg install -y cmake ninja gmake perl5
+          run: |
+            scripts/check-toolchain --cxx clang++ --out /tmp/laghu-toolchain
+            cmake -S . -B /tmp/laghu-crypto -G Ninja \
+              -DCMAKE_CXX_COMPILER=clang++ \
+              -DLAGHU_BUILD_PROFILE=CUSTOM \
+              -DLAGHU_FEATURES=tls
+            cmake --build /tmp/laghu-crypto --target laghu_crypto_provider_test
+            ctest --test-dir /tmp/laghu-crypto --output-on-failure \
+              -R '^laghu.crypto.provider$'
   linux-aarch64-cross:
     runs-on: ubuntu-24.04
     steps:
@@ -96,12 +155,16 @@ jobs:
           sudo apt-get install --yes ninja-build g++-14-aarch64-linux-gnu
       - name: Configure, compile, archive, and validate ARM64 contract
         run: |
-          cmake --preset linux-aarch64-gcc
+          cmake --preset linux-aarch64-gcc \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
           cmake --build build/linux-aarch64-gcc --target laghu_verify_toolchain
       - name: Verify ARM64 archive
         run: |
           test -f build/linux-aarch64-gcc/liblaghu_core.a
           aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_core.a
+          test -f build/linux-aarch64-gcc/liblaghu_crypto.a
+          aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_crypto.a
   linux-clang-tsan:
     runs-on: ubuntu-24.04
     steps:
