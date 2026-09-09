@@ -325,6 +325,18 @@ function(laghu_add_validation_tests)
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
       "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyMetadata.cmake")
+  add_test(NAME laghu.dependencies.selection_metadata
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMETADATA=${LAGHU_DEPENDENCY_SELECTION_METADATA}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencySelectionMetadata.cmake")
+  add_test(NAME laghu.dependencies.static_artifact_proof
+    COMMAND "${CMAKE_COMMAND}"
+      "-DARTIFACT=$<TARGET_FILE:laghu_core>"
+      -DDEPENDENCY=laghu_core
+      "-DAR=${CMAKE_AR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/VerifyStaticArtifact.cmake")
   foreach(fixture IN ITEMS positive_symbol positive_http3 version_too_old unknown_dependency http3_incomplete http3_mixed_provider http3_tls_too_old zlib_compat_enabled capability_mismatch)
     if(fixture STREQUAL "positive_symbol" OR fixture STREQUAL "positive_http3")
       set(expected_fail OFF)
@@ -356,9 +368,69 @@ function(laghu_add_validation_tests)
         "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
         "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
         "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
         "-DSCENARIO=${fixture}"
         "-DEXPECT_FAIL=${expected_fail}"
         "-DEXPECT_TEXT=${expected_text}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
+  foreach(fixture IN ITEMS mode_defaults mode_minimal_no_fetch mode_tls_openssl mode_tls_libressl mode_vendored_tls)
+    add_test(NAME "laghu.dependencies.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+        "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=OFF
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
+  foreach(link_mode IN ITEMS STATIC DYNAMIC)
+    add_test(NAME "laghu.dependencies.vendored_yyjson_${link_mode}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+        -DSCENARIO=mode_vendored_yyjson
+        -DSOURCE=VENDORED
+        "-DLINK_MODE=${link_mode}"
+        -DTLS_PROVIDER=OPENSSL
+        -DEXPECT_FAIL=OFF
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
+  foreach(mode_case IN ITEMS source link_mode tls_provider static_artifact)
+    if(mode_case STREQUAL source)
+      set(mode_fixture mode_invalid_source)
+      set(mode_arguments -DSOURCE=INVALID)
+      set(mode_text "rule=source_invalid source=INVALID")
+    elseif(mode_case STREQUAL link_mode)
+      set(mode_fixture mode_invalid_link_mode)
+      set(mode_arguments -DLINK_MODE=INVALID)
+      set(mode_text "rule=link_mode_invalid link_mode=INVALID")
+    elseif(mode_case STREQUAL tls_provider)
+      set(mode_fixture mode_invalid_tls_provider)
+      set(mode_arguments -DTLS_PROVIDER=INVALID)
+      set(mode_text "rule=tls_provider_invalid tls_provider=INVALID")
+    else()
+      set(mode_fixture mode_static_artifact_nonstatic)
+      set(mode_arguments)
+      set(mode_text "dependency=yyjson rule=static_artifact_required")
+    endif()
+    add_test(NAME "laghu.dependencies.negative_mode_${mode_case}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+        "-DSCENARIO=${mode_fixture}"
+        -DEXPECT_FAIL=ON
+        "-DEXPECT_TEXT=${mode_text}"
+        ${mode_arguments}
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()
   add_test(NAME laghu.features.positive.http3

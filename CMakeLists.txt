@@ -29,6 +29,7 @@ include(cmake/LaghuToolchain.cmake)
 laghu_configure_toolchain()
 laghu_configure_feature_registry(REQUESTED core AVAILABLE core)
 laghu_configure_dependency_registry()
+laghu_configure_dependency_modes()
 laghu_configure_capability_header()
 
 add_library(laghu_core STATIC src/core/contract.cpp)
