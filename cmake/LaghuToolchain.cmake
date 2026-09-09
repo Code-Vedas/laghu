@@ -663,6 +663,24 @@ function(laghu_add_validation_tests)
       "-DFLAGS=-fno-exceptions;-fno-rtti"
       -DEXPECT_FAIL=ON
       -P "${expect_compile}")
+  add_test(NAME laghu.core.mapped_regions.negative.copy
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/mapped-region-copy.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
+  add_test(NAME laghu.core.mapped_regions.negative.resize
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/mapped-region-resize.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
   add_test(NAME laghu.core.memory_budgets.negative.copy
     COMMAND "${CMAKE_COMMAND}"
       "-DCXX=${CMAKE_CXX_COMPILER}"
