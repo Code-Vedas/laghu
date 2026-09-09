@@ -313,6 +313,38 @@ function(laghu_add_validation_tests)
       "-DCONFIG_JSON=${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
       "-DPROBE_JSON=${LAGHU_PROBE_DIRECTORY}/toolchain-capabilities-v1.json"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCapabilityParity.cmake")
+  add_test(NAME laghu.features.metadata
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMETADATA=${LAGHU_FEATURE_REGISTRY_METADATA}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFeatureMetadata.cmake")
+  add_test(NAME laghu.features.positive.http3
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      -DSCENARIO=positive_http3
+      -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFeatureConfigure.cmake")
+  foreach(fixture IN ITEMS unknown duplicate unavailable conflict cycle)
+    if(fixture STREQUAL "unknown")
+      set(expected_text "feature=unknown rule=unknown_feature")
+    elseif(fixture STREQUAL "duplicate")
+      set(expected_text "feature=tls rule=duplicate_request")
+    elseif(fixture STREQUAL "unavailable")
+      set(expected_text "feature=tls rule=feature_unavailable")
+    elseif(fixture STREQUAL "conflict")
+      set(expected_text "feature=core conflict=http2 rule=feature_conflict")
+    else()
+      set(expected_text "feature=tls dependency=http3 rule=dependency_cycle")
+    endif()
+    add_test(NAME "laghu.features.negative.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DSCENARIO=${fixture}"
+        -DEXPECT_FAIL=ON
+        "-DEXPECT_TEXT=${expected_text}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFeatureConfigure.cmake")
+  endforeach()
   foreach(fixture IN ITEMS positive_leaf positive_protocol positive_top_and_adapter)
     add_test(NAME "laghu.dag.positive.${fixture}"
       COMMAND "${CMAKE_COMMAND}"

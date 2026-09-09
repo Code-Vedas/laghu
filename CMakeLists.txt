@@ -22,13 +22,16 @@ include(CTest)
 include(cmake/LaghuCapabilities.cmake)
 include(cmake/LaghuDependencyDag.cmake)
 include(cmake/LaghuApiBoundaries.cmake)
+include(cmake/LaghuFeatures.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
+laghu_configure_feature_registry(REQUESTED core AVAILABLE core)
 laghu_configure_capability_header()
 
 add_library(laghu_core STATIC src/core/contract.cpp)
 laghu_apply_first_party_contract(laghu_core)
+target_link_libraries(laghu_core PRIVATE laghu_feature_core)
 
 laghu_declare_subsystem_graph()
 laghu_configure_api_boundaries()
