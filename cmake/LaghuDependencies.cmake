@@ -639,7 +639,7 @@ function(laghu_acquire_vendored_tls_dependency id private_target)
     PREFIX "${prefix}"
     URL "${archive_url}"
     URL_HASH "SHA256=${archive_sha256}"
-    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     CONFIGURE_COMMAND ${configure_command}
     BUILD_COMMAND "${laghu_make_program}"
     INSTALL_COMMAND ${install_command}
@@ -657,6 +657,10 @@ function(laghu_acquire_vendored_tls_dependency id private_target)
   set_target_properties("${private_target}_crypto" PROPERTIES
     IMPORTED_LOCATION "${crypto_library}"
     INTERFACE_INCLUDE_DIRECTORIES "${install_directory}/include")
+  if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+    find_package(Threads REQUIRED)
+    target_link_libraries("${private_target}_crypto" INTERFACE Threads::Threads)
+  endif()
   add_dependencies("${private_target}_crypto" "laghu_vendor_${id}")
   add_library("${private_target}" INTERFACE)
   target_link_libraries("${private_target}" INTERFACE

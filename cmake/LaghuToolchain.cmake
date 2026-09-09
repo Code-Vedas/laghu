@@ -456,6 +456,19 @@ function(laghu_add_validation_tests)
         -DEXPECT_FAIL=OFF
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()
+  add_test(NAME laghu.dependencies.mode_vendored_tls_dynamic
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+      "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+      "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+      -DSCENARIO=mode_vendored_tls
+      -DSOURCE=VENDORED
+      -DLINK_MODE=DYNAMIC
+      -DTLS_PROVIDER=OPENSSL
+      -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   add_test(NAME laghu.dependencies.mode_minimal_ignored_selectors
     COMMAND "${CMAKE_COMMAND}"
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
