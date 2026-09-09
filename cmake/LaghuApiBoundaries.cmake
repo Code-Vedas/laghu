@@ -194,6 +194,8 @@ endfunction()
 function(laghu_add_visibility_probe)
   add_library(laghu_visibility_probe SHARED
     src/core/contract.cpp
+    src/core/digest.cpp
+    src/core/fingerprints.cpp
     src/core/handles.cpp
     src/core/mapped_regions.cpp)
   laghu_apply_first_party_contract(laghu_visibility_probe)

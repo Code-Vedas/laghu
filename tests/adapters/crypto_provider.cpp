@@ -9,6 +9,7 @@
 
 #include <laghu/adapters/crypto_provider.hpp>
 #include <laghu/adapters/internal/entropy.hpp>
+#include <laghu/core/digest.hpp>
 
 namespace {
 
@@ -104,6 +105,24 @@ struct EntropyFixture final {
   key.fill(std::byte{0xA5});
   const auto changed = provider.hmac_sha256(view_of(key), view_of(input));
   return changed.has_value() && !provider.constant_time_equal(*digest, *changed);
+}
+
+[[nodiscard]] bool check_digest_primitives(
+    const laghu::core::CryptoProvider& provider) noexcept {
+  constexpr std::array<std::byte, 3> input{
+      std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+  constexpr auto expected_digest = hex_bytes<32>(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  constexpr std::array<char, 64> expected_hex{
+      'b', 'a', '7', '8', '1', '6', 'b', 'f', '8', 'f', '0', '1', 'c', 'f', 'e', 'a',
+      '4', '1', '4', '1', '4', '0', 'd', 'e', '5', 'd', 'a', 'e', '2', '2', '2', '3',
+      'b', '0', '0', '3', '6', '1', 'a', '3', '9', '6', '1', '7', '7', 'a', '9', 'c',
+      'b', '4', '1', '0', 'f', 'f', '6', '1', 'f', '2', '0', '0', '1', '5', 'a', 'd'};
+  const auto public_digest =
+      laghu::core::PublicDigest::from_canonical_sanitized_bytes(provider, view_of(input));
+  return public_digest.has_value() &&
+         bytes_equal(public_digest->value().bytes(), expected_digest) &&
+         public_digest->lowercase_hex() == expected_hex;
 }
 
 [[nodiscard]] bool check_ed25519(const laghu::core::CryptoProvider& provider) noexcept {
@@ -251,6 +270,9 @@ int main() {
   }
   if (!check_hmac_sha256(provider)) {
     return 3;
+  }
+  if (!check_digest_primitives(provider)) {
+    return 8;
   }
   if (!check_ed25519(provider)) {
     return 4;

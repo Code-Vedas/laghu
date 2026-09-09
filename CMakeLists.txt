@@ -38,7 +38,12 @@ laghu_configure_dependency_modes()
 laghu_configure_capability_header()
 laghu_configure_build_identity()
 
-add_library(laghu_core STATIC src/core/contract.cpp src/core/handles.cpp src/core/mapped_regions.cpp)
+add_library(laghu_core STATIC
+  src/core/contract.cpp
+  src/core/digest.cpp
+  src/core/fingerprints.cpp
+  src/core/handles.cpp
+  src/core/mapped_regions.cpp)
 laghu_apply_first_party_contract(laghu_core)
 target_link_libraries(laghu_core PRIVATE laghu_feature_core)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -161,6 +166,13 @@ laghu_configure_api_consumer(laghu_core_binary_envelope_test core)
 target_link_libraries(laghu_core_binary_envelope_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.binary_envelope laghu_core_binary_envelope_test)
 
+add_executable(laghu_core_digest_primitives_test tests/core/digest_primitives.cpp)
+laghu_apply_first_party_contract(laghu_core_digest_primitives_test)
+laghu_configure_api_consumer(laghu_core_digest_primitives_test core)
+target_include_directories(laghu_core_digest_primitives_test PRIVATE "${CMAKE_SOURCE_DIR}/src/core/private")
+target_link_libraries(laghu_core_digest_primitives_test PRIVATE laghu_core)
+laghu_add_native_test(laghu.core.digest_primitives laghu_core_digest_primitives_test)
+
 if(TARGET laghu_crypto)
   add_executable(laghu_crypto_provider_test tests/adapters/crypto_provider.cpp)
   laghu_apply_first_party_contract(laghu_crypto_provider_test)
@@ -229,7 +241,8 @@ set(laghu_verify_targets
   laghu_core_slab_pools_test laghu_core_bounded_buffer_test
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
-  laghu_core_binary_envelope_test laghu_os_iovec_translation_test laghu
+  laghu_core_binary_envelope_test laghu_core_digest_primitives_test
+  laghu_os_iovec_translation_test laghu
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
 if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets laghu_crypto laghu_crypto_provider_test)

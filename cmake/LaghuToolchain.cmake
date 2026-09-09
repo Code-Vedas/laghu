@@ -739,6 +739,15 @@ function(laghu_add_validation_tests)
       "-DFLAGS=-fno-exceptions;-fno-rtti"
       -DEXPECT_FAIL=ON
       -P "${expect_compile}")
+  add_test(NAME laghu.core.digest_primitives.negative.private_header
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/digest-private-header.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
   foreach(fixture IN ITEMS shared-schema-pointer shared-schema-reference shared-schema-span
       shared-schema-string shared-schema-string-view shared-schema-smart-pointer
       shared-schema-polymorphic shared-schema-borrowed-view)
@@ -792,6 +801,17 @@ function(laghu_add_validation_tests)
       "-DPLATFORM=${CMAKE_SYSTEM_NAME}"
       -DEXPECT_FAIL=ON
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectNoLaghuDynamicSymbols.cmake")
+  add_test(NAME laghu.core.digest_primitives.build_boundary
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}"
+      "-DARTIFACT=$<TARGET_FILE:laghu_core>"
+      "-DNM=${CMAKE_NM}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCoreDigestBoundary.cmake")
+  add_test(NAME laghu.core.digest_primitives.output_exclusion
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}"
+      "-DEXECUTABLE=$<TARGET_FILE:laghu>"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDigestOutputExclusion.cmake")
 endfunction()
 
 function(laghu_add_install_layout_test)
