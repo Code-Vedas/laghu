@@ -155,7 +155,7 @@ template <laghu::core::BigEndianFixedWidth T, std::size_t N>
     return false;
   }
 
-  const auto out_of_bounds = NodeOffset::from_raw(static_cast<std::uint64_t>(first_mapping->size()));
+  const auto out_of_bounds = NodeOffset::from_raw(first_mapping->size());
   const auto overflow = NodeOffset::from_raw(UINT64_MAX);
   const auto misaligned = NodeOffset::from_raw(17);
   const auto out_of_bounds_node = out_of_bounds.resolve<Node>(first_mapping->as_const());
