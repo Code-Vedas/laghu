@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
-if(NOT DEFINED SOURCE OR NOT DEFINED EXECUTABLE)
-  message(FATAL_ERROR "Laghu digest output exclusion test requires source and executable")
+if(NOT DEFINED SOURCE)
+  message(FATAL_ERROR "Laghu digest output exclusion test requires source")
 endif()
 
 file(GLOB_RECURSE output_sources LIST_DIRECTORIES FALSE
@@ -15,6 +15,13 @@ foreach(output_source IN LISTS output_sources)
     message(FATAL_ERROR "Laghu digest output exclusion test found a fingerprint in ${output_source}")
   endif()
 endforeach()
+
+if(NOT DEFINED RUN_VERSION_OUTPUT OR NOT RUN_VERSION_OUTPUT)
+  return()
+endif()
+if(NOT DEFINED EXECUTABLE)
+  message(FATAL_ERROR "Laghu digest version output test requires executable")
+endif()
 
 foreach(version_flag IN ITEMS "" --verbose --json)
   if(version_flag STREQUAL "")

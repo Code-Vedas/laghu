@@ -810,8 +810,20 @@ function(laghu_add_validation_tests)
   add_test(NAME laghu.core.digest_primitives.output_exclusion
     COMMAND "${CMAKE_COMMAND}"
       "-DSOURCE=${CMAKE_SOURCE_DIR}"
-      "-DEXECUTABLE=$<TARGET_FILE:laghu>"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDigestOutputExclusion.cmake")
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME laghu.core.digest_primitives.output_exclusion.version
+      COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE=${CMAKE_SOURCE_DIR}"
+        -DRUN_VERSION_OUTPUT=ON
+        "-DEXECUTABLE=$<TARGET_FILE:laghu>"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDigestOutputExclusion.cmake")
+  endif()
+  add_test(NAME laghu.core.digest_primitives.output_exclusion.registration
+    COMMAND "${CMAKE_COMMAND}"
+      "-DTEST_FILE=${CMAKE_BINARY_DIR}/CTestTestfile.cmake"
+      "-DCROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDigestOutputExclusionRegistration.cmake")
 endfunction()
 
 function(laghu_add_install_layout_test)
