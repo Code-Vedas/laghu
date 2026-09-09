@@ -41,9 +41,12 @@ function(laghu_build_identity_input_hashes output)
     src/core/contract/laghu/core/handles.hpp
     src/core/contract/laghu/core/identifiers.hpp
     src/core/contract/laghu/core/memory_budget.hpp
+    src/core/contract/laghu/core/mapped_regions.hpp
     src/core/handles.cpp
+    src/core/mapped_regions.cpp
     src/core/private/laghu/core/internal/compiler_extensions.hpp
     src/core/private/laghu/core/internal/descriptor_operations.hpp
+    src/core/private/laghu/core/internal/mapping_operations.hpp
     tests/warnings/suppressions.tsv)
   set(entries)
   foreach(input IN LISTS inputs)

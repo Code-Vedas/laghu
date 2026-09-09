@@ -192,7 +192,10 @@ function(laghu_configure_api_consumer target node)
 endfunction()
 
 function(laghu_add_visibility_probe)
-  add_library(laghu_visibility_probe SHARED src/core/contract.cpp src/core/handles.cpp)
+  add_library(laghu_visibility_probe SHARED
+    src/core/contract.cpp
+    src/core/handles.cpp
+    src/core/mapped_regions.cpp)
   laghu_apply_first_party_contract(laghu_visibility_probe)
   laghu_configure_api_consumer(laghu_visibility_probe core)
   laghu_api_source_root(source_root)

@@ -38,9 +38,13 @@ laghu_configure_dependency_modes()
 laghu_configure_capability_header()
 laghu_configure_build_identity()
 
-add_library(laghu_core STATIC src/core/contract.cpp src/core/handles.cpp)
+add_library(laghu_core STATIC src/core/contract.cpp src/core/handles.cpp src/core/mapped_regions.cpp)
 laghu_apply_first_party_contract(laghu_core)
 target_link_libraries(laghu_core PRIVATE laghu_feature_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(src/core/mapped_regions.cpp PROPERTIES
+    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
 
 laghu_declare_subsystem_graph()
 laghu_configure_api_boundaries()
@@ -127,6 +131,17 @@ laghu_configure_api_consumer(laghu_core_shared_offsets_test core)
 target_link_libraries(laghu_core_shared_offsets_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.shared_offsets laghu_core_shared_offsets_test)
 
+add_executable(laghu_core_mapped_regions_test tests/core/mapped_regions.cpp)
+laghu_apply_first_party_contract(laghu_core_mapped_regions_test)
+laghu_configure_api_consumer(laghu_core_mapped_regions_test core)
+target_include_directories(laghu_core_mapped_regions_test PRIVATE "${CMAKE_SOURCE_DIR}/src/core/private")
+target_link_libraries(laghu_core_mapped_regions_test PRIVATE laghu_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(tests/core/mapped_regions.cpp PROPERTIES
+    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
+laghu_add_native_test(laghu.core.mapped_regions laghu_core_mapped_regions_test)
+
 if(LAGHU_ENABLE_TSAN)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "Laghu TSan target requires Linux Clang")
@@ -179,6 +194,6 @@ install(FILES "${LAGHU_BUILD_MANIFEST}"
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu_core_bounded_arena_test laghu_core_slab_pools_test laghu_core_bounded_buffer_test laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test laghu_core_shared_offsets_test laghu_os_iovec_translation_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
+  DEPENDS laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu_core_bounded_arena_test laghu_core_slab_pools_test laghu_core_bounded_buffer_test laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test laghu_core_shared_offsets_test laghu_core_mapped_regions_test laghu_os_iovec_translation_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")
