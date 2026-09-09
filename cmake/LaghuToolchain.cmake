@@ -640,6 +640,15 @@ function(laghu_add_validation_tests)
         -DEXPECT_FAIL=ON
         -P "${expect_compile}")
   endforeach()
+  add_test(NAME laghu.core.checked_arithmetic.negative.bool
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/checked-arithmetic-bool.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
   add_test(NAME laghu.api.private_header_leak_rejected
     COMMAND "${CMAKE_COMMAND}"
       "-DCXX=${CMAKE_CXX_COMPILER}"
