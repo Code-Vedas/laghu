@@ -98,3 +98,20 @@ jobs:
         run: |
           test -f build/linux-aarch64-gcc/liblaghu_core.a
           aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_core.a
+  linux-clang-tsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux Clang ThreadSanitizer toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build clang-19
+      - name: Run cancellation races under ThreadSanitizer
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-tsan" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DLAGHU_ENABLE_TSAN=ON
+          cmake --build "$RUNNER_TEMP/laghu-tsan" \
+            --target laghu_core_deadlines_cancellation_tsan_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-tsan" --output-on-failure \
+            -R '^laghu.core.deadlines_cancellation.tsan$'

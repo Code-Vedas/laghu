@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.28)
 
 project(laghu LANGUAGES CXX)
 
+option(LAGHU_ENABLE_TSAN "Build the Linux Clang ThreadSanitizer deadline race target" OFF)
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR
     "Laghu requires an out-of-tree build. Configure with -S <source> -B <build>.")
@@ -112,6 +114,27 @@ laghu_configure_api_consumer(laghu_core_state_transitions_test core)
 target_link_libraries(laghu_core_state_transitions_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.state_transitions laghu_core_state_transitions_test)
 
+find_package(Threads REQUIRED)
+add_executable(laghu_core_deadlines_cancellation_test tests/core/deadlines_cancellation.cpp)
+laghu_apply_first_party_contract(laghu_core_deadlines_cancellation_test)
+laghu_configure_api_consumer(laghu_core_deadlines_cancellation_test core)
+target_link_libraries(laghu_core_deadlines_cancellation_test PRIVATE laghu_core Threads::Threads)
+laghu_add_native_test(laghu.core.deadlines_cancellation laghu_core_deadlines_cancellation_test)
+
+if(LAGHU_ENABLE_TSAN)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "Laghu TSan target requires Linux Clang")
+  endif()
+  add_executable(laghu_core_deadlines_cancellation_tsan_test tests/core/deadlines_cancellation.cpp)
+  laghu_apply_first_party_contract(laghu_core_deadlines_cancellation_tsan_test)
+  laghu_configure_api_consumer(laghu_core_deadlines_cancellation_tsan_test core)
+  target_compile_options(laghu_core_deadlines_cancellation_tsan_test PRIVATE -fsanitize=thread)
+  target_link_options(laghu_core_deadlines_cancellation_tsan_test PRIVATE -fsanitize=thread)
+  target_link_libraries(laghu_core_deadlines_cancellation_tsan_test PRIVATE laghu_core Threads::Threads)
+  laghu_add_native_test(laghu.core.deadlines_cancellation.tsan
+    laghu_core_deadlines_cancellation_tsan_test)
+endif()
+
 add_executable(laghu_os_iovec_translation_test tests/os/iovec_translation.cpp)
 laghu_apply_first_party_contract(laghu_os_iovec_translation_test)
 laghu_configure_api_consumer(laghu_os_iovec_translation_test os)
@@ -150,6 +173,6 @@ install(FILES "${LAGHU_BUILD_MANIFEST}"
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu_core_bounded_arena_test laghu_core_slab_pools_test laghu_core_bounded_buffer_test laghu_core_state_transitions_test laghu_os_iovec_translation_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
+  DEPENDS laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu_core_bounded_arena_test laghu_core_slab_pools_test laghu_core_bounded_buffer_test laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test laghu_os_iovec_translation_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")
