@@ -32,6 +32,13 @@ jobs:
         env:
           CXXFLAGS: ${{ matrix.cxxflags }}
         run: scripts/check-toolchain --cxx "${{ matrix.compiler }}" --out "$RUNNER_TEMP/laghu-toolchain"
+      - name: Verify full vendored static configuration
+        if: matrix.name == 'gcc-14-libstdc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-full" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DLAGHU_BUILD_PROFILE=FULL
+          cmake --build "$RUNNER_TEMP/laghu-full" --target laghu_core
       - uses: actions/upload-artifact@v4
         with:
           name: toolchain-capabilities-${{ matrix.name }}

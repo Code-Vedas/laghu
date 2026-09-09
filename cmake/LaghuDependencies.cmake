@@ -35,7 +35,7 @@ function(laghu_declare_dependency id)
   cmake_parse_arguments(PARSE_ARGV 1 dependency
     ""
     "VENDORED_VERSION;SYSTEM_FLOOR;ARCHIVE_URL;ARCHIVE_SHA256;PROBE_SOURCE"
-    "FEATURES;PKG_CONFIG_NAMES;CMAKE_TARGETS")
+    "FEATURES;PKG_CONFIG_NAMES;CMAKE_TARGETS;CMAKE_SOURCE_SUBDIR")
   list(FIND LAGHU_DEPENDENCY_IDS "${id}" id_index)
   if(id_index EQUAL -1 OR dependency_UNPARSED_ARGUMENTS OR
       dependency_VENDORED_VERSION STREQUAL "" OR dependency_SYSTEM_FLOOR STREQUAL "" OR
@@ -55,6 +55,7 @@ function(laghu_declare_dependency id)
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_FEATURES_${id}" "${dependency_FEATURES}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_PKG_CONFIG_NAMES_${id}" "${dependency_PKG_CONFIG_NAMES}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_CMAKE_TARGETS_${id}" "${dependency_CMAKE_TARGETS}")
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_CMAKE_SOURCE_SUBDIR_${id}" "${dependency_CMAKE_SOURCE_SUBDIR}")
   # Known-incompatible ranges intentionally remain empty until a primary
   # upstream source establishes one.  This prevents invented exclusions.
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_INCOMPATIBLE_RANGES_${id}" "")
@@ -113,8 +114,8 @@ function(laghu_dependency_registry_initialize)
     CMAKE_TARGETS ngtcp2 ngtcp2_static ngtcp2_shared)
   laghu_declare_dependency(nghttp3
     VENDORED_VERSION 1.18.0 SYSTEM_FLOOR 1.18.0
-    ARCHIVE_URL https://github.com/ngtcp2/nghttp3/archive/refs/tags/v1.18.0.tar.gz
-    ARCHIVE_SHA256 6558c14929a79ced8de1cb8bb4e4b17974e531616501ffb0431135bb495f5be7
+    ARCHIVE_URL https://github.com/ngtcp2/nghttp3/releases/download/v1.18.0/nghttp3-1.18.0.tar.xz
+    ARCHIVE_SHA256 aad782c23d3f01bd4bb52c8bac7a553b631ef8115fd1612703df6183449fef19
     PROBE_SOURCE tests/dependencies/probes/nghttp3.cpp FEATURES http3 PKG_CONFIG_NAMES libnghttp3
     CMAKE_TARGETS nghttp3 nghttp3_static nghttp3_shared)
   laghu_declare_dependency(c_ares
@@ -122,7 +123,7 @@ function(laghu_dependency_registry_initialize)
     ARCHIVE_URL https://github.com/c-ares/c-ares/releases/download/v1.34.8/c-ares-1.34.8.tar.gz
     ARCHIVE_SHA256 c222b6d681096f9444d2c4863d2c1174019e27cacca0a4a5c114d36dd7d7bf78
     PROBE_SOURCE tests/dependencies/probes/c_ares.cpp FEATURES async_dns PKG_CONFIG_NAMES libcares cares
-    CMAKE_TARGETS c-ares::cares cares)
+    CMAKE_TARGETS c-ares::cares_static c-ares::cares cares_static cares)
   laghu_declare_dependency(pcre2_8bit
     VENDORED_VERSION 10.48 SYSTEM_FLOOR 10.40
     ARCHIVE_URL https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.48/pcre2-10.48.tar.bz2
@@ -146,7 +147,8 @@ function(laghu_dependency_registry_initialize)
     ARCHIVE_URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
     ARCHIVE_SHA256 eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
     PROBE_SOURCE tests/dependencies/probes/zstd.cpp FEATURES compression_zstd PKG_CONFIG_NAMES libzstd
-    CMAKE_TARGETS libzstd_static libzstd_shared)
+    CMAKE_TARGETS libzstd_static libzstd_shared
+    CMAKE_SOURCE_SUBDIR build/cmake)
   laghu_declare_dependency(libmaxminddb
     VENDORED_VERSION 1.14.0 SYSTEM_FLOOR 1.8.0
     ARCHIVE_URL https://github.com/maxmind/libmaxminddb/releases/download/1.14.0/libmaxminddb-1.14.0.tar.gz
@@ -503,16 +505,66 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
   include(FetchContent)
   laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
   laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
+  laghu_dependency_property("${id}" CMAKE_SOURCE_SUBDIR cmake_source_subdir)
   set(content_name "laghu_vendor_${id}")
+  set(patch_arguments)
+  if(id STREQUAL ngtcp2 OR id STREQUAL nghttp3)
+    list(APPEND patch_arguments
+      PATCH_COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=<SOURCE_DIR>"
+        "-DPROJECT_ID=${id}"
+        -P "${LAGHU_DEPENDENCY_MODULE_DIRECTORY}/PatchVendoredProject.cmake")
+  endif()
+  set(source_subdir_arguments)
+  if(NOT cmake_source_subdir STREQUAL "")
+    list(APPEND source_subdir_arguments SOURCE_SUBDIR "${cmake_source_subdir}")
+  endif()
   FetchContent_Declare("${content_name}"
     URL "${archive_url}"
     URL_HASH "SHA256=${archive_sha256}"
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE
-    EXCLUDE_FROM_ALL)
+    EXCLUDE_FROM_ALL
+    ${patch_arguments}
+    ${source_subdir_arguments})
+  set(BUILD_TESTING OFF)
   if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
     set(BUILD_SHARED_LIBS OFF)
   else()
     set(BUILD_SHARED_LIBS ON)
+  endif()
+  if(id STREQUAL nghttp2)
+    if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+      set(BUILD_STATIC_LIBS ON)
+    else()
+      set(BUILD_STATIC_LIBS OFF)
+    endif()
+  endif()
+  if(id STREQUAL ngtcp2 OR id STREQUAL nghttp3)
+    set(ENABLE_LIB_ONLY ON)
+    if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+      set(ENABLE_STATIC_LIB ON)
+      set(ENABLE_SHARED_LIB OFF)
+    else()
+      set(ENABLE_STATIC_LIB OFF)
+      set(ENABLE_SHARED_LIB ON)
+    endif()
+  endif()
+  if(id STREQUAL ngtcp2)
+    # Laghu owns TLS-provider selection.  ngtcp2's optional crypto backend
+    # defaults to ON and otherwise discovers an unrelated host OpenSSL during
+    # configuration, which can reject a non-QUIC host provider.  Build only
+    # its transport library; the selected Laghu TLS provider remains separate.
+    set(ENABLE_OPENSSL OFF)
+  endif()
+  if(id STREQUAL c_ares)
+    set(CARES_BUILD_TOOLS OFF CACHE BOOL "Build c-ares tools" FORCE)
+    if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+      set(CARES_STATIC ON CACHE BOOL "Build c-ares static library" FORCE)
+      set(CARES_SHARED OFF CACHE BOOL "Build c-ares shared library" FORCE)
+    else()
+      set(CARES_STATIC OFF CACHE BOOL "Build c-ares static library" FORCE)
+      set(CARES_SHARED ON CACHE BOOL "Build c-ares shared library" FORCE)
+    endif()
   endif()
   FetchContent_MakeAvailable("${content_name}")
   laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
@@ -616,8 +668,14 @@ function(laghu_write_dependency_selection_metadata output active_dependencies)
   endforeach()
   list(JOIN entries ",\n" rendered_entries)
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
+  if(active_dependencies)
+    set(selector_members
+"  \"source\": \"${LAGHU_DEPENDENCY_SOURCE}\",\n  \"link_mode\": \"${LAGHU_DEPENDENCY_LINK_MODE}\",\n  \"tls_provider\": \"${LAGHU_TLS_PROVIDER}\",\n")
+  else()
+    set(selector_members "")
+  endif()
   file(WRITE "${output}"
-"{\n  \"schema_version\": \"laghu-dependency-selection-v1\",\n  \"source\": \"${LAGHU_DEPENDENCY_SOURCE}\",\n  \"link_mode\": \"${LAGHU_DEPENDENCY_LINK_MODE}\",\n  \"tls_provider\": \"${LAGHU_TLS_PROVIDER}\",\n  \"active_dependencies\": [\n${rendered_entries}\n  ]\n}\n")
+"{\n  \"schema_version\": \"laghu-dependency-selection-v1\",\n${selector_members}  \"active_dependencies\": [\n${rendered_entries}\n  ]\n}\n")
 endfunction()
 
 function(laghu_configure_dependency_modes)
@@ -636,6 +694,14 @@ function(laghu_configure_dependency_modes)
     else()
       laghu_acquire_vendored_cmake_dependency("${id}" "${private_target}")
     endif()
+    laghu_dependency_property("${id}" FEATURES dependency_features)
+    foreach(feature IN LISTS dependency_features)
+      list(FIND LAGHU_EFFECTIVE_FEATURES "${feature}" feature_enabled)
+      if(NOT feature_enabled EQUAL -1)
+        laghu_feature_target_name("${feature}" feature_target)
+        target_link_libraries("${feature_target}" INTERFACE "${private_target}")
+      endif()
+    endforeach()
   endforeach()
   set(metadata "${CMAKE_BINARY_DIR}/config/laghu-dependency-selection-v1.json")
   laghu_write_dependency_selection_metadata("${metadata}" "${active_dependencies}")
