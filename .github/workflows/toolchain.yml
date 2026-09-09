@@ -108,6 +108,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Linux Clang ThreadSanitizer toolchain
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install --yes ninja-build clang-19
       - name: Run cancellation races under ThreadSanitizer
