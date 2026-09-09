@@ -66,6 +66,12 @@ laghu_configure_api_consumer(laghu_core_checked_arithmetic_test core)
 target_link_libraries(laghu_core_checked_arithmetic_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.checked_arithmetic laghu_core_checked_arithmetic_test)
 
+add_executable(laghu_core_byte_text_views_test tests/core/byte_text_views.cpp)
+laghu_apply_first_party_contract(laghu_core_byte_text_views_test)
+laghu_configure_api_consumer(laghu_core_byte_text_views_test core)
+target_link_libraries(laghu_core_byte_text_views_test PRIVATE laghu_core)
+laghu_add_native_test(laghu.core.byte_text_views laghu_core_byte_text_views_test)
+
 add_executable(laghu
   src/cli/main.cpp
   "${LAGHU_BUILD_MANIFEST_SOURCE}")
@@ -97,6 +103,6 @@ install(FILES "${LAGHU_BUILD_MANIFEST}"
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
+  DEPENDS laghu_core laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")
