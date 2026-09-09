@@ -37,6 +37,7 @@ function(laghu_build_identity_input_hashes output)
     src/cli/private/laghu/cli/internal/build_manifest.hpp
     src/core/contract.cpp
     src/core/contract/laghu/core/contract.hpp
+    src/core/contract/laghu/core/identifiers.hpp
     src/core/private/laghu/core/internal/compiler_extensions.hpp
     tests/warnings/suppressions.tsv)
   set(entries)

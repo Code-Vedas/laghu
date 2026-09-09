@@ -629,6 +629,17 @@ function(laghu_add_validation_tests)
       "-DFLAGS=-fno-exceptions;-fno-rtti"
       -DEXPECT_FAIL=ON
       -P "${expect_compile}")
+  foreach(fixture IN ITEMS strong-id-cross-type strong-id-implicit-integer)
+    add_test(NAME "laghu.core.strong_identifiers.negative.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+        "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/${fixture}.cpp"
+        "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+        "-DFLAGS=-fno-exceptions;-fno-rtti"
+        -DEXPECT_FAIL=ON
+        -P "${expect_compile}")
+  endforeach()
   add_test(NAME laghu.api.private_header_leak_rejected
     COMMAND "${CMAKE_COMMAND}"
       "-DCXX=${CMAKE_CXX_COMPILER}"
