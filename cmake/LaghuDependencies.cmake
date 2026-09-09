@@ -706,4 +706,6 @@ function(laghu_configure_dependency_modes)
   set(metadata "${CMAKE_BINARY_DIR}/config/laghu-dependency-selection-v1.json")
   laghu_write_dependency_selection_metadata("${metadata}" "${active_dependencies}")
   set(LAGHU_DEPENDENCY_SELECTION_METADATA "${metadata}" CACHE INTERNAL "Laghu dependency selection metadata")
+  set(LAGHU_ACTIVE_DEPENDENCIES "${active_dependencies}" CACHE INTERNAL
+    "Laghu effective external dependency inventory")
 endfunction()
