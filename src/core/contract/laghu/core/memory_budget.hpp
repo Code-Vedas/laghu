@@ -25,6 +25,7 @@ class MemoryReservation final {
   [[nodiscard]] constexpr bool is_active() const noexcept { return budget_ != nullptr; }
   [[nodiscard]] constexpr std::size_t bytes() const noexcept { return bytes_; }
   [[nodiscard]] Result<void> release(WorkerId worker) noexcept;
+  [[nodiscard]] Result<void> grow(WorkerId worker, std::size_t additional_bytes) noexcept;
 
  private:
   friend class MemoryBudget;
@@ -169,6 +170,25 @@ class MemoryBudget final {
     }
   }
 
+  [[nodiscard]] Result<void> grow_reservation(MemoryReservation& reservation,
+                                                std::size_t additional_bytes) noexcept {
+    if (reservation.budget_ != this) {
+      return std::unexpected{lifetime_error()};
+    }
+    if (const auto preflight = preflight_reservation(additional_bytes); !preflight.has_value()) {
+      return std::unexpected{preflight.error()};
+    }
+    if (additional_bytes > std::numeric_limits<std::size_t>::max() - reservation.bytes_) {
+      return std::unexpected{Error{ErrorDomain::core, ErrorCode::overflow, 0,
+                                   "memory budget reservation size overflow"}};
+    }
+    for (MemoryBudget* current = this; current != nullptr; current = current->parent_) {
+      current->charged_ += additional_bytes;
+    }
+    reservation.bytes_ += additional_bytes;
+    return {};
+  }
+
   void register_child() noexcept {
     if (live_children_ == std::numeric_limits<std::size_t>::max()) {
       std::terminate();
@@ -248,6 +268,17 @@ inline Result<void> MemoryReservation::release(WorkerId worker) noexcept {
   }
   release_unchecked();
   return {};
+}
+
+inline Result<void> MemoryReservation::grow(WorkerId worker, std::size_t additional_bytes) noexcept {
+  if (budget_ == nullptr) {
+    return std::unexpected{Error{ErrorDomain::core, ErrorCode::invalid_state, 0,
+                                 "inactive memory reservation cannot grow"}};
+  }
+  if (const auto owner = budget_->require_worker(worker); !owner.has_value()) {
+    return std::unexpected{owner.error()};
+  }
+  return budget_->grow_reservation(*this, additional_bytes);
 }
 
 inline void MemoryReservation::release_unchecked() noexcept {

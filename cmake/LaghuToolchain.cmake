@@ -163,6 +163,11 @@ function(laghu_require_core_profile_sources)
     if(contents MATCHES "(^|[^A-Za-z0-9_])virtual[ \t\r\n]")
       laghu_fail(restricted_profile_virtual "file=${relative_source}")
     endif()
+    if((contents MATCHES "std::pmr::" OR
+        contents MATCHES "#[ \t]*include[ \t]*[<\"]memory_resource[>\"]") AND
+        NOT relative_source STREQUAL "src/core/contract/laghu/core/bounded_arena.hpp")
+      laghu_fail(restricted_profile_pmr "file=${relative_source}; recoverable_code_must_use_try_allocate")
+    endif()
   endforeach()
 endfunction()
 
@@ -293,7 +298,7 @@ function(laghu_add_validation_tests)
   endforeach()
   add_test(NAME laghu.profile.value_type COMMAND "${CMAKE_COMMAND}" -DCXX=${CMAKE_CXX_COMPILER} -DCXXFLAGS=${CMAKE_CXX_FLAGS} -DSOURCE=${CMAKE_SOURCE_DIR}/tests/profile/positive/value_type.cpp "-DFLAGS=-fno-exceptions;-fno-rtti" -DEXPECT_FAIL=OFF -P "${expect_compile}")
   add_test(NAME laghu.profile.third_party_isolated COMMAND "${CMAKE_COMMAND}" -DCXX=${CMAKE_CXX_COMPILER} -DCXXFLAGS=${CMAKE_CXX_FLAGS} -DSOURCE=${CMAKE_SOURCE_DIR}/tests/profile/third-party/throws.cpp -DEXPECT_FAIL=OFF -P "${expect_compile}")
-  foreach(fixture IN ITEMS exceptions rtti coroutines futures iostream virtual)
+  foreach(fixture IN ITEMS exceptions rtti coroutines futures iostream virtual pmr)
     add_test(NAME "laghu.profile.source_negative.${fixture}" COMMAND "${CMAKE_COMMAND}" -DSOURCE=${CMAKE_SOURCE_DIR}/tests/profile/negative/${fixture}.cpp -DEXPECT_RULE=${fixture} -P "${CMAKE_SOURCE_DIR}/cmake/ExpectProfilePolicy.cmake")
   endforeach()
   add_test(NAME laghu.profile.audit_reenable_exceptions COMMAND "${CMAKE_COMMAND}" -DTRACE=${CMAKE_SOURCE_DIR}/tests/profile/audit/re-enable-exceptions.tsv -DREENABLE=-fexceptions -P "${CMAKE_SOURCE_DIR}/cmake/ExpectProfileAudit.cmake")
@@ -663,6 +668,15 @@ function(laghu_add_validation_tests)
       "-DCXX=${CMAKE_CXX_COMPILER}"
       "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
       "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/memory-budget-copy.cpp"
+      "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+      "-DFLAGS=-fno-exceptions;-fno-rtti"
+      -DEXPECT_FAIL=ON
+      -P "${expect_compile}")
+  add_test(NAME laghu.core.bounded_arena.negative.copy
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/bounded-arena-copy.cpp"
       "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
       "-DFLAGS=-fno-exceptions;-fno-rtti"
       -DEXPECT_FAIL=ON

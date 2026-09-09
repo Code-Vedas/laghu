@@ -85,6 +85,12 @@ laghu_configure_api_consumer(laghu_core_memory_budgets_test core)
 target_link_libraries(laghu_core_memory_budgets_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.memory_budgets laghu_core_memory_budgets_test)
 
+add_executable(laghu_core_bounded_arena_test tests/core/bounded_arena.cpp)
+laghu_apply_first_party_contract(laghu_core_bounded_arena_test)
+laghu_configure_api_consumer(laghu_core_bounded_arena_test core)
+target_link_libraries(laghu_core_bounded_arena_test PRIVATE laghu_core)
+laghu_add_native_test(laghu.core.bounded_arena laghu_core_bounded_arena_test)
+
 add_executable(laghu
   src/cli/main.cpp
   "${LAGHU_BUILD_MANIFEST_SOURCE}")
@@ -116,6 +122,6 @@ install(FILES "${LAGHU_BUILD_MANIFEST}"
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-  DEPENDS laghu_core laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
+  DEPENDS laghu_core laghu_core_smoke laghu_core_result_errors_test laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test laghu_core_byte_text_views_test laghu_core_fd_handles_test laghu_core_memory_budgets_test laghu_core_bounded_arena_test laghu laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")
