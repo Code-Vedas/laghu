@@ -585,6 +585,11 @@ endfunction()
 
 function(laghu_acquire_vendored_tls_dependency id private_target)
   include(ExternalProject)
+  if(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
+    find_program(laghu_make_program NAMES gmake REQUIRED)
+  else()
+    find_program(laghu_make_program NAMES make REQUIRED)
+  endif()
   laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
   laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
   set(prefix "${CMAKE_BINARY_DIR}/_deps/${id}")
@@ -606,23 +611,37 @@ function(laghu_acquire_vendored_tls_dependency id private_target)
     set(crypto_library "${install_directory}/lib/libcrypto.so")
   endif()
   if(id STREQUAL openssl)
-    set(configure_command "<SOURCE_DIR>/Configure" "${configure_mode}" "--prefix=${install_directory}")
-    set(install_command make install_sw)
+    if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL Linux AND
+        CMAKE_SYSTEM_PROCESSOR STREQUAL aarch64)
+      set(configure_environment
+        "${CMAKE_COMMAND}" -E env
+        "CC=${CMAKE_C_COMPILER}"
+        "AR=${CMAKE_AR}"
+        "RANLIB=${CMAKE_RANLIB}")
+      set(openssl_target linux-aarch64)
+    else()
+      set(configure_environment)
+      set(openssl_target)
+    endif()
+    set(configure_command ${configure_environment} "<SOURCE_DIR>/Configure"
+      ${openssl_target} "${configure_mode}" no-apps no-tests
+      "--prefix=${install_directory}" "--libdir=lib")
+    set(install_command "${laghu_make_program}" install_sw)
   else()
     if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
       set(configure_command "<SOURCE_DIR>/configure" "--prefix=${install_directory}" "--disable-shared")
     else()
       set(configure_command "<SOURCE_DIR>/configure" "--prefix=${install_directory}" "--enable-shared")
     endif()
-    set(install_command make install)
+    set(install_command "${laghu_make_program}" install)
   endif()
   ExternalProject_Add("laghu_vendor_${id}"
     PREFIX "${prefix}"
     URL "${archive_url}"
     URL_HASH "SHA256=${archive_sha256}"
-    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     CONFIGURE_COMMAND ${configure_command}
-    BUILD_COMMAND make
+    BUILD_COMMAND "${laghu_make_program}"
     INSTALL_COMMAND ${install_command}
     BUILD_IN_SOURCE TRUE
     EXCLUDE_FROM_ALL TRUE
@@ -638,6 +657,10 @@ function(laghu_acquire_vendored_tls_dependency id private_target)
   set_target_properties("${private_target}_crypto" PROPERTIES
     IMPORTED_LOCATION "${crypto_library}"
     INTERFACE_INCLUDE_DIRECTORIES "${install_directory}/include")
+  if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+    find_package(Threads REQUIRED)
+    target_link_libraries("${private_target}_crypto" INTERFACE Threads::Threads)
+  endif()
   add_dependencies("${private_target}_crypto" "laghu_vendor_${id}")
   add_library("${private_target}" INTERFACE)
   target_link_libraries("${private_target}" INTERFACE
