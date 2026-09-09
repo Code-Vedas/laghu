@@ -279,6 +279,11 @@ endfunction()
 
 function(laghu_add_validation_tests)
   set(expect_compile "${CMAKE_SOURCE_DIR}/cmake/ExpectCompile.cmake")
+  add_test(NAME laghu.build.cross_test_registration
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DFIXTURE_BINARY=${CMAKE_BINARY_DIR}/tests/cross-test-registration"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCrossTestRegistration.cmake")
   foreach(capability IN ITEMS if_consteval expected byteswap to_underlying unreachable)
     add_test(NAME "laghu.toolchain.negative.${capability}" COMMAND "${CMAKE_COMMAND}" -DCXX=${CMAKE_CXX_COMPILER} -DCXXFLAGS=${CMAKE_CXX_FLAGS} -DSOURCE=${CMAKE_SOURCE_DIR}/tests/toolchain/negative/${capability}.cpp -DEXPECT_FAIL=ON -DEXPECT_TEXT=laghu\ forced-negative\ capability=${capability} -P "${expect_compile}")
   endforeach()

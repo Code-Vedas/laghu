@@ -26,6 +26,7 @@ include(cmake/LaghuDependencies.cmake)
 include(cmake/LaghuFeatures.cmake)
 include(cmake/LaghuBuildVariants.cmake)
 include(cmake/LaghuBuildIdentity.cmake)
+include(cmake/LaghuTestRegistration.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
@@ -51,7 +52,7 @@ add_executable(laghu_core_result_errors_test tests/core/result_errors.cpp)
 laghu_apply_first_party_contract(laghu_core_result_errors_test)
 laghu_configure_api_consumer(laghu_core_result_errors_test core)
 target_link_libraries(laghu_core_result_errors_test PRIVATE laghu_core)
-add_test(NAME laghu.core.result_errors COMMAND laghu_core_result_errors_test)
+laghu_add_native_test(laghu.core.result_errors laghu_core_result_errors_test)
 
 add_executable(laghu
   src/cli/main.cpp
