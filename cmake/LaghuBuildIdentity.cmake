@@ -38,6 +38,7 @@ function(laghu_build_identity_input_hashes output)
     src/core/contract.cpp
     src/core/contract/laghu/core/contract.hpp
     src/core/contract/laghu/core/bounded_arena.hpp
+    src/core/contract/laghu/core/binary_envelope.hpp
     src/core/contract/laghu/core/handles.hpp
     src/core/contract/laghu/core/identifiers.hpp
     src/core/contract/laghu/core/memory_budget.hpp
