@@ -26,6 +26,7 @@ class MemoryReservation final {
   [[nodiscard]] constexpr std::size_t bytes() const noexcept { return bytes_; }
   [[nodiscard]] Result<void> release(WorkerId worker) noexcept;
   [[nodiscard]] Result<void> grow(WorkerId worker, std::size_t additional_bytes) noexcept;
+  [[nodiscard]] Result<void> shrink(WorkerId worker, std::size_t bytes) noexcept;
 
  private:
   friend class MemoryBudget;
@@ -189,6 +190,25 @@ class MemoryBudget final {
     return {};
   }
 
+  [[nodiscard]] Result<void> shrink_reservation(MemoryReservation& reservation,
+                                                  std::size_t bytes) noexcept {
+    if (reservation.budget_ != this) {
+      return std::unexpected{lifetime_error()};
+    }
+    if (bytes > reservation.bytes_) {
+      return std::unexpected{Error{ErrorDomain::core, ErrorCode::invalid_range, 0,
+                                   "memory reservation cannot shrink below zero"}};
+    }
+    for (MemoryBudget* current = this; current != nullptr; current = current->parent_) {
+      if (current->charged_ < bytes) {
+        std::terminate();
+      }
+      current->charged_ -= bytes;
+    }
+    reservation.bytes_ -= bytes;
+    return {};
+  }
+
   void register_child() noexcept {
     if (live_children_ == std::numeric_limits<std::size_t>::max()) {
       std::terminate();
@@ -279,6 +299,17 @@ inline Result<void> MemoryReservation::grow(WorkerId worker, std::size_t additio
     return std::unexpected{owner.error()};
   }
   return budget_->grow_reservation(*this, additional_bytes);
+}
+
+inline Result<void> MemoryReservation::shrink(WorkerId worker, std::size_t bytes) noexcept {
+  if (budget_ == nullptr) {
+    return std::unexpected{Error{ErrorDomain::core, ErrorCode::invalid_state, 0,
+                                 "inactive memory reservation cannot shrink"}};
+  }
+  if (const auto owner = budget_->require_worker(worker); !owner.has_value()) {
+    return std::unexpected{owner.error()};
+  }
+  return budget_->shrink_reservation(*this, bytes);
 }
 
 inline void MemoryReservation::release_unchecked() noexcept {
