@@ -708,6 +708,19 @@ function(laghu_add_validation_tests)
       "-DFLAGS=-fno-exceptions;-fno-rtti"
       -DEXPECT_FAIL=ON
       -P "${expect_compile}")
+  foreach(fixture IN ITEMS shared-schema-pointer shared-schema-reference shared-schema-span
+      shared-schema-string shared-schema-string-view shared-schema-smart-pointer
+      shared-schema-polymorphic shared-schema-borrowed-view)
+    add_test(NAME "laghu.core.shared_offsets.negative.${fixture}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DCXXFLAGS=${CMAKE_CXX_FLAGS}"
+        "-DSOURCE=${CMAKE_SOURCE_DIR}/tests/core/negative/${fixture}.cpp"
+        "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
+        "-DFLAGS=-fno-exceptions;-fno-rtti"
+        -DEXPECT_FAIL=ON
+        -P "${expect_compile}")
+  endforeach()
   foreach(fixture IN ITEMS slab-pool-copy slab-pool-throwing slab-pool-throwing-destructor)
     add_test(NAME "laghu.core.slab_pools.negative.${fixture}"
       COMMAND "${CMAKE_COMMAND}"
