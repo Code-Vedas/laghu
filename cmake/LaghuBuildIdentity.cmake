@@ -39,6 +39,7 @@ function(laghu_build_identity_input_hashes output)
     src/core/contract/laghu/core/contract.hpp
     src/core/contract/laghu/core/handles.hpp
     src/core/contract/laghu/core/identifiers.hpp
+    src/core/contract/laghu/core/memory_budget.hpp
     src/core/handles.cpp
     src/core/private/laghu/core/internal/compiler_extensions.hpp
     src/core/private/laghu/core/internal/descriptor_operations.hpp
