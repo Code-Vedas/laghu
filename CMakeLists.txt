@@ -51,6 +51,32 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
 endif()
 
+find_package(Threads REQUIRED)
+
+# Test support is a first-party, build-local library. It is intentionally not
+# registered as a subsystem and is never installed or linked by runtime targets.
+add_library(laghu_test_support STATIC tests/support/laghu_test_support.cpp)
+laghu_apply_first_party_contract(laghu_test_support)
+target_include_directories(laghu_test_support PUBLIC "${CMAKE_SOURCE_DIR}/tests/support")
+
+add_executable(laghu_test_support_fixtures_test tests/support/fixtures.cpp)
+laghu_apply_first_party_contract(laghu_test_support_fixtures_test)
+target_link_libraries(laghu_test_support_fixtures_test PRIVATE laghu_test_support Threads::Threads)
+laghu_add_native_test(laghu.test_support.fixtures laghu_test_support_fixtures_test)
+
+add_executable(laghu_test_support_runner_contract_test tests/support/runner_contract.cpp)
+laghu_apply_first_party_contract(laghu_test_support_runner_contract_test)
+target_link_libraries(laghu_test_support_runner_contract_test PRIVATE laghu_test_support)
+laghu_add_native_test(laghu.test_support.runner_contract laghu_test_support_runner_contract_test)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # POSIX requires fixed C buffers for sockaddr, mkdtemp, and directory APIs.
+  # Keep the narrow diagnostic waiver confined to this non-installed test support.
+  set_source_files_properties(
+    tests/support/laghu_test_support.cpp
+    tests/support/fixtures.cpp
+    PROPERTIES COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
+
 laghu_declare_subsystem_graph()
 laghu_configure_api_boundaries()
 laghu_apply_first_party_contract(laghu_os)
@@ -79,6 +105,7 @@ add_executable(laghu_core_result_errors_test tests/core/result_errors.cpp)
 laghu_apply_first_party_contract(laghu_core_result_errors_test)
 laghu_configure_api_consumer(laghu_core_result_errors_test core)
 target_link_libraries(laghu_core_result_errors_test PRIVATE laghu_core)
+target_link_libraries(laghu_core_result_errors_test PRIVATE laghu_test_support)
 laghu_add_native_test(laghu.core.result_errors laghu_core_result_errors_test)
 
 add_executable(laghu_core_strong_identifiers_test tests/core/strong_identifiers.cpp)
@@ -136,7 +163,6 @@ laghu_configure_api_consumer(laghu_core_state_transitions_test core)
 target_link_libraries(laghu_core_state_transitions_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.state_transitions laghu_core_state_transitions_test)
 
-find_package(Threads REQUIRED)
 add_executable(laghu_core_deadlines_cancellation_test tests/core/deadlines_cancellation.cpp)
 laghu_apply_first_party_contract(laghu_core_deadlines_cancellation_test)
 laghu_configure_api_consumer(laghu_core_deadlines_cancellation_test core)
@@ -180,6 +206,7 @@ if(TARGET laghu_crypto)
   target_include_directories(laghu_crypto_provider_test PRIVATE
     "${CMAKE_SOURCE_DIR}/src/adapters/private")
   target_link_libraries(laghu_crypto_provider_test PRIVATE laghu_crypto)
+  target_link_libraries(laghu_crypto_provider_test PRIVATE laghu_test_support)
   laghu_add_native_test(laghu.crypto.provider laghu_crypto_provider_test)
 endif()
 
@@ -202,6 +229,7 @@ laghu_apply_first_party_contract(laghu_os_iovec_translation_test)
 laghu_configure_api_consumer(laghu_os_iovec_translation_test os)
 target_include_directories(laghu_os_iovec_translation_test PRIVATE "${CMAKE_SOURCE_DIR}/src/os/private")
 target_link_libraries(laghu_os_iovec_translation_test PRIVATE laghu_os)
+target_link_libraries(laghu_os_iovec_translation_test PRIVATE laghu_test_support)
 laghu_add_native_test(laghu.os.iovec_translation laghu_os_iovec_translation_test)
 
 add_executable(laghu
@@ -242,7 +270,8 @@ set(laghu_verify_targets
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
-  laghu_os_iovec_translation_test laghu
+  laghu_os_iovec_translation_test laghu_test_support laghu_test_support_fixtures_test
+  laghu_test_support_runner_contract_test laghu
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
 if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets laghu_crypto laghu_crypto_provider_test)
