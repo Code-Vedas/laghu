@@ -37,8 +37,11 @@ function(laghu_build_identity_input_hashes output)
     src/cli/private/laghu/cli/internal/build_manifest.hpp
     src/core/contract.cpp
     src/core/contract/laghu/core/contract.hpp
+    src/core/contract/laghu/core/handles.hpp
     src/core/contract/laghu/core/identifiers.hpp
+    src/core/handles.cpp
     src/core/private/laghu/core/internal/compiler_extensions.hpp
+    src/core/private/laghu/core/internal/descriptor_operations.hpp
     tests/warnings/suppressions.tsv)
   set(entries)
   foreach(input IN LISTS inputs)
