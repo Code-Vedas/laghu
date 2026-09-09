@@ -73,6 +73,8 @@ install(TARGETS laghu_core
   ARCHIVE DESTINATION lib/laghu)
 install(TARGETS laghu
   RUNTIME DESTINATION bin)
+install(FILES "${LAGHU_BUILD_MANIFEST}"
+  DESTINATION share/laghu)
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
