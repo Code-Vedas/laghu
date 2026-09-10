@@ -8,15 +8,17 @@
 
 namespace laghu::core::internal {
 
-using MappingMapFunction = void* (*)(int, std::size_t, std::uint64_t, MappingAccess) noexcept;
-using MappingUnmapFunction = int (*)(void*, std::size_t) noexcept;
-using MappingFlushFunction = int (*)(void*, std::size_t, MappingFlush) noexcept;
-using MappingProtectFunction = int (*)(void*, std::size_t, MappingAccess) noexcept;
-using MappingPageSizeFunction = long (*)() noexcept;
-using MappingFileSizeFunction = int (*)(int, std::uint64_t*) noexcept;
-using SharedMemoryOpenFunction = int (*)(const char*, MappingAccess) noexcept;
+using MappingMapFunction = void* (*)(void* context, int, std::size_t, std::uint64_t,
+                                     MappingAccess) noexcept;
+using MappingUnmapFunction = int (*)(void* context, void*, std::size_t) noexcept;
+using MappingFlushFunction = int (*)(void* context, void*, std::size_t, MappingFlush) noexcept;
+using MappingProtectFunction = int (*)(void* context, void*, std::size_t, MappingAccess) noexcept;
+using MappingPageSizeFunction = long (*)(void* context) noexcept;
+using MappingFileSizeFunction = int (*)(void* context, int, std::uint64_t*) noexcept;
+using SharedMemoryOpenFunction = int (*)(void* context, const char*, MappingAccess) noexcept;
 
 struct MappingOperations final {
+  void* context;
   MappingMapFunction map;
   MappingUnmapFunction unmap;
   MappingFlushFunction flush;

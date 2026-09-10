@@ -45,17 +45,16 @@ struct CloseRecorder final {
   int error{};
 };
 
-CloseRecorder* active_recorder{};
-
-[[nodiscard]] int record_close(int descriptor) noexcept {
-  if (active_recorder == nullptr) {
+[[nodiscard]] int record_close(void* context, int descriptor) noexcept {
+  auto* const recorder = static_cast<CloseRecorder*>(context);
+  if (recorder == nullptr) {
     errno = EINVAL;
     return -1;
   }
-  ++active_recorder->calls;
-  active_recorder->last_descriptor = descriptor;
-  errno = active_recorder->error;
-  return active_recorder->result;
+  ++recorder->calls;
+  recorder->last_descriptor = descriptor;
+  errno = recorder->error;
+  return recorder->result;
 }
 
 [[nodiscard]] bool check(bool condition) noexcept { return condition; }
@@ -79,25 +78,21 @@ CloseRecorder* active_recorder{};
 
 [[nodiscard]] bool check_injected_lifecycle() noexcept {
   CloseRecorder recorder{};
-  active_recorder = &recorder;
-  const laghu::core::internal::DescriptorOperations operations{record_close};
+  const laghu::core::internal::DescriptorOperations operations{&recorder, record_close};
 
   auto original = laghu::core::internal::HandleTestAccess::adopt_file(41, operations);
   auto moved{std::move(original)};
   if (!check(!original.is_valid() && moved.is_valid() && recorder.calls == 0)) {
-    active_recorder = nullptr;
     return false;
   }
   if (!check(moved.close().has_value() && !moved.is_valid() && recorder.calls == 1 &&
              recorder.last_descriptor == 41 && moved.close().has_value() && recorder.calls == 1)) {
-    active_recorder = nullptr;
     return false;
   }
 
   auto self = laghu::core::internal::HandleTestAccess::adopt_file(42, operations);
   if (!check(self.reset(std::move(self)).has_value() && self.is_valid() && recorder.calls == 1 &&
              self.close().has_value() && recorder.calls == 2)) {
-    active_recorder = nullptr;
     return false;
   }
 
@@ -106,7 +101,6 @@ CloseRecorder* active_recorder{};
   if (!check(same_first.reset(std::move(same_second)).has_value() && same_first.is_valid() &&
              !same_second.is_valid() && recorder.calls == 2 && same_first.close().has_value() &&
              recorder.calls == 3)) {
-    active_recorder = nullptr;
     return false;
   }
 
@@ -115,24 +109,20 @@ CloseRecorder* active_recorder{};
   assigned = std::move(replacement);
   if (!check(!replacement.is_valid() && assigned.native_handle() == 45 && recorder.calls == 4 &&
              recorder.last_descriptor == 44 && assigned.close().has_value() && recorder.calls == 5)) {
-    active_recorder = nullptr;
     return false;
   }
 
-  active_recorder = nullptr;
   return true;
 }
 
 [[nodiscard]] bool check_failure_lifecycle() noexcept {
   CloseRecorder recorder{0, -1, -1, EINTR};
-  active_recorder = &recorder;
-  const laghu::core::internal::DescriptorOperations operations{record_close};
+  const laghu::core::internal::DescriptorOperations operations{&recorder, record_close};
   auto interrupted = laghu::core::internal::HandleTestAccess::adopt_file(51, operations);
   const auto interrupted_result = interrupted.close();
   if (!check(!interrupted_result.has_value() && !interrupted.is_valid() && recorder.calls == 1 &&
              recorder.last_descriptor == 51 && interrupted_result.error().native_code() == EINTR &&
              interrupted.close().has_value() && recorder.calls == 1)) {
-    active_recorder = nullptr;
     return false;
   }
 
@@ -144,12 +134,10 @@ CloseRecorder* active_recorder{};
   if (!check(!reset_result.has_value() && reset_result.error().native_code() == EIO &&
              old.is_valid() && old.native_handle() == 53 && !replacement.is_valid() &&
              recorder.calls == 2 && recorder.last_descriptor == 52)) {
-    active_recorder = nullptr;
     return false;
   }
   recorder.result = 0;
   if (!check(old.close().has_value() && recorder.calls == 3 && recorder.last_descriptor == 53)) {
-    active_recorder = nullptr;
     return false;
   }
 
@@ -158,12 +146,10 @@ CloseRecorder* active_recorder{};
   {
     auto best_effort = laghu::core::internal::HandleTestAccess::adopt_file(54, operations);
     if (!check(best_effort.is_valid())) {
-      active_recorder = nullptr;
       return false;
     }
   }
   const bool destructor_closed_once = recorder.calls == 4 && recorder.last_descriptor == 54;
-  active_recorder = nullptr;
   return destructor_closed_once;
 }
 

@@ -10,9 +10,9 @@
 namespace laghu::core {
 namespace {
 
-[[nodiscard]] int close_descriptor(int descriptor) noexcept { return ::close(descriptor); }
+[[nodiscard]] int close_descriptor(void*, int descriptor) noexcept { return ::close(descriptor); }
 
-constexpr internal::DescriptorOperations default_operations{close_descriptor};
+constexpr internal::DescriptorOperations default_operations{nullptr, close_descriptor};
 
 [[nodiscard]] Error invalid_descriptor_error() noexcept {
   return Error{ErrorDomain::core, ErrorCode::invalid_input, EINVAL,
@@ -25,7 +25,7 @@ constexpr internal::DescriptorOperations default_operations{close_descriptor};
     return std::unexpected{Error{ErrorDomain::core, ErrorCode::invalid_state, 0,
                                  "descriptor has no close operation"}};
   }
-  if (operations->close(descriptor) == 0) {
+  if (operations->close(operations->context, descriptor) == 0) {
     return {};
   }
   return std::unexpected{Error::from_errno(errno, "descriptor close failed")};
