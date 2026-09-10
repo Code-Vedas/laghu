@@ -223,6 +223,14 @@ class CancellationToken final {
     return deadline.require_not_expired(clock);
   }
 
+  [[nodiscard]] Result<void> require_active(const Deadline& deadline,
+                                             const ClockOperations& operations) const noexcept {
+    if (const Result<void> active = require_active(); !active.has_value()) {
+      return std::unexpected{active.error()};
+    }
+    return deadline.require_not_expired(operations);
+  }
+
   [[nodiscard]] Result<CancellationToken> child(CancellationState& child_state) const noexcept {
     for (std::uint8_t index = 0; index < state_count_; ++index) {
       if (states_[index] == &child_state) {
@@ -277,6 +285,22 @@ class CancellationSource final {
   [[nodiscard]] CancellationOutcome cancel_if_expired(const Deadline& deadline,
                                                        const Clock& clock) noexcept {
     if (!deadline.expired(clock)) {
+      return state_->outcome();
+    }
+    return state_->finish(CancellationState::StoredTerminal::cancelled_deadline);
+  }
+
+  [[nodiscard]] Result<CancellationOutcome> cancel_if_expired(
+      const Deadline& deadline, const ClockOperations& operations) noexcept {
+    const CancellationOutcome existing = state_->outcome();
+    if (existing.is_terminal()) {
+      return existing;
+    }
+    const auto expired = deadline.expired(operations);
+    if (!expired.has_value()) {
+      return std::unexpected{expired.error()};
+    }
+    if (!*expired) {
       return state_->outcome();
     }
     return state_->finish(CancellationState::StoredTerminal::cancelled_deadline);

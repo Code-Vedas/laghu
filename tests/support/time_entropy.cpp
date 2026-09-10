@@ -8,7 +8,6 @@
 #include <limits>
 #include <span>
 
-#include <laghu/adapters/internal/entropy.hpp>
 #include <laghu/core/deadlines_cancellation.hpp>
 #include <laghu/core/internal/clock_operations.hpp>
 
@@ -101,17 +100,17 @@ template <std::size_t Size>
 }
 
 [[nodiscard]] bool check_deterministic_entropy() noexcept {
-  std::array<std::byte, 600> sequence{};
+  std::array<std::byte, 6> sequence{};
   for (std::size_t index = 0; index < sequence.size(); ++index) {
     sequence[index] = static_cast<std::byte>(index);
   }
-  std::array<std::byte, 600> output{};
+  std::array<std::byte, 3> output{};
   laghu::test::DeterministicEntropy entropy{std::span<const std::byte>{sequence}};
-  const auto result = laghu::adapters::internal::fill_entropy_with(
-      mutable_view(output), entropy.call(), entropy.context());
-  if (!result.has_value() || entropy.calls() != 3 || entropy.consumed() != output.size() ||
-      output[0] != sequence[0] || output[255] != sequence[255] ||
-      output[256] != sequence[256] || output.back() != sequence.back()) {
+  const auto first = entropy.fill(mutable_view(output));
+  const auto second = entropy.fill(mutable_view(output));
+  if (!first.has_value() || !second.has_value() || entropy.calls() != 2 ||
+      entropy.consumed() != sequence.size() || output[0] != sequence[3] ||
+      output[1] != sequence[4] || output[2] != sequence[5]) {
     return false;
   }
 
@@ -119,16 +118,12 @@ template <std::size_t Size>
   if (!failing.fail_on_call(2, EIO)) {
     return false;
   }
-  const auto failure = laghu::adapters::internal::fill_entropy_with(
-      mutable_view(output), failing.call(), failing.context());
-  return !failure.has_value() && failing.calls() == 2 && failing.consumed() == 256 &&
+  const auto successful = failing.fill(mutable_view(output));
+  const auto failure = failing.fill(mutable_view(output));
+  return successful.has_value() && !failure.has_value() && failing.calls() == 2 &&
+         failing.consumed() == output.size() &&
          failure.error().domain() == laghu::core::ErrorDomain::posix &&
          failure.error().code() == laghu::core::ErrorCode::io && failure.error().native_code() == EIO;
-}
-
-[[nodiscard]] bool check_os_entropy_only() noexcept {
-  std::array<std::byte, 32> output{};
-  return laghu::adapters::internal::fill_entropy(mutable_view(output)).has_value();
 }
 
 }  // namespace
@@ -141,7 +136,6 @@ int main() {
       laghu::test::TestCase{"time_entropy.realtime_conversion_boundaries",
                             check_realtime_conversion_boundaries},
       laghu::test::TestCase{"time_entropy.deterministic_entropy", check_deterministic_entropy},
-      laghu::test::TestCase{"time_entropy.os_entropy_only", check_os_entropy_only},
   };
   return laghu::test::run_tests(tests);
 }

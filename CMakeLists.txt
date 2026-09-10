@@ -109,17 +109,13 @@ add_library(laghu_test_time_entropy STATIC tests/support/laghu_test_time_entropy
 laghu_apply_first_party_contract(laghu_test_time_entropy)
 target_include_directories(laghu_test_time_entropy PUBLIC
   "${CMAKE_SOURCE_DIR}/tests/support"
-  "${CMAKE_SOURCE_DIR}/src/core/contract"
-  "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  "${CMAKE_SOURCE_DIR}/src/core/contract")
 
-add_executable(laghu_test_time_entropy_test
-  tests/support/time_entropy.cpp
-  src/adapters/entropy.cpp)
+add_executable(laghu_test_time_entropy_test tests/support/time_entropy.cpp)
 laghu_apply_first_party_contract(laghu_test_time_entropy_test)
-laghu_configure_api_consumer(laghu_test_time_entropy_test adapters)
+laghu_configure_api_consumer(laghu_test_time_entropy_test core)
 target_include_directories(laghu_test_time_entropy_test PRIVATE
-  "${CMAKE_SOURCE_DIR}/src/core/private"
-  "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  "${CMAKE_SOURCE_DIR}/src/core/private")
 target_link_libraries(laghu_test_time_entropy_test PRIVATE
   laghu_test_support laghu_test_time_entropy laghu_core)
 laghu_add_native_test(laghu.test_support.time_entropy laghu_test_time_entropy_test)
