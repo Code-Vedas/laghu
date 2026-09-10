@@ -50,7 +50,7 @@ template <std::size_t Size>
 }
 
 [[nodiscard]] bool check_clock_tables() noexcept {
-  const auto& operations = laghu::core::internal::default_clock_operations();
+  const auto& operations = laghu::core::system_clock_operations();
   const auto monotonic = laghu::core::read_monotonic_clock(operations);
   const auto realtime = laghu::core::read_realtime_clock(operations);
   const laghu::core::ClockOperations incomplete{};

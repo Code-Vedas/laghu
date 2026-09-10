@@ -215,6 +215,25 @@ class OperationClock final {
                already_completed->cause == laghu::core::CancellationCause::none);
 }
 
+[[nodiscard]] bool check_system_clock_contract() noexcept {
+  const auto& operations = laghu::core::system_clock_operations();
+  const auto monotonic = laghu::core::read_monotonic_clock(operations);
+  const auto realtime = laghu::core::read_realtime_clock(operations);
+  if (!check(monotonic.has_value() && realtime.has_value())) {
+    return false;
+  }
+
+  laghu::core::CancellationState state;
+  laghu::core::CancellationSource source{state};
+  const auto active = source.token().require_active(
+      laghu::core::Deadline::at(std::numeric_limits<laghu::core::MonotonicInstant>::max()),
+      operations);
+  const auto expired = source.cancel_if_expired(laghu::core::Deadline::at(*monotonic), operations);
+  return check(active.has_value() && expired.has_value() && expired->is_cancelled() &&
+               expired->cause == laghu::core::CancellationCause::deadline_expired &&
+               source.token().outcome().is_cancelled());
+}
+
 [[nodiscard]] bool check_parent_observation_and_bounds() noexcept {
   laghu::core::CancellationState root_state;
   laghu::core::CancellationSource root_source{root_state};
@@ -325,6 +344,9 @@ int main() {
   }
   if (!check(check_clock_operation_deadline_cancellation())) {
     return 8;
+  }
+  if (!check(check_system_clock_contract())) {
+    return 9;
   }
   if (!check(check_parent_observation_and_bounds())) {
     return 5;

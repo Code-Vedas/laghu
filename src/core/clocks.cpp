@@ -6,7 +6,6 @@
 #include <time.h>
 
 #include <laghu/core/clocks.hpp>
-
 #include <laghu/core/internal/clock_operations.hpp>
 
 namespace laghu::core {
@@ -62,9 +61,9 @@ Result<RealtimeInstant> read_realtime_clock(const ClockOperations& operations) n
   return operations.realtime_now(operations.context);
 }
 
-namespace internal {
+const ClockOperations& system_clock_operations() noexcept { return default_operations; }
 
-const ClockOperations& default_clock_operations() noexcept { return default_operations; }
+namespace internal {
 
 Result<RealtimeInstant> realtime_instant_from_parts(RealtimeInstant seconds,
                                                      RealtimeInstant nanoseconds) noexcept {

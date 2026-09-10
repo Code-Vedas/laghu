@@ -26,4 +26,8 @@ struct ClockOperations final {
 [[nodiscard]] Result<RealtimeInstant> read_realtime_clock(
     const ClockOperations& operations) noexcept;
 
+// Returns a non-owning reference to Laghu's process-static POSIX clock table.
+// It remains valid for the process lifetime and exposes no POSIX types.
+[[nodiscard]] const ClockOperations& system_clock_operations() noexcept;
+
 }  // namespace laghu::core

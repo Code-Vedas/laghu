@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <span>
 
+#include <laghu/adapters/internal/entropy.hpp>
 #include <laghu/core/clocks.hpp>
 #include <laghu/core/views.hpp>
 
@@ -39,10 +40,16 @@ class DeterministicEntropy final {
 
   [[nodiscard]] bool fail_on_call(std::size_t call, int native_error) noexcept;
   [[nodiscard]] core::Result<void> fill(core::MutableByteView output) noexcept;
+  [[nodiscard]] constexpr adapters::internal::EntropyCall call() const noexcept {
+    return fill_call;
+  }
+  [[nodiscard]] constexpr void* context() noexcept { return this; }
   [[nodiscard]] constexpr std::size_t calls() const noexcept { return calls_; }
   [[nodiscard]] constexpr std::size_t consumed() const noexcept { return offset_; }
 
  private:
+  [[nodiscard]] static int fill_call(core::MutableByteView output, void* context) noexcept;
+
   std::span<const std::byte> bytes_{};
   std::size_t offset_{};
   std::size_t calls_{};

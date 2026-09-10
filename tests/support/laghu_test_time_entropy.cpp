@@ -54,18 +54,32 @@ bool DeterministicEntropy::fail_on_call(std::size_t call, int native_error) noex
 }
 
 core::Result<void> DeterministicEntropy::fill(core::MutableByteView output) noexcept {
-  ++calls_;
-  if (failure_call_ == calls_) {
-    return std::unexpected{core::Error::from_errno(failure_error_, "deterministic entropy failed")};
+  if (fill_call(output, this) != 0) {
+    return std::unexpected{core::Error::from_errno(errno, "deterministic entropy failed")};
   }
-  if (output.size() > bytes_.size() - offset_) {
-    return std::unexpected{core::Error::from_errno(ENOSPC, "deterministic entropy is exhausted")};
+  return {};
+}
+
+int DeterministicEntropy::fill_call(core::MutableByteView output, void* context) noexcept {
+  if (context == nullptr) {
+    errno = EINVAL;
+    return -1;
+  }
+  auto& entropy = *static_cast<DeterministicEntropy*>(context);
+  ++entropy.calls_;
+  if (entropy.failure_call_ == entropy.calls_) {
+    errno = entropy.failure_error_;
+    return -1;
+  }
+  if (output.size() > entropy.bytes_.size() - entropy.offset_) {
+    errno = ENOSPC;
+    return -1;
   }
   for (std::size_t index = 0; index < output.size(); ++index) {
-    output.span()[index] = bytes_[offset_ + index];
+    output.span()[index] = entropy.bytes_[entropy.offset_ + index];
   }
-  offset_ += output.size();
-  return {};
+  entropy.offset_ += output.size();
+  return 0;
 }
 
 }  // namespace laghu::test
