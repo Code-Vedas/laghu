@@ -3,9 +3,10 @@
 
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <cstddef>
-#include <cstdio>
 #include <cstring>
+#include <system_error>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -34,15 +35,24 @@ namespace {
       return false;
     }
     std::array<char, laghu::test::fixture_path_capacity> nested = path;
+    std::size_t nested_size = path_size;
     for (int depth = 0; depth < 17; ++depth) {
       std::array<char, laghu::test::fixture_path_capacity> next{};
-      const int rendered = std::snprintf(next.data(), next.size(), "%s/level-%d",
-                                         nested.data(), depth);
-      if (rendered <= 0 || static_cast<std::size_t>(rendered) >= next.size() ||
-          ::mkdir(next.data(), 0700) != 0) {
+      std::array<char, 16> suffix{'/', 'l', 'e', 'v', 'e', 'l', '-'};
+      const auto rendered = std::to_chars(suffix.data() + 7, suffix.data() + suffix.size(), depth);
+      const std::size_t suffix_size = static_cast<std::size_t>(rendered.ptr - suffix.data());
+      if (rendered.ec != std::errc{} || suffix_size >= next.size() ||
+          nested_size > next.size() - suffix_size - 1U) {
+        return false;
+      }
+      std::memcpy(next.data(), nested.data(), nested_size);
+      std::memcpy(next.data() + nested_size, suffix.data(), suffix_size);
+      next[nested_size + suffix_size] = '\0';
+      if (::mkdir(next.data(), 0700) != 0) {
         return false;
       }
       nested = next;
+      nested_size += suffix_size;
     }
   }
   return path_size != 0U && ::access(path.data(), F_OK) != 0 && errno == ENOENT;
