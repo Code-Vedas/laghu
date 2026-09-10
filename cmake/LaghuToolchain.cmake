@@ -287,6 +287,8 @@ function(laghu_add_validation_tests)
   add_test(NAME laghu.test.wrapper.usage
     COMMAND "${CMAKE_COMMAND}"
       "-DSCRIPT=${CMAKE_SOURCE_DIR}/scripts/test"
+      "-DTEST_ROOT=${CMAKE_BINARY_DIR}/tests/test-wrapper"
+      "-DTEST_BUILD=${CMAKE_BINARY_DIR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectTestWrapper.cmake")
   if(NOT CMAKE_CROSSCOMPILING)
     add_test(NAME laghu.test.wrapper.selective

@@ -189,23 +189,26 @@ std::expected<TemporaryDirectory, FixtureFailure> TemporaryDirectory::create(
   if (temporary_root == nullptr || temporary_root[0] != '/') {
     temporary_root = "/tmp";
   }
-  TemporaryDirectory directory;
-  if (!append_text(directory.path_, sizeof(directory.path_), directory.path_size_, temporary_root) ||
-      !append_text(directory.path_, sizeof(directory.path_), directory.path_size_, "/laghu-") ||
-      !append_text(directory.path_, sizeof(directory.path_), directory.path_size_, label) ||
-      !append_text(directory.path_, sizeof(directory.path_), directory.path_size_, "-") ||
-      !append_number(directory.path_, sizeof(directory.path_), directory.path_size_,
+  std::array<char, fixture_path_capacity> candidate{};
+  std::size_t candidate_size{};
+  if (!append_text(candidate.data(), candidate.size(), candidate_size, temporary_root) ||
+      !append_text(candidate.data(), candidate.size(), candidate_size, "/laghu-") ||
+      !append_text(candidate.data(), candidate.size(), candidate_size, label) ||
+      !append_text(candidate.data(), candidate.size(), candidate_size, "-") ||
+      !append_number(candidate.data(), candidate.size(), candidate_size,
                      static_cast<unsigned long>(::getpid())) ||
-      !append_text(directory.path_, sizeof(directory.path_), directory.path_size_, "-") ||
-      !append_number(directory.path_, sizeof(directory.path_), directory.path_size_,
+      !append_text(candidate.data(), candidate.size(), candidate_size, "-") ||
+      !append_number(candidate.data(), candidate.size(), candidate_size,
                      fixture_serial.fetch_add(1U, std::memory_order_relaxed)) ||
-      !append_text(directory.path_, sizeof(directory.path_), directory.path_size_, "-XXXXXX")) {
+      !append_text(candidate.data(), candidate.size(), candidate_size, "-XXXXXX")) {
     return std::unexpected{FixtureFailure{FixtureError::path_too_long, 0}};
   }
-  if (::mkdtemp(directory.path_) == nullptr) {
+  if (::mkdtemp(candidate.data()) == nullptr) {
     return std::unexpected{system_failure()};
   }
-  directory.path_size_ = std::strlen(directory.path_);
+  TemporaryDirectory directory;
+  directory.path_size_ = std::strlen(candidate.data());
+  std::memcpy(directory.path_, candidate.data(), directory.path_size_ + 1U);
   return directory;
 }
 
@@ -255,12 +258,14 @@ std::expected<UnixSocket, FixtureFailure> UnixSocket::bind(
     }
   }
   UnixSocket socket;
-  if (!append_text(socket.path_, sizeof(socket.path_), socket.path_size_, directory.path()) ||
-      !append_text(socket.path_, sizeof(socket.path_), socket.path_size_, "/") ||
-      !append_text(socket.path_, sizeof(socket.path_), socket.path_size_, name)) {
+  std::array<char, fixture_path_capacity> candidate{};
+  std::size_t candidate_size{};
+  if (!append_text(candidate.data(), candidate.size(), candidate_size, directory.path()) ||
+      !append_text(candidate.data(), candidate.size(), candidate_size, "/") ||
+      !append_text(candidate.data(), candidate.size(), candidate_size, name)) {
     return std::unexpected{FixtureFailure{FixtureError::path_too_long, 0}};
   }
-  if (socket.path_size_ >= sizeof(sockaddr_un{}.sun_path)) {
+  if (candidate_size >= sizeof(sockaddr_un{}.sun_path)) {
     return std::unexpected{FixtureFailure{FixtureError::path_too_long, 0}};
   }
   socket.fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -269,10 +274,18 @@ std::expected<UnixSocket, FixtureFailure> UnixSocket::bind(
   }
   sockaddr_un address{};
   address.sun_family = AF_UNIX;
-  std::memcpy(address.sun_path, socket.path_, socket.path_size_ + 1U);
-  const auto address_size = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + socket.path_size_ + 1U);
-  if (::bind(socket.fd_, reinterpret_cast<const sockaddr*>(&address), address_size) != 0 ||
-      ::listen(socket.fd_, 8) != 0) {
+  std::memcpy(address.sun_path, candidate.data(), candidate_size + 1U);
+  const auto address_size =
+      static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + candidate_size + 1U);
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  address.sun_len = static_cast<decltype(address.sun_len)>(address_size);
+#endif
+  if (::bind(socket.fd_, reinterpret_cast<const sockaddr*>(&address), address_size) != 0) {
+    return std::unexpected{system_failure()};
+  }
+  std::memcpy(socket.path_, candidate.data(), candidate_size + 1U);
+  socket.path_size_ = candidate_size;
+  if (::listen(socket.fd_, 8) != 0) {
     return std::unexpected{system_failure()};
   }
   return socket;

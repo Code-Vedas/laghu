@@ -6,9 +6,11 @@
 #include <charconv>
 #include <cstddef>
 #include <cstring>
+#include <cstdlib>
 #include <system_error>
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
@@ -58,6 +60,51 @@ namespace {
   return path_size != 0U && ::access(path.data(), F_OK) != 0 && errno == ENOENT;
 }
 
+[[nodiscard]] bool check_temporary_directory_failure_ownership() noexcept {
+  const auto directory = laghu::test::TemporaryDirectory::create("temporary-failure");
+  if (!directory.has_value() ||
+      directory->path().size() + 1U + sizeof("not-a-directory") >
+          laghu::test::fixture_path_capacity) {
+    return false;
+  }
+  std::array<char, laghu::test::fixture_path_capacity> sentinel{};
+  const std::size_t directory_size = directory->path().size();
+  std::memcpy(sentinel.data(), directory->path().data(), directory_size);
+  sentinel[directory_size] = '/';
+  std::memcpy(sentinel.data() + directory_size + 1U, "not-a-directory",
+              sizeof("not-a-directory"));
+  const int sentinel_fd = ::open(sentinel.data(), O_CREAT | O_EXCL | O_WRONLY, 0600);
+  if (sentinel_fd < 0) {
+    return false;
+  }
+  (void)::close(sentinel_fd);
+
+  std::array<char, laghu::test::fixture_path_capacity> previous{};
+  const char* previous_value = ::getenv("TMPDIR");
+  const bool restore_previous = previous_value != nullptr;
+  std::size_t previous_size{};
+  if (restore_previous) {
+    previous_size = std::strlen(previous_value);
+    if (previous_size >= previous.size()) {
+      (void)::unlink(sentinel.data());
+      return false;
+    }
+    std::memcpy(previous.data(), previous_value, previous_size + 1U);
+  }
+  if (::setenv("TMPDIR", sentinel.data(), 1) != 0) {
+    (void)::unlink(sentinel.data());
+    return false;
+  }
+  const auto failed = laghu::test::TemporaryDirectory::create("mkdtemp-failure");
+  const int restore_result = restore_previous ? ::setenv("TMPDIR", previous.data(), 1)
+                                              : ::unsetenv("TMPDIR");
+  struct stat sentinel_status {};
+  const bool retained = ::stat(sentinel.data(), &sentinel_status) == 0 &&
+                        S_ISREG(sentinel_status.st_mode);
+  (void)::unlink(sentinel.data());
+  return !failed.has_value() && restore_result == 0 && retained;
+}
+
 [[nodiscard]] bool check_unix_socket() noexcept {
   const auto directory = laghu::test::TemporaryDirectory::create("unix");
   if (!directory.has_value()) {
@@ -80,6 +127,9 @@ namespace {
   std::memcpy(address.sun_path, listener->path().data(), listener->path().size() + 1U);
   const auto address_size = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) +
                                                    listener->path().size() + 1U);
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  address.sun_len = static_cast<decltype(address.sun_len)>(address_size);
+#endif
   const bool connected = ::connect(client, reinterpret_cast<const sockaddr*>(&address), address_size) == 0;
   const int accepted = connected ? ::accept(listener->fd(), nullptr, nullptr) : -1;
   (void)::close(client);
@@ -88,6 +138,30 @@ namespace {
   }
   (void)::close(accepted);
   return true;
+}
+
+[[nodiscard]] bool check_unix_socket_failure_ownership() noexcept {
+  const auto directory = laghu::test::TemporaryDirectory::create("unix-failure");
+  if (!directory.has_value() ||
+      directory->path().size() + 1U + sizeof("listener") > laghu::test::fixture_path_capacity) {
+    return false;
+  }
+  std::array<char, laghu::test::fixture_path_capacity> sentinel{};
+  const std::size_t directory_size = directory->path().size();
+  std::memcpy(sentinel.data(), directory->path().data(), directory_size);
+  sentinel[directory_size] = '/';
+  std::memcpy(sentinel.data() + directory_size + 1U, "listener", sizeof("listener"));
+  const int sentinel_fd = ::open(sentinel.data(), O_CREAT | O_EXCL | O_WRONLY, 0600);
+  if (sentinel_fd < 0) {
+    return false;
+  }
+  (void)::close(sentinel_fd);
+  const auto failed = laghu::test::UnixSocket::bind(*directory, "listener");
+  struct stat sentinel_status {};
+  const bool retained = ::stat(sentinel.data(), &sentinel_status) == 0 &&
+                        S_ISREG(sentinel_status.st_mode);
+  (void)::unlink(sentinel.data());
+  return !failed.has_value() && retained;
 }
 
 [[nodiscard]] bool check_loopback_tcp() noexcept {
@@ -172,7 +246,9 @@ void* create_isolated_fixture(void* argument) noexcept {
     (void)::pthread_join(first_thread, nullptr);
     return false;
   }
-  if (::pthread_join(first_thread, nullptr) != 0 || ::pthread_join(second_thread, nullptr) != 0) {
+  const int first_join_result = ::pthread_join(first_thread, nullptr);
+  const int second_join_result = ::pthread_join(second_thread, nullptr);
+  if (first_join_result != 0 || second_join_result != 0) {
     return false;
   }
   return first.created && second.created && first.path_size != 0U && second.path_size != 0U &&
@@ -185,7 +261,10 @@ void* create_isolated_fixture(void* argument) noexcept {
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"temporary_directory.cleanup", check_temporary_directory},
+      laghu::test::TestCase{"temporary_directory.failure_ownership",
+                            check_temporary_directory_failure_ownership},
       laghu::test::TestCase{"unix_socket.connection", check_unix_socket},
+      laghu::test::TestCase{"unix_socket.failure_ownership", check_unix_socket_failure_ownership},
       laghu::test::TestCase{"loopback_tcp.connection", check_loopback_tcp},
       laghu::test::TestCase{"loopback_udp.datagram", check_loopback_udp},
       laghu::test::TestCase{"temporary_directory.concurrent_isolation", check_concurrent_isolation},

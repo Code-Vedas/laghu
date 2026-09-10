@@ -59,7 +59,7 @@ if ! command -v ctest >/dev/null 2>&1; then
   exit 69
 fi
 
-set -- ctest --test-dir "$build_directory" --output-on-failure
+set -- ctest --test-dir "$build_directory" --output-on-failure --no-tests=error
 if [ -n "$filter" ]; then
   set -- "$@" --tests-regex "$filter"
 fi
