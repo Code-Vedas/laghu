@@ -6,6 +6,7 @@
 
 #include <laghu/core/bounded_buffer.hpp>
 #include <laghu/core/internal/descriptor_operations.hpp>
+#include <laghu/core/internal/mapping_operations.hpp>
 #include <laghu/os/internal/io_operations.hpp>
 
 namespace laghu::test {
@@ -72,6 +73,13 @@ struct FaultInjectedDescriptorOperations final {
   const laghu::core::internal::DescriptorOperations* underlying{};
 
   [[nodiscard]] laghu::core::internal::DescriptorOperations operations() noexcept;
+};
+
+struct FaultInjectedMappingOperations final {
+  FailurePlan* plan{};
+  const laghu::core::internal::MappingOperations* underlying{};
+
+  [[nodiscard]] laghu::core::internal::MappingOperations operations() noexcept;
 };
 
 }  // namespace laghu::test

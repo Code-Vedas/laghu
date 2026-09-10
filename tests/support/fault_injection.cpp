@@ -7,16 +7,28 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 namespace {
 
 using laghu::core::BoundedBuffer;
 using laghu::core::ByteView;
+using laghu::core::ErrorCode;
+using laghu::core::ErrorDomain;
 using laghu::core::MemoryBudget;
+using laghu::core::MappedRegion;
+using laghu::core::MappingAccess;
+using laghu::core::MappingFlush;
 using laghu::core::MutableByteView;
 using laghu::core::Result;
+using laghu::core::Retryability;
 using laghu::core::WorkerId;
+using laghu::core::internal::HandleTestAccess;
+using laghu::core::internal::MappedRegionTestAccess;
+using laghu::core::internal::MappingOperations;
+
+constexpr std::size_t mapping_size = 4096;
 
 struct FixedBlockSource final {
   std::array<std::array<std::byte, 16>, 2> blocks{};
@@ -38,6 +50,75 @@ struct FixedBlockSource final {
 
 void release(void* context, MutableByteView) noexcept {
   ++static_cast<FixedBlockSource*>(context)->release_calls;
+}
+
+struct MappingState final {
+  std::array<std::byte, mapping_size> storage{};
+  int map_calls{};
+  int unmap_calls{};
+  int flush_calls{};
+  int protect_calls{};
+  int page_size_calls{};
+  int file_size_calls{};
+  int open_shared_memory_calls{};
+};
+
+[[nodiscard]] void* map(void* context, int, std::size_t, std::uint64_t,
+                        MappingAccess) noexcept {
+  auto& state = *static_cast<MappingState*>(context);
+  ++state.map_calls;
+  return state.storage.data();
+}
+
+[[nodiscard]] int unmap(void* context, void*, std::size_t) noexcept {
+  ++static_cast<MappingState*>(context)->unmap_calls;
+  return 0;
+}
+
+[[nodiscard]] int mapping_noop(void* context, void*, std::size_t, MappingFlush) noexcept {
+  ++static_cast<MappingState*>(context)->flush_calls;
+  return 0;
+}
+
+[[nodiscard]] int mapping_protect(void* context, void*, std::size_t, MappingAccess) noexcept {
+  ++static_cast<MappingState*>(context)->protect_calls;
+  return 0;
+}
+
+[[nodiscard]] long mapping_page_size(void* context) noexcept {
+  ++static_cast<MappingState*>(context)->page_size_calls;
+  return static_cast<long>(mapping_size);
+}
+
+[[nodiscard]] int mapping_file_size(void* context, int, std::uint64_t* output) noexcept {
+  ++static_cast<MappingState*>(context)->file_size_calls;
+  *output = mapping_size;
+  return 0;
+}
+
+[[nodiscard]] int mapping_open_shared_memory(void* context, const char*, MappingAccess) noexcept {
+  ++static_cast<MappingState*>(context)->open_shared_memory_calls;
+  return 73;
+}
+
+[[nodiscard]] MappingOperations mapping_operations(MappingState& state) noexcept {
+  return MappingOperations{&state,
+                           map,
+                           unmap,
+                           mapping_noop,
+                           mapping_protect,
+                           mapping_page_size,
+                           mapping_file_size,
+                           mapping_open_shared_memory,
+                           reinterpret_cast<void*>(static_cast<std::uintptr_t>(1))};
+}
+
+[[nodiscard]] Result<laghu::core::FileHandle> disposable_file() noexcept {
+  const int descriptor = ::open("/dev/null", O_RDONLY);
+  if (descriptor < 0) {
+    return std::unexpected{laghu::core::Error::from_errno(errno, "test descriptor open failed")};
+  }
+  return laghu::core::FileHandle::adopt(descriptor);
 }
 
 [[nodiscard]] bool check_allocation_rollback() noexcept {
@@ -108,12 +189,119 @@ void release(void* context, MutableByteView) noexcept {
   return short_write && !interrupted.has_value() && interrupted.error().native_code() == EINTR;
 }
 
+[[nodiscard]] bool check_descriptor_close_error() noexcept {
+  int descriptors[2]{};
+  if (::pipe(descriptors) != 0) {
+    return false;
+  }
+  laghu::test::FailurePlan plan;
+  const auto& native = laghu::core::internal::default_descriptor_operations();
+  laghu::test::FaultInjectedDescriptorOperations injected{&plan, &native};
+  if (!plan.fail_syscall_on(laghu::test::FailurePoint::descriptor_close, 1, EAGAIN)) {
+    static_cast<void>(::close(descriptors[0]));
+    static_cast<void>(::close(descriptors[1]));
+    return false;
+  }
+  auto handle = HandleTestAccess::adopt_file(descriptors[0], injected.operations());
+  const auto close_result = handle.close();
+  const bool closed_once = !close_result.has_value() &&
+                           close_result.error().domain() == ErrorDomain::posix &&
+                           close_result.error().code() == ErrorCode::io &&
+                           close_result.error().retryability() == Retryability::may_retry &&
+                           close_result.error().native_code() == EAGAIN && !handle.is_valid();
+  const int cleanup_read = ::close(descriptors[0]);
+  const int cleanup_write = ::close(descriptors[1]);
+  return closed_once && cleanup_read == 0 && cleanup_write == 0;
+}
+
+[[nodiscard]] bool check_mapping_failures_preserve_state() noexcept {
+  MappingState state{};
+  const MappingOperations native = mapping_operations(state);
+  laghu::test::FailurePlan map_plan;
+  if (!map_plan.fail_syscall_on(laghu::test::FailurePoint::mapping_map, 2, EIO)) {
+    return false;
+  }
+  laghu::test::FaultInjectedMappingOperations map_injected{&map_plan, &native};
+  const MappingOperations mapped_operations = map_injected.operations();
+
+  auto first_file = disposable_file();
+  if (!first_file.has_value()) {
+    return false;
+  }
+  auto first = MappedRegionTestAccess::map(std::move(*first_file), mapping_size,
+                                           MappingAccess::read_write, 0, mapped_operations);
+  if (!first.has_value() || first_file->is_valid() || state.page_size_calls != 1 ||
+      state.file_size_calls != 1) {
+    return false;
+  }
+  MappedRegion first_region{std::move(*first)};
+  if (!first_region.flush(0, mapping_size, MappingFlush::synchronous).has_value() ||
+      !first_region.protect(MappingAccess::read_only).has_value() ||
+      mapped_operations.open_shared_memory(mapped_operations.context, "/laghu-test",
+                                           MappingAccess::read_only) != 73 ||
+      state.flush_calls != 1 || state.protect_calls != 1 || state.page_size_calls != 2 ||
+      state.open_shared_memory_calls != 1) {
+    return false;
+  }
+  auto released = first_region.release();
+  if (!released.has_value() || !released->close().has_value() || state.map_calls != 1 ||
+      state.unmap_calls != 1) {
+    return false;
+  }
+
+  auto second_file = disposable_file();
+  if (!second_file.has_value()) {
+    return false;
+  }
+  const auto failed_map = MappedRegionTestAccess::map(std::move(*second_file), mapping_size,
+                                                       MappingAccess::read_write, 0,
+                                                       mapped_operations);
+  if (failed_map.has_value() || failed_map.error().native_code() != EIO ||
+      !second_file->is_valid() || state.map_calls != 1 || !second_file->close().has_value()) {
+    return false;
+  }
+
+  laghu::test::FailurePlan unmap_plan;
+  if (!unmap_plan.fail_syscall_on(laghu::test::FailurePoint::mapping_unmap, 1, EBUSY)) {
+    return false;
+  }
+  laghu::test::FaultInjectedMappingOperations unmap_injected{&unmap_plan, &native};
+  const MappingOperations unmapped_operations = unmap_injected.operations();
+  auto third_file = disposable_file();
+  if (!third_file.has_value()) {
+    return false;
+  }
+  auto third = MappedRegionTestAccess::map(std::move(*third_file), mapping_size,
+                                           MappingAccess::read_write, 0, unmapped_operations);
+  if (!third.has_value() || third_file->is_valid()) {
+    return false;
+  }
+  MappedRegion third_region{std::move(*third)};
+  const auto failed_unmap = third_region.release();
+  if (failed_unmap.has_value() || failed_unmap.error().native_code() != EBUSY ||
+      !third_region.is_mapped() || state.unmap_calls != 1) {
+    return false;
+  }
+  auto third_released = third_region.release();
+  laghu::test::FaultInjectedMappingOperations incomplete{&unmap_plan, nullptr};
+  const MappingOperations incomplete_operations = incomplete.operations();
+  errno = 0;
+  const bool incomplete_rejected = incomplete_operations.page_size(incomplete_operations.context) == -1 &&
+                                   errno == EINVAL;
+  return third_released.has_value() && third_released->close().has_value() &&
+         !third_region.is_mapped() && state.map_calls == 2 && state.unmap_calls == 2 &&
+         incomplete_rejected;
+}
+
 }  // namespace
 
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"fault_injection.allocation_rollback", check_allocation_rollback},
       laghu::test::TestCase{"fault_injection.short_io_and_eintr", check_short_io_and_eintr},
+      laghu::test::TestCase{"fault_injection.descriptor_close_error", check_descriptor_close_error},
+      laghu::test::TestCase{"fault_injection.mapping_failures_preserve_state",
+                            check_mapping_failures_preserve_state},
   };
   return laghu::test::run_tests(tests);
 }
