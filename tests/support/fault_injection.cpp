@@ -152,6 +152,36 @@ struct MappingState final {
          readable->data()[0] == std::byte{0x2a} && *budget.charged(*worker) == 4;
 }
 
+[[nodiscard]] bool check_incomplete_block_source_rejected() noexcept {
+  const auto worker = WorkerId::from_uint64(8);
+  if (!worker.has_value()) {
+    return false;
+  }
+  FixedBlockSource source{};
+  laghu::test::FailurePlan plan;
+  MemoryBudget budget{*worker, 32};
+
+  laghu::test::FaultInjectedBufferSource missing_acquire{&plan, &source, nullptr, release};
+  const auto acquire_source = missing_acquire.block_source();
+  BoundedBuffer acquire_buffer{*worker, budget, acquire_source, 4, 16};
+  const auto acquire_result = acquire_buffer.reserve(*worker, 4);
+  if (acquire_source.acquire != nullptr || acquire_source.release == nullptr ||
+      acquire_result.has_value() || acquire_result.error().code() != ErrorCode::invalid_input ||
+      source.acquire_calls != 0 || source.release_calls != 0 || acquire_buffer.capacity() != 0 ||
+      *budget.charged(*worker) != 0) {
+    return false;
+  }
+
+  laghu::test::FaultInjectedBufferSource missing_release{&plan, &source, acquire, nullptr};
+  const auto release_source = missing_release.block_source();
+  BoundedBuffer release_buffer{*worker, budget, release_source, 4, 16};
+  const auto release_result = release_buffer.reserve(*worker, 4);
+  return release_source.acquire != nullptr && release_source.release == nullptr &&
+         !release_result.has_value() && release_result.error().code() == ErrorCode::invalid_input &&
+         source.acquire_calls == 0 && source.release_calls == 0 && release_buffer.capacity() == 0 &&
+         *budget.charged(*worker) == 0;
+}
+
 [[nodiscard]] bool check_short_io_and_eintr() noexcept {
   int pipe_descriptors[2]{};
   if (::pipe(pipe_descriptors) != 0) {
@@ -160,6 +190,7 @@ struct MappingState final {
   laghu::test::FailurePlan plan;
   const auto& native = laghu::os::internal::default_io_operations();
   laghu::test::FaultInjectedIoOperations injected{&plan, &native};
+  const auto operations = injected.operations();
   constexpr std::array input{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
   const auto view = ByteView::from(std::span<const std::byte>{input});
   if (!view.has_value() || !plan.short_io_on(laghu::test::FailurePoint::os_write, 1, 2)) {
@@ -167,12 +198,32 @@ struct MappingState final {
     static_cast<void>(::close(pipe_descriptors[1]));
     return false;
   }
-  const auto partial = laghu::os::internal::write_once(pipe_descriptors[1], *view,
-                                                        injected.operations());
+  const auto partial = laghu::os::internal::write_once(pipe_descriptors[1], *view, operations);
+  if (!partial.has_value() || *partial != 2) {
+    static_cast<void>(::close(pipe_descriptors[0]));
+    static_cast<void>(::close(pipe_descriptors[1]));
+    return false;
+  }
   std::array<std::byte, 2> received{};
   const ssize_t read_count = ::read(pipe_descriptors[0], received.data(), received.size());
-  const bool short_write = partial.has_value() && *partial == 2 && read_count == 2 &&
-                           received[0] == input[0] && received[1] == input[1];
+  const bool short_write = read_count == 2 && received[0] == input[0] && received[1] == input[1];
+  const ssize_t source_write =
+      short_write ? ::write(pipe_descriptors[1], input.data(), input.size()) : -1;
+  if (source_write != static_cast<ssize_t>(input.size()) ||
+      !plan.short_io_on(laghu::test::FailurePoint::os_read, 1, 2)) {
+    static_cast<void>(::close(pipe_descriptors[0]));
+    static_cast<void>(::close(pipe_descriptors[1]));
+    return false;
+  }
+  std::array short_output{std::byte{0xfe}, std::byte{0xfe}, std::byte{0xfe}};
+  const auto short_output_view = MutableByteView::from(std::span<std::byte>{short_output});
+  const auto short_read = short_output_view.has_value()
+                              ? laghu::os::internal::read_once(pipe_descriptors[0],
+                                                                *short_output_view, operations)
+                              : Result<std::size_t>{std::unexpected{short_output_view.error()}};
+  const bool short_read_correct = short_read.has_value() && *short_read == 2 &&
+                                  short_output[0] == input[0] && short_output[1] == input[1] &&
+                                  short_output[2] == std::byte{0xfe};
   if (!plan.fail_syscall_on(laghu::test::FailurePoint::os_read, 1, EINTR)) {
     static_cast<void>(::close(pipe_descriptors[0]));
     static_cast<void>(::close(pipe_descriptors[1]));
@@ -182,11 +233,12 @@ struct MappingState final {
   const auto output_view = MutableByteView::from(std::span<std::byte>{output});
   const auto interrupted = output_view.has_value()
                                ? laghu::os::internal::read_once(pipe_descriptors[0], *output_view,
-                                                                 injected.operations())
+                                                                 operations)
                                : Result<std::size_t>{std::unexpected{output_view.error()}};
   static_cast<void>(::close(pipe_descriptors[0]));
   static_cast<void>(::close(pipe_descriptors[1]));
-  return short_write && !interrupted.has_value() && interrupted.error().native_code() == EINTR;
+  return short_write && short_read_correct && !interrupted.has_value() &&
+         interrupted.error().native_code() == EINTR;
 }
 
 [[nodiscard]] bool check_descriptor_close_error() noexcept {
@@ -202,7 +254,8 @@ struct MappingState final {
     static_cast<void>(::close(descriptors[1]));
     return false;
   }
-  auto handle = HandleTestAccess::adopt_file(descriptors[0], injected.operations());
+  const auto operations = injected.operations();
+  auto handle = HandleTestAccess::adopt_file(descriptors[0], operations);
   const auto close_result = handle.close();
   const bool closed_once = !close_result.has_value() &&
                            close_result.error().domain() == ErrorDomain::posix &&
@@ -298,6 +351,8 @@ struct MappingState final {
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"fault_injection.allocation_rollback", check_allocation_rollback},
+      laghu::test::TestCase{"fault_injection.incomplete_block_source",
+                            check_incomplete_block_source_rejected},
       laghu::test::TestCase{"fault_injection.short_io_and_eintr", check_short_io_and_eintr},
       laghu::test::TestCase{"fault_injection.descriptor_close_error", check_descriptor_close_error},
       laghu::test::TestCase{"fault_injection.mapping_failures_preserve_state",

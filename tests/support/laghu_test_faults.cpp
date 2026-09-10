@@ -233,7 +233,8 @@ FailureAction FailurePlan::next(FailurePoint point) noexcept {
 }
 
 laghu::core::BufferBlockSource FaultInjectedBufferSource::block_source() noexcept {
-  return laghu::core::BufferBlockSource{this, fault_acquire, fault_release};
+  return laghu::core::BufferBlockSource{this, acquire == nullptr ? nullptr : fault_acquire,
+                                        release == nullptr ? nullptr : fault_release};
 }
 
 laghu::os::internal::IoOperations FaultInjectedIoOperations::operations() noexcept {
