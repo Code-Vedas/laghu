@@ -9,11 +9,9 @@
 #include <limits>
 #include <type_traits>
 
-#include <laghu/core/contract.hpp>
+#include <laghu/core/clocks.hpp>
 
 namespace laghu::core {
-
-using MonotonicInstant = std::uint64_t;
 
 // Clocks are supplied by the owner.  Production code can inject its POSIX
 // monotonic clock and tests can inject a deterministic clock without a timer
@@ -40,6 +38,19 @@ class Deadline final {
     return Deadline{now + duration};
   }
 
+  [[nodiscard]] static Result<Deadline> after(const ClockOperations& operations,
+                                               MonotonicInstant duration) noexcept {
+    const auto now = read_monotonic_clock(operations);
+    if (!now.has_value()) {
+      return std::unexpected{now.error()};
+    }
+    if (duration > std::numeric_limits<MonotonicInstant>::max() - *now) {
+      return std::unexpected{Error{ErrorDomain::core, ErrorCode::overflow, 0,
+                                   "monotonic deadline overflows"}};
+    }
+    return Deadline{*now + duration};
+  }
+
   [[nodiscard]] static constexpr Deadline child(Deadline parent, Deadline requested) noexcept {
     return Deadline{parent.instant_ < requested.instant_ ? parent.instant_ : requested.instant_};
   }
@@ -51,9 +62,28 @@ class Deadline final {
     return clock.now() >= instant_;
   }
 
+  [[nodiscard]] Result<bool> expired(const ClockOperations& operations) const noexcept {
+    const auto now = read_monotonic_clock(operations);
+    if (!now.has_value()) {
+      return std::unexpected{now.error()};
+    }
+    return *now >= instant_;
+  }
+
   template <MonotonicClock Clock>
   [[nodiscard]] constexpr Result<void> require_not_expired(const Clock& clock) const noexcept {
     if (expired(clock)) {
+      return std::unexpected{deadline_error()};
+    }
+    return {};
+  }
+
+  [[nodiscard]] Result<void> require_not_expired(const ClockOperations& operations) const noexcept {
+    const auto is_expired = expired(operations);
+    if (!is_expired.has_value()) {
+      return std::unexpected{is_expired.error()};
+    }
+    if (*is_expired) {
       return std::unexpected{deadline_error()};
     }
     return {};
