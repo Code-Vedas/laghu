@@ -39,6 +39,7 @@ laghu_configure_capability_header()
 laghu_configure_build_identity()
 
 add_library(laghu_core STATIC
+  src/core/clocks.cpp
   src/core/contract.cpp
   src/core/digest.cpp
   src/core/fingerprints.cpp
@@ -101,6 +102,24 @@ laghu_configure_api_boundaries()
 laghu_apply_first_party_contract(laghu_os)
 laghu_configure_api_consumer(laghu_os os)
 target_include_directories(laghu_os PRIVATE "${CMAKE_SOURCE_DIR}/src/os/private")
+
+# Deterministic time and entropy are test-only controls. They are kept in a
+# separate non-installed target so production entropy remains OS-provided.
+add_library(laghu_test_time_entropy STATIC tests/support/laghu_test_time_entropy.cpp)
+laghu_apply_first_party_contract(laghu_test_time_entropy)
+target_include_directories(laghu_test_time_entropy PUBLIC
+  "${CMAKE_SOURCE_DIR}/tests/support"
+  "${CMAKE_SOURCE_DIR}/src/core/contract"
+  "${CMAKE_SOURCE_DIR}/src/adapters/private")
+
+add_executable(laghu_test_time_entropy_test tests/support/time_entropy.cpp)
+laghu_apply_first_party_contract(laghu_test_time_entropy_test)
+laghu_configure_api_consumer(laghu_test_time_entropy_test core)
+target_include_directories(laghu_test_time_entropy_test PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/core/private")
+target_link_libraries(laghu_test_time_entropy_test PRIVATE
+  laghu_test_support laghu_test_time_entropy laghu_core)
+laghu_add_native_test(laghu.test_support.time_entropy laghu_test_time_entropy_test)
 
 list(FIND LAGHU_EFFECTIVE_FEATURES tls laghu_tls_feature_index)
 if(NOT laghu_tls_feature_index EQUAL -1)
@@ -227,6 +246,15 @@ if(TARGET laghu_crypto)
   target_link_libraries(laghu_crypto_provider_test PRIVATE laghu_crypto)
   target_link_libraries(laghu_crypto_provider_test PRIVATE laghu_test_support)
   laghu_add_native_test(laghu.crypto.provider laghu_crypto_provider_test)
+
+  add_executable(laghu_crypto_entropy_seam_test tests/adapters/entropy_seam.cpp)
+  laghu_apply_first_party_contract(laghu_crypto_entropy_seam_test)
+  laghu_configure_api_consumer(laghu_crypto_entropy_seam_test adapters)
+  target_include_directories(laghu_crypto_entropy_seam_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  target_link_libraries(laghu_crypto_entropy_seam_test PRIVATE
+    laghu_crypto laghu_test_support laghu_test_time_entropy)
+  laghu_add_native_test(laghu.crypto.entropy_seam laghu_crypto_entropy_seam_test)
 endif()
 
 if(LAGHU_ENABLE_TSAN)
@@ -289,11 +317,13 @@ set(laghu_verify_targets
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
-  laghu_os_iovec_translation_test laghu_test_support laghu_test_faults laghu_test_support_fixtures_test
+  laghu_os_iovec_translation_test laghu_test_support laghu_test_faults laghu_test_time_entropy
+  laghu_test_time_entropy_test laghu_test_support_fixtures_test
   laghu_test_support_runner_contract_test laghu_test_fault_injection_test laghu
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
 if(TARGET laghu_crypto_provider_test)
-  list(APPEND laghu_verify_targets laghu_crypto laghu_crypto_provider_test)
+  list(APPEND laghu_verify_targets
+    laghu_crypto laghu_crypto_provider_test laghu_crypto_entropy_seam_test)
 endif()
 
 add_custom_target(laghu_verify_toolchain

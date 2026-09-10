@@ -35,11 +35,14 @@ function(laghu_build_identity_input_hashes output)
     cmake/LaghuToolchain.cmake
     src/cli/main.cpp
     src/cli/private/laghu/cli/internal/build_manifest.hpp
+    src/core/clocks.cpp
     src/core/contract.cpp
     src/core/digest.cpp
     src/core/fingerprints.cpp
     src/core/contract/laghu/core/contract.hpp
+    src/core/contract/laghu/core/clocks.hpp
     src/core/contract/laghu/core/crypto.hpp
+    src/core/contract/laghu/core/deadlines_cancellation.hpp
     src/core/contract/laghu/core/digest.hpp
     src/core/contract/laghu/core/bounded_arena.hpp
     src/core/contract/laghu/core/binary_envelope.hpp
@@ -49,6 +52,7 @@ function(laghu_build_identity_input_hashes output)
     src/core/contract/laghu/core/mapped_regions.hpp
     src/core/handles.cpp
     src/core/mapped_regions.cpp
+    src/core/private/laghu/core/internal/clock_operations.hpp
     src/core/private/laghu/core/internal/compiler_extensions.hpp
     src/core/private/laghu/core/internal/descriptor_operations.hpp
     src/core/private/laghu/core/internal/fingerprints.hpp

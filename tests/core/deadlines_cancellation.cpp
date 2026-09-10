@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
@@ -58,6 +59,30 @@ class DeterministicClock final {
 };
 
 [[nodiscard]] constexpr bool check(bool condition) noexcept { return condition; }
+
+class OperationClock final {
+ public:
+  constexpr explicit OperationClock(laghu::core::MonotonicInstant now) noexcept : now_(now) {}
+
+  [[nodiscard]] constexpr laghu::core::ClockOperations operations() noexcept {
+    return laghu::core::ClockOperations{this, read};
+  }
+  constexpr void advance_to(laghu::core::MonotonicInstant now) noexcept { now_ = now; }
+
+ private:
+  [[nodiscard]] static laghu::core::Result<laghu::core::MonotonicInstant> read(
+      void* context) noexcept {
+    return static_cast<OperationClock*>(context)->now_;
+  }
+
+  laghu::core::MonotonicInstant now_;
+};
+
+[[nodiscard]] laghu::core::Result<laghu::core::MonotonicInstant> failed_clock_read(void*) noexcept {
+  return std::unexpected{laghu::core::Error{laghu::core::ErrorDomain::posix,
+                                             laghu::core::ErrorCode::io, EIO,
+                                             "injected clock read failure"}};
+}
 
 [[nodiscard]] bool check_deadline_boundaries() noexcept {
   DeterministicClock clock{100};
@@ -140,6 +165,73 @@ class DeterministicClock final {
                expired.cause == laghu::core::CancellationCause::deadline_expired &&
                !source.token().require_active().has_value() &&
                source.token().require_active().error().code() == laghu::core::ErrorCode::deadline);
+}
+
+[[nodiscard]] bool check_clock_operation_deadline_cancellation() noexcept {
+  OperationClock clock{49};
+  const auto operations = clock.operations();
+  const auto deadline = laghu::core::Deadline::at(50);
+
+  laghu::core::CancellationState active_state;
+  laghu::core::CancellationSource active_source{active_state};
+  const auto active = active_source.token().require_active(deadline, operations);
+  const auto not_expired = active_source.cancel_if_expired(deadline, operations);
+  if (!check(active.has_value() && not_expired.has_value() &&
+             not_expired->terminal == laghu::core::CancellationTerminal::pending &&
+             active_source.token().outcome().terminal == laghu::core::CancellationTerminal::pending)) {
+    return false;
+  }
+
+  clock.advance_to(50);
+  const auto expired = active_source.cancel_if_expired(deadline, operations);
+  if (!check(expired.has_value() && expired->is_cancelled() &&
+             expired->cause == laghu::core::CancellationCause::deadline_expired &&
+             !active_source.token().require_active(deadline, operations).has_value() &&
+             active_source.token().outcome().is_cancelled())) {
+    return false;
+  }
+
+  const laghu::core::ClockOperations failed_operations{nullptr, failed_clock_read, nullptr};
+  laghu::core::CancellationState failed_state;
+  laghu::core::CancellationSource failed_source{failed_state};
+  const auto token_failure = failed_source.token().require_active(deadline, failed_operations);
+  const auto source_failure = failed_source.cancel_if_expired(deadline, failed_operations);
+  if (!check(!token_failure.has_value() && token_failure.error().code() == laghu::core::ErrorCode::io &&
+             !source_failure.has_value() && source_failure.error().code() == laghu::core::ErrorCode::io &&
+             failed_source.token().outcome().terminal == laghu::core::CancellationTerminal::pending)) {
+    return false;
+  }
+
+  laghu::core::CancellationState completed_state;
+  laghu::core::CancellationSource completed_source{completed_state};
+  const auto completion = completed_source.complete();
+  const auto completed_token = completed_source.token().require_active(deadline, failed_operations);
+  const auto already_completed = completed_source.cancel_if_expired(deadline, failed_operations);
+  return check(completion.terminal == laghu::core::CancellationTerminal::completed &&
+               !completed_token.has_value() &&
+               completed_token.error().code() == laghu::core::ErrorCode::invalid_state &&
+               already_completed.has_value() &&
+               already_completed->terminal == laghu::core::CancellationTerminal::completed &&
+               already_completed->cause == laghu::core::CancellationCause::none);
+}
+
+[[nodiscard]] bool check_system_clock_contract() noexcept {
+  const auto& operations = laghu::core::system_clock_operations();
+  const auto monotonic = laghu::core::read_monotonic_clock(operations);
+  const auto realtime = laghu::core::read_realtime_clock(operations);
+  if (!check(monotonic.has_value() && realtime.has_value())) {
+    return false;
+  }
+
+  laghu::core::CancellationState state;
+  laghu::core::CancellationSource source{state};
+  const auto active = source.token().require_active(
+      laghu::core::Deadline::at(std::numeric_limits<laghu::core::MonotonicInstant>::max()),
+      operations);
+  const auto expired = source.cancel_if_expired(laghu::core::Deadline::at(*monotonic), operations);
+  return check(active.has_value() && expired.has_value() && expired->is_cancelled() &&
+               expired->cause == laghu::core::CancellationCause::deadline_expired &&
+               source.token().outcome().is_cancelled());
 }
 
 [[nodiscard]] bool check_parent_observation_and_bounds() noexcept {
@@ -249,6 +341,12 @@ int main() {
   }
   if (!check(check_deadline_cancellation())) {
     return 4;
+  }
+  if (!check(check_clock_operation_deadline_cancellation())) {
+    return 8;
+  }
+  if (!check(check_system_clock_contract())) {
+    return 9;
   }
   if (!check(check_parent_observation_and_bounds())) {
     return 5;
