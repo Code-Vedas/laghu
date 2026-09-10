@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/Code-Vedas/laghu/security/advisories/new
+    about: Follow SECURITY.md and use GitHub Private Vulnerability Reporting for undisclosed vulnerabilities.
