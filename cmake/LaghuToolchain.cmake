@@ -284,6 +284,18 @@ endfunction()
 
 function(laghu_add_validation_tests)
   set(expect_compile "${CMAKE_SOURCE_DIR}/cmake/ExpectCompile.cmake")
+  add_test(NAME laghu.test.wrapper.usage
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/scripts/test"
+      "-DTEST_ROOT=${CMAKE_BINARY_DIR}/tests/test-wrapper"
+      "-DTEST_BUILD=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectTestWrapper.cmake")
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME laghu.test.wrapper.selective
+      COMMAND "${CMAKE_SOURCE_DIR}/scripts/test"
+        --build "${CMAKE_BINARY_DIR}"
+        --filter "^laghu.test_support.fixtures$")
+  endif()
   add_test(NAME laghu.build.cross_test_registration
     COMMAND "${CMAKE_COMMAND}"
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"

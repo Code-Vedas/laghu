@@ -7,6 +7,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include "laghu_test_support.hpp"
+
 #include <laghu/adapters/crypto_provider.hpp>
 #include <laghu/adapters/internal/entropy.hpp>
 #include <laghu/core/digest.hpp>
@@ -260,31 +262,38 @@ static_assert(std::is_trivially_copyable_v<laghu::core::CryptoProvider>);
 
 }  // namespace
 
-int main() {
+[[nodiscard]] bool check_crypto_provider() noexcept {
   const auto provider = laghu::adapters::crypto_provider();
   if (!provider.valid()) {
-    return 1;
+    return false;
   }
   if (!check_sha256(provider)) {
-    return 2;
+    return false;
   }
   if (!check_hmac_sha256(provider)) {
-    return 3;
+    return false;
   }
   if (!check_digest_primitives(provider)) {
-    return 8;
+    return false;
   }
   if (!check_ed25519(provider)) {
-    return 4;
+    return false;
   }
   if (!check_spki_pin(provider)) {
-    return 5;
+    return false;
   }
   if (!check_constant_time_equality(provider)) {
-    return 6;
+    return false;
   }
   if (!check_entropy(provider)) {
-    return 7;
+    return false;
   }
-  return 0;
+  return true;
+}
+
+int main() {
+  constexpr std::array tests{
+      laghu::test::TestCase{"adapters.crypto_provider.contract", check_crypto_provider},
+  };
+  return laghu::test::run_tests(tests);
 }
