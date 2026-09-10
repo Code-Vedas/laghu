@@ -22,7 +22,7 @@ jobs:
             cxxflags: -stdlib=libc++
     name: ${{ matrix.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install compiler and standard library
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
@@ -87,7 +87,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
           ctest --test-dir "$RUNNER_TEMP/laghu-reproducible" \
             --output-on-failure -R '^laghu.build.reproducible_staging$'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: toolchain-capabilities-${{ matrix.name }}
           path: |
@@ -98,7 +98,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install canonical generator
         run: brew install ninja openssl@3
       - name: Verify Apple Clang toolchain contract
@@ -116,7 +116,7 @@ jobs:
             --target laghu_crypto_provider_test
           ctest --test-dir "$RUNNER_TEMP/laghu-crypto" --output-on-failure \
             -R '^laghu.crypto.provider$'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: toolchain-capabilities-macos-appleclang
           path: |
@@ -127,7 +127,7 @@ jobs:
   freebsd:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1
         with:
           release: '15.1'
@@ -145,7 +145,7 @@ jobs:
   linux-aarch64-cross:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install ARM64 GCC cross toolchain
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
@@ -168,7 +168,7 @@ jobs:
   linux-clang-tsan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux Clang ThreadSanitizer toolchain
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
