@@ -5,9 +5,10 @@
 
 namespace laghu::core::internal {
 
-using DescriptorCloseFunction = int (*)(int) noexcept;
+using DescriptorCloseFunction = int (*)(void* context, int) noexcept;
 
 struct DescriptorOperations final {
+  void* context;
   DescriptorCloseFunction close;
 };
 

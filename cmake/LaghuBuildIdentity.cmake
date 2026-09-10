@@ -53,6 +53,8 @@ function(laghu_build_identity_input_hashes output)
     src/core/private/laghu/core/internal/descriptor_operations.hpp
     src/core/private/laghu/core/internal/fingerprints.hpp
     src/core/private/laghu/core/internal/mapping_operations.hpp
+    src/os/io_operations.cpp
+    src/os/private/laghu/os/internal/io_operations.hpp
     tests/warnings/suppressions.tsv)
   list(FIND LAGHU_EFFECTIVE_FEATURES tls tls_feature_index)
   if(NOT tls_feature_index EQUAL -1)
