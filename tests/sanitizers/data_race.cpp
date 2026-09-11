@@ -13,7 +13,14 @@ void increment() noexcept {
 
 }  // namespace
 
+extern "C" {
+volatile int laghu_sanitizer_fixture_data_race_marker = 0;
+}
+
 int main() {
+  if (laghu_sanitizer_fixture_data_race_marker != 0) {
+    return 1;
+  }
   std::thread first{increment};
   std::thread second{increment};
   first.join();

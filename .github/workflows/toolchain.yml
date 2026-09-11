@@ -170,6 +170,20 @@ jobs:
         run: |
           cmake --preset linux-clang-asan-ubsan
           cmake --build build/linux-clang-asan-ubsan --target laghu_verify_toolchain
+      - name: Run TLS crypto adapter under ASan and UBSan
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-asan-crypto" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
+            -DLAGHU_SANITIZER_PROFILE=ASAN_UBSAN \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
+          cmake --build "$RUNNER_TEMP/laghu-asan-crypto" \
+            --target laghu_crypto_provider_test laghu_crypto_entropy_seam_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-asan-crypto" --output-on-failure \
+            -R '^laghu.crypto.provider$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-asan-crypto" --output-on-failure \
+            -R '^laghu.crypto.entropy_seam$'
   linux-clang-tsan:
     runs-on: ubuntu-24.04
     steps:

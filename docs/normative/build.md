@@ -35,6 +35,6 @@ binary directory only and never mutates source files.
 
 ## Presets and ARM64 cross-builds
 
-`CMakePresets.json` provides the unversioned `linux-gcc`, `linux-clang`, `macos-appleclang`, `freebsd-clang`, and `linux-aarch64-gcc` configure presets. Repository release metadata owns versioning; preset names do not repeat it.
+`CMakePresets.json` provides the unversioned `linux-gcc`, `linux-clang`, `linux-clang-asan-ubsan`, `linux-clang-tsan`, `macos-appleclang`, `freebsd-clang`, and `linux-aarch64-gcc` configure presets. Repository release metadata owns versioning; preset names do not repeat it.
 
 The ARM64 preset uses `cmake/toolchains/aarch64-linux-gnu.cmake` and the Ubuntu package `g++-14-aarch64-linux-gnu`, which provides `aarch64-linux-gnu-g++-14`, `aarch64-linux-gnu-ar`, and `aarch64-linux-gnu-ranlib`. Its `try_compile` checks create static libraries, and no cross-built executable is run.
