@@ -3,8 +3,6 @@ cmake_minimum_required(VERSION 3.28)
 
 project(laghu LANGUAGES CXX)
 
-option(LAGHU_ENABLE_TSAN "Build the Linux Clang ThreadSanitizer deadline race target" OFF)
-
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR
     "Laghu requires an out-of-tree build. Configure with -S <source> -B <build>.")
@@ -26,12 +24,14 @@ include(cmake/LaghuDependencyDag.cmake)
 include(cmake/LaghuApiBoundaries.cmake)
 include(cmake/LaghuDependencies.cmake)
 include(cmake/LaghuFeatures.cmake)
+include(cmake/LaghuSanitizers.cmake)
 include(cmake/LaghuBuildVariants.cmake)
 include(cmake/LaghuBuildIdentity.cmake)
 include(cmake/LaghuTestRegistration.cmake)
 include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
+laghu_configure_sanitizer_profile()
 laghu_configure_build_variant()
 laghu_configure_dependency_registry()
 laghu_configure_dependency_modes()
@@ -257,19 +257,7 @@ if(TARGET laghu_crypto)
   laghu_add_native_test(laghu.crypto.entropy_seam laghu_crypto_entropy_seam_test)
 endif()
 
-if(LAGHU_ENABLE_TSAN)
-  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "Laghu TSan target requires Linux Clang")
-  endif()
-  add_executable(laghu_core_deadlines_cancellation_tsan_test tests/core/deadlines_cancellation.cpp)
-  laghu_apply_first_party_contract(laghu_core_deadlines_cancellation_tsan_test)
-  laghu_configure_api_consumer(laghu_core_deadlines_cancellation_tsan_test core)
-  target_compile_options(laghu_core_deadlines_cancellation_tsan_test PRIVATE -fsanitize=thread)
-  target_link_options(laghu_core_deadlines_cancellation_tsan_test PRIVATE -fsanitize=thread)
-  target_link_libraries(laghu_core_deadlines_cancellation_tsan_test PRIVATE laghu_core Threads::Threads)
-  laghu_add_native_test(laghu.core.deadlines_cancellation.tsan
-    laghu_core_deadlines_cancellation_tsan_test)
-endif()
+laghu_add_sanitizer_fixture_targets()
 
 add_executable(laghu_os_iovec_translation_test tests/os/iovec_translation.cpp)
 laghu_apply_first_party_contract(laghu_os_iovec_translation_test)
@@ -325,9 +313,17 @@ if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets
     laghu_crypto laghu_crypto_provider_test laghu_crypto_entropy_seam_test)
 endif()
+foreach(target IN ITEMS laghu_sanitizer_heap_misuse_fixture
+    laghu_sanitizer_undefined_behavior_fixture)
+  if(TARGET "${target}")
+    list(APPEND laghu_verify_targets "${target}")
+  endif()
+endforeach()
 
 add_custom_target(laghu_verify_toolchain
   COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
   DEPENDS ${laghu_verify_targets}
   USES_TERMINAL
   COMMENT "Running Laghu's configured toolchain contract")
+
+laghu_add_sanitizer_test_target()

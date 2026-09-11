@@ -26,6 +26,22 @@
       }
     },
     {
+      "name": "linux-clang-asan-ubsan",
+      "displayName": "Linux Clang ASan and UBSan",
+      "inherits": "linux-clang",
+      "cacheVariables": {
+        "LAGHU_SANITIZER_PROFILE": "ASAN_UBSAN"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux Clang ThreadSanitizer",
+      "inherits": "linux-clang",
+      "cacheVariables": {
+        "LAGHU_SANITIZER_PROFILE": "TSAN"
+      }
+    },
+    {
       "name": "macos-appleclang",
       "displayName": "macOS Apple Clang",
       "generator": "Ninja",

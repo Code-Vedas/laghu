@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+address	linux	src/core/./contract.cpp	current-directory path segment is forbidden

@@ -16,7 +16,7 @@ cmake --build build/linux-gcc
 ctest --test-dir build/linux-gcc --output-on-failure
 ```
 
-Other native presets are `linux-clang`, `macos-appleclang`, and `freebsd-clang`. The `linux-aarch64-gcc` preset is compile-only and does not execute target binaries.
+Other native presets are `linux-clang`, `macos-appleclang`, and `freebsd-clang`. Linux Clang sanitizer presets are `linux-clang-asan-ubsan` and `linux-clang-tsan`. The `linux-aarch64-gcc` preset is compile-only and does not execute target binaries.
 
 Stage an installation with the standard CMake interface:
 

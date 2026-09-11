@@ -273,7 +273,12 @@ function(laghu_apply_first_party_contract target)
   set_property(TARGET "${target}" PROPERTY CXX_EXTENSIONS OFF)
   set_property(TARGET "${target}" PROPERTY CXX_VISIBILITY_PRESET hidden)
   set_property(TARGET "${target}" PROPERTY VISIBILITY_INLINES_HIDDEN YES)
-  target_compile_options("${target}" PRIVATE -pedantic-errors -fno-exceptions -fno-rtti ${LAGHU_EFFECTIVE_WARNING_FLAGS})
+  target_compile_options("${target}" PRIVATE
+    -pedantic-errors -fno-exceptions -fno-rtti ${LAGHU_EFFECTIVE_WARNING_FLAGS}
+    ${LAGHU_SANITIZER_COMPILE_OPTIONS})
+  if(NOT LAGHU_SANITIZER_LINK_OPTIONS STREQUAL "")
+    target_link_options("${target}" PRIVATE ${LAGHU_SANITIZER_LINK_OPTIONS})
+  endif()
   get_target_property(effective_options "${target}" COMPILE_OPTIONS)
   list(FIND effective_options -fexceptions enables_exceptions)
   list(FIND effective_options -frtti enables_rtti)
@@ -320,6 +325,58 @@ function(laghu_add_validation_tests)
   foreach(fixture IN ITEMS broad-source invalid-warning missing-reason)
     add_test(NAME "laghu.warning.suppression_negative.${fixture}" COMMAND "${CMAKE_COMMAND}" -DMANIFEST=${CMAKE_SOURCE_DIR}/tests/warnings/negative/${fixture}.tsv -P "${CMAKE_SOURCE_DIR}/cmake/ExpectWarningSuppression.cmake")
   endforeach()
+  foreach(fixture IN ITEMS global third-party invalid-sanitizer missing-reason whitespace-reason traversal current-directory nonexistent-source)
+    if(fixture STREQUAL "global" OR fixture STREQUAL "third-party")
+      set(expected_sanitizer_diagnostic global_or_third_party_suppression_is_forbidden)
+    elseif(fixture STREQUAL "invalid-sanitizer")
+      set(expected_sanitizer_diagnostic expected=address-undefined-or-thread)
+    elseif(fixture STREQUAL "traversal" OR fixture STREQUAL "current-directory")
+      set(expected_sanitizer_diagnostic source_path_segments_forbidden)
+    elseif(fixture STREQUAL "nonexistent-source")
+      set(expected_sanitizer_diagnostic source_file_required)
+    else()
+      set(expected_sanitizer_diagnostic technical_reason_required)
+    endif()
+    add_test(NAME "laghu.sanitizer.suppression_negative.${fixture}" COMMAND "${CMAKE_COMMAND}"
+      "-DMANIFEST=${CMAKE_SOURCE_DIR}/tests/sanitizers/negative/${fixture}.tsv"
+      "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}"
+      "-DEXPECTED_DIAGNOSTIC=${expected_sanitizer_diagnostic}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSanitizerSuppression.cmake")
+  endforeach()
+  add_test(NAME laghu.sanitizer.reconfigure
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSanitizerReconfigure.cmake")
+  if(TARGET laghu_sanitizer_heap_misuse_fixture)
+    set(laghu_sanitizer_marker_target laghu_sanitizer_heap_misuse_fixture)
+    set(laghu_sanitizer_marker_symbol laghu_sanitizer_fixture_heap_misuse_marker)
+  elseif(TARGET laghu_sanitizer_data_race_fixture)
+    set(laghu_sanitizer_marker_target laghu_sanitizer_data_race_fixture)
+    set(laghu_sanitizer_marker_symbol laghu_sanitizer_fixture_data_race_marker)
+  endif()
+  if(DEFINED laghu_sanitizer_marker_target)
+    set(laghu_sanitizer_release_exclusion_arguments
+      "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+      "-DARCHIVE=$<TARGET_FILE:laghu_core>"
+      "-DEXECUTABLE=$<TARGET_FILE:laghu>"
+      "-DNM=${CMAKE_NM}"
+      "-DMARKER_ARTIFACT=$<TARGET_FILE:${laghu_sanitizer_marker_target}>"
+      "-DMARKER=${laghu_sanitizer_marker_symbol}"
+      "-DMARKER_PREFIX=laghu_sanitizer_fixture_"
+      "-DMARKER_TARGET=${laghu_sanitizer_marker_target}")
+    add_test(NAME laghu.sanitizer.release_exclusion
+      COMMAND "${CMAKE_COMMAND}" ${laghu_sanitizer_release_exclusion_arguments}
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSanitizerReleaseExclusion.cmake")
+    add_test(NAME laghu.sanitizer.release_exclusion_marker_rejected
+      COMMAND "${CMAKE_COMMAND}"
+        "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+        "-DMARKER_ARTIFACT=$<TARGET_FILE:${laghu_sanitizer_marker_target}>"
+        "-DMARKER=${laghu_sanitizer_marker_symbol}"
+        "-DMARKER_PREFIX=laghu_sanitizer_fixture_"
+        "-DMARKER_TARGET=${laghu_sanitizer_marker_target}"
+        "-DNM=${CMAKE_NM}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSanitizerMarkerRejection.cmake")
+  endif()
   foreach(mode IN ITEMS all_enabled baseline_unavailable)
     string(REPLACE "_" "-" golden_mode "${mode}")
     add_test(NAME "laghu.capabilities.golden.${mode}"

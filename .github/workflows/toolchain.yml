@@ -58,18 +58,6 @@ jobs:
             --target laghu_crypto_provider_test
           ctest --test-dir "$RUNNER_TEMP/laghu-clang-crypto" --output-on-failure \
             -R '^laghu.crypto.provider$'
-      - name: Verify Clang 19 crypto adapter under ASan and UBSan
-        if: matrix.name == 'clang-19-libc++'
-        run: |
-          cmake -S . -B "$RUNNER_TEMP/laghu-clang-crypto-sanitized" -G Ninja \
-            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
-            -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }} -fsanitize=address,undefined -fno-omit-frame-pointer" \
-            -DLAGHU_BUILD_PROFILE=CUSTOM \
-            -DLAGHU_FEATURES=tls
-          cmake --build "$RUNNER_TEMP/laghu-clang-crypto-sanitized" \
-            --target laghu_crypto_provider_test
-          ctest --test-dir "$RUNNER_TEMP/laghu-clang-crypto-sanitized" --output-on-failure \
-            -R '^laghu.crypto.provider$'
       - name: Verify LibreSSL crypto adapter
         if: matrix.name == 'gcc-14-libstdc++'
         run: |
@@ -168,6 +156,34 @@ jobs:
           aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_core.a
           test -f build/linux-aarch64-gcc/liblaghu_crypto.a
           aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_crypto.a
+  linux-clang-asan-ubsan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux Clang ASan and UBSan toolchain
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build clang-19 libc++-19-dev libc++abi-19-dev
+      - name: Run ordinary native suite under ASan and UBSan
+        run: |
+          cmake --preset linux-clang-asan-ubsan
+          cmake --build build/linux-clang-asan-ubsan --target laghu_verify_toolchain
+      - name: Run TLS crypto adapter under ASan and UBSan
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-asan-crypto" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
+            -DLAGHU_SANITIZER_PROFILE=ASAN_UBSAN \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
+          cmake --build "$RUNNER_TEMP/laghu-asan-crypto" \
+            --target laghu_crypto_provider_test laghu_crypto_entropy_seam_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-asan-crypto" --output-on-failure \
+            -R '^laghu.crypto.provider$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-asan-crypto" --output-on-failure \
+            -R '^laghu.crypto.entropy_seam$'
   linux-clang-tsan:
     runs-on: ubuntu-24.04
     steps:
@@ -177,13 +193,8 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
             /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
-          sudo apt-get install --yes ninja-build clang-19
-      - name: Run cancellation races under ThreadSanitizer
+          sudo apt-get install --yes ninja-build clang-19 libc++-19-dev libc++abi-19-dev
+      - name: Run concurrency targets under ThreadSanitizer
         run: |
-          cmake -S . -B "$RUNNER_TEMP/laghu-tsan" -G Ninja \
-            -DCMAKE_CXX_COMPILER=clang++-19 \
-            -DLAGHU_ENABLE_TSAN=ON
-          cmake --build "$RUNNER_TEMP/laghu-tsan" \
-            --target laghu_core_deadlines_cancellation_tsan_test
-          ctest --test-dir "$RUNNER_TEMP/laghu-tsan" --output-on-failure \
-            -R '^laghu.core.deadlines_cancellation.tsan$'
+          cmake --preset linux-clang-tsan
+          cmake --build build/linux-clang-tsan --target laghu_sanitizer_tsan_tests
