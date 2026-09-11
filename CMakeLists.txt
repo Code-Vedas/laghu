@@ -24,6 +24,7 @@ include(cmake/LaghuDependencyDag.cmake)
 include(cmake/LaghuApiBoundaries.cmake)
 include(cmake/LaghuDependencies.cmake)
 include(cmake/LaghuFeatures.cmake)
+include(cmake/LaghuFuzzing.cmake)
 include(cmake/LaghuSanitizers.cmake)
 include(cmake/LaghuBuildVariants.cmake)
 include(cmake/LaghuBuildIdentity.cmake)
@@ -32,6 +33,7 @@ include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
 laghu_configure_sanitizer_profile()
+laghu_configure_fuzzing()
 laghu_configure_build_variant()
 laghu_configure_dependency_registry()
 laghu_configure_dependency_modes()
@@ -230,6 +232,17 @@ laghu_configure_api_consumer(laghu_core_binary_envelope_test core)
 target_link_libraries(laghu_core_binary_envelope_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.binary_envelope laghu_core_binary_envelope_test)
 
+laghu_add_fuzz_target(binary-envelope fuzz/binary_envelope.cpp
+  SUBSYSTEM core
+  LIBRARIES laghu_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # libFuzzer supplies its input only as a pointer and byte count.
+  set_source_files_properties(fuzz/binary_envelope.cpp PROPERTIES
+    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
+laghu_write_fuzz_target_registry()
+laghu_add_fuzz_validation_tests()
+
 add_executable(laghu_core_digest_primitives_test tests/core/digest_primitives.cpp)
 laghu_apply_first_party_contract(laghu_core_digest_primitives_test)
 laghu_configure_api_consumer(laghu_core_digest_primitives_test core)
@@ -313,6 +326,8 @@ if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets
     laghu_crypto laghu_crypto_provider_test laghu_crypto_entropy_seam_test)
 endif()
+laghu_collect_fuzz_targets(laghu_fuzz_verify_targets)
+list(APPEND laghu_verify_targets ${laghu_fuzz_verify_targets})
 foreach(target IN ITEMS laghu_sanitizer_heap_misuse_fixture
     laghu_sanitizer_undefined_behavior_fixture)
   if(TARGET "${target}")
