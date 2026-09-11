@@ -20,7 +20,9 @@ function(laghu_validate_sanitizer_suppressions manifest)
     endif()
     string(REPLACE "\t" ";" fields "${line}")
     list(LENGTH fields field_count)
-    if(NOT field_count EQUAL 4)
+    if(field_count EQUAL 3)
+      list(APPEND fields "")
+    elseif(NOT field_count EQUAL 4)
       laghu_sanitizer_fail("manifest=${manifest}; expected=sanitizer-platform-target_or_source-reason")
     endif()
     list(GET fields 0 sanitizer)
@@ -41,8 +43,9 @@ function(laghu_validate_sanitizer_suppressions manifest)
     if(NOT target_or_source MATCHES "^(laghu_[A-Za-z0-9_]+|src/(core|config|protocol|tls|proxy|cache|control|cli|observability|os)/[A-Za-z0-9_./-]+\\.(cpp|cc|cxx))$")
       laghu_sanitizer_fail("target_or_source=${target_or_source}; expected=one_laghu_target_or_governed_source")
     endif()
+    string(STRIP "${reason}" reason)
     if(reason STREQUAL "")
-      laghu_sanitizer_fail("target_or_source=${target_or_source}; technical reason is required")
+      laghu_sanitizer_fail("target_or_source=${target_or_source}; technical_reason_required")
     endif()
   endforeach()
 endfunction()
@@ -62,7 +65,8 @@ function(laghu_configure_sanitizer_profile)
       laghu_sanitizer_fail("profile=${LAGHU_SANITIZER_PROFILE}; requires=linux_clang")
     endif()
     if(LAGHU_SANITIZER_PROFILE STREQUAL "ASAN_UBSAN")
-      set(compile_options -fsanitize=address,undefined -fno-omit-frame-pointer)
+      set(compile_options -fsanitize=address,undefined -fno-omit-frame-pointer
+        -fno-sanitize-recover=undefined)
       set(link_options -fsanitize=address,undefined)
     else()
       set(compile_options -fsanitize=thread -fno-omit-frame-pointer)
@@ -70,9 +74,9 @@ function(laghu_configure_sanitizer_profile)
     endif()
   endif()
   set(LAGHU_SANITIZER_COMPILE_OPTIONS "${compile_options}" CACHE INTERNAL
-    "Laghu sanitizer compile options")
+    "Laghu sanitizer compile options" FORCE)
   set(LAGHU_SANITIZER_LINK_OPTIONS "${link_options}" CACHE INTERNAL
-    "Laghu sanitizer link options")
+    "Laghu sanitizer link options" FORCE)
 endfunction()
 
 function(laghu_add_sanitizer_fixture_targets)
@@ -85,6 +89,11 @@ function(laghu_add_sanitizer_fixture_targets)
       add_executable("${target}" "${CMAKE_SOURCE_DIR}/tests/sanitizers/${fixture}.cpp")
       laghu_apply_first_party_contract("${target}")
       laghu_configure_api_consumer("${target}" core)
+      if(fixture STREQUAL "heap_misuse" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # This isolated fixture must perform an unchecked access for ASan to detect.
+        set_source_files_properties("${CMAKE_SOURCE_DIR}/tests/sanitizers/heap_misuse.cpp"
+          PROPERTIES COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+      endif()
       add_test(NAME "laghu.sanitizer.fixture.${fixture}"
         COMMAND "${CMAKE_COMMAND}"
           "-DEXECUTABLE=$<TARGET_FILE:${target}>"
@@ -119,7 +128,9 @@ function(laghu_add_sanitizer_test_target)
   if(LAGHU_SANITIZER_PROFILE STREQUAL "TSAN" AND NOT CMAKE_CROSSCOMPILING)
     add_custom_target(laghu_sanitizer_tsan_tests
       COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-        -R "^laghu\\.(core\\.deadlines_cancellation\\.tsan|sanitizer\\.fixture\\.data_race)$"
+        -R "laghu.core.deadlines_cancellation.tsan"
+      COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
+        -R "laghu.sanitizer.fixture.data_race"
       DEPENDS laghu_core_deadlines_cancellation_tsan_test laghu_sanitizer_data_race_fixture
       USES_TERMINAL
       COMMENT "Running Laghu concurrency tests under ThreadSanitizer")

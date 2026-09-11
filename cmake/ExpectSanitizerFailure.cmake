@@ -18,11 +18,13 @@ set(combined "${output}${diagnostics}")
 if(result EQUAL 0)
   message(FATAL_ERROR "Laghu sanitizer fixture expectation failed: fixture=${EXPECTED}; result=success")
 endif()
-if(EXPECTED STREQUAL "heap_misuse" AND NOT combined MATCHES "AddressSanitizer")
-  message(FATAL_ERROR "Laghu sanitizer fixture expectation failed: fixture=heap_misuse; report=missing_address_sanitizer")
+if(EXPECTED STREQUAL "heap_misuse" AND
+    NOT combined MATCHES "ERROR: AddressSanitizer: heap-buffer-overflow")
+  message(FATAL_ERROR "Laghu sanitizer fixture expectation failed: fixture=heap_misuse; report=missing_heap_buffer_overflow")
 elseif(EXPECTED STREQUAL "undefined_behavior" AND
     NOT combined MATCHES "runtime error: signed integer overflow")
   message(FATAL_ERROR "Laghu sanitizer fixture expectation failed: fixture=undefined_behavior; report=missing_undefined_sanitizer")
-elseif(EXPECTED STREQUAL "data_race" AND NOT combined MATCHES "ThreadSanitizer")
-  message(FATAL_ERROR "Laghu sanitizer fixture expectation failed: fixture=data_race; report=missing_thread_sanitizer")
+elseif(EXPECTED STREQUAL "data_race" AND
+    NOT combined MATCHES "WARNING: ThreadSanitizer: data race")
+  message(FATAL_ERROR "Laghu sanitizer fixture expectation failed: fixture=data_race; report=missing_data_race")
 endif()

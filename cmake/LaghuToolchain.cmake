@@ -325,13 +325,26 @@ function(laghu_add_validation_tests)
   foreach(fixture IN ITEMS broad-source invalid-warning missing-reason)
     add_test(NAME "laghu.warning.suppression_negative.${fixture}" COMMAND "${CMAKE_COMMAND}" -DMANIFEST=${CMAKE_SOURCE_DIR}/tests/warnings/negative/${fixture}.tsv -P "${CMAKE_SOURCE_DIR}/cmake/ExpectWarningSuppression.cmake")
   endforeach()
-  foreach(fixture IN ITEMS global third-party invalid-sanitizer missing-reason)
+  foreach(fixture IN ITEMS global third-party invalid-sanitizer missing-reason whitespace-reason)
+    if(fixture STREQUAL "global" OR fixture STREQUAL "third-party")
+      set(expected_sanitizer_diagnostic global_or_third_party_suppression_is_forbidden)
+    elseif(fixture STREQUAL "invalid-sanitizer")
+      set(expected_sanitizer_diagnostic expected=address-undefined-or-thread)
+    else()
+      set(expected_sanitizer_diagnostic technical_reason_required)
+    endif()
     add_test(NAME "laghu.sanitizer.suppression_negative.${fixture}" COMMAND "${CMAKE_COMMAND}"
       -DMANIFEST=${CMAKE_SOURCE_DIR}/tests/sanitizers/negative/${fixture}.tsv
+      "-DEXPECTED_DIAGNOSTIC=${expected_sanitizer_diagnostic}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSanitizerSuppression.cmake")
   endforeach()
+  add_test(NAME laghu.sanitizer.reconfigure
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSanitizerReconfigure.cmake")
   add_test(NAME laghu.sanitizer.release_exclusion
     COMMAND "${CMAKE_COMMAND}"
+      "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
       "-DARCHIVE=$<TARGET_FILE:laghu_core>"
       "-DEXECUTABLE=$<TARGET_FILE:laghu>"
       "-DNM=${CMAKE_NM}"
