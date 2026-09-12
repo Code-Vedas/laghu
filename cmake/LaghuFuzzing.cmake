@@ -21,6 +21,9 @@ function(laghu_configure_fuzzing)
   if(LAGHU_SANITIZER_PROFILE STREQUAL "TSAN")
     laghu_fuzz_fail("build_fuzzers=ON; incompatible_sanitizer_profile=TSAN")
   endif()
+  if(NOT LAGHU_SANITIZER_PROFILE STREQUAL "ASAN_UBSAN")
+    laghu_fuzz_fail("build_fuzzers=ON; requires=sanitizer_profile_ASAN_UBSAN")
+  endif()
   set(laghu_libfuzzer_probe_directory "${CMAKE_BINARY_DIR}/probes/try-libfuzzer")
   try_compile(laghu_libfuzzer_available
     "${laghu_libfuzzer_probe_directory}"
@@ -53,7 +56,7 @@ function(laghu_add_fuzz_target name source)
   endif()
   string(REPLACE "-" "_" target_suffix "${name}")
   set(target "laghu_fuzz_${target_suffix}")
-  add_executable("${target}" "${source}")
+  add_executable("${target}" EXCLUDE_FROM_ALL "${source}")
   laghu_apply_first_party_contract("${target}")
   laghu_configure_api_consumer("${target}" "${FUZZ_SUBSYSTEM}")
   target_link_libraries("${target}" PRIVATE ${FUZZ_LIBRARIES})
@@ -96,6 +99,16 @@ function(laghu_add_fuzz_validation_tests)
       "-DNM=${CMAKE_NM}"
       "-DSTAGE_DIRECTORY=${CMAKE_BINARY_DIR}/tests/fuzz-install"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFuzzReleaseExclusion.cmake")
+  add_test(NAME laghu.fuzz.default_all_exclusion
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}"
+      "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}/tests/fuzz-default-all"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      "-DGENERATOR=${CMAKE_GENERATOR}"
+      "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+      "-DSCRIPT=${CMAKE_SOURCE_DIR}/scripts/fuzz"
+      "-DCORPUS=${CMAKE_SOURCE_DIR}/fuzz/corpus/binary-envelope"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFuzzDefaultAllExclusion.cmake")
 endfunction()
 
 function(laghu_collect_fuzz_targets output)

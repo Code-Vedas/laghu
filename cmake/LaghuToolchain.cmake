@@ -351,6 +351,10 @@ function(laghu_add_validation_tests)
     COMMAND "${CMAKE_COMMAND}"
       "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuFuzzing.cmake"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFuzzTsanRejected.cmake")
+  add_test(NAME laghu.fuzz.negative.none
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuFuzzing.cmake"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectFuzzNoneProfileRejected.cmake")
   if(TARGET laghu_sanitizer_heap_misuse_fixture)
     set(laghu_sanitizer_marker_target laghu_sanitizer_heap_misuse_fixture)
     set(laghu_sanitizer_marker_symbol laghu_sanitizer_fixture_heap_misuse_marker)

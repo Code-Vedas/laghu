@@ -196,6 +196,8 @@ jobs:
             -R '^laghu\.fuzz\.wrapper$'
           ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
             -R '^laghu\.fuzz\.release_exclusion$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
+            -R '^laghu\.fuzz\.default_all_exclusion$'
       - name: Run bounded binary-envelope fuzz campaign
         continue-on-error: true
         run: |
