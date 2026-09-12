@@ -217,3 +217,39 @@ jobs:
         run: |
           cmake --preset linux-clang-tsan
           cmake --build build/linux-clang-tsan --target laghu_sanitizer_tsan_tests
+  static-analysis-hardening:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install static-analysis toolchain
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build clang-19 clang-tidy-19 clang-tools-19 cppcheck
+      - name: Analyze Laghu-owned code and verify Release hardening
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-static-analysis" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DLAGHU_STATIC_ANALYSIS=ON
+          cmake --build "$RUNNER_TEMP/laghu-static-analysis" --target laghu_static_analysis
+          cmake --build "$RUNNER_TEMP/laghu-static-analysis" --target laghu_verify_toolchain
+          cmake -S . -B "$RUNNER_TEMP/laghu-static-analysis-tls" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DLAGHU_STATIC_ANALYSIS=ON \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
+          cmake --build "$RUNNER_TEMP/laghu-static-analysis-tls" --target laghu_static_analysis
+          cmake -S . -B "$RUNNER_TEMP/laghu-release-hardening" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/laghu-release-hardening" --target laghu
+          ctest --test-dir "$RUNNER_TEMP/laghu-release-hardening" --output-on-failure \
+            -R '^laghu.hardening.'
+          readelf -h "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep 'Type:.*DYN'
+          readelf -l "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep GNU_RELRO
+          readelf -d "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep BIND_NOW
+          if readelf -d "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep -q TEXTREL; then
+            echo "Laghu Release executable contains text relocations" >&2
+            exit 1
+          fi

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# cppcheck-2.13
+--enable=warning,portability
+--error-exitcode=2
+--template={file}:{line}:{severity}:{id}:{message}

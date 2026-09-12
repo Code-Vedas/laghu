@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+---
+Checks: >
+  -*,
+  bugprone-narrowing-conversions,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-nullability.*,
+  clang-analyzer-security.*
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^$'
+FormatStyle: none
+...
