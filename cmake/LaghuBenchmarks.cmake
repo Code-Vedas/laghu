@@ -61,11 +61,15 @@ function(laghu_add_benchmark_validation_tests)
   if(CMAKE_CROSSCOMPILING)
     return()
   endif()
+  list(LENGTH LAGHU_BUILD_EFFECTIVE_FEATURES benchmark_expected_feature_count)
+  list(LENGTH LAGHU_ACTIVE_DEPENDENCIES benchmark_expected_dependency_count)
   add_test(NAME laghu.benchmark.runner
     COMMAND "${CMAKE_COMMAND}"
       "-DSCRIPT=${CMAKE_SOURCE_DIR}/scripts/benchmark"
       "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
       "-DSOURCE_DIRECTORY=${CMAKE_SOURCE_DIR}"
+      "-DEXPECTED_FEATURE_COUNT=${benchmark_expected_feature_count}"
+      "-DEXPECTED_DEPENDENCY_COUNT=${benchmark_expected_dependency_count}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBenchmarkRunner.cmake")
   add_test(NAME laghu.benchmark.release_exclusion
     COMMAND "${CMAKE_COMMAND}"
@@ -74,5 +78,6 @@ function(laghu_add_benchmark_validation_tests)
       "-DEXECUTABLE=$<TARGET_FILE:laghu>"
       "-DNM=${CMAKE_NM}"
       "-DSTAGE_DIRECTORY=${CMAKE_BINARY_DIR}/tests/benchmark-install"
+      "-DINSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBenchmarkReleaseExclusion.cmake")
 endfunction()

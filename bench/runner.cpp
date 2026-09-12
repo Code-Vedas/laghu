@@ -215,7 +215,7 @@ class JsonWriter final {
   }
 #if defined(__APPLE__)
   return NumericMetric{true, static_cast<std::uint64_t>(usage.ru_maxrss), {}};
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
   const auto kilobytes = static_cast<std::uint64_t>(usage.ru_maxrss);
   if (kilobytes > std::numeric_limits<std::uint64_t>::max() / 1024U) {
     return NumericMetric{false, 0U, "peak_rss_overflow"};
@@ -241,8 +241,13 @@ class JsonWriter final {
 [[nodiscard]] TextMetric cpu_description() noexcept {
   TextMetric metric{};
 #if defined(__APPLE__) || defined(__FreeBSD__)
+  #if defined(__APPLE__)
+  constexpr std::string_view cpu_sysctl{"machdep.cpu.brand_string"};
+  #else
+  constexpr std::string_view cpu_sysctl{"hw.model"};
+  #endif
   std::size_t size = metric.text.size() - 1U;
-  if (::sysctlbyname("machdep.cpu.brand_string", metric.text.data(), &size, nullptr, 0U) == 0 &&
+  if (::sysctlbyname(cpu_sysctl.data(), metric.text.data(), &size, nullptr, 0U) == 0 &&
       size != 0U && size < metric.text.size()) {
     metric.size = size;
     if (metric.text[metric.size - 1U] == '\0') {

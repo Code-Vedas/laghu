@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-if(NOT DEFINED SCRIPT OR NOT DEFINED BUILD_DIRECTORY OR NOT DEFINED SOURCE_DIRECTORY)
-  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY and SOURCE_DIRECTORY")
+if(NOT DEFINED SCRIPT OR NOT DEFINED BUILD_DIRECTORY OR NOT DEFINED SOURCE_DIRECTORY OR
+    NOT DEFINED EXPECTED_FEATURE_COUNT OR NOT DEFINED EXPECTED_DEPENDENCY_COUNT)
+  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT and EXPECTED_DEPENDENCY_COUNT")
 endif()
 
 function(laghu_benchmark_run output)
@@ -42,7 +43,8 @@ foreach(output IN ITEMS "${first}" "${second}")
   string(JSON allocation_instrumented GET "${output}" metrics allocation_count instrumented)
   string(JSON syscall_instrumented GET "${output}" metrics laghu_syscall_count instrumented)
   if(NOT schema STREQUAL "laghu-benchmark-v1" OR NOT workload STREQUAL "core-foundation" OR
-      build_id STREQUAL "" OR NOT feature_count EQUAL 1 OR NOT dependency_count EQUAL 0 OR
+      build_id STREQUAL "" OR NOT feature_count EQUAL EXPECTED_FEATURE_COUNT OR
+      NOT dependency_count EQUAL EXPECTED_DEPENDENCY_COUNT OR
       NOT interval_count EQUAL 5 OR NOT warmup_count EQUAL 1 OR NOT operations EQUAL 4096 OR
       p50 GREATER p95 OR p95 GREATER p99 OR p99 GREATER p999 OR
       NOT allocation_instrumented OR NOT syscall_instrumented)
@@ -66,13 +68,18 @@ if(NOT first_build STREQUAL second_build OR NOT first_parameters STREQUAL second
   message(FATAL_ERROR "Laghu benchmark expectation failed: deterministic_identity_or_parameters_invalid")
 endif()
 
-foreach(case IN ITEMS missing-workload invalid-workload zero-intervals missing-build missing-directory)
+foreach(case IN ITEMS missing-workload invalid-workload zero-intervals zero-padded-intervals
+    zero-tripled-intervals missing-build missing-directory)
   if(case STREQUAL "missing-workload")
     set(arguments --build "${BUILD_DIRECTORY}" --warmup 1 --intervals 1)
   elseif(case STREQUAL "invalid-workload")
     set(arguments --build "${BUILD_DIRECTORY}" --workload invalid --warmup 1 --intervals 1)
   elseif(case STREQUAL "zero-intervals")
-    set(arguments --build "${BUILD_DIRECTORY}" --workload core-foundation --warmup 1 --intervals 0)
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 0)
+  elseif(case STREQUAL "zero-padded-intervals")
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 00)
+  elseif(case STREQUAL "zero-tripled-intervals")
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 000)
   elseif(case STREQUAL "missing-directory")
     set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 1)
   else()
@@ -91,3 +98,16 @@ foreach(case IN ITEMS missing-workload invalid-workload zero-intervals missing-b
     message(FATAL_ERROR "Laghu benchmark expectation failed: case=${case}; expected_exit=${expected_exit}; actual_exit=${result}; output=${output}${diagnostics}")
   endif()
 endforeach()
+
+execute_process(
+  COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --workload core-foundation --warmup 1 --intervals 001
+  RESULT_VARIABLE padded_result
+  OUTPUT_VARIABLE padded_output
+  ERROR_VARIABLE padded_diagnostics)
+if(NOT padded_result EQUAL 0)
+  message(FATAL_ERROR "Laghu benchmark expectation failed: nonzero_padded_intervals=${padded_output}${padded_diagnostics}")
+endif()
+string(JSON padded_interval_count GET "${padded_output}" parameters intervals)
+if(NOT padded_interval_count EQUAL 1)
+  message(FATAL_ERROR "Laghu benchmark expectation failed: nonzero_padded_intervals_invalid")
+endif()

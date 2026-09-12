@@ -24,7 +24,11 @@ while [ "$#" -gt 0 ]; do
       warmup=$2; shift 2 ;;
     --intervals)
       if [ "$#" -lt 2 ] || [ -n "$intervals" ]; then usage; exit 64; fi
-      case "$2" in ''|*[!0-9]*|0) usage; exit 64 ;; esac
+      case "$2" in
+        ''|*[!0-9]*) usage; exit 64 ;;
+        *[1-9]*) ;;
+        *) usage; exit 64 ;;
+      esac
       intervals=$2; shift 2 ;;
     *) usage; exit 64 ;;
   esac

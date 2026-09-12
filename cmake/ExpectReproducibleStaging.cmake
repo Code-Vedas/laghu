@@ -10,7 +10,7 @@ file(REMOVE_RECURSE "${work}")
 file(MAKE_DIRECTORY "${work}")
 
 function(laghu_copy_source destination)
-  foreach(entry IN ITEMS CMakeLists.txt CMakePresets.json VERSION cmake docs src tests)
+  foreach(entry IN ITEMS CMakeLists.txt CMakePresets.json VERSION bench cmake docs src tests)
     set(source_entry "${LAGHU_SOURCE}/${entry}")
     if(NOT EXISTS "${source_entry}")
       message(FATAL_ERROR "Laghu reproducibility expectation failed: source_entry_missing=${entry}")
