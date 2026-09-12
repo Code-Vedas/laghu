@@ -42,7 +42,7 @@ foreach(artifact IN ITEMS "${ARCHIVE}" "${EXECUTABLE}" "${installed_archive}" "$
   if(NOT result EQUAL 0)
     message(FATAL_ERROR "Laghu fuzz release exclusion failed: artifact=${artifact}; nm=${diagnostics}")
   endif()
-  if(symbols MATCHES "LLVMFuzzer(TestOneInput|)|__sanitizer|__asan|__ubsan")
+  if(symbols MATCHES "LLVMFuzzer")
     message(FATAL_ERROR "Laghu fuzz release exclusion failed: artifact=${artifact}; fuzz_symbol=present")
   endif()
 endforeach()

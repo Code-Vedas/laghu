@@ -165,7 +165,7 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
             /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
-          sudo apt-get install --yes ninja-build clang-19 libc++-19-dev libc++abi-19-dev
+          sudo apt-get install --yes ninja-build clang-19 libclang-rt-19-dev libc++-19-dev libc++abi-19-dev
       - name: Run ordinary native suite under ASan and UBSan
         run: |
           cmake --preset linux-clang-asan-ubsan
@@ -188,7 +188,6 @@ jobs:
         run: |
           cmake -S . -B "$RUNNER_TEMP/laghu-fuzz" -G Ninja \
             -DCMAKE_CXX_COMPILER=clang++-19 \
-            -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
             -DLAGHU_SANITIZER_PROFILE=ASAN_UBSAN \
             -DLAGHU_BUILD_FUZZERS=ON
           scripts/fuzz --build "$RUNNER_TEMP/laghu-fuzz" \

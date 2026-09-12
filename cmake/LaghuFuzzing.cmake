@@ -18,20 +18,24 @@ function(laghu_configure_fuzzing)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     laghu_fuzz_fail("build_fuzzers=ON; requires=clang_libfuzzer")
   endif()
-  set(laghu_libfuzzer_cxx_flags "${CMAKE_CXX_FLAGS} -fsanitize=fuzzer")
-  set(laghu_libfuzzer_link_flags "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=fuzzer")
+  if(LAGHU_SANITIZER_PROFILE STREQUAL "TSAN")
+    laghu_fuzz_fail("build_fuzzers=ON; incompatible_sanitizer_profile=TSAN")
+  endif()
+  set(laghu_libfuzzer_probe_directory "${CMAKE_BINARY_DIR}/probes/try-libfuzzer")
   try_compile(laghu_libfuzzer_available
-    "${CMAKE_BINARY_DIR}/probes/try-libfuzzer"
+    "${laghu_libfuzzer_probe_directory}"
     SOURCES "${CMAKE_SOURCE_DIR}/tests/configure/probes/libfuzzer.cpp"
     CMAKE_FLAGS
       "-DCMAKE_CXX_STANDARD=23"
       "-DCMAKE_CXX_STANDARD_REQUIRED=ON"
       "-DCMAKE_CXX_EXTENSIONS=OFF"
-      "-DCMAKE_CXX_FLAGS=${laghu_libfuzzer_cxx_flags}"
-      "-DCMAKE_EXE_LINKER_FLAGS=${laghu_libfuzzer_link_flags}"
+    COMPILE_DEFINITIONS -fsanitize=fuzzer
+    LINK_OPTIONS -fsanitize=fuzzer
     OUTPUT_VARIABLE laghu_libfuzzer_output)
+  laghu_sanitize_probe_text(laghu_sanitized_libfuzzer_output "${laghu_libfuzzer_output}")
+  file(WRITE "${CMAKE_BINARY_DIR}/probes/libfuzzer.log" "${laghu_sanitized_libfuzzer_output}")
   if(NOT laghu_libfuzzer_available)
-    laghu_fuzz_fail("build_fuzzers=ON; requires=clang_libfuzzer_runtime")
+    laghu_fuzz_fail("build_fuzzers=ON; requires=clang_libfuzzer_runtime; retained_log=probes/libfuzzer.log")
   endif()
   set(LAGHU_FUZZING_ENABLED ON CACHE INTERNAL "Laghu fuzzing is enabled" FORCE)
 endfunction()
