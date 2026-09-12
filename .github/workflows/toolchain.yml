@@ -165,7 +165,7 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
             /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
-          sudo apt-get install --yes ninja-build clang-19 libc++-19-dev libc++abi-19-dev
+          sudo apt-get install --yes ninja-build clang-19 libclang-rt-19-dev libc++-19-dev libc++abi-19-dev
       - name: Run ordinary native suite under ASan and UBSan
         run: |
           cmake --preset linux-clang-asan-ubsan
@@ -184,6 +184,25 @@ jobs:
             -R '^laghu.crypto.provider$'
           ctest --test-dir "$RUNNER_TEMP/laghu-asan-crypto" --output-on-failure \
             -R '^laghu.crypto.entropy_seam$'
+      - name: Replay binary-envelope fuzz corpus under ASan and UBSan
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-fuzz" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DLAGHU_SANITIZER_PROFILE=ASAN_UBSAN \
+            -DLAGHU_BUILD_FUZZERS=ON
+          scripts/fuzz --build "$RUNNER_TEMP/laghu-fuzz" \
+            --target binary-envelope --corpus fuzz/corpus/binary-envelope --runs 1
+          ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
+            -R '^laghu\.fuzz\.wrapper$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
+            -R '^laghu\.fuzz\.release_exclusion$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
+            -R '^laghu\.fuzz\.default_all_exclusion$'
+      - name: Run bounded binary-envelope fuzz campaign
+        continue-on-error: true
+        run: |
+          scripts/fuzz --build "$RUNNER_TEMP/laghu-fuzz" \
+            --target binary-envelope --corpus fuzz/corpus/binary-envelope --runs 10000
   linux-clang-tsan:
     runs-on: ubuntu-24.04
     steps:
