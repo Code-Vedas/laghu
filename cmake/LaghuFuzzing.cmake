@@ -29,8 +29,8 @@ function(laghu_configure_fuzzing)
       "-DCMAKE_CXX_STANDARD=23"
       "-DCMAKE_CXX_STANDARD_REQUIRED=ON"
       "-DCMAKE_CXX_EXTENSIONS=OFF"
-    COMPILE_DEFINITIONS -fsanitize=fuzzer
-    LINK_OPTIONS -fsanitize=fuzzer
+    COMPILE_DEFINITIONS -fsanitize=fuzzer,address,undefined
+    LINK_OPTIONS -fsanitize=fuzzer,address,undefined
     OUTPUT_VARIABLE laghu_libfuzzer_output)
   laghu_sanitize_probe_text(laghu_sanitized_libfuzzer_output "${laghu_libfuzzer_output}")
   file(WRITE "${CMAKE_BINARY_DIR}/probes/libfuzzer.log" "${laghu_sanitized_libfuzzer_output}")

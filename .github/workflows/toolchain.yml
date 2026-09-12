@@ -192,6 +192,10 @@ jobs:
             -DLAGHU_BUILD_FUZZERS=ON
           scripts/fuzz --build "$RUNNER_TEMP/laghu-fuzz" \
             --target binary-envelope --corpus fuzz/corpus/binary-envelope --runs 1
+          ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
+            -R '^laghu\.fuzz\.wrapper$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-fuzz" --output-on-failure \
+            -R '^laghu\.fuzz\.release_exclusion$'
       - name: Run bounded binary-envelope fuzz campaign
         continue-on-error: true
         run: |
