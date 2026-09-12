@@ -22,6 +22,7 @@ include(CTest)
 include(cmake/LaghuCapabilities.cmake)
 include(cmake/LaghuDependencyDag.cmake)
 include(cmake/LaghuApiBoundaries.cmake)
+include(cmake/LaghuBenchmarks.cmake)
 include(cmake/LaghuDependencies.cmake)
 include(cmake/LaghuFeatures.cmake)
 include(cmake/LaghuFuzzing.cmake)
@@ -44,6 +45,7 @@ laghu_configure_dependency_registry()
 laghu_configure_dependency_modes()
 laghu_configure_capability_header()
 laghu_configure_build_identity()
+laghu_configure_benchmarks()
 
 add_library(laghu_core STATIC
   src/core/clocks.cpp
@@ -103,6 +105,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     tests/support/fault_injection.cpp
     PROPERTIES COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
 endif()
+
+laghu_add_benchmark_targets()
 
 laghu_declare_subsystem_graph()
 laghu_configure_api_boundaries()
@@ -305,6 +309,7 @@ set_property(TARGET visibility_negative_fixture PROPERTY CXX_VISIBILITY_PRESET h
 set_property(TARGET visibility_negative_fixture PROPERTY VISIBILITY_INLINES_HIDDEN YES)
 
 laghu_add_validation_tests()
+laghu_add_benchmark_validation_tests()
 laghu_add_static_analysis_validation_tests()
 laghu_add_static_analysis_target()
 laghu_add_install_layout_test()
@@ -326,6 +331,7 @@ set(laghu_verify_targets
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
   laghu_os_iovec_translation_test laghu_test_support laghu_test_faults laghu_test_time_entropy
+  laghu_benchmark_metrics_test
   laghu_test_time_entropy_test laghu_test_support_fixtures_test
   laghu_test_support_runner_contract_test laghu_test_fault_injection_test laghu
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)

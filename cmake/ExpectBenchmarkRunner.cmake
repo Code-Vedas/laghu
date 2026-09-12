@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+if(NOT DEFINED SCRIPT OR NOT DEFINED BUILD_DIRECTORY OR NOT DEFINED SOURCE_DIRECTORY OR
+    NOT DEFINED EXPECTED_FEATURE_COUNT OR NOT DEFINED EXPECTED_DEPENDENCY_COUNT)
+  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT and EXPECTED_DEPENDENCY_COUNT")
+endif()
+
+function(laghu_benchmark_run output)
+  execute_process(
+    COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --workload core-foundation --warmup 1 --intervals 5
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE standard_output
+    ERROR_VARIABLE diagnostics)
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Laghu benchmark expectation failed: positive=${standard_output}${diagnostics}")
+  endif()
+  set(${output} "${standard_output}" PARENT_SCOPE)
+endfunction()
+
+laghu_benchmark_run(first)
+laghu_benchmark_run(second)
+
+foreach(output IN ITEMS "${first}" "${second}")
+  if(NOT output MATCHES "^\\{\\\"schema_version\\\":\\\"laghu-benchmark-v1\\\"")
+    message(FATAL_ERROR "Laghu benchmark expectation failed: canonical_schema_prefix_missing")
+  endif()
+  string(FIND "${output}" "${SOURCE_DIRECTORY}" source_path)
+  string(FIND "${output}" "${BUILD_DIRECTORY}" build_path)
+  if(NOT source_path EQUAL -1 OR NOT build_path EQUAL -1)
+    message(FATAL_ERROR "Laghu benchmark expectation failed: path_leakage")
+  endif()
+  string(JSON schema GET "${output}" schema_version)
+  string(JSON workload GET "${output}" workload)
+  string(JSON build_id GET "${output}" build build_id)
+  string(JSON feature_count LENGTH "${output}" build features)
+  string(JSON dependency_count LENGTH "${output}" build dependencies)
+  string(JSON interval_count GET "${output}" parameters intervals)
+  string(JSON warmup_count GET "${output}" parameters warmup)
+  string(JSON operations GET "${output}" parameters operations_per_interval)
+  string(JSON p50 GET "${output}" metrics latency_ns_per_interval p50)
+  string(JSON p95 GET "${output}" metrics latency_ns_per_interval p95)
+  string(JSON p99 GET "${output}" metrics latency_ns_per_interval p99)
+  string(JSON p999 GET "${output}" metrics latency_ns_per_interval p99_9)
+  string(JSON allocation_instrumented GET "${output}" metrics allocation_count instrumented)
+  string(JSON syscall_instrumented GET "${output}" metrics laghu_syscall_count instrumented)
+  if(NOT schema STREQUAL "laghu-benchmark-v1" OR NOT workload STREQUAL "core-foundation" OR
+      build_id STREQUAL "" OR NOT feature_count EQUAL EXPECTED_FEATURE_COUNT OR
+      NOT dependency_count EQUAL EXPECTED_DEPENDENCY_COUNT OR
+      NOT interval_count EQUAL 5 OR NOT warmup_count EQUAL 1 OR NOT operations EQUAL 4096 OR
+      p50 GREATER p95 OR p95 GREATER p99 OR p99 GREATER p999 OR
+      NOT allocation_instrumented OR NOT syscall_instrumented)
+    message(FATAL_ERROR "Laghu benchmark expectation failed: schema_or_metric_invalid")
+  endif()
+  string(JSON cpu_description_status GET "${output}" cpu description status)
+  string(JSON cpu_time_status GET "${output}" metrics cpu_time_ns status)
+  string(JSON peak_rss_status GET "${output}" metrics peak_rss_bytes status)
+  foreach(status IN ITEMS "${cpu_description_status}" "${cpu_time_status}" "${peak_rss_status}")
+    if(NOT status STREQUAL "available" AND NOT status STREQUAL "unavailable")
+      message(FATAL_ERROR "Laghu benchmark expectation failed: host_metric_status_invalid")
+    endif()
+  endforeach()
+endforeach()
+
+string(JSON first_build GET "${first}" build)
+string(JSON second_build GET "${second}" build)
+string(JSON first_parameters GET "${first}" parameters)
+string(JSON second_parameters GET "${second}" parameters)
+if(NOT first_build STREQUAL second_build OR NOT first_parameters STREQUAL second_parameters)
+  message(FATAL_ERROR "Laghu benchmark expectation failed: deterministic_identity_or_parameters_invalid")
+endif()
+
+foreach(case IN ITEMS missing-workload invalid-workload zero-intervals zero-padded-intervals
+    zero-tripled-intervals missing-build missing-directory)
+  if(case STREQUAL "missing-workload")
+    set(arguments --build "${BUILD_DIRECTORY}" --warmup 1 --intervals 1)
+  elseif(case STREQUAL "invalid-workload")
+    set(arguments --build "${BUILD_DIRECTORY}" --workload invalid --warmup 1 --intervals 1)
+  elseif(case STREQUAL "zero-intervals")
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 0)
+  elseif(case STREQUAL "zero-padded-intervals")
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 00)
+  elseif(case STREQUAL "zero-tripled-intervals")
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 000)
+  elseif(case STREQUAL "missing-directory")
+    set(arguments --build "${BUILD_DIRECTORY}/missing" --workload core-foundation --warmup 1 --intervals 1)
+  else()
+    set(arguments --workload core-foundation --warmup 1 --intervals 1)
+  endif()
+  execute_process(COMMAND "${SCRIPT}" ${arguments}
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE diagnostics)
+  if(case STREQUAL "missing-directory")
+    set(expected_exit 66)
+  else()
+    set(expected_exit 64)
+  endif()
+  if(NOT result EQUAL expected_exit)
+    message(FATAL_ERROR "Laghu benchmark expectation failed: case=${case}; expected_exit=${expected_exit}; actual_exit=${result}; output=${output}${diagnostics}")
+  endif()
+endforeach()
+
+execute_process(
+  COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --workload core-foundation --warmup 1 --intervals 001
+  RESULT_VARIABLE padded_result
+  OUTPUT_VARIABLE padded_output
+  ERROR_VARIABLE padded_diagnostics)
+if(NOT padded_result EQUAL 0)
+  message(FATAL_ERROR "Laghu benchmark expectation failed: nonzero_padded_intervals=${padded_output}${padded_diagnostics}")
+endif()
+string(JSON padded_interval_count GET "${padded_output}" parameters intervals)
+if(NOT padded_interval_count EQUAL 1)
+  message(FATAL_ERROR "Laghu benchmark expectation failed: nonzero_padded_intervals_invalid")
+endif()

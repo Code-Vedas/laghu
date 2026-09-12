@@ -24,7 +24,7 @@ if(command_count GREATER 0)
     string(JSON source GET "${compile_database}" ${index} file)
     file(REAL_PATH "${source}" source_real)
     file(RELATIVE_PATH relative_source "${SOURCE}" "${source_real}")
-    if(relative_source MATCHES "^src/.*\\.(cpp|cc|cxx)$")
+    if(relative_source MATCHES "^(src|bench)/.*\\.(cpp|cc|cxx)$")
       list(APPEND owned_sources "${source_real}")
       list(APPEND owned_command_indexes "${index}")
     endif()
@@ -36,7 +36,9 @@ if(owned_sources STREQUAL "")
 endif()
 file(TO_CMAKE_PATH "${SOURCE}/src" owned_header_root)
 string(REGEX REPLACE "([][+.*^$(){}|\\\\?])" "\\\\\\1" owned_header_root_regex "${owned_header_root}")
-set(owned_header_filter "^${owned_header_root_regex}/.*")
+file(TO_CMAKE_PATH "${SOURCE}/bench" benchmark_header_root)
+string(REGEX REPLACE "([][+.*^$(){}|\\\\?])" "\\\\\\1" benchmark_header_root_regex "${benchmark_header_root}")
+set(owned_header_filter "^(${owned_header_root_regex}|${benchmark_header_root_regex})/.*")
 
 execute_process(
   COMMAND "${CLANG_TIDY}" "--config-file=${CLANG_TIDY_CONFIG}"
@@ -53,7 +55,7 @@ file(STRINGS "${CPPCHECK_CONFIG}" cppcheck_options)
 list(FILTER cppcheck_options EXCLUDE REGEX "^[ \\t]*(#|$)")
 execute_process(
   COMMAND "${CPPCHECK}" ${cppcheck_options} "--project=${compile_commands}"
-    "--file-filter=${SOURCE}/src/*"
+    "--file-filter=${SOURCE}/src/*" "--file-filter=${SOURCE}/bench/*"
   RESULT_VARIABLE cppcheck_result
   OUTPUT_VARIABLE cppcheck_output
   ERROR_VARIABLE cppcheck_diagnostics)
