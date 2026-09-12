@@ -207,9 +207,9 @@ function(laghu_write_metadata)
   laghu_capability_json_members(capabilities_json)
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
   file(WRITE "${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
-"{\n  \"schema_version\": \"laghu-config-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"capabilities\": {\n${capabilities_json}\n  },\n  \"generator\": \"Ninja\"\n}\n")
+"{\n  \"schema_version\": \"laghu-config-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"hardening\": ${LAGHU_HARDENING_METADATA_JSON},\n  \"capabilities\": {\n${capabilities_json}\n  },\n  \"generator\": \"Ninja\"\n}\n")
   file(WRITE "${LAGHU_PROBE_DIRECTORY}/toolchain-capabilities-v1.json"
-"{\n  \"schema_version\": \"toolchain-capabilities-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"warning_gates\": [\"${warnings_json}\"],\n  \"capabilities\": {\n${capabilities_json}\n  }\n}\n")
+"{\n  \"schema_version\": \"toolchain-capabilities-v1\",\n  \"target_os\": \"${CMAKE_SYSTEM_NAME}\",\n  \"compiler\": {\"id\": \"${CMAKE_CXX_COMPILER_ID}\", \"version\": \"${CMAKE_CXX_COMPILER_VERSION}\"},\n  \"standard_library\": {\"id\": \"${LAGHU_STANDARD_LIBRARY_ID}\", \"version\": \"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\n  \"language\": {\"standard\": \"c++23\", \"compiler_extensions\": false},\n  \"restricted_profile\": {\"exceptions\": false, \"rtti\": false},\n  \"posix_baseline\": \"${LAGHU_POSIX_BASELINE}\",\n  \"hardening\": ${LAGHU_HARDENING_METADATA_JSON},\n  \"warning_gates\": [\"${warnings_json}\"],\n  \"capabilities\": {\n${capabilities_json}\n  }\n}\n")
 endfunction()
 
 function(laghu_configure_toolchain)
@@ -264,7 +264,6 @@ function(laghu_configure_toolchain)
   laghu_require_core_profile_sources()
   laghu_validate_warning_suppressions("${CMAKE_SOURCE_DIR}/tests/warnings/suppressions.tsv")
   laghu_publish_capability_values()
-  laghu_write_metadata()
 endfunction()
 
 function(laghu_apply_first_party_contract target)
@@ -275,9 +274,13 @@ function(laghu_apply_first_party_contract target)
   set_property(TARGET "${target}" PROPERTY VISIBILITY_INLINES_HIDDEN YES)
   target_compile_options("${target}" PRIVATE
     -pedantic-errors -fno-exceptions -fno-rtti ${LAGHU_EFFECTIVE_WARNING_FLAGS}
-    ${LAGHU_SANITIZER_COMPILE_OPTIONS})
-  if(NOT LAGHU_SANITIZER_LINK_OPTIONS STREQUAL "")
-    target_link_options("${target}" PRIVATE ${LAGHU_SANITIZER_LINK_OPTIONS})
+    ${LAGHU_SANITIZER_COMPILE_OPTIONS} ${LAGHU_HARDENING_COMPILE_OPTIONS})
+  get_target_property(target_type "${target}" TYPE)
+  if(target_type STREQUAL "EXECUTABLE" AND
+      (NOT LAGHU_SANITIZER_LINK_OPTIONS STREQUAL "" OR
+      NOT LAGHU_HARDENING_LINK_OPTIONS STREQUAL ""))
+    target_link_options("${target}" PRIVATE ${LAGHU_SANITIZER_LINK_OPTIONS}
+      ${LAGHU_HARDENING_LINK_OPTIONS})
   endif()
   get_target_property(effective_options "${target}" COMPILE_OPTIONS)
   list(FIND effective_options -fexceptions enables_exceptions)
@@ -306,6 +309,24 @@ function(laghu_add_validation_tests)
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
       "-DFIXTURE_BINARY=${CMAKE_BINARY_DIR}/tests/cross-test-registration"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCrossTestRegistration.cmake")
+  foreach(feature IN ITEMS pie stack_protection relro immediate_binding)
+    add_test(NAME "laghu.hardening.negative.${feature}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuHardening.cmake"
+        "-DFEATURE=${feature}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectHardeningFailure.cmake")
+  endforeach()
+  add_test(NAME laghu.hardening.unsupported.fortification
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuHardening.cmake"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectHardeningUnsupported.cmake")
+  add_test(NAME laghu.hardening.metadata
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCONFIG=${CMAKE_BINARY_DIR}/config/laghu-config-v1.json"
+      "-DMANIFEST=${LAGHU_BUILD_MANIFEST}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectHardeningMetadata.cmake")
   foreach(capability IN ITEMS if_consteval expected byteswap to_underlying unreachable)
     add_test(NAME "laghu.toolchain.negative.${capability}" COMMAND "${CMAKE_COMMAND}" -DCXX=${CMAKE_CXX_COMPILER} -DCXXFLAGS=${CMAKE_CXX_FLAGS} -DSOURCE=${CMAKE_SOURCE_DIR}/tests/toolchain/negative/${capability}.cpp -DEXPECT_FAIL=ON -DEXPECT_TEXT=laghu\ forced-negative\ capability=${capability} -P "${expect_compile}")
   endforeach()

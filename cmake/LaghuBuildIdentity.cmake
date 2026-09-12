@@ -32,8 +32,10 @@ function(laghu_build_identity_input_hashes output)
     cmake/LaghuDependencies.cmake
     cmake/LaghuDependencyDag.cmake
     cmake/LaghuFeatures.cmake
+    cmake/LaghuHardening.cmake
     cmake/LaghuSanitizers.cmake
     cmake/LaghuToolchain.cmake
+    tests/hardening/probes/clean.cpp
     src/cli/main.cpp
     src/cli/private/laghu/cli/internal/build_manifest.hpp
     src/core/clocks.cpp
@@ -112,6 +114,7 @@ function(laghu_build_identity_verbose output build_id compiler requested effecti
     "product.name=laghu"
     "product.version=${LAGHU_PRODUCT_VERSION}"
     "profile=${LAGHU_BUILD_PROFILE}"
+    "hardening=${LAGHU_HARDENING_METADATA_JSON}"
     "sanitizer.profile=${LAGHU_SANITIZER_PROFILE}"
     "schema_version=${LAGHU_BUILD_MANIFEST_SCHEMA_VERSION}"
     "standard_library.id=${LAGHU_STANDARD_LIBRARY_ID}"
@@ -169,7 +172,7 @@ function(laghu_configure_build_identity)
   laghu_build_identity_dependencies(dependencies_json dependency_names)
 
   set(preimage
-    "{\"schema_version\":\"${LAGHU_BUILD_MANIFEST_SCHEMA_VERSION}\",\"product\":{\"name\":\"laghu\",\"version\":\"${product_version}\"},\"build_inputs\":${inputs_json},\"compiler\":{\"executable\":\"${compiler}\",\"id\":\"${CMAKE_CXX_COMPILER_ID}\",\"version\":\"${CMAKE_CXX_COMPILER_VERSION}\"},\"standard_library\":{\"id\":\"${LAGHU_STANDARD_LIBRARY_ID}\",\"version\":\"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\"target\":{\"os\":\"${CMAKE_SYSTEM_NAME}\",\"architecture\":\"${CMAKE_SYSTEM_PROCESSOR}\"},\"profile\":\"${LAGHU_BUILD_PROFILE}\",\"sanitizer_profile\":\"${LAGHU_SANITIZER_PROFILE}\",\"features\":{\"requested\":${requested_json},\"effective\":${effective_json}},\"dependencies\":${dependencies_json}}")
+    "{\"schema_version\":\"${LAGHU_BUILD_MANIFEST_SCHEMA_VERSION}\",\"product\":{\"name\":\"laghu\",\"version\":\"${product_version}\"},\"build_inputs\":${inputs_json},\"compiler\":{\"executable\":\"${compiler}\",\"id\":\"${CMAKE_CXX_COMPILER_ID}\",\"version\":\"${CMAKE_CXX_COMPILER_VERSION}\"},\"standard_library\":{\"id\":\"${LAGHU_STANDARD_LIBRARY_ID}\",\"version\":\"${LAGHU_STANDARD_LIBRARY_VERSION}\"},\"target\":{\"os\":\"${CMAKE_SYSTEM_NAME}\",\"architecture\":\"${CMAKE_SYSTEM_PROCESSOR}\"},\"profile\":\"${LAGHU_BUILD_PROFILE}\",\"sanitizer_profile\":\"${LAGHU_SANITIZER_PROFILE}\",\"hardening\":${LAGHU_HARDENING_METADATA_JSON},\"features\":{\"requested\":${requested_json},\"effective\":${effective_json}},\"dependencies\":${dependencies_json}}")
   string(SHA256 build_id "${preimage}")
   set(manifest "${preimage}")
   string(REGEX REPLACE "}$" ",\"build_id\":\"${build_id}\"}" manifest "${manifest}")

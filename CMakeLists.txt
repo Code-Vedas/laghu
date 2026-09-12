@@ -25,7 +25,9 @@ include(cmake/LaghuApiBoundaries.cmake)
 include(cmake/LaghuDependencies.cmake)
 include(cmake/LaghuFeatures.cmake)
 include(cmake/LaghuFuzzing.cmake)
+include(cmake/LaghuHardening.cmake)
 include(cmake/LaghuSanitizers.cmake)
+include(cmake/LaghuStaticAnalysis.cmake)
 include(cmake/LaghuBuildVariants.cmake)
 include(cmake/LaghuBuildIdentity.cmake)
 include(cmake/LaghuTestRegistration.cmake)
@@ -33,6 +35,9 @@ include(cmake/LaghuToolchain.cmake)
 
 laghu_configure_toolchain()
 laghu_configure_sanitizer_profile()
+laghu_configure_hardening()
+laghu_write_metadata()
+laghu_configure_static_analysis()
 laghu_configure_fuzzing()
 laghu_configure_build_variant()
 laghu_configure_dependency_registry()
@@ -300,6 +305,8 @@ set_property(TARGET visibility_negative_fixture PROPERTY CXX_VISIBILITY_PRESET h
 set_property(TARGET visibility_negative_fixture PROPERTY VISIBILITY_INLINES_HIDDEN YES)
 
 laghu_add_validation_tests()
+laghu_add_static_analysis_validation_tests()
+laghu_add_static_analysis_target()
 laghu_add_install_layout_test()
 
 install(TARGETS laghu_core
