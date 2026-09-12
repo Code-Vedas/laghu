@@ -191,4 +191,8 @@ function(laghu_configure_build_identity)
   set(LAGHU_BUILD_IDENTITY_PREIMAGE "${preimage_path}" CACHE INTERNAL "Laghu build identity preimage")
   set(LAGHU_BUILD_ID "${build_id}" CACHE INTERNAL "Laghu stable build identifier")
   set(LAGHU_BUILD_MANIFEST_SOURCE "${generated_source}" CACHE INTERNAL "Laghu generated build manifest source")
+  set(LAGHU_BUILD_IDENTITY_FEATURES_JSON "${effective_json}" CACHE INTERNAL
+    "Laghu effective feature identity JSON" FORCE)
+  set(LAGHU_BUILD_IDENTITY_DEPENDENCIES_JSON "${dependencies_json}" CACHE INTERNAL
+    "Laghu effective dependency identity JSON" FORCE)
 endfunction()
