@@ -249,3 +249,7 @@ jobs:
           readelf -h "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep 'Type:.*DYN'
           readelf -l "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep GNU_RELRO
           readelf -d "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep BIND_NOW
+          if readelf -d "$RUNNER_TEMP/laghu-release-hardening/laghu" | grep -q TEXTREL; then
+            echo "Laghu Release executable contains text relocations" >&2
+            exit 1
+          fi

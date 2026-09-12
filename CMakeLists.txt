@@ -13,9 +13,9 @@ endif()
 # separate clang-scan-deps executable merely to compile ordinary C++23 probes.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-if(NOT CMAKE_GENERATOR MATCHES "Ninja")
+if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
   message(FATAL_ERROR
-    "Laghu requires the Ninja generator; generator=${CMAKE_GENERATOR}. Configure with -G Ninja.")
+    "Laghu requires the single-config Ninja generator; generator=${CMAKE_GENERATOR}. Configure with -G Ninja.")
 endif()
 
 include(CTest)

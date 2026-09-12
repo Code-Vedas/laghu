@@ -276,6 +276,10 @@ function(laghu_apply_first_party_contract target)
     -pedantic-errors -fno-exceptions -fno-rtti ${LAGHU_EFFECTIVE_WARNING_FLAGS}
     ${LAGHU_SANITIZER_COMPILE_OPTIONS} ${LAGHU_HARDENING_COMPILE_OPTIONS})
   get_target_property(target_type "${target}" TYPE)
+  if(LAGHU_HARDENING_STATIC_POSITION_INDEPENDENT_CODE AND
+      (target_type STREQUAL "STATIC_LIBRARY" OR target_type STREQUAL "OBJECT_LIBRARY"))
+    set_property(TARGET "${target}" PROPERTY POSITION_INDEPENDENT_CODE ON)
+  endif()
   if(target_type STREQUAL "EXECUTABLE")
     target_compile_options("${target}" PRIVATE ${LAGHU_HARDENING_EXECUTABLE_COMPILE_OPTIONS})
   endif()
@@ -314,7 +318,7 @@ function(laghu_add_validation_tests)
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
       "-DFIXTURE_BINARY=${CMAKE_BINARY_DIR}/tests/cross-test-registration"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCrossTestRegistration.cmake")
-  foreach(feature IN ITEMS pie stack_protection relro immediate_binding)
+  foreach(feature IN ITEMS pie stack_protection static_pic relro immediate_binding)
     add_test(NAME "laghu.hardening.negative.${feature}"
       COMMAND "${CMAKE_COMMAND}"
         "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuHardening.cmake"
@@ -332,6 +336,12 @@ function(laghu_add_validation_tests)
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
       "-DLAGHU_BINARY=${CMAKE_BINARY_DIR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectHardeningMetadata.cmake")
+  add_test(NAME laghu.build.generator.multi_config_rejected
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}"
+      "-DBINARY=${CMAKE_BINARY_DIR}/tests/multi-config-generator"
+      "-DCXX=${CMAKE_CXX_COMPILER}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSingleConfigNinja.cmake")
   foreach(capability IN ITEMS if_consteval expected byteswap to_underlying unreachable)
     add_test(NAME "laghu.toolchain.negative.${capability}" COMMAND "${CMAKE_COMMAND}" -DCXX=${CMAKE_CXX_COMPILER} -DCXXFLAGS=${CMAKE_CXX_FLAGS} -DSOURCE=${CMAKE_SOURCE_DIR}/tests/toolchain/negative/${capability}.cpp -DEXPECT_FAIL=ON -DEXPECT_TEXT=laghu\ forced-negative\ capability=${capability} -P "${expect_compile}")
   endforeach()

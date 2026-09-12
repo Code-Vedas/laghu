@@ -95,3 +95,80 @@ set(unowned_analyzer_combined "${unowned_analyzer_output}${unowned_analyzer_diag
 if(unowned_analyzer_result EQUAL 0 OR NOT unowned_analyzer_combined MATCHES "Dereference of null pointer")
   message(FATAL_ERROR "Laghu static-analysis ownership expectation failed: clang_analyzer_fixture=invalid")
 endif()
+
+function(laghu_json_escape output input)
+  set(value "${input}")
+  string(REPLACE "\\" "\\\\" value "${value}")
+  string(REPLACE "\"" "\\\"" value "${value}")
+  set(${output} "${value}" PARENT_SCOPE)
+endfunction()
+
+function(laghu_write_mixed_compile_database owned vendor)
+  set(production_build "${WORK_DIRECTORY}/production-build")
+  file(MAKE_DIRECTORY "${production_build}")
+  foreach(path IN ITEMS "${production_build}" "${owned}" "${vendor}")
+    laghu_json_escape(path_json "${path}")
+    if(path STREQUAL "${production_build}")
+      set(build_json "${path_json}")
+    elseif(path STREQUAL "${owned}")
+      set(owned_json "${path_json}")
+    else()
+      set(vendor_json "${path_json}")
+    endif()
+  endforeach()
+  set(owned_command "${CLANG_ANALYZER} -std=c++23 -c ${owned} -o ${production_build}/owned.o")
+  set(vendor_command "${CLANG_ANALYZER} -std=c++23 -c ${vendor} -o ${production_build}/vendor.o")
+  laghu_json_escape(owned_command_json "${owned_command}")
+  laghu_json_escape(vendor_command_json "${vendor_command}")
+  file(WRITE "${production_build}/compile_commands.json"
+    "[{\"directory\":\"${build_json}\",\"command\":\"${owned_command_json}\",\"file\":\"${owned_json}\"},"
+    "{\"directory\":\"${build_json}\",\"command\":\"${vendor_command_json}\",\"file\":\"${vendor_json}\"}]")
+endfunction()
+
+function(laghu_run_production_analysis expected_failure)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSOURCE=${WORK_DIRECTORY}"
+      "-DBUILD_DIRECTORY=${WORK_DIRECTORY}/production-build"
+      "-DCXX=${CLANG_ANALYZER}"
+      "-DCLANG_TIDY=${CLANG_TIDY}"
+      "-DSCAN_BUILD=${SCAN_BUILD}"
+      "-DCLANG_ANALYZER=${CLANG_ANALYZER}"
+      "-DCPPCHECK=${CPPCHECK}"
+      "-DCLANG_TIDY_CONFIG=${CLANG_TIDY_CONFIG}"
+      "-DCLANG_ANALYZER_CONFIG=${LAGHU_SOURCE}/cmake/static-analysis/clang-analyzer-19.txt"
+      "-DCPPCHECK_CONFIG=${CPPCHECK_CONFIG}"
+      "-DANALYSIS_TARGETS=laghu_owned"
+      -P "${LAGHU_SOURCE}/cmake/RunStaticAnalysis.cmake"
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE diagnostics)
+  set(production_output "${output}${diagnostics}" PARENT_SCOPE)
+  if(expected_failure AND result EQUAL 0)
+    message(FATAL_ERROR "Laghu static-analysis ownership expectation failed: owned_defect=missed")
+  endif()
+  if(NOT expected_failure AND NOT result EQUAL 0)
+    message(FATAL_ERROR "Laghu static-analysis ownership expectation failed: vendor_defect=leaked\n${production_output}")
+  endif()
+endfunction()
+
+set(production_source_root "${WORK_DIRECTORY}/src")
+set(production_vendor_root "${WORK_DIRECTORY}/_deps/vendor-src/src")
+file(MAKE_DIRECTORY "${production_source_root}" "${production_vendor_root}")
+set(production_owned "${production_source_root}/owned.cpp")
+set(production_vendor "${production_vendor_root}/vendor.cpp")
+
+file(WRITE "${production_owned}" "int main() { return 0; }\n")
+file(WRITE "${production_vendor}"
+  "int laghu_vendor_defect() { int* value = nullptr; return *value; }\n")
+laghu_write_mixed_compile_database("${production_owned}" "${production_vendor}")
+laghu_run_production_analysis(FALSE)
+
+file(WRITE "${production_owned}"
+  "int main() { int* value = nullptr; return *value; }\n")
+file(WRITE "${production_vendor}" "int laghu_vendor_clean() { return 0; }\n")
+laghu_write_mixed_compile_database("${production_owned}" "${production_vendor}")
+laghu_run_production_analysis(TRUE)
+if(NOT production_output MATCHES "tool=(clang_tidy|cppcheck|clang_analyzer)")
+  message(FATAL_ERROR "Laghu static-analysis ownership expectation failed: owned_defect=unrelated")
+endif()
