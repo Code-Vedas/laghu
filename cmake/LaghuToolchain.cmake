@@ -276,11 +276,16 @@ function(laghu_apply_first_party_contract target)
     -pedantic-errors -fno-exceptions -fno-rtti ${LAGHU_EFFECTIVE_WARNING_FLAGS}
     ${LAGHU_SANITIZER_COMPILE_OPTIONS} ${LAGHU_HARDENING_COMPILE_OPTIONS})
   get_target_property(target_type "${target}" TYPE)
-  if(target_type STREQUAL "EXECUTABLE" AND
-      (NOT LAGHU_SANITIZER_LINK_OPTIONS STREQUAL "" OR
-      NOT LAGHU_HARDENING_LINK_OPTIONS STREQUAL ""))
+  if(target_type STREQUAL "EXECUTABLE")
+    target_compile_options("${target}" PRIVATE ${LAGHU_HARDENING_EXECUTABLE_COMPILE_OPTIONS})
+  endif()
+  if(target_type STREQUAL "EXECUTABLE" OR target_type STREQUAL "SHARED_LIBRARY" OR
+      target_type STREQUAL "MODULE_LIBRARY")
     target_link_options("${target}" PRIVATE ${LAGHU_SANITIZER_LINK_OPTIONS}
       ${LAGHU_HARDENING_LINK_OPTIONS})
+    if(target_type STREQUAL "EXECUTABLE")
+      target_link_options("${target}" PRIVATE ${LAGHU_HARDENING_EXECUTABLE_LINK_OPTIONS})
+    endif()
   endif()
   get_target_property(effective_options "${target}" COMPILE_OPTIONS)
   list(FIND effective_options -fexceptions enables_exceptions)

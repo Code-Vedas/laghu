@@ -5,6 +5,10 @@ foreach(variable IN ITEMS SOURCE BUILD_DIRECTORY CXX CLANG_TIDY SCAN_BUILD CLANG
     message(FATAL_ERROR "Laghu static analysis requires ${variable}")
   endif()
 endforeach()
+if(NOT DEFINED ANALYSIS_TARGETS OR ANALYSIS_TARGETS STREQUAL "")
+  message(FATAL_ERROR "Laghu static analysis requires ANALYSIS_TARGETS")
+endif()
+string(REPLACE "," ";" analysis_targets "${ANALYSIS_TARGETS}")
 
 set(compile_commands "${BUILD_DIRECTORY}/compile_commands.json")
 if(NOT EXISTS "${compile_commands}")
@@ -13,6 +17,7 @@ endif()
 file(READ "${compile_commands}" compile_database)
 string(JSON command_count LENGTH "${compile_database}")
 set(owned_sources)
+set(owned_command_indexes)
 if(command_count GREATER 0)
   math(EXPR last_command "${command_count} - 1")
   foreach(index RANGE ${last_command})
@@ -21,6 +26,7 @@ if(command_count GREATER 0)
     file(RELATIVE_PATH relative_source "${SOURCE}" "${source_real}")
     if(relative_source MATCHES "^src/.*\\.(cpp|cc|cxx)$")
       list(APPEND owned_sources "${source_real}")
+      list(APPEND owned_command_indexes "${index}")
     endif()
   endforeach()
 endif()
@@ -55,33 +61,20 @@ if(NOT cppcheck_result EQUAL 0)
   message(FATAL_ERROR "Laghu static analysis failed: tool=cppcheck\n${cppcheck_output}${cppcheck_diagnostics}")
 endif()
 
-set(analyzer_build "${BUILD_DIRECTORY}/analysis/clang-analyzer")
-file(REMOVE_RECURSE "${analyzer_build}")
-set(analyzer_configure_arguments
-  -S "${SOURCE}"
-  -B "${analyzer_build}"
-  -G Ninja
-  "-DCMAKE_CXX_COMPILER=${CXX}"
-  -DCMAKE_BUILD_TYPE=Release
-  -DLAGHU_BUILD_PROFILE=MINIMAL)
-if(DEFINED CXX_FLAGS AND NOT CXX_FLAGS STREQUAL "")
-  list(APPEND analyzer_configure_arguments "-DCMAKE_CXX_FLAGS=${CXX_FLAGS}")
-endif()
-execute_process(COMMAND "${CMAKE_COMMAND}" ${analyzer_configure_arguments}
-  RESULT_VARIABLE analyzer_configure_result
-  OUTPUT_VARIABLE analyzer_configure_output
-  ERROR_VARIABLE analyzer_configure_diagnostics)
-if(NOT analyzer_configure_result EQUAL 0)
-  message(FATAL_ERROR "Laghu static analysis failed: tool=clang_analyzer_configure\n${analyzer_configure_output}${analyzer_configure_diagnostics}")
-endif()
 file(STRINGS "${CLANG_ANALYZER_CONFIG}" analyzer_options)
 list(FILTER analyzer_options EXCLUDE REGEX "^[ \\t]*(#|$)")
-execute_process(
-  COMMAND "${SCAN_BUILD}" --use-cc "${CLANG_ANALYZER}" --use-c++ "${CXX}" ${analyzer_options}
-    "${CMAKE_COMMAND}" --build "${analyzer_build}" --target laghu_core laghu_os laghu
-  RESULT_VARIABLE analyzer_result
-  OUTPUT_VARIABLE analyzer_output
-  ERROR_VARIABLE analyzer_diagnostics)
-if(NOT analyzer_result EQUAL 0)
-  message(FATAL_ERROR "Laghu static analysis failed: tool=clang_analyzer\n${analyzer_output}${analyzer_diagnostics}")
-endif()
+get_filename_component(cxx_command "${CXX}" NAME)
+foreach(index IN LISTS owned_command_indexes)
+  string(JSON compile_command GET "${compile_database}" ${index} command)
+  separate_arguments(compile_arguments NATIVE_COMMAND "${compile_command}")
+  list(REMOVE_AT compile_arguments 0)
+  execute_process(
+    COMMAND "${SCAN_BUILD}" --exclude "${BUILD_DIRECTORY}/_deps" --use-cc "${CLANG_ANALYZER}"
+      --use-c++ "${CXX}" ${analyzer_options} "${cxx_command}" ${compile_arguments}
+    RESULT_VARIABLE analyzer_result
+    OUTPUT_VARIABLE analyzer_output
+    ERROR_VARIABLE analyzer_diagnostics)
+  if(NOT analyzer_result EQUAL 0)
+    message(FATAL_ERROR "Laghu static analysis failed: tool=clang_analyzer; source_index=${index}\n${analyzer_output}${analyzer_diagnostics}")
+  endif()
+endforeach()

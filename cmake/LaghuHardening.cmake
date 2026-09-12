@@ -6,9 +6,21 @@ function(laghu_hardening_fail detail)
 endfunction()
 
 function(laghu_hardening_probe feature output)
-  cmake_parse_arguments(PROBE "" "" "COMPILE_OPTIONS;LINK_OPTIONS" ${ARGN})
+  cmake_parse_arguments(PROBE "" "SOURCE" "COMPILE_OPTIONS;LINK_OPTIONS" ${ARGN})
+  if(NOT DEFINED PROBE_SOURCE OR PROBE_SOURCE STREQUAL "")
+    set(PROBE_SOURCE "${CMAKE_SOURCE_DIR}/tests/hardening/probes/clean.cpp")
+  endif()
+  if(DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)
+    set(had_try_compile_target_type true)
+    set(saved_try_compile_target_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+  else()
+    set(had_try_compile_target_type false)
+  endif()
+  if(PROBE_LINK_OPTIONS)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
+  endif()
   try_compile(result "${CMAKE_BINARY_DIR}/probes/try-hardening-${feature}"
-    SOURCES "${CMAKE_SOURCE_DIR}/tests/hardening/probes/clean.cpp"
+    SOURCES "${PROBE_SOURCE}"
     COMPILE_DEFINITIONS ${PROBE_COMPILE_OPTIONS}
     LINK_OPTIONS ${PROBE_LINK_OPTIONS}
     CMAKE_FLAGS
@@ -17,6 +29,11 @@ function(laghu_hardening_probe feature output)
       "-DCMAKE_CXX_EXTENSIONS=OFF"
       "-DCMAKE_CXX_SCAN_FOR_MODULES=OFF"
     OUTPUT_VARIABLE probe_output)
+  if(had_try_compile_target_type)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${saved_try_compile_target_type}")
+  else()
+    unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+  endif()
   laghu_sanitize_probe_text(sanitized_output "${probe_output}")
   file(WRITE "${CMAKE_BINARY_DIR}/probes/hardening-${feature}.log" "${sanitized_output}")
   if(result)
@@ -53,10 +70,17 @@ function(laghu_configure_hardening)
   endif()
 
   if(posix_build)
-    laghu_hardening_probe(pie pie_supported COMPILE_OPTIONS -fPIE)
+    if(elf_build)
+      laghu_hardening_probe(pie pie_supported
+        COMPILE_OPTIONS -fPIE
+        LINK_OPTIONS -pie)
+    else()
+      laghu_hardening_probe(pie pie_supported COMPILE_OPTIONS -fPIE)
+    endif()
     laghu_hardening_probe(stack_protection stack_protection_supported
       COMPILE_OPTIONS -fstack-protector-strong)
     laghu_hardening_probe(fortification fortification_supported
+      SOURCE "${CMAKE_SOURCE_DIR}/tests/hardening/probes/fortification.cpp"
       COMPILE_OPTIONS -O2 -D_FORTIFY_SOURCE=3)
   else()
     set(pie_supported false)
@@ -88,20 +112,22 @@ function(laghu_configure_hardening)
     endif()
   endif()
 
-  set(compile_options)
+  set(common_compile_options)
+  set(executable_compile_options)
   set(link_options)
+  set(executable_link_options)
   if(release_build)
     if(posix_build AND pie_supported)
-      list(APPEND compile_options -fPIE)
+      list(APPEND executable_compile_options -fPIE)
       if(elf_build)
-        list(APPEND link_options -pie)
+        list(APPEND executable_link_options -pie)
       endif()
       set(pie_enabled true)
     else()
       set(pie_enabled false)
     endif()
     if(posix_build AND stack_protection_supported)
-      list(APPEND compile_options -fstack-protector-strong)
+      list(APPEND common_compile_options -fstack-protector-strong)
       set(stack_protection_enabled true)
     else()
       set(stack_protection_enabled false)
@@ -119,7 +145,7 @@ function(laghu_configure_hardening)
       set(immediate_binding_enabled false)
     endif()
     if(posix_build AND fortification_supported)
-      list(APPEND compile_options -O2 -D_FORTIFY_SOURCE=3)
+      list(APPEND common_compile_options -O2 -D_FORTIFY_SOURCE=3)
       set(fortification_enabled true)
     else()
       set(fortification_enabled false)
@@ -139,7 +165,13 @@ function(laghu_configure_hardening)
   laghu_hardening_feature_json(fortification_json fortification "${fortification_supported}" "${fortification_enabled}")
   set(metadata "{\"mode\":\"${CMAKE_BUILD_TYPE}\",${pie_json},${stack_protection_json},${relro_json},${immediate_binding_json},${fortification_json}}")
 
-  set(LAGHU_HARDENING_COMPILE_OPTIONS "${compile_options}" CACHE INTERNAL "Laghu hardening compile options" FORCE)
-  set(LAGHU_HARDENING_LINK_OPTIONS "${link_options}" CACHE INTERNAL "Laghu hardening link options" FORCE)
+  set(LAGHU_HARDENING_COMPILE_OPTIONS "${common_compile_options}" CACHE INTERNAL
+    "Laghu common hardening compile options" FORCE)
+  set(LAGHU_HARDENING_EXECUTABLE_COMPILE_OPTIONS "${executable_compile_options}" CACHE INTERNAL
+    "Laghu executable hardening compile options" FORCE)
+  set(LAGHU_HARDENING_LINK_OPTIONS "${link_options}" CACHE INTERNAL
+    "Laghu linkable hardening options" FORCE)
+  set(LAGHU_HARDENING_EXECUTABLE_LINK_OPTIONS "${executable_link_options}" CACHE INTERNAL
+    "Laghu executable hardening link options" FORCE)
   set(LAGHU_HARDENING_METADATA_JSON "${metadata}" CACHE INTERNAL "Laghu hardening metadata" FORCE)
 endfunction()

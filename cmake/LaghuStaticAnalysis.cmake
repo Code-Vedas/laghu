@@ -3,6 +3,31 @@ include_guard(GLOBAL)
 
 set(LAGHU_STATIC_ANALYSIS OFF CACHE BOOL "Enable Laghu-owned static analysis targets")
 
+function(laghu_collect_static_analysis_targets output)
+  get_property(targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  set(analysis_targets)
+  foreach(target IN LISTS targets)
+    get_target_property(target_sources "${target}" SOURCES)
+    if(target_sources STREQUAL "target_sources-NOTFOUND")
+      continue()
+    endif()
+    foreach(source IN LISTS target_sources)
+      if(NOT source MATCHES "\\.(cpp|cc|cxx)$")
+        continue()
+      endif()
+      get_filename_component(source_absolute "${source}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+      file(RELATIVE_PATH source_relative "${CMAKE_SOURCE_DIR}" "${source_absolute}")
+      if(source_relative MATCHES "^src/")
+        list(APPEND analysis_targets "${target}")
+        break()
+      endif()
+    endforeach()
+  endforeach()
+  list(REMOVE_DUPLICATES analysis_targets)
+  list(SORT analysis_targets)
+  set(${output} "${analysis_targets}" PARENT_SCOPE)
+endfunction()
+
 function(laghu_configure_static_analysis)
   if(NOT LAGHU_STATIC_ANALYSIS)
     return()
@@ -22,6 +47,11 @@ function(laghu_add_static_analysis_target)
   if(NOT LAGHU_STATIC_ANALYSIS)
     return()
   endif()
+  laghu_collect_static_analysis_targets(analysis_targets)
+  if(analysis_targets STREQUAL "")
+    message(FATAL_ERROR "Laghu static analysis failed: first_party_targets_missing")
+  endif()
+  string(JOIN "," analysis_targets_csv ${analysis_targets})
   add_custom_target(laghu_static_analysis
     COMMAND "${CMAKE_COMMAND}"
       "-DSOURCE=${CMAKE_SOURCE_DIR}"
@@ -35,7 +65,9 @@ function(laghu_add_static_analysis_target)
       "-DCLANG_TIDY_CONFIG=${CMAKE_SOURCE_DIR}/cmake/static-analysis/clang-tidy-19.yaml"
       "-DCLANG_ANALYZER_CONFIG=${CMAKE_SOURCE_DIR}/cmake/static-analysis/clang-analyzer-19.txt"
       "-DCPPCHECK_CONFIG=${CMAKE_SOURCE_DIR}/cmake/static-analysis/cppcheck-2.13.txt"
+      "-DANALYSIS_TARGETS=${analysis_targets_csv}"
       -P "${CMAKE_SOURCE_DIR}/cmake/RunStaticAnalysis.cmake"
+    DEPENDS ${analysis_targets}
     USES_TERMINAL
     COMMENT "Analyzing Laghu-owned C++ sources")
 endfunction()

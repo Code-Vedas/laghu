@@ -234,6 +234,12 @@ jobs:
             -DLAGHU_STATIC_ANALYSIS=ON
           cmake --build "$RUNNER_TEMP/laghu-static-analysis" --target laghu_static_analysis
           cmake --build "$RUNNER_TEMP/laghu-static-analysis" --target laghu_verify_toolchain
+          cmake -S . -B "$RUNNER_TEMP/laghu-static-analysis-tls" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DLAGHU_STATIC_ANALYSIS=ON \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            -DLAGHU_FEATURES=tls
+          cmake --build "$RUNNER_TEMP/laghu-static-analysis-tls" --target laghu_static_analysis
           cmake -S . -B "$RUNNER_TEMP/laghu-release-hardening" -G Ninja \
             -DCMAKE_CXX_COMPILER=clang++-19 \
             -DCMAKE_BUILD_TYPE=Release
