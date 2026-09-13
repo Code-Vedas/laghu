@@ -25,7 +25,7 @@ jobs:
             cxxflags: -stdlib=libc++
     name: ${{ matrix.name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Install compiler and standard library
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
@@ -101,7 +101,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Install canonical generator
         run: brew install ninja openssl@3
       - name: Verify Apple Clang toolchain contract
@@ -130,8 +130,8 @@ jobs:
   freebsd:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1
+      - uses: actions/checkout@v7.0.1
+      - uses: vmactions/freebsd-vm@8b0f1a8fc0ea0def307835c258940ca358fe6480
         with:
           release: '15.1'
           usesh: true
@@ -148,7 +148,7 @@ jobs:
   linux-aarch64-cross:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Install ARM64 GCC cross toolchain
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
@@ -171,7 +171,7 @@ jobs:
   linux-clang-tsan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Install Linux Clang ThreadSanitizer toolchain
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
