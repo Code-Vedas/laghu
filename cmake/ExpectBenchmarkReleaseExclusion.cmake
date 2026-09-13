@@ -13,6 +13,7 @@ if(NOT build_result EQUAL 0)
   message(FATAL_ERROR "Laghu benchmark exclusion expectation failed: build=${build_output}${build_diagnostics}")
 endif()
 
+file(REMOVE_RECURSE "${STAGE_DIRECTORY}")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "DESTDIR=${STAGE_DIRECTORY}"
     "${CMAKE_COMMAND}" --install "${BUILD_DIRECTORY}"

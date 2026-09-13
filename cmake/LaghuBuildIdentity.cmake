@@ -25,7 +25,12 @@ function(laghu_build_identity_input_hashes output)
     CMakeLists.txt
     CMakePresets.json
     VERSION
+    bench/core_foundation.cpp
+    bench/private/laghu/benchmark/internal/metrics.hpp
+    bench/private/laghu/benchmark/internal/workload.hpp
+    bench/runner.cpp
     cmake/LaghuApiBoundaries.cmake
+    cmake/LaghuBenchmarks.cmake
     cmake/LaghuBuildIdentity.cmake
     cmake/LaghuBuildVariants.cmake
     cmake/LaghuCapabilities.cmake

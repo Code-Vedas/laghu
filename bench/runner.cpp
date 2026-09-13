@@ -231,7 +231,7 @@ class JsonWriter final {
   if (text.empty() || text.size() >= metric.text.size()) {
     return false;
   }
-  std::memcpy(metric.text.data(), text.data(), text.size());
+  std::memmove(metric.text.data(), text.data(), text.size());
   metric.size = text.size();
   metric.available = true;
   return true;
