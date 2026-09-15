@@ -25,7 +25,12 @@ function(laghu_build_identity_input_hashes output)
     CMakeLists.txt
     CMakePresets.json
     VERSION
+    bench/core_foundation.cpp
+    bench/private/laghu/benchmark/internal/metrics.hpp
+    bench/private/laghu/benchmark/internal/workload.hpp
+    bench/runner.cpp
     cmake/LaghuApiBoundaries.cmake
+    cmake/LaghuBenchmarks.cmake
     cmake/LaghuBuildIdentity.cmake
     cmake/LaghuBuildVariants.cmake
     cmake/LaghuCapabilities.cmake
@@ -37,6 +42,7 @@ function(laghu_build_identity_input_hashes output)
     cmake/LaghuToolchain.cmake
     tests/hardening/probes/clean.cpp
     tests/hardening/probes/fortification.cpp
+    tests/benchmarks/workload_counters.cpp
     src/cli/main.cpp
     src/cli/private/laghu/cli/internal/build_manifest.hpp
     src/core/clocks.cpp
@@ -191,4 +197,8 @@ function(laghu_configure_build_identity)
   set(LAGHU_BUILD_IDENTITY_PREIMAGE "${preimage_path}" CACHE INTERNAL "Laghu build identity preimage")
   set(LAGHU_BUILD_ID "${build_id}" CACHE INTERNAL "Laghu stable build identifier")
   set(LAGHU_BUILD_MANIFEST_SOURCE "${generated_source}" CACHE INTERNAL "Laghu generated build manifest source")
+  set(LAGHU_BUILD_IDENTITY_FEATURES_JSON "${effective_json}" CACHE INTERNAL
+    "Laghu effective feature identity JSON" FORCE)
+  set(LAGHU_BUILD_IDENTITY_DEPENDENCIES_JSON "${dependencies_json}" CACHE INTERNAL
+    "Laghu effective dependency identity JSON" FORCE)
 endfunction()
