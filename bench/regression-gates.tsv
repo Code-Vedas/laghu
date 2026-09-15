@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# laghu-benchmark-regressions-v1
+# workload	metric	direction	allowed_regression_percent	noise_band_percent	reference_environment	mode
+# reference_environment is the 16-character lowercase identity from --environment.
+# Production thresholds remain empty until measured evidence is approved.

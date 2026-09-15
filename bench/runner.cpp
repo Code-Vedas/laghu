@@ -29,7 +29,9 @@ using laghu::benchmark::internal::WorkloadCounters;
 constexpr std::size_t maximum_intervals = 1000U;
 constexpr std::uint64_t maximum_warmup_intervals = 10000U;
 constexpr std::size_t diagnostic_capacity = 256U;
-constexpr std::size_t json_capacity = 8192U;
+// A report can retain all 1,000 measured interval values without truncating
+// their observed order. It remains a bounded, build-local benchmark artifact.
+constexpr std::size_t json_capacity = 32768U;
 
 enum class ExitCode : int {
   success = 0,
@@ -307,7 +309,22 @@ class JsonWriter final {
       writer.append("}");
 }
 
+[[nodiscard]] bool append_samples(JsonWriter& writer,
+                                  const std::array<std::uint64_t, maximum_intervals>& samples,
+                                  std::size_t count) noexcept {
+  if (!writer.append("[")) {
+    return false;
+  }
+  for (std::size_t index = 0U; index < count; ++index) {
+    if ((index != 0U && !writer.append(",")) || !writer.append_number(samples[index])) {
+      return false;
+    }
+  }
+  return writer.append("]");
+}
+
 [[nodiscard]] bool write_report(const Options& options, const Percentiles& percentiles,
+                                const std::array<std::uint64_t, maximum_intervals>& samples,
                                 std::uint64_t throughput, bool throughput_available,
                                 const NumericMetric& cpu_time, const NumericMetric& peak_rss,
                                 const TextMetric& cpu, const WorkloadCounters& counters,
@@ -327,7 +344,15 @@ class JsonWriter final {
       writer.append(laghu::benchmark::internal::dependencies_json) &&
       writer.append(",\"features\":") &&
       writer.append(laghu::benchmark::internal::features_json) &&
-      writer.append(",\"target\":{\"architecture\":") &&
+      writer.append(",\"profile\":") &&
+      writer.append_json_string(laghu::benchmark::internal::build_profile) &&
+      writer.append(",\"sanitizer_profile\":") &&
+      writer.append_json_string(laghu::benchmark::internal::sanitizer_profile) &&
+      writer.append(",\"standard_library\":{\"id\":") &&
+      writer.append_json_string(laghu::benchmark::internal::standard_library_id) &&
+      writer.append(",\"version\":") &&
+      writer.append_json_string(laghu::benchmark::internal::standard_library_version) &&
+      writer.append("},\"target\":{\"architecture\":") &&
       writer.append_json_string(laghu::benchmark::internal::target_architecture) &&
       writer.append(",\"os\":") &&
       writer.append_json_string(laghu::benchmark::internal::target_os) &&
@@ -348,9 +373,15 @@ class JsonWriter final {
       writer.append(",\"p95\":") && writer.append_number(percentiles.p95) &&
       writer.append(",\"p99\":") && writer.append_number(percentiles.p99) &&
       writer.append(",\"p99_9\":") && writer.append_number(percentiles.p999) &&
-      writer.append("},\"peak_rss_bytes\":") && append_numeric_metric(writer, peak_rss) &&
+      writer.append(",\"samples_ns\":");
+  if (!complete || !append_samples(writer, samples, options.measured_intervals) ||
+      !writer.append("}")) {
+    return false;
+  }
+  const bool metrics_complete =
+      writer.append(",\"peak_rss_bytes\":") && append_numeric_metric(writer, peak_rss) &&
       writer.append(",\"throughput_operations_per_second\":");
-  if (!complete) {
+  if (!metrics_complete) {
     return false;
   }
   const bool throughput_written = throughput_available
@@ -416,8 +447,9 @@ int main(int argc, char** argv) {
   }
 
   Percentiles percentiles{};
+  std::array<std::uint64_t, maximum_intervals> percentile_samples = durations;
   if (!laghu::benchmark::internal::summarize_percentiles(
-          durations, options.measured_intervals, percentiles)) {
+          percentile_samples, options.measured_intervals, percentiles)) {
     static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: percentile calculation failed\n"));
     return static_cast<int>(ExitCode::metric_unavailable);
   }
@@ -434,7 +466,7 @@ int main(int argc, char** argv) {
       throughput_available = false;
     }
   }
-  if (!write_report(options, percentiles, throughput, throughput_available, cpu_time, peak_rss_bytes(),
+  if (!write_report(options, percentiles, durations, throughput, throughput_available, cpu_time, peak_rss_bytes(),
                     cpu_description(), measured_counters, checksum)) {
     static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: report exceeds bounded output capacity\n"));
     return static_cast<int>(ExitCode::output_failure);

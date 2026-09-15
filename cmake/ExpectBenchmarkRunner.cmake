@@ -42,6 +42,11 @@ foreach(output IN ITEMS "${first}" "${second}")
   string(JSON p95 GET "${output}" metrics latency_ns_per_interval p95)
   string(JSON p99 GET "${output}" metrics latency_ns_per_interval p99)
   string(JSON p999 GET "${output}" metrics latency_ns_per_interval p99_9)
+  string(JSON sample_count LENGTH "${output}" metrics latency_ns_per_interval samples_ns)
+  string(JSON profile GET "${output}" build profile)
+  string(JSON sanitizer_profile GET "${output}" build sanitizer_profile)
+  string(JSON standard_library_id GET "${output}" build standard_library id)
+  string(JSON standard_library_version GET "${output}" build standard_library version)
   string(JSON allocation_instrumented GET "${output}" metrics allocation_count instrumented)
   string(JSON allocation_count GET "${output}" metrics allocation_count value)
   string(JSON syscall_instrumented GET "${output}" metrics laghu_syscall_count instrumented)
@@ -50,6 +55,9 @@ foreach(output IN ITEMS "${first}" "${second}")
       build_id STREQUAL "" OR NOT feature_count EQUAL EXPECTED_FEATURE_COUNT OR
       NOT dependency_count EQUAL EXPECTED_DEPENDENCY_COUNT OR
       NOT interval_count EQUAL 5 OR NOT warmup_count EQUAL 1 OR NOT operations EQUAL 4096 OR
+      NOT sample_count EQUAL 5 OR
+      NOT profile STREQUAL "MINIMAL" OR NOT sanitizer_profile STREQUAL "NONE" OR
+      standard_library_id STREQUAL "" OR standard_library_version STREQUAL "" OR
       p50 GREATER p95 OR p95 GREATER p99 OR p99 GREATER p999 OR
       allocation_instrumented OR syscall_instrumented OR
       NOT allocation_count EQUAL 0 OR NOT syscall_count EQUAL 0)
