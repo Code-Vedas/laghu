@@ -881,6 +881,10 @@ struct Manifest final {
         error = "field_value";
         return false;
       }
+      if (metric_id(rule.metric) == MetricId::invalid) {
+        error = "metric";
+        return false;
+      }
       if (fields[2U] == "lower") {
         rule.higher_is_better = false;
       } else if (fields[2U] == "higher") {
@@ -1280,11 +1284,6 @@ int main(int argc, char** argv) {
     }
     applicable[index] = true;
     const MetricId metric = metric_id(rule.metric);
-    if (metric == MetricId::invalid) {
-      static_cast<void>(write_all(STDERR_FILENO,
-          "laghu-benchmark-evaluate: manifest=metric\n"));
-      return static_cast<int>(ExitCode::invalid_input);
-    }
     if (rule.reference_environment != reference_environment) {
       static_cast<void>(write_all(STDERR_FILENO,
           "laghu-benchmark-evaluate: manifest=reference_environment_mismatch; expected="));

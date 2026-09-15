@@ -163,7 +163,7 @@ file(WRITE "${work}/short.json" "${short_document}")
 laghu_evaluator_run("${work}/short.json" 65 "artifact=candidate; field=parameters" short_output)
 
 file(WRITE "${manifest}"
-  "# fixture\ncore-foundation\tunsupported_metric\tlower\t5\t1\t${environment}\thard\n")
+  "# fixture\nfuture-workload\tunsupported_metric\tlower\t5\t1\t${environment}\thard\n")
 laghu_evaluator_run("${work}/noise.json" 65 "manifest=metric" malformed_output)
 file(WRITE "${manifest}"
   "# fixture\ncore-foundation\tlatency_ns_per_interval\tinvalid\t5\t1\t${environment}\thard\n")
