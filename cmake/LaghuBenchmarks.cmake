@@ -88,6 +88,7 @@ function(laghu_add_benchmark_validation_tests)
       "-DSOURCE_DIRECTORY=${CMAKE_SOURCE_DIR}"
       "-DEXPECTED_FEATURE_COUNT=${benchmark_expected_feature_count}"
       "-DEXPECTED_DEPENDENCY_COUNT=${benchmark_expected_dependency_count}"
+      "-DEXPECTED_SANITIZER_PROFILE=${LAGHU_SANITIZER_PROFILE}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBenchmarkRunner.cmake")
   add_test(NAME laghu.benchmark.release_exclusion
     COMMAND "${CMAKE_COMMAND}"

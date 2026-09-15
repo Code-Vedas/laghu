@@ -14,16 +14,29 @@
 
 namespace {
 
-constexpr std::size_t maximum_document_bytes = 65536U;
-constexpr std::size_t maximum_json_nodes = 4096U;
+constexpr std::size_t maximum_document_bytes = 262144U;
+constexpr std::size_t maximum_json_nodes = 8192U;
 constexpr std::size_t maximum_json_members = 1024U;
-constexpr std::size_t maximum_json_elements = 2048U;
+constexpr std::size_t maximum_json_elements = 8192U;
 constexpr std::size_t maximum_rules = 128U;
 constexpr std::size_t minimum_samples = 10U;
 constexpr std::size_t maximum_samples = 1000U;
 constexpr std::size_t bootstrap_resamples = 10000U;
 constexpr std::uint64_t percent_ppm = 10000U;
 constexpr std::uint64_t fixed_seed = 0x6c616768755f3832ULL;
+
+enum class MetricId : std::uint8_t {
+  latency,
+  throughput,
+  cpu_time,
+  peak_rss,
+  allocation,
+  laghu_syscall,
+  count,
+  invalid,
+};
+
+constexpr std::size_t metric_count = static_cast<std::size_t>(MetricId::count);
 
 enum class ExitCode : int {
   success = 0,
@@ -446,34 +459,12 @@ class JsonDocument final {
   return true;
 }
 
-[[nodiscard]] bool required_counter_metric(const JsonDocument& document, const JsonNode* metrics,
-                                           std::string_view key) noexcept {
-  const JsonNode* metric{};
-  bool instrumented{};
-  std::uint64_t value{};
-  return required_object(document, metrics, key, metric) &&
-      required_boolean(document, metric, "instrumented", instrumented) &&
-      required_number(document, metric, "value", value);
-}
-
-[[nodiscard]] bool required_host_metric(const JsonDocument& document, const JsonNode* metrics,
-                                        std::string_view key) noexcept {
-  const JsonNode* metric{};
-  std::string_view status;
-  if (!required_object(document, metrics, key, metric) ||
-      !required_string(document, metric, "status", status)) {
-    return false;
-  }
-  if (status == "available") {
-    std::uint64_t value{};
-    return required_number(document, metric, "value", value);
-  }
-  if (status == "unavailable") {
-    std::string_view reason;
-    return required_string(document, metric, "reason", reason);
-  }
-  return false;
-}
+struct MetricSeries final {
+  std::array<std::uint64_t, maximum_samples> values{};
+  std::size_t count{};
+  bool available{};
+  std::string_view reason{};
+};
 
 struct Artifact final {
   JsonDocument document{};
@@ -487,14 +478,112 @@ struct Artifact final {
   std::string_view target_architecture{};
   std::string_view target_os{};
   std::string_view cpu_description{};
+  bool cpu_description_available{};
   std::string_view dependencies{};
   std::string_view features{};
   std::string_view parameters{};
   std::string_view workload{};
   std::uint64_t workload_checksum{};
-  std::array<std::uint64_t, maximum_samples> samples{};
-  std::size_t sample_count{};
+  std::array<MetricSeries, metric_count> metrics{};
 };
+
+[[nodiscard]] constexpr std::size_t metric_index(MetricId metric) noexcept {
+  return static_cast<std::size_t>(metric);
+}
+
+[[nodiscard]] MetricId metric_id(std::string_view name) noexcept {
+  if (name == "latency_ns_per_interval") {
+    return MetricId::latency;
+  }
+  if (name == "throughput_operations_per_second") {
+    return MetricId::throughput;
+  }
+  if (name == "cpu_time_ns") {
+    return MetricId::cpu_time;
+  }
+  if (name == "peak_rss_bytes") {
+    return MetricId::peak_rss;
+  }
+  if (name == "allocation_count") {
+    return MetricId::allocation;
+  }
+  if (name == "laghu_syscall_count") {
+    return MetricId::laghu_syscall;
+  }
+  return MetricId::invalid;
+}
+
+[[nodiscard]] bool load_samples(const JsonDocument& document, const JsonNode* metric,
+                                std::string_view key, std::uint64_t intervals,
+                                MetricSeries& output) noexcept {
+  const JsonNode* samples{};
+  if (!required_array(document, metric, key, samples)) {
+    return false;
+  }
+  output.count = document.element_count(samples);
+  if (output.count < minimum_samples || output.count > output.values.size() ||
+      output.count != intervals) {
+    return false;
+  }
+  for (std::size_t index = 0U; index < output.count; ++index) {
+    const JsonNode* sample = document.element(samples, index);
+    if (sample == nullptr || sample->type != JsonType::number) {
+      return false;
+    }
+    output.values[index] = sample->number;
+  }
+  output.available = true;
+  return true;
+}
+
+[[nodiscard]] bool load_host_metric(const JsonDocument& document, const JsonNode* metrics,
+                                    std::string_view key, std::string_view samples_key,
+                                    std::uint64_t intervals, MetricSeries& output) noexcept {
+  const JsonNode* metric{};
+  std::string_view status;
+  if (!required_object(document, metrics, key, metric) ||
+      !required_string(document, metric, "status", status)) {
+    return false;
+  }
+  if (status == "unavailable") {
+    return required_string(document, metric, "reason", output.reason);
+  }
+  std::uint64_t value{};
+  return status == "available" && required_number(document, metric, "value", value) &&
+      load_samples(document, metric, samples_key, intervals, output);
+}
+
+[[nodiscard]] bool load_counter_metric(const JsonDocument& document, const JsonNode* metrics,
+                                       std::string_view key, std::uint64_t intervals,
+                                       MetricSeries& output) noexcept {
+  const JsonNode* metric{};
+  bool instrumented{};
+  std::uint64_t value{};
+  std::string_view status;
+  if (!required_object(document, metrics, key, metric) ||
+      !required_boolean(document, metric, "instrumented", instrumented) ||
+      !required_number(document, metric, "value", value) ||
+      !required_string(document, metric, "status", status)) {
+    return false;
+  }
+  if (!instrumented) {
+    return status == "unavailable" && required_string(document, metric, "reason", output.reason);
+  }
+  return status == "available" &&
+      load_samples(document, metric, "samples_count", intervals, output);
+}
+
+[[nodiscard]] bool load_latency_metric(const JsonDocument& document, const JsonNode* metrics,
+                                       std::uint64_t intervals, MetricSeries& output) noexcept {
+  const JsonNode* metric{};
+  std::uint64_t ignored{};
+  return required_object(document, metrics, "latency_ns_per_interval", metric) &&
+      required_number(document, metric, "p50", ignored) &&
+      required_number(document, metric, "p95", ignored) &&
+      required_number(document, metric, "p99", ignored) &&
+      required_number(document, metric, "p99_9", ignored) &&
+      load_samples(document, metric, "samples_ns", intervals, output);
+}
 
 [[nodiscard]] bool load_artifact(const char* path, Artifact& artifact,
                                  std::string_view& error) noexcept {
@@ -545,9 +634,23 @@ struct Artifact final {
   std::string_view cpu_status;
   if (!required_object(artifact.document, root, "cpu", cpu) ||
       !required_object(artifact.document, cpu, "description", description) ||
-      !required_string(artifact.document, description, "status", cpu_status) ||
-      cpu_status != "available" ||
-      !required_string(artifact.document, description, "value", artifact.cpu_description)) {
+      !required_string(artifact.document, description, "status", cpu_status)) {
+    error = "cpu_description";
+    return false;
+  }
+  if (cpu_status == "available") {
+    if (!required_string(artifact.document, description, "value", artifact.cpu_description)) {
+      error = "cpu_description";
+      return false;
+    }
+    artifact.cpu_description_available = true;
+  } else if (cpu_status == "unavailable") {
+    std::string_view reason;
+    if (!required_string(artifact.document, description, "reason", reason)) {
+      error = "cpu_description";
+      return false;
+    }
+  } else {
     error = "cpu_description";
     return false;
   }
@@ -558,6 +661,7 @@ struct Artifact final {
   std::uint64_t warmup{};
   if (!required_object(artifact.document, root, "parameters", parameters) ||
       !required_number(artifact.document, parameters, "intervals", intervals) || intervals < minimum_samples ||
+      intervals > maximum_samples ||
       !required_number(artifact.document, parameters, "operations_per_interval", operations) ||
       !required_number(artifact.document, parameters, "warmup", warmup) ||
       !required_string(artifact.document, root, "workload", artifact.workload) ||
@@ -568,37 +672,22 @@ struct Artifact final {
   artifact.parameters = parameters->raw;
 
   const JsonNode* metrics{};
-  const JsonNode* latency{};
-  const JsonNode* samples{};
-  std::uint64_t ignored{};
   if (!required_object(artifact.document, root, "metrics", metrics) ||
-      !required_counter_metric(artifact.document, metrics, "allocation_count") ||
-      !required_host_metric(artifact.document, metrics, "cpu_time_ns") ||
-      !required_counter_metric(artifact.document, metrics, "laghu_syscall_count") ||
-      !required_object(artifact.document, metrics, "latency_ns_per_interval", latency) ||
-      !required_number(artifact.document, latency, "p50", ignored) ||
-      !required_number(artifact.document, latency, "p95", ignored) ||
-      !required_number(artifact.document, latency, "p99", ignored) ||
-      !required_number(artifact.document, latency, "p99_9", ignored) ||
-      !required_array(artifact.document, latency, "samples_ns", samples) ||
-      !required_host_metric(artifact.document, metrics, "peak_rss_bytes") ||
-      !required_host_metric(artifact.document, metrics, "throughput_operations_per_second")) {
+      !load_counter_metric(artifact.document, metrics, "allocation_count", intervals,
+        artifact.metrics[metric_index(MetricId::allocation)]) ||
+      !load_host_metric(artifact.document, metrics, "cpu_time_ns", "samples_ns", intervals,
+        artifact.metrics[metric_index(MetricId::cpu_time)]) ||
+      !load_counter_metric(artifact.document, metrics, "laghu_syscall_count", intervals,
+        artifact.metrics[metric_index(MetricId::laghu_syscall)]) ||
+      !load_latency_metric(artifact.document, metrics, intervals,
+        artifact.metrics[metric_index(MetricId::latency)]) ||
+      !load_host_metric(artifact.document, metrics, "peak_rss_bytes", "samples_bytes", intervals,
+        artifact.metrics[metric_index(MetricId::peak_rss)]) ||
+      !load_host_metric(artifact.document, metrics, "throughput_operations_per_second",
+        "samples_operations_per_second", intervals,
+        artifact.metrics[metric_index(MetricId::throughput)])) {
     error = "metrics";
     return false;
-  }
-  artifact.sample_count = artifact.document.element_count(samples);
-  if (artifact.sample_count < minimum_samples || artifact.sample_count > artifact.samples.size() ||
-      artifact.sample_count != intervals) {
-    error = "sample_count";
-    return false;
-  }
-  for (std::size_t index = 0U; index < artifact.sample_count; ++index) {
-    const JsonNode* sample = artifact.document.element(samples, index);
-    if (sample == nullptr || sample->type != JsonType::number) {
-      error = "sample_value";
-      return false;
-    }
-    artifact.samples[index] = sample->number;
   }
   return true;
 }
@@ -617,6 +706,10 @@ struct Artifact final {
       baseline.profile != candidate.profile || baseline.sanitizer_profile != candidate.sanitizer_profile ||
       baseline.features != candidate.features || baseline.dependencies != candidate.dependencies) {
     error = "build";
+    return false;
+  }
+  if (!baseline.cpu_description_available || !candidate.cpu_description_available) {
+    error = "hardware_identity_unavailable";
     return false;
   }
   if (baseline.cpu_description != candidate.cpu_description) {
@@ -658,7 +751,7 @@ struct Artifact final {
       '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
   for (std::size_t index = 0U; index < 16U; ++index) {
     const std::size_t shift = (15U - index) * 4U;
-    output[index] = digits[static_cast<std::size_t>((value >> shift) & 0x0fU)];
+    output[index] = digits[(value >> shift) & 0x0fU];
   }
   output[16U] = '\0';
   return true;
@@ -837,22 +930,54 @@ struct Manifest final {
 [[nodiscard]] bool sample_mean(const std::array<std::uint64_t, maximum_samples>& samples,
                                std::size_t count, std::uint64_t& state,
                                std::uint64_t& output) noexcept {
+  if (count == 0U || count > samples.size()) {
+    return false;
+  }
   std::uint64_t total{};
   for (std::size_t sample = 0U; sample < count; ++sample) {
-    const std::uint64_t value = samples[static_cast<std::size_t>(next_random(state) % count)];
+    const auto sample_index = next_random(state) % count;
+    const std::uint64_t value = samples[sample_index];
     if (value > std::numeric_limits<std::uint64_t>::max() - total) {
       return false;
     }
     total += value;
   }
-  output = total / static_cast<std::uint64_t>(count);
+  output = total / count;
   return true;
 }
 
-[[nodiscard]] bool regression_ppm(std::uint64_t baseline, std::uint64_t candidate,
-                                  bool higher_is_better, std::int64_t& output) noexcept {
-  if (baseline == 0U || candidate == 0U) {
+[[nodiscard]] bool sample_max(const std::array<std::uint64_t, maximum_samples>& samples,
+                              std::size_t count, std::uint64_t& state,
+                              std::uint64_t& output) noexcept {
+  if (count == 0U || count > samples.size()) {
     return false;
+  }
+  output = 0U;
+  for (std::size_t sample = 0U; sample < count; ++sample) {
+    const auto sample_index = next_random(state) % count;
+    const std::uint64_t value = samples[sample_index];
+    if (value > output) {
+      output = value;
+    }
+  }
+  return true;
+}
+
+enum class RegressionResult : std::uint8_t {
+  success,
+  zero_baseline_undefined,
+  arithmetic_overflow,
+};
+
+[[nodiscard]] RegressionResult regression_ppm(std::uint64_t baseline, std::uint64_t candidate,
+                                              bool higher_is_better,
+                                              std::int64_t& output) noexcept {
+  if (baseline == 0U) {
+    if (candidate == 0U) {
+      output = 0;
+      return RegressionResult::success;
+    }
+    return RegressionResult::zero_baseline_undefined;
   }
   const bool candidate_is_regression = higher_is_better ? candidate < baseline : candidate > baseline;
   const std::uint64_t difference = candidate >= baseline ? candidate - baseline : baseline - candidate;
@@ -877,18 +1002,18 @@ struct Manifest final {
       }
     }
     if (fractional > (std::numeric_limits<std::uint64_t>::max() - carry) / 2U) {
-      return false;
+      return RegressionResult::arithmetic_overflow;
     }
     fractional = fractional * 2U + carry;
   }
   if (whole > (static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) -
                fractional) / 1000000U) {
-    return false;
+    return RegressionResult::arithmetic_overflow;
   }
   const std::uint64_t magnitude = whole * 1000000U + fractional;
   output = candidate_is_regression ? static_cast<std::int64_t>(magnitude)
                                    : -static_cast<std::int64_t>(magnitude);
-  return true;
+  return RegressionResult::success;
 }
 
 struct Interval final {
@@ -896,24 +1021,52 @@ struct Interval final {
   std::int64_t upper{};
 };
 
-[[nodiscard]] bool bootstrap_interval(const Artifact& baseline, const Artifact& candidate,
-                                      bool higher_is_better, Interval& output) noexcept {
+enum class BootstrapResult : std::uint8_t {
+  success,
+  invalid_samples,
+  zero_baseline_undefined,
+  arithmetic_overflow,
+};
+
+[[nodiscard]] bool uses_maximum(MetricId metric) noexcept {
+  return metric == MetricId::peak_rss;
+}
+
+[[nodiscard]] BootstrapResult bootstrap_interval(const MetricSeries& baseline,
+                                                 const MetricSeries& candidate,
+                                                 MetricId metric, bool higher_is_better,
+                                                 Interval& output) noexcept {
+  if (!baseline.available || !candidate.available) {
+    return BootstrapResult::invalid_samples;
+  }
   std::array<std::int64_t, bootstrap_resamples> samples{};
   std::uint64_t state = fixed_seed;
   for (std::size_t iteration = 0U; iteration < samples.size(); ++iteration) {
     std::uint64_t baseline_mean{};
     std::uint64_t candidate_mean{};
-    if (!sample_mean(baseline.samples, baseline.sample_count, state, baseline_mean) ||
-        !sample_mean(candidate.samples, candidate.sample_count, state, candidate_mean) ||
-        !regression_ppm(baseline_mean, candidate_mean, higher_is_better, samples[iteration])) {
-      return false;
+    const bool baseline_ok = uses_maximum(metric)
+        ? sample_max(baseline.values, baseline.count, state, baseline_mean)
+        : sample_mean(baseline.values, baseline.count, state, baseline_mean);
+    const bool candidate_ok = uses_maximum(metric)
+        ? sample_max(candidate.values, candidate.count, state, candidate_mean)
+        : sample_mean(candidate.values, candidate.count, state, candidate_mean);
+    if (!baseline_ok || !candidate_ok) {
+      return BootstrapResult::invalid_samples;
+    }
+    const RegressionResult regression =
+        regression_ppm(baseline_mean, candidate_mean, higher_is_better, samples[iteration]);
+    if (regression == RegressionResult::zero_baseline_undefined) {
+      return BootstrapResult::zero_baseline_undefined;
+    }
+    if (regression == RegressionResult::arithmetic_overflow) {
+      return BootstrapResult::arithmetic_overflow;
     }
   }
   std::sort(samples.begin(), samples.end());
   constexpr std::size_t lower_index = (bootstrap_resamples * 25U + 999U) / 1000U - 1U;
   constexpr std::size_t upper_index = (bootstrap_resamples * 975U + 999U) / 1000U - 1U;
   output = Interval{samples[lower_index], samples[upper_index]};
-  return true;
+  return BootstrapResult::success;
 }
 
 class JsonWriter final {
@@ -1004,6 +1157,9 @@ struct Options final {
 }
 
 [[nodiscard]] bool write_environment(const Artifact& artifact) noexcept {
+  if (!artifact.cpu_description_available) {
+    return false;
+  }
   std::array<char, 17U> environment{};
   static_cast<void>(hex_environment(environment_hash(artifact), environment));
   return write_all(STDOUT_FILENO, {environment.data(), 16U}) && write_all(STDOUT_FILENO, "\n");
@@ -1074,6 +1230,11 @@ int main(int argc, char** argv) {
       static_cast<void>(write_all(STDERR_FILENO, "\n"));
       return static_cast<int>(ExitCode::invalid_input);
     }
+    if (!baseline.cpu_description_available) {
+      static_cast<void>(write_all(STDERR_FILENO,
+          "laghu-benchmark-evaluate: environment=hardware_identity_unavailable\n"));
+      return static_cast<int>(ExitCode::invalid_input);
+    }
     return write_environment(baseline) ? static_cast<int>(ExitCode::success)
                                        : static_cast<int>(ExitCode::output_failure);
   }
@@ -1118,9 +1279,10 @@ int main(int argc, char** argv) {
       continue;
     }
     applicable[index] = true;
-    if (rule.metric != "latency_ns_per_interval") {
+    const MetricId metric = metric_id(rule.metric);
+    if (metric == MetricId::invalid) {
       static_cast<void>(write_all(STDERR_FILENO,
-          "laghu-benchmark-evaluate: manifest=metric_unavailable\n"));
+          "laghu-benchmark-evaluate: manifest=metric\n"));
       return static_cast<int>(ExitCode::invalid_input);
     }
     if (rule.reference_environment != reference_environment) {
@@ -1130,9 +1292,30 @@ int main(int argc, char** argv) {
       static_cast<void>(write_all(STDERR_FILENO, "\n"));
       return static_cast<int>(ExitCode::invalid_input);
     }
-    if (!bootstrap_interval(baseline, candidate, rule.higher_is_better, intervals[index])) {
+    const MetricSeries& baseline_metric = baseline.metrics[metric_index(metric)];
+    const MetricSeries& candidate_metric = candidate.metrics[metric_index(metric)];
+    if (!baseline_metric.available || !candidate_metric.available) {
+      static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark-evaluate: metric="));
+      static_cast<void>(write_all(STDERR_FILENO, rule.metric));
+      static_cast<void>(write_all(STDERR_FILENO, "; reason="));
       static_cast<void>(write_all(STDERR_FILENO,
-          "laghu-benchmark-evaluate: metric=latency_ns_per_interval; reason=bootstrap_invalid\n"));
+          baseline_metric.available ? "candidate_unavailable\n" : "baseline_unavailable\n"));
+      return static_cast<int>(ExitCode::invalid_input);
+    }
+    const BootstrapResult bootstrap = bootstrap_interval(
+        baseline_metric, candidate_metric, metric, rule.higher_is_better, intervals[index]);
+    if (bootstrap != BootstrapResult::success) {
+      static_cast<void>(write_all(STDERR_FILENO,
+          "laghu-benchmark-evaluate: metric="));
+      static_cast<void>(write_all(STDERR_FILENO, rule.metric));
+      static_cast<void>(write_all(STDERR_FILENO, "; reason="));
+      if (bootstrap == BootstrapResult::zero_baseline_undefined) {
+        static_cast<void>(write_all(STDERR_FILENO, "zero_baseline_undefined\n"));
+      } else if (bootstrap == BootstrapResult::arithmetic_overflow) {
+        static_cast<void>(write_all(STDERR_FILENO, "arithmetic_overflow\n"));
+      } else {
+        static_cast<void>(write_all(STDERR_FILENO, "invalid_samples\n"));
+      }
       return static_cast<int>(ExitCode::invalid_input);
     }
     if (rule.allowed_regression_ppm > std::numeric_limits<std::uint64_t>::max() -
