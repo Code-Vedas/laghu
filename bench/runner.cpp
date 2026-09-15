@@ -335,12 +335,14 @@ class JsonWriter final {
       writer.append(cpu.available ? "\"status\":\"available\",\"value\":"
                                   : "\"status\":\"unavailable\",\"reason\":") &&
       writer.append_json_string(cpu.available ? cpu_text : std::string_view{"cpu_description_unavailable"}) &&
-      writer.append("}},\"metrics\":{\"allocation_count\":{\"instrumented\":true,\"value\":") &&
-      writer.append_number(counters.allocation_count) &&
+      writer.append("}},\"metrics\":{\"allocation_count\":{\"instrumented\":") &&
+      writer.append(counters.allocation_instrumented() ? "true" : "false") &&
+      writer.append(",\"value\":") && writer.append_number(counters.allocation_count()) &&
       writer.append("},\"cpu_time_ns\":") &&
       append_numeric_metric(writer, cpu_time) &&
-      writer.append(",\"laghu_syscall_count\":{\"instrumented\":true,\"value\":") &&
-      writer.append_number(counters.laghu_syscall_count) &&
+      writer.append(",\"laghu_syscall_count\":{\"instrumented\":") &&
+      writer.append(counters.laghu_syscall_instrumented() ? "true" : "false") &&
+      writer.append(",\"value\":") && writer.append_number(counters.laghu_syscall_count()) &&
       writer.append("},\"latency_ns_per_interval\":{\"p50\":") &&
       writer.append_number(percentiles.p50) &&
       writer.append(",\"p95\":") && writer.append_number(percentiles.p95) &&
@@ -377,13 +379,14 @@ int main(int argc, char** argv) {
     return static_cast<int>(ExitCode::invalid_arguments);
   }
 
-  WorkloadCounters counters{};
+  WorkloadCounters warmup_counters{};
   std::uint64_t checksum{};
   for (std::uint64_t interval = 0U; interval < options.warmup_intervals; ++interval) {
-    checksum ^= laghu::benchmark::internal::run_core_foundation(interval + 1U, counters);
+    checksum ^= laghu::benchmark::internal::run_core_foundation(interval + 1U, warmup_counters);
   }
 
   std::array<std::uint64_t, maximum_intervals> durations{};
+  WorkloadCounters measured_counters{};
   NumericMetric cpu_start = process_cpu_time();
   std::uint64_t total_duration{};
   for (std::size_t interval = 0U; interval < options.measured_intervals; ++interval) {
@@ -394,7 +397,7 @@ int main(int argc, char** argv) {
       return static_cast<int>(ExitCode::metric_unavailable);
     }
     checksum ^= laghu::benchmark::internal::run_core_foundation(
-        static_cast<std::uint64_t>(interval) + options.warmup_intervals + 1U, counters);
+        static_cast<std::uint64_t>(interval) + options.warmup_intervals + 1U, measured_counters);
     if (!monotonic_now(end) || end < begin) {
       static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: monotonic clock is invalid\n"));
       return static_cast<int>(ExitCode::metric_unavailable);
@@ -432,7 +435,7 @@ int main(int argc, char** argv) {
     }
   }
   if (!write_report(options, percentiles, throughput, throughput_available, cpu_time, peak_rss_bytes(),
-                    cpu_description(), counters, checksum)) {
+                    cpu_description(), measured_counters, checksum)) {
     static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: report exceeds bounded output capacity\n"));
     return static_cast<int>(ExitCode::output_failure);
   }

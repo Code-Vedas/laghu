@@ -4,9 +4,9 @@ if(NOT DEFINED SCRIPT OR NOT DEFINED BUILD_DIRECTORY OR NOT DEFINED SOURCE_DIREC
   message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT and EXPECTED_DEPENDENCY_COUNT")
 endif()
 
-function(laghu_benchmark_run output)
+function(laghu_benchmark_run output warmup)
   execute_process(
-    COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --workload core-foundation --warmup 1 --intervals 5
+    COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --workload core-foundation --warmup "${warmup}" --intervals 5
     RESULT_VARIABLE result
     OUTPUT_VARIABLE standard_output
     ERROR_VARIABLE diagnostics)
@@ -16,8 +16,10 @@ function(laghu_benchmark_run output)
   set(${output} "${standard_output}" PARENT_SCOPE)
 endfunction()
 
-laghu_benchmark_run(first)
-laghu_benchmark_run(second)
+laghu_benchmark_run(first 1)
+laghu_benchmark_run(second 1)
+laghu_benchmark_run(no_warmup 0)
+laghu_benchmark_run(extended_warmup 7)
 
 foreach(output IN ITEMS "${first}" "${second}")
   if(NOT output MATCHES "^\\{\\\"schema_version\\\":\\\"laghu-benchmark-v1\\\"")
@@ -41,13 +43,16 @@ foreach(output IN ITEMS "${first}" "${second}")
   string(JSON p99 GET "${output}" metrics latency_ns_per_interval p99)
   string(JSON p999 GET "${output}" metrics latency_ns_per_interval p99_9)
   string(JSON allocation_instrumented GET "${output}" metrics allocation_count instrumented)
+  string(JSON allocation_count GET "${output}" metrics allocation_count value)
   string(JSON syscall_instrumented GET "${output}" metrics laghu_syscall_count instrumented)
+  string(JSON syscall_count GET "${output}" metrics laghu_syscall_count value)
   if(NOT schema STREQUAL "laghu-benchmark-v1" OR NOT workload STREQUAL "core-foundation" OR
       build_id STREQUAL "" OR NOT feature_count EQUAL EXPECTED_FEATURE_COUNT OR
       NOT dependency_count EQUAL EXPECTED_DEPENDENCY_COUNT OR
       NOT interval_count EQUAL 5 OR NOT warmup_count EQUAL 1 OR NOT operations EQUAL 4096 OR
       p50 GREATER p95 OR p95 GREATER p99 OR p99 GREATER p999 OR
-      NOT allocation_instrumented OR NOT syscall_instrumented)
+      allocation_instrumented OR syscall_instrumented OR
+      NOT allocation_count EQUAL 0 OR NOT syscall_count EQUAL 0)
     message(FATAL_ERROR "Laghu benchmark expectation failed: schema_or_metric_invalid")
   endif()
   string(JSON cpu_description_status GET "${output}" cpu description status)
@@ -67,6 +72,17 @@ string(JSON second_parameters GET "${second}" parameters)
 if(NOT first_build STREQUAL second_build OR NOT first_parameters STREQUAL second_parameters)
   message(FATAL_ERROR "Laghu benchmark expectation failed: deterministic_identity_or_parameters_invalid")
 endif()
+
+foreach(metric IN ITEMS allocation_count laghu_syscall_count)
+  string(JSON no_warmup_instrumented GET "${no_warmup}" metrics ${metric} instrumented)
+  string(JSON extended_warmup_instrumented GET "${extended_warmup}" metrics ${metric} instrumented)
+  string(JSON no_warmup_value GET "${no_warmup}" metrics ${metric} value)
+  string(JSON extended_warmup_value GET "${extended_warmup}" metrics ${metric} value)
+  if(NOT no_warmup_instrumented STREQUAL extended_warmup_instrumented OR
+      NOT no_warmup_value EQUAL extended_warmup_value)
+    message(FATAL_ERROR "Laghu benchmark expectation failed: warmup_counter_leak metric=${metric}")
+  endif()
+endforeach()
 
 foreach(case IN ITEMS missing-workload invalid-workload zero-intervals zero-padded-intervals
     zero-tripled-intervals missing-build missing-directory)

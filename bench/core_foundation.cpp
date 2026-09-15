@@ -17,7 +17,8 @@ std::uint64_t laghu::benchmark::internal::run_core_foundation(
     state = *incremented ^ (state >> 13U);
   }
   // The foundation workload deliberately performs no allocation or Laghu OS
-  // operation. The counters remain explicit, rather than inferred from host metrics.
+  // operation. It records no events, so the caller reports these metrics as
+  // uninstrumented rather than inferring them from host metrics.
   static_cast<void>(counters);
   return state;
 }

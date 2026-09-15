@@ -42,6 +42,7 @@ function(laghu_build_identity_input_hashes output)
     cmake/LaghuToolchain.cmake
     tests/hardening/probes/clean.cpp
     tests/hardening/probes/fortification.cpp
+    tests/benchmarks/workload_counters.cpp
     src/cli/main.cpp
     src/cli/private/laghu/cli/internal/build_manifest.hpp
     src/core/clocks.cpp
