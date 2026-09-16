@@ -62,7 +62,43 @@ enum class DependencyId : std::uint8_t {
   none,
   openssl,
   libressl,
+  yyjson,
+  nghttp2,
+  ngtcp2,
+  nghttp3,
+  c_ares,
+  pcre2_8bit,
+  zlib_ng,
+  brotli,
+  zstd,
+  libmaxminddb,
+  libidn2,
+  libxcrypt,
+  protobuf_c,
 };
+
+[[nodiscard]] constexpr bool is_known_dependency_id(DependencyId value) noexcept {
+  switch (value) {
+    case DependencyId::none:
+    case DependencyId::openssl:
+    case DependencyId::libressl:
+    case DependencyId::yyjson:
+    case DependencyId::nghttp2:
+    case DependencyId::ngtcp2:
+    case DependencyId::nghttp3:
+    case DependencyId::c_ares:
+    case DependencyId::pcre2_8bit:
+    case DependencyId::zlib_ng:
+    case DependencyId::brotli:
+    case DependencyId::zstd:
+    case DependencyId::libmaxminddb:
+    case DependencyId::libidn2:
+    case DependencyId::libxcrypt:
+    case DependencyId::protobuf_c:
+      return true;
+  }
+  return false;
+}
 
 enum class DependencyOperation : std::uint8_t {
   none,

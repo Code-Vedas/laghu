@@ -136,6 +136,7 @@ list(FIND LAGHU_EFFECTIVE_FEATURES tls laghu_tls_feature_index)
 if(NOT laghu_tls_feature_index EQUAL -1)
   add_library(laghu_crypto STATIC
     src/adapters/dependency.cpp
+    src/adapters/dependency_lifecycle.cpp
     src/adapters/crypto_provider.cpp
     src/adapters/entropy.cpp)
   laghu_apply_first_party_contract(laghu_crypto)
@@ -283,6 +284,24 @@ target_link_libraries(laghu_adapter_dependency_error_logging_test PRIVATE
 laghu_add_native_test(laghu.adapters.dependency_error_logging
   laghu_adapter_dependency_error_logging_test)
 
+# The lifecycle registry is linked by the current crypto adapter, while this
+# fixture uses deterministic caller-owned hooks so the default minimal build
+# proves its fork protocol without acquiring a TLS dependency.
+add_executable(laghu_adapter_dependency_lifecycle_test
+  tests/adapters/dependency_lifecycle.cpp
+  src/adapters/dependency_lifecycle.cpp)
+laghu_apply_first_party_contract(laghu_adapter_dependency_lifecycle_test)
+laghu_configure_api_consumer(laghu_adapter_dependency_lifecycle_test adapters)
+target_link_libraries(laghu_adapter_dependency_lifecycle_test PRIVATE
+  laghu_core laghu_test_support)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # The fixture's bounded POSIX pipe protocol necessarily uses raw descriptors.
+  set_source_files_properties(tests/adapters/dependency_lifecycle.cpp PROPERTIES
+    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
+laghu_add_native_test(laghu.adapters.dependency_lifecycle
+  laghu_adapter_dependency_lifecycle_test)
+
 if(TARGET laghu_crypto)
   add_executable(laghu_crypto_provider_test tests/adapters/crypto_provider.cpp)
   laghu_apply_first_party_contract(laghu_crypto_provider_test)
@@ -359,6 +378,7 @@ set(laghu_verify_targets
   laghu_test_time_entropy_test laghu_test_support_fixtures_test
   laghu_test_support_runner_contract_test laghu_test_fault_injection_test laghu
   laghu_adapter_dependency_error_logging_test
+  laghu_adapter_dependency_lifecycle_test
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
 if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets
