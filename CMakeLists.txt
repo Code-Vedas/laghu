@@ -135,6 +135,7 @@ laghu_add_native_test(laghu.test_support.time_entropy laghu_test_time_entropy_te
 list(FIND LAGHU_EFFECTIVE_FEATURES tls laghu_tls_feature_index)
 if(NOT laghu_tls_feature_index EQUAL -1)
   add_library(laghu_crypto STATIC
+    src/adapters/dependency.cpp
     src/adapters/crypto_provider.cpp
     src/adapters/entropy.cpp)
   laghu_apply_first_party_contract(laghu_crypto)
@@ -143,6 +144,13 @@ if(NOT laghu_tls_feature_index EQUAL -1)
   laghu_register_subsystem_target(laghu_crypto adapters)
   laghu_link_subsystems(laghu_crypto laghu_core)
   target_link_libraries(laghu_crypto PRIVATE laghu_feature_tls)
+  if(LAGHU_TLS_PROVIDER STREQUAL "OPENSSL")
+    target_compile_definitions(laghu_crypto PRIVATE LAGHU_CRYPTO_DEPENDENCY_OPENSSL=1)
+  elseif(LAGHU_TLS_PROVIDER STREQUAL "LIBRESSL")
+    target_compile_definitions(laghu_crypto PRIVATE LAGHU_CRYPTO_DEPENDENCY_LIBRESSL=1)
+  else()
+    message(FATAL_ERROR "Laghu dependency logging failed: tls_provider=${LAGHU_TLS_PROVIDER}")
+  endif()
 endif()
 
 add_executable(laghu_core_smoke src/core/smoke.cpp)
@@ -259,6 +267,22 @@ target_include_directories(laghu_core_digest_primitives_test PRIVATE "${CMAKE_SO
 target_link_libraries(laghu_core_digest_primitives_test PRIVATE laghu_core)
 laghu_add_native_test(laghu.core.digest_primitives laghu_core_digest_primitives_test)
 
+# This fixture compiles the adapter boundary directly without an external
+# dependency. It proves the bounded translation and callback contract in the
+# default minimal build; a TLS-enabled laghu_crypto test exercises OpenSSL or
+# LibreSSL at the real adapter boundary below.
+add_executable(laghu_adapter_dependency_error_logging_test
+  tests/adapters/dependency_error_logging.cpp
+  src/adapters/dependency.cpp)
+laghu_apply_first_party_contract(laghu_adapter_dependency_error_logging_test)
+laghu_configure_api_consumer(laghu_adapter_dependency_error_logging_test adapters)
+target_include_directories(laghu_adapter_dependency_error_logging_test PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/adapters/private")
+target_link_libraries(laghu_adapter_dependency_error_logging_test PRIVATE
+  laghu_core laghu_test_support)
+laghu_add_native_test(laghu.adapters.dependency_error_logging
+  laghu_adapter_dependency_error_logging_test)
+
 if(TARGET laghu_crypto)
   add_executable(laghu_crypto_provider_test tests/adapters/crypto_provider.cpp)
   laghu_apply_first_party_contract(laghu_crypto_provider_test)
@@ -334,6 +358,7 @@ set(laghu_verify_targets
   laghu_benchmark_metrics_test laghu_benchmark_workload_counters_test laghu_benchmark_evaluate
   laghu_test_time_entropy_test laghu_test_support_fixtures_test
   laghu_test_support_runner_contract_test laghu_test_fault_injection_test laghu
+  laghu_adapter_dependency_error_logging_test
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
 if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets

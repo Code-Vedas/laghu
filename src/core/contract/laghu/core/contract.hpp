@@ -55,6 +55,25 @@ enum class DependencyStatus : std::uint8_t {
   unknown,
 };
 
+// These values identify an external boundary without importing or exposing a
+// dependency type. `none` preserves the legacy dependency-status factory for
+// callers that do not have a more specific adapter identity.
+enum class DependencyId : std::uint8_t {
+  none,
+  openssl,
+  libressl,
+};
+
+enum class DependencyOperation : std::uint8_t {
+  none,
+  sha256,
+  hmac_sha256,
+  ed25519_private_key,
+  ed25519_sign,
+  ed25519_verify,
+  spki_decode,
+};
+
 class Error final {
  public:
   static constexpr std::size_t diagnostic_context_capacity = 96;
@@ -75,7 +94,19 @@ class Error final {
   [[nodiscard]] static constexpr Error from_dependency(
       DependencyStatus status, std::int32_t native_code = 0,
       std::string_view diagnostic = {}) noexcept {
-    return Error{ErrorDomain::dependency, normalize_dependency(status), native_code, diagnostic};
+    return from_dependency(DependencyId::none, DependencyOperation::none, status,
+                           native_code, diagnostic);
+  }
+
+  [[nodiscard]] static constexpr Error from_dependency(
+      DependencyId dependency_id, DependencyOperation dependency_operation,
+      DependencyStatus status, std::int32_t native_code = 0,
+      std::string_view diagnostic = {}) noexcept {
+    Error error{ErrorDomain::dependency, normalize_dependency(status), native_code, diagnostic};
+    error.dependency_id_ = dependency_id;
+    error.dependency_operation_ = dependency_operation;
+    error.dependency_status_ = status;
+    return error;
   }
 
   [[nodiscard]] constexpr ErrorDomain domain() const noexcept { return domain_; }
@@ -84,6 +115,13 @@ class Error final {
   [[nodiscard]] constexpr Retryability retryability() const noexcept { return retryability_; }
   [[nodiscard]] constexpr SecurityRelevance security_relevance() const noexcept {
     return security_relevance_;
+  }
+  [[nodiscard]] constexpr DependencyId dependency_id() const noexcept { return dependency_id_; }
+  [[nodiscard]] constexpr DependencyOperation dependency_operation() const noexcept {
+    return dependency_operation_;
+  }
+  [[nodiscard]] constexpr DependencyStatus dependency_status() const noexcept {
+    return dependency_status_;
   }
   [[nodiscard]] constexpr std::string_view diagnostic_context() const noexcept {
     return {diagnostic_context_.data(), diagnostic_context_length_};
@@ -208,6 +246,9 @@ class Error final {
   std::int32_t native_code_;
   Retryability retryability_;
   SecurityRelevance security_relevance_;
+  DependencyId dependency_id_{DependencyId::none};
+  DependencyOperation dependency_operation_{DependencyOperation::none};
+  DependencyStatus dependency_status_{DependencyStatus::unknown};
   std::array<char, diagnostic_context_capacity> diagnostic_context_{};
   std::uint8_t diagnostic_context_length_{};
   bool diagnostic_truncated_{};
