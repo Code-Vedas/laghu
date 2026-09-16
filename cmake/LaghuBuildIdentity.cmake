@@ -101,7 +101,8 @@ function(laghu_build_identity_input_hashes output)
   if(NOT password_auth_feature_index EQUAL -1)
     list(APPEND inputs
       src/adapters/contract/laghu/adapters/password_auth.hpp
-      src/adapters/password_auth.cpp)
+      src/adapters/password_auth.cpp
+      src/adapters/private/laghu/adapters/internal/password_auth.hpp)
   endif()
   set(entries)
   foreach(input IN LISTS inputs)

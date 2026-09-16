@@ -11,6 +11,17 @@
 namespace laghu::adapters {
 namespace {
 
+// Libidn2 bounds a lookup name to 255 octets.  Its UTF-8 input is separate
+// from Laghu's 253-byte ASCII output contract and requires up to four octets
+// per Unicode scalar value.
+constexpr std::size_t libidn2_lookup_name_maximum_length = 255;
+constexpr std::size_t maximum_utf8_octets_per_scalar = 4;
+constexpr std::size_t maximum_utf8_input_length =
+    libidn2_lookup_name_maximum_length * maximum_utf8_octets_per_scalar;
+constexpr std::size_t utf8_input_storage_capacity = maximum_utf8_input_length + 1;
+constexpr std::size_t native_output_storage_capacity =
+    libidn2_lookup_name_maximum_length + 1;
+
 [[nodiscard]] constexpr bool is_ascii_label_character(char character) noexcept {
   return (character >= 'a' && character <= 'z') ||
          (character >= 'A' && character <= 'Z') ||
@@ -59,6 +70,9 @@ namespace {
   if (status == IDN2_NO_CODESET) {
     return core::DependencyStatus::unavailable;
   }
+  if (status == IDN2_TOO_BIG_DOMAIN || status == IDN2_TOO_BIG_LABEL) {
+    return core::DependencyStatus::invalid_range;
+  }
   return core::DependencyStatus::corrupt_data;
 }
 
@@ -97,7 +111,7 @@ class NativeIdn2Output final {
                                        core::ErrorCode::corrupt_data, 0,
                                        "libidn2 returned no hostname"}};
   }
-  for (std::size_t index = 0; index < AsciiHostname::storage_capacity; ++index) {
+  for (std::size_t index = 0; index < native_output_storage_capacity; ++index) {
     if (value[index] == '\0') {
       return std::string_view{value, index};
     }
@@ -122,7 +136,7 @@ core::Result<AsciiHostname> AsciiHostname::from_ascii(std::string_view hostname)
 
 core::Result<AsciiHostname> idna_to_ascii(core::TextView hostname,
                                           DependencyLogSink log_sink) noexcept {
-  const auto input = hostname.to_c_string<AsciiHostname::storage_capacity>();
+  const auto input = hostname.to_c_string<utf8_input_storage_capacity>();
   if (!input.has_value()) {
     return std::unexpected{input.error()};
   }
@@ -150,6 +164,11 @@ core::Result<AsciiHostname> idna_to_ascii(core::TextView hostname,
         core::DependencyStatus::corrupt_data, 0);
     log_dependency_error(log_sink, error);
     return std::unexpected{error};
+  }
+  if (native_hostname->size() > AsciiHostname::maximum_text_length) {
+    return std::unexpected{core::Error{core::ErrorDomain::core,
+                                       core::ErrorCode::invalid_range, 0,
+                                       "IDNA output exceeds 253 bytes"}};
   }
   const auto bounded_hostname = AsciiHostname::from_ascii(*native_hostname);
   if (!bounded_hostname.has_value()) {

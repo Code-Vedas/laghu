@@ -779,12 +779,16 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
       "${laghu_make_program}" install-libLTLIBRARIES install-nodist_includeHEADERS)
   endif()
   set(configure_environment "${CMAKE_COMMAND}" -E env
-    "CC=${laghu_autoconf_c_compiler}" "AR=${CMAKE_AR}" "RANLIB=${laghu_autoconf_ranlib}")
+    "CC=${laghu_autoconf_c_compiler}" "AR=${CMAKE_AR}" "RANLIB=${laghu_autoconf_ranlib}"
+    "MAKE=${laghu_make_program}")
   ExternalProject_Add("laghu_vendor_${id}"
     PREFIX "${prefix}"
     URL "${archive_url}"
     URL_HASH "SHA256=${archive_sha256}"
-    DOWNLOAD_EXTRACT_TIMESTAMP FALSE
+    # Preserve official release timestamps.  Autotools otherwise treats
+    # generated files as stale, attempts maintainer-only regeneration, and
+    # may execute a cross-compiled generator.
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     CONFIGURE_COMMAND ${configure_environment} "<SOURCE_DIR>/configure"
       "--prefix=${install_directory}" "--libdir=${install_directory}/lib"
       ${linkage_arguments} ${cross_arguments} ${dependency_arguments}

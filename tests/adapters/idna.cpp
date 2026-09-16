@@ -31,6 +31,14 @@ using laghu::core::TextView;
          result.error().dependency_status() == DependencyStatus::corrupt_data;
 }
 
+[[nodiscard]] bool has_idn2_range_error(
+    const laghu::core::Result<AsciiHostname>& result) noexcept {
+  return !result.has_value() && result.error().code() == ErrorCode::invalid_range &&
+         result.error().dependency_id() == DependencyId::libidn2 &&
+         result.error().dependency_operation() == DependencyOperation::idna_lookup &&
+         result.error().dependency_status() == DependencyStatus::invalid_range;
+}
+
 [[nodiscard]] bool check_unicode_golden_vectors() noexcept {
   const auto german = idna_to_ascii(TextView::from("b\xC3\xBC""cher.example"));
   const auto japanese = idna_to_ascii(
@@ -56,10 +64,36 @@ using laghu::core::TextView;
   return embedded.has_value() && invalid.has_value() && label.has_value() &&
          hostname.has_value() && has_error(idna_to_ascii(*embedded), ErrorCode::invalid_input) &&
          has_idn2_error(invalid_result) &&
-         !idna_to_ascii(*label).has_value() &&
+         has_idn2_range_error(idna_to_ascii(*label)) &&
          has_error(idna_to_ascii(*hostname), ErrorCode::invalid_range) &&
          has_error(idna_to_ascii(TextView::from("bad_label.example")),
                    ErrorCode::invalid_input);
+}
+
+[[nodiscard]] bool check_utf8_input_and_native_length_boundaries() noexcept {
+  std::array<char, 267> mapped_input{};
+  for (std::size_t index = 0; index < 130; ++index) {
+    mapped_input[index * 2] = static_cast<char>(0xC2);
+    mapped_input[index * 2 + 1] = static_cast<char>(0xAD);
+  }
+  constexpr std::string_view suffix{"example"};
+  for (std::size_t index = 0; index < suffix.size(); ++index) {
+    mapped_input[260 + index] = suffix[index];
+  }
+
+  std::array<char, 255> too_big_domain{};
+  for (std::size_t index = 0; index < too_big_domain.size(); ++index) {
+    too_big_domain[index] = (index == 63 || index == 127 || index == 191) ? '.' : 'a';
+  }
+
+  const auto utf8_input = TextView::from(mapped_input.data(), mapped_input.size());
+  const auto domain_input = TextView::from(too_big_domain.data(), too_big_domain.size());
+  if (!utf8_input.has_value() || !domain_input.has_value()) {
+    return false;
+  }
+  const auto mapped = idna_to_ascii(*utf8_input);
+  return mapped.has_value() && mapped->value() == "example" &&
+         has_idn2_range_error(idna_to_ascii(*domain_input));
 }
 
 [[nodiscard]] bool check_malformed_fuzz_vectors() noexcept {
@@ -89,6 +123,8 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.idna.unicode_golden", check_unicode_golden_vectors},
       laghu::test::TestCase{"adapters.idna.input_and_limits", check_input_and_hostname_limits},
+      laghu::test::TestCase{"adapters.idna.utf8_and_native_length_boundaries",
+                            check_utf8_input_and_native_length_boundaries},
       laghu::test::TestCase{"adapters.idna.malformed_fuzz_vectors", check_malformed_fuzz_vectors},
       laghu::test::TestCase{"adapters.idna.bounded_ascii", check_bounded_ascii_value},
   };
