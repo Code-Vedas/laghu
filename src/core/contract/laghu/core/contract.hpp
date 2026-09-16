@@ -47,6 +47,7 @@ enum class SecurityRelevance : std::uint8_t {
 
 enum class DependencyStatus : std::uint8_t {
   unavailable,
+  exhaustion,
   unsupported_version,
   corrupt_data,
   checksum,
@@ -108,6 +109,8 @@ enum class DependencyOperation : std::uint8_t {
   ed25519_sign,
   ed25519_verify,
   spki_decode,
+  idna_lookup,
+  password_verify,
 };
 
 class Error final {
@@ -203,6 +206,8 @@ class Error final {
     switch (status) {
       case DependencyStatus::unavailable:
         return ErrorCode::unavailable_capability;
+      case DependencyStatus::exhaustion:
+        return ErrorCode::exhaustion;
       case DependencyStatus::unsupported_version:
         return ErrorCode::unsupported_version;
       case DependencyStatus::corrupt_data:

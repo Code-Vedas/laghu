@@ -44,6 +44,8 @@ namespace {
     case core::DependencyOperation::ed25519_sign:
     case core::DependencyOperation::ed25519_verify:
     case core::DependencyOperation::spki_decode:
+    case core::DependencyOperation::idna_lookup:
+    case core::DependencyOperation::password_verify:
       return value;
   }
   return core::DependencyOperation::none;
@@ -53,6 +55,7 @@ namespace {
     core::DependencyStatus value) noexcept {
   switch (value) {
     case core::DependencyStatus::unavailable:
+    case core::DependencyStatus::exhaustion:
     case core::DependencyStatus::unsupported_version:
     case core::DependencyStatus::corrupt_data:
     case core::DependencyStatus::checksum:
@@ -119,6 +122,10 @@ namespace {
       return "ed25519_verify";
     case core::DependencyOperation::spki_decode:
       return "spki_decode";
+    case core::DependencyOperation::idna_lookup:
+      return "idna_lookup";
+    case core::DependencyOperation::password_verify:
+      return "password_verify";
   }
   return "none";
 }
@@ -127,6 +134,8 @@ namespace {
   switch (value) {
     case core::DependencyStatus::unavailable:
       return "unavailable";
+    case core::DependencyStatus::exhaustion:
+      return "exhaustion";
     case core::DependencyStatus::unsupported_version:
       return "unsupported_version";
     case core::DependencyStatus::corrupt_data:

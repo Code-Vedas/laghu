@@ -100,7 +100,7 @@ elseif(SCENARIO STREQUAL "mode_full_selection")
   laghu_select_active_dependencies(active
     FEATURES ${LAGHU_EFFECTIVE_FEATURES}
     TLS_PROVIDER "${LAGHU_TLS_PROVIDER}")
-  foreach(dependency IN ITEMS nghttp2 ngtcp2 nghttp3 yyjson c_ares pcre2_8bit zlib_ng brotli zstd libmaxminddb)
+  foreach(dependency IN ITEMS nghttp2 ngtcp2 nghttp3 yyjson c_ares pcre2_8bit zlib_ng brotli zstd libmaxminddb libidn2 libxcrypt)
     list(FIND active "${dependency}" dependency_index)
     if(dependency_index EQUAL -1)
       message(FATAL_ERROR
@@ -176,6 +176,17 @@ elseif(SCENARIO STREQUAL "mode_vendored_yyjson")
   endif()
   add_executable(laghu_dependency_mode_consumer consumer.cpp)
   target_link_libraries(laghu_dependency_mode_consumer PRIVATE laghu_dependency_yyjson)
+elseif(SCENARIO STREQUAL "mode_vendored_idna_password")
+  set(LAGHU_BUILD_PROFILE CUSTOM)
+  set(LAGHU_FEATURES "idna;password_auth")
+  laghu_configure_build_variant()
+  laghu_configure_dependency_modes()
+  if(NOT TARGET laghu_dependency_libidn2 OR NOT TARGET laghu_dependency_libxcrypt)
+    message(FATAL_ERROR "Laghu dependency fixture vendored IDNA/password targets are missing")
+  endif()
+  add_executable(laghu_dependency_mode_consumer consumer.cpp)
+  target_link_libraries(laghu_dependency_mode_consumer PRIVATE
+    laghu_dependency_libidn2 laghu_dependency_libxcrypt)
 elseif(SCENARIO STREQUAL "mode_vendored_http3_transport")
   # ngtcp2 declares this option ON by default.  Preserve that upstream default
   # in the fixture to prove Laghu isolates its transport build from host TLS.

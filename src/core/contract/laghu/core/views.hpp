@@ -97,6 +97,17 @@ class StaticCString final {
     return {storage_.data(), size_};
   }
 
+  // Password adapters use this after native calls. Volatile stores prevent a
+  // compiler from treating the erase as dead after the bounded secret leaves
+  // scope.
+  void cleanse() noexcept {
+    volatile char* bytes = storage_.data();
+    for (std::size_t index = 0; index < storage_.size(); ++index) {
+      bytes[index] = '\0';
+    }
+    size_ = 0;
+  }
+
  private:
   friend class TextView;
 

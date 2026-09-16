@@ -20,6 +20,8 @@ foreach(requirement IN ITEMS
     "\"brotli\": {\"vendored_version\": \"1.2.0\", \"system_floor\": \"1.0.9\""
     "\"zstd\": {\"vendored_version\": \"1.5.7\", \"system_floor\": \"1.5.0\""
     "\"libmaxminddb\": {\"vendored_version\": \"1.14.0\", \"system_floor\": \"1.8.0\""
+    "\"libidn2\": {\"vendored_version\": \"2.3.8\", \"system_floor\": \"2.3.7\""
+    "\"libxcrypt\": {\"vendored_version\": \"4.5.2\", \"system_floor\": \"4.4.36\""
     "\"incompatible_versions\": []")
   string(FIND "${metadata}" "${requirement}" requirement_offset)
   if(requirement_offset EQUAL -1)

@@ -69,6 +69,7 @@ function(laghu_build_identity_input_hashes output)
     src/core/contract/laghu/core/identifiers.hpp
     src/core/contract/laghu/core/memory_budget.hpp
     src/core/contract/laghu/core/mapped_regions.hpp
+    src/core/contract/laghu/core/views.hpp
     src/core/handles.cpp
     src/core/mapped_regions.cpp
     src/core/private/laghu/core/internal/clock_operations.hpp
@@ -89,6 +90,18 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/crypto_provider.cpp
       src/adapters/entropy.cpp
       src/adapters/private/laghu/adapters/internal/entropy.hpp)
+  endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES idna idna_feature_index)
+  if(NOT idna_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/idna.hpp
+      src/adapters/idna.cpp)
+  endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES password_auth password_auth_feature_index)
+  if(NOT password_auth_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/password_auth.hpp
+      src/adapters/password_auth.cpp)
   endif()
   set(entries)
   foreach(input IN LISTS inputs)

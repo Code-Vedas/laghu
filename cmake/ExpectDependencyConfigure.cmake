@@ -40,8 +40,10 @@ execute_process(
 
 set(combined "${configure_output}\n${configure_diagnostics}")
 if(configure_result EQUAL 0 AND ("${SCENARIO}" STREQUAL "positive_symbol" OR
-    "${SCENARIO}" STREQUAL "capability_mismatch" OR "${SCENARIO}" STREQUAL "mode_vendored_yyjson"))
-  if("${SCENARIO}" STREQUAL "mode_vendored_yyjson")
+    "${SCENARIO}" STREQUAL "capability_mismatch" OR "${SCENARIO}" STREQUAL "mode_vendored_yyjson" OR
+    "${SCENARIO}" STREQUAL "mode_vendored_idna_password"))
+  if("${SCENARIO}" STREQUAL "mode_vendored_yyjson" OR
+      "${SCENARIO}" STREQUAL "mode_vendored_idna_password")
     set(build_target laghu_dependency_mode_consumer)
   else()
     set(build_target laghu_dependency_fixture_probe)
@@ -53,7 +55,8 @@ if(configure_result EQUAL 0 AND ("${SCENARIO}" STREQUAL "positive_symbol" OR
     ERROR_VARIABLE build_diagnostics)
   string(APPEND combined "\n${build_output}\n${build_diagnostics}")
   set(result "${build_result}")
-  if(result EQUAL 0 AND "${SCENARIO}" STREQUAL "mode_vendored_yyjson")
+  if(result EQUAL 0 AND ("${SCENARIO}" STREQUAL "mode_vendored_yyjson" OR
+      "${SCENARIO}" STREQUAL "mode_vendored_idna_password"))
     set(install_directory "${binary_directory}/install")
     execute_process(
       COMMAND "${CMAKE_COMMAND}" --install "${binary_directory}" --prefix "${install_directory}"
