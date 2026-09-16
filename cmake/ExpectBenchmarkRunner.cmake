@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 if(NOT DEFINED SCRIPT OR NOT DEFINED BUILD_DIRECTORY OR NOT DEFINED SOURCE_DIRECTORY OR
-    NOT DEFINED EXPECTED_FEATURE_COUNT OR NOT DEFINED EXPECTED_DEPENDENCY_COUNT)
-  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT and EXPECTED_DEPENDENCY_COUNT")
+    NOT DEFINED EXPECTED_FEATURE_COUNT OR NOT DEFINED EXPECTED_DEPENDENCY_COUNT OR
+    NOT DEFINED EXPECTED_BUILD_PROFILE OR NOT DEFINED EXPECTED_HARDENING_MODE OR
+    NOT DEFINED EXPECTED_SANITIZER_PROFILE)
+  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT EXPECTED_DEPENDENCY_COUNT EXPECTED_BUILD_PROFILE EXPECTED_HARDENING_MODE and EXPECTED_SANITIZER_PROFILE")
 endif()
 
 function(laghu_benchmark_run output warmup)
@@ -42,6 +44,13 @@ foreach(output IN ITEMS "${first}" "${second}")
   string(JSON p95 GET "${output}" metrics latency_ns_per_interval p95)
   string(JSON p99 GET "${output}" metrics latency_ns_per_interval p99)
   string(JSON p999 GET "${output}" metrics latency_ns_per_interval p99_9)
+  string(JSON sample_count LENGTH "${output}" metrics latency_ns_per_interval samples_ns)
+  string(JSON profile GET "${output}" build profile)
+  string(JSON hardening_type TYPE "${output}" build hardening)
+  string(JSON hardening_mode GET "${output}" build hardening mode)
+  string(JSON sanitizer_profile GET "${output}" build sanitizer_profile)
+  string(JSON standard_library_id GET "${output}" build standard_library id)
+  string(JSON standard_library_version GET "${output}" build standard_library version)
   string(JSON allocation_instrumented GET "${output}" metrics allocation_count instrumented)
   string(JSON allocation_count GET "${output}" metrics allocation_count value)
   string(JSON syscall_instrumented GET "${output}" metrics laghu_syscall_count instrumented)
@@ -50,17 +59,46 @@ foreach(output IN ITEMS "${first}" "${second}")
       build_id STREQUAL "" OR NOT feature_count EQUAL EXPECTED_FEATURE_COUNT OR
       NOT dependency_count EQUAL EXPECTED_DEPENDENCY_COUNT OR
       NOT interval_count EQUAL 5 OR NOT warmup_count EQUAL 1 OR NOT operations EQUAL 4096 OR
+      NOT sample_count EQUAL 5 OR
+      NOT profile STREQUAL EXPECTED_BUILD_PROFILE OR
+      NOT "${hardening_type}" STREQUAL "OBJECT" OR
+      NOT "${hardening_mode}" STREQUAL "${EXPECTED_HARDENING_MODE}" OR
+      NOT sanitizer_profile STREQUAL EXPECTED_SANITIZER_PROFILE OR
+      standard_library_id STREQUAL "" OR standard_library_version STREQUAL "" OR
       p50 GREATER p95 OR p95 GREATER p99 OR p99 GREATER p999 OR
       allocation_instrumented OR syscall_instrumented OR
       NOT allocation_count EQUAL 0 OR NOT syscall_count EQUAL 0)
     message(FATAL_ERROR "Laghu benchmark expectation failed: schema_or_metric_invalid")
   endif()
   string(JSON cpu_description_status GET "${output}" cpu description status)
-  string(JSON cpu_time_status GET "${output}" metrics cpu_time_ns status)
-  string(JSON peak_rss_status GET "${output}" metrics peak_rss_bytes status)
-  foreach(status IN ITEMS "${cpu_description_status}" "${cpu_time_status}" "${peak_rss_status}")
+  foreach(status IN ITEMS "${cpu_description_status}")
     if(NOT status STREQUAL "available" AND NOT status STREQUAL "unavailable")
       message(FATAL_ERROR "Laghu benchmark expectation failed: host_metric_status_invalid")
+    endif()
+  endforeach()
+  foreach(metric IN ITEMS cpu_time_ns peak_rss_bytes throughput_operations_per_second)
+    string(JSON status GET "${output}" metrics ${metric} status)
+    if(status STREQUAL "available")
+      if(metric STREQUAL "cpu_time_ns")
+        set(samples_key samples_ns)
+      elseif(metric STREQUAL "peak_rss_bytes")
+        set(samples_key samples_bytes)
+      else()
+        set(samples_key samples_operations_per_second)
+      endif()
+      string(JSON metric_sample_count LENGTH "${output}" metrics ${metric} ${samples_key})
+      if(NOT metric_sample_count EQUAL 5)
+        message(FATAL_ERROR "Laghu benchmark expectation failed: interval_sample_count_invalid metric=${metric}")
+      endif()
+    elseif(NOT status STREQUAL "unavailable")
+      message(FATAL_ERROR "Laghu benchmark expectation failed: host_metric_status_invalid metric=${metric}")
+    endif()
+  endforeach()
+  foreach(metric IN ITEMS allocation_count laghu_syscall_count)
+    string(JSON status GET "${output}" metrics ${metric} status)
+    string(JSON reason GET "${output}" metrics ${metric} reason)
+    if(NOT status STREQUAL "unavailable" OR reason STREQUAL "")
+      message(FATAL_ERROR "Laghu benchmark expectation failed: uninstrumented_counter_invalid metric=${metric}")
     endif()
   endforeach()
 endforeach()

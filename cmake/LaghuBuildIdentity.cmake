@@ -26,11 +26,15 @@ function(laghu_build_identity_input_hashes output)
     CMakePresets.json
     VERSION
     bench/core_foundation.cpp
+    bench/evaluator.cpp
+    bench/regression-gates.tsv
     bench/private/laghu/benchmark/internal/metrics.hpp
     bench/private/laghu/benchmark/internal/workload.hpp
     bench/runner.cpp
     cmake/LaghuApiBoundaries.cmake
     cmake/LaghuBenchmarks.cmake
+    cmake/ExpectBenchmarkEvaluator.cmake
+    cmake/ExpectBenchmarkRunner.cmake
     cmake/LaghuBuildIdentity.cmake
     cmake/LaghuBuildVariants.cmake
     cmake/LaghuCapabilities.cmake
@@ -69,6 +73,8 @@ function(laghu_build_identity_input_hashes output)
     src/core/private/laghu/core/internal/mapping_operations.hpp
     src/os/io_operations.cpp
     src/os/private/laghu/os/internal/io_operations.hpp
+    scripts/benchmark
+    scripts/benchmark-evaluate
     tests/warnings/suppressions.tsv
     tests/sanitizers/suppressions.tsv)
   list(FIND LAGHU_EFFECTIVE_FEATURES tls tls_feature_index)
