@@ -391,6 +391,15 @@ if(TARGET laghu_password_auth)
     "${CMAKE_SOURCE_DIR}/src/adapters/private")
   target_link_libraries(laghu_password_auth_test PRIVATE laghu_password_auth laghu_test_support)
   laghu_add_native_test(laghu.adapters.password_auth laghu_password_auth_test)
+
+  add_executable(laghu_password_auth_failure_token_test
+    tests/adapters/password_auth_failure_token.cpp)
+  laghu_apply_first_party_contract(laghu_password_auth_failure_token_test)
+  laghu_configure_api_consumer(laghu_password_auth_failure_token_test adapters)
+  target_link_libraries(laghu_password_auth_failure_token_test PRIVATE
+    laghu_password_auth laghu_test_support)
+  laghu_add_native_test(laghu.adapters.password_auth.failure_token
+    laghu_password_auth_failure_token_test)
 endif()
 
 laghu_add_sanitizer_fixture_targets()
@@ -459,7 +468,8 @@ if(TARGET laghu_idna_test)
   list(APPEND laghu_verify_targets laghu_idna laghu_idna_test)
 endif()
 if(TARGET laghu_password_auth_test)
-  list(APPEND laghu_verify_targets laghu_password_auth laghu_password_auth_test)
+  list(APPEND laghu_verify_targets
+    laghu_password_auth laghu_password_auth_test laghu_password_auth_failure_token_test)
 endif()
 laghu_collect_fuzz_targets(laghu_fuzz_verify_targets)
 list(APPEND laghu_verify_targets ${laghu_fuzz_verify_targets})

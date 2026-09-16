@@ -24,19 +24,20 @@ using laghu::core::TextView;
   return !result.has_value() && result.error().code() == code;
 }
 
-[[nodiscard]] bool has_idn2_error(const laghu::core::Result<AsciiHostname>& result) noexcept {
-  return !result.has_value() && result.error().code() == ErrorCode::corrupt_data &&
-         result.error().dependency_id() == DependencyId::libidn2 &&
-         result.error().dependency_operation() == DependencyOperation::idna_lookup &&
-         result.error().dependency_status() == DependencyStatus::corrupt_data;
-}
-
 [[nodiscard]] bool has_idn2_range_error(
     const laghu::core::Result<AsciiHostname>& result) noexcept {
   return !result.has_value() && result.error().code() == ErrorCode::invalid_range &&
          result.error().dependency_id() == DependencyId::libidn2 &&
          result.error().dependency_operation() == DependencyOperation::idna_lookup &&
          result.error().dependency_status() == DependencyStatus::invalid_range;
+}
+
+[[nodiscard]] bool has_idn2_input_error(
+    const laghu::core::Result<AsciiHostname>& result) noexcept {
+  return !result.has_value() && result.error().code() == ErrorCode::invalid_input &&
+         result.error().dependency_id() == DependencyId::libidn2 &&
+         result.error().dependency_operation() == DependencyOperation::idna_lookup &&
+         result.error().dependency_status() == DependencyStatus::invalid_input;
 }
 
 [[nodiscard]] bool check_unicode_golden_vectors() noexcept {
@@ -63,11 +64,20 @@ using laghu::core::TextView;
   const auto invalid_result = idna_to_ascii(*invalid);
   return embedded.has_value() && invalid.has_value() && label.has_value() &&
          hostname.has_value() && has_error(idna_to_ascii(*embedded), ErrorCode::invalid_input) &&
-         has_idn2_error(invalid_result) &&
+         has_idn2_input_error(invalid_result) &&
          has_idn2_range_error(idna_to_ascii(*label)) &&
          has_error(idna_to_ascii(*hostname), ErrorCode::invalid_range) &&
          has_error(idna_to_ascii(TextView::from("bad_label.example")),
                    ErrorCode::invalid_input);
+}
+
+[[nodiscard]] bool check_native_input_error_classification() noexcept {
+  const auto leading_hyphen = idna_to_ascii(TextView::from("-leading.example"));
+  constexpr std::array<char, 2> malformed_utf8{static_cast<char>(0xC0),
+                                                static_cast<char>(0xAF)};
+  const auto malformed = TextView::from(malformed_utf8.data(), malformed_utf8.size());
+  return malformed.has_value() && has_idn2_input_error(leading_hyphen) &&
+         has_idn2_input_error(idna_to_ascii(*malformed));
 }
 
 [[nodiscard]] bool check_utf8_input_and_native_length_boundaries() noexcept {
@@ -123,6 +133,8 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.idna.unicode_golden", check_unicode_golden_vectors},
       laghu::test::TestCase{"adapters.idna.input_and_limits", check_input_and_hostname_limits},
+      laghu::test::TestCase{"adapters.idna.native_input_error_classification",
+                            check_native_input_error_classification},
       laghu::test::TestCase{"adapters.idna.utf8_and_native_length_boundaries",
                             check_utf8_input_and_native_length_boundaries},
       laghu::test::TestCase{"adapters.idna.malformed_fuzz_vectors", check_malformed_fuzz_vectors},

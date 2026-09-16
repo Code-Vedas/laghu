@@ -322,8 +322,9 @@ core::Result<bool> verify_password(PasswordAuthWorker& auth_worker, core::Worker
 
   crypt_data native_data{};
   errno = 0;
-  const char* native_result = crypt_r(bounded_password->c_str(), bounded_hash->c_str(), &native_data);
-  if (native_result == nullptr) {
+  const char* native_result =
+      crypt_r(bounded_password->c_str(), bounded_hash->c_str(), &native_data);
+  if (native_result == nullptr || native_result[0] == '*') {
     return std::unexpected{internal::password_auth_native_error(errno, log_sink)};
   }
   const auto output = bounded_crypt_output(native_result);

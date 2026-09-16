@@ -73,6 +73,18 @@ constexpr std::size_t native_output_storage_capacity =
   if (status == IDN2_TOO_BIG_DOMAIN || status == IDN2_TOO_BIG_LABEL) {
     return core::DependencyStatus::invalid_range;
   }
+  if (status == IDN2_ENCODING_ERROR || status == IDN2_PUNYCODE_BAD_INPUT ||
+      status == IDN2_INVALID_ALABEL || status == IDN2_UALABEL_MISMATCH ||
+      status == IDN2_NOT_NFC || status == IDN2_2HYPHEN ||
+      status == IDN2_HYPHEN_STARTEND || status == IDN2_LEADING_COMBINING ||
+      status == IDN2_DISALLOWED || status == IDN2_CONTEXTJ ||
+      status == IDN2_CONTEXTJ_NO_RULE || status == IDN2_CONTEXTO ||
+      status == IDN2_CONTEXTO_NO_RULE || status == IDN2_UNASSIGNED ||
+      status == IDN2_BIDI || status == IDN2_DOT_IN_LABEL ||
+      status == IDN2_INVALID_TRANSITIONAL || status == IDN2_INVALID_NONTRANSITIONAL ||
+      status == IDN2_ALABEL_ROUNDTRIP_FAILED) {
+    return core::DependencyStatus::invalid_input;
+  }
   return core::DependencyStatus::corrupt_data;
 }
 
