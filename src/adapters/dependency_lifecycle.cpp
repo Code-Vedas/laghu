@@ -35,6 +35,10 @@ namespace {
   return registry.master_process() != 0 && current_process() == registry.master_process();
 }
 
+[[nodiscard]] constexpr bool is_tls_provider(core::DependencyId dependency) noexcept {
+  return dependency == core::DependencyId::openssl || dependency == core::DependencyId::libressl;
+}
+
 }  // namespace
 
 DependencyLifecycleRegistry::DependencyLifecycleRegistry() noexcept
@@ -78,15 +82,19 @@ core::Result<void> DependencyLifecycleRegistry::register_dependency(
     return lifecycle_failure(core::ErrorCode::invalid_input,
                              "dependency lifecycle hooks are invalid");
   }
-  if (count_ == hooks_.size()) {
-    return lifecycle_failure(core::ErrorCode::exhaustion,
-                             "dependency lifecycle registry capacity exhausted");
-  }
   for (std::size_t index = 0; index < count_; ++index) {
     if (hooks_[index].dependency == hooks.dependency) {
       return lifecycle_failure(core::ErrorCode::invalid_state,
                                "dependency lifecycle registration is duplicate");
     }
+    if (is_tls_provider(hooks_[index].dependency) && is_tls_provider(hooks.dependency)) {
+      return lifecycle_failure(core::ErrorCode::invalid_state,
+                               "dependency lifecycle TLS providers conflict");
+    }
+  }
+  if (count_ == hooks_.size()) {
+    return lifecycle_failure(core::ErrorCode::exhaustion,
+                             "dependency lifecycle registry capacity exhausted");
   }
   hooks_[count_] = hooks;
   ++count_;

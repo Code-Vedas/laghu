@@ -88,7 +88,9 @@ constexpr std::array dependency_ids{
 };
 
 [[nodiscard]] Result<void> fixture_error(HookStage stage) noexcept {
-  const auto native_code = static_cast<std::int32_t>(-71 - static_cast<std::int32_t>(stage));
+  constexpr std::int32_t first_fixture_native_code = -71;
+  const std::int32_t stage_value = static_cast<std::int32_t>(stage);
+  const std::int32_t native_code = first_fixture_native_code - stage_value;
   return std::unexpected{Error{ErrorDomain::dependency, ErrorCode::dependency, native_code,
                                "dependency lifecycle fixture failure"}};
 }
@@ -363,9 +365,14 @@ template <class T>
   DependencyLifecycleRegistry capacity_registry{};
   if (!register_dependencies(capacity_registry, capacity_recorder, capacity_contexts,
                              capacity_contexts.size()) ||
+      capacity_registry.registered_count() != capacity_contexts.size() ||
       !has_error(capacity_registry.register_dependency(
                      make_hooks(DependencyId::openssl, capacity_contexts[0])),
-                 ErrorCode::exhaustion)) {
+                 ErrorCode::invalid_state) ||
+      !has_error(capacity_registry.register_dependency(
+                     make_hooks(DependencyId::libressl, capacity_contexts[0])),
+                 ErrorCode::invalid_state) ||
+      capacity_registry.registered_count() != capacity_contexts.size()) {
     return false;
   }
 
@@ -443,6 +450,42 @@ template <class T>
     return false;
   }
   return true;
+}
+
+[[nodiscard]] bool check_tls_provider_registration() noexcept {
+  Recorder openssl_recorder{};
+  std::array<HookContext, laghu::adapters::dependency_lifecycle_capacity> openssl_contexts{};
+  openssl_contexts[0] = HookContext{&openssl_recorder, 0};
+  openssl_contexts[1] = HookContext{&openssl_recorder, 1};
+  openssl_contexts[2] = HookContext{&openssl_recorder, 2};
+  DependencyLifecycleRegistry openssl_registry{};
+  if (!openssl_registry.register_dependency(
+           make_hooks(DependencyId::openssl, openssl_contexts[0])).has_value() ||
+      !has_error(openssl_registry.register_dependency(
+                     make_hooks(DependencyId::libressl, openssl_contexts[1])),
+                 ErrorCode::invalid_state) ||
+      openssl_registry.registered_count() != 1 ||
+      !openssl_registry.register_dependency(
+           make_hooks(DependencyId::yyjson, openssl_contexts[2])).has_value() ||
+      openssl_registry.registered_count() != 2) {
+    return false;
+  }
+
+  Recorder libressl_recorder{};
+  std::array<HookContext, laghu::adapters::dependency_lifecycle_capacity> libressl_contexts{};
+  libressl_contexts[0] = HookContext{&libressl_recorder, 0};
+  libressl_contexts[1] = HookContext{&libressl_recorder, 1};
+  libressl_contexts[2] = HookContext{&libressl_recorder, 2};
+  DependencyLifecycleRegistry libressl_registry{};
+  return libressl_registry.register_dependency(
+             make_hooks(DependencyId::libressl, libressl_contexts[0])).has_value() &&
+         has_error(libressl_registry.register_dependency(
+                       make_hooks(DependencyId::openssl, libressl_contexts[1])),
+                   ErrorCode::invalid_state) &&
+         libressl_registry.registered_count() == 1 &&
+         libressl_registry.register_dependency(
+             make_hooks(DependencyId::yyjson, libressl_contexts[2])).has_value() &&
+         libressl_registry.registered_count() == 2;
 }
 
 [[nodiscard]] bool check_preflight_failure_rollback() noexcept {
@@ -657,6 +700,8 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.dependency_lifecycle.registration",
                             check_registration_and_fork_boundary},
+      laghu::test::TestCase{"adapters.dependency_lifecycle.tls_provider_registration",
+                            check_tls_provider_registration},
       laghu::test::TestCase{"adapters.dependency_lifecycle.preflight_rollback",
                             check_preflight_failure_rollback},
       laghu::test::TestCase{"adapters.dependency_lifecycle.preflight_rollback_cleanup_failure",
