@@ -132,11 +132,19 @@ target_link_libraries(laghu_test_time_entropy_test PRIVATE
   laghu_test_support laghu_test_time_entropy laghu_core)
 laghu_add_native_test(laghu.test_support.time_entropy laghu_test_time_entropy_test)
 
+# The lifecycle registry belongs to the adapters subsystem but has no TLS
+# dependency. Keep it available to every adapter configuration, including the
+# default minimal build.
+add_library(laghu_dependency_lifecycle STATIC src/adapters/dependency_lifecycle.cpp)
+laghu_apply_first_party_contract(laghu_dependency_lifecycle)
+laghu_configure_api_consumer(laghu_dependency_lifecycle adapters)
+laghu_register_subsystem_target(laghu_dependency_lifecycle adapters)
+laghu_link_subsystems(laghu_dependency_lifecycle laghu_core)
+
 list(FIND LAGHU_EFFECTIVE_FEATURES tls laghu_tls_feature_index)
 if(NOT laghu_tls_feature_index EQUAL -1)
   add_library(laghu_crypto STATIC
     src/adapters/dependency.cpp
-    src/adapters/dependency_lifecycle.cpp
     src/adapters/crypto_provider.cpp
     src/adapters/entropy.cpp)
   laghu_apply_first_party_contract(laghu_crypto)
@@ -144,7 +152,7 @@ if(NOT laghu_tls_feature_index EQUAL -1)
   target_include_directories(laghu_crypto PRIVATE "${CMAKE_SOURCE_DIR}/src/adapters/private")
   laghu_register_subsystem_target(laghu_crypto adapters)
   laghu_link_subsystems(laghu_crypto laghu_core)
-  target_link_libraries(laghu_crypto PRIVATE laghu_feature_tls)
+  target_link_libraries(laghu_crypto PRIVATE laghu_dependency_lifecycle laghu_feature_tls)
   if(LAGHU_TLS_PROVIDER STREQUAL "OPENSSL")
     target_compile_definitions(laghu_crypto PRIVATE LAGHU_CRYPTO_DEPENDENCY_OPENSSL=1)
   elseif(LAGHU_TLS_PROVIDER STREQUAL "LIBRESSL")
@@ -284,16 +292,14 @@ target_link_libraries(laghu_adapter_dependency_error_logging_test PRIVATE
 laghu_add_native_test(laghu.adapters.dependency_error_logging
   laghu_adapter_dependency_error_logging_test)
 
-# The lifecycle registry is linked by the current crypto adapter, while this
-# fixture uses deterministic caller-owned hooks so the default minimal build
-# proves its fork protocol without acquiring a TLS dependency.
-add_executable(laghu_adapter_dependency_lifecycle_test
-  tests/adapters/dependency_lifecycle.cpp
-  src/adapters/dependency_lifecycle.cpp)
+# The lifecycle registry is a TLS-independent adapters target. This fixture
+# uses deterministic caller-owned hooks so the default minimal build proves its
+# fork protocol without acquiring a TLS dependency.
+add_executable(laghu_adapter_dependency_lifecycle_test tests/adapters/dependency_lifecycle.cpp)
 laghu_apply_first_party_contract(laghu_adapter_dependency_lifecycle_test)
 laghu_configure_api_consumer(laghu_adapter_dependency_lifecycle_test adapters)
 target_link_libraries(laghu_adapter_dependency_lifecycle_test PRIVATE
-  laghu_core laghu_test_support)
+  laghu_dependency_lifecycle laghu_core laghu_test_support)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # The fixture's bounded POSIX pipe protocol necessarily uses raw descriptors.
   set_source_files_properties(tests/adapters/dependency_lifecycle.cpp PROPERTIES
