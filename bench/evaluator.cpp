@@ -474,6 +474,7 @@ struct Artifact final {
   std::string_view standard_library_id{};
   std::string_view standard_library_version{};
   std::string_view profile{};
+  std::string_view hardening{};
   std::string_view sanitizer_profile{};
   std::string_view target_architecture{};
   std::string_view target_os{};
@@ -606,6 +607,7 @@ struct Artifact final {
   const JsonNode* compiler{};
   const JsonNode* standard_library{};
   const JsonNode* target{};
+  const JsonNode* hardening{};
   const JsonNode* dependencies{};
   const JsonNode* features{};
   if (!required_object(artifact.document, root, "build", build) ||
@@ -617,6 +619,7 @@ struct Artifact final {
       !required_string(artifact.document, standard_library, "id", artifact.standard_library_id) ||
       !required_string(artifact.document, standard_library, "version", artifact.standard_library_version) ||
       !required_string(artifact.document, build, "profile", artifact.profile) ||
+      !required_object(artifact.document, build, "hardening", hardening) ||
       !required_string(artifact.document, build, "sanitizer_profile", artifact.sanitizer_profile) ||
       !required_object(artifact.document, build, "target", target) ||
       !required_string(artifact.document, target, "architecture", artifact.target_architecture) ||
@@ -628,6 +631,7 @@ struct Artifact final {
   }
   artifact.dependencies = dependencies->raw;
   artifact.features = features->raw;
+  artifact.hardening = hardening->raw;
 
   const JsonNode* cpu{};
   const JsonNode* description{};
@@ -703,7 +707,8 @@ struct Artifact final {
       baseline.compiler_version != candidate.compiler_version ||
       baseline.standard_library_id != candidate.standard_library_id ||
       baseline.standard_library_version != candidate.standard_library_version ||
-      baseline.profile != candidate.profile || baseline.sanitizer_profile != candidate.sanitizer_profile ||
+      baseline.profile != candidate.profile || baseline.hardening != candidate.hardening ||
+      baseline.sanitizer_profile != candidate.sanitizer_profile ||
       baseline.features != candidate.features || baseline.dependencies != candidate.dependencies) {
     error = "build";
     return false;
@@ -739,7 +744,8 @@ struct Artifact final {
   for (const std::string_view component : {
            artifact.target_os, artifact.target_architecture, artifact.cpu_description,
            artifact.compiler_id, artifact.compiler_version, artifact.standard_library_id,
-           artifact.standard_library_version, artifact.profile, artifact.sanitizer_profile,
+           artifact.standard_library_version, artifact.profile, artifact.hardening,
+           artifact.sanitizer_profile,
            artifact.features, artifact.dependencies}) {
     value = hash_append(value, component);
   }
@@ -969,9 +975,11 @@ struct Manifest final {
 
 enum class RegressionResult : std::uint8_t {
   success,
-  zero_baseline_undefined,
   arithmetic_overflow,
 };
+
+constexpr std::int64_t unbounded_regression_ppm = std::numeric_limits<std::int64_t>::max();
+constexpr std::int64_t unbounded_improvement_ppm = std::numeric_limits<std::int64_t>::min();
 
 [[nodiscard]] RegressionResult regression_ppm(std::uint64_t baseline, std::uint64_t candidate,
                                               bool higher_is_better,
@@ -981,7 +989,8 @@ enum class RegressionResult : std::uint8_t {
       output = 0;
       return RegressionResult::success;
     }
-    return RegressionResult::zero_baseline_undefined;
+    output = higher_is_better ? unbounded_improvement_ppm : unbounded_regression_ppm;
+    return RegressionResult::success;
   }
   const bool candidate_is_regression = higher_is_better ? candidate < baseline : candidate > baseline;
   const std::uint64_t difference = candidate >= baseline ? candidate - baseline : baseline - candidate;
@@ -1036,12 +1045,24 @@ enum class BootstrapResult : std::uint8_t {
   return metric == MetricId::peak_rss;
 }
 
+[[nodiscard]] bool has_nonzero_sample(const MetricSeries& series) noexcept {
+  for (std::size_t index = 0U; index < series.count; ++index) {
+    if (series.values[index] != 0U) {
+      return true;
+    }
+  }
+  return false;
+}
+
 [[nodiscard]] BootstrapResult bootstrap_interval(const MetricSeries& baseline,
                                                  const MetricSeries& candidate,
                                                  MetricId metric, bool higher_is_better,
                                                  Interval& output) noexcept {
   if (!baseline.available || !candidate.available) {
     return BootstrapResult::invalid_samples;
+  }
+  if (!has_nonzero_sample(baseline) && has_nonzero_sample(candidate)) {
+    return BootstrapResult::zero_baseline_undefined;
   }
   std::array<std::int64_t, bootstrap_resamples> samples{};
   std::uint64_t state = fixed_seed;
@@ -1059,9 +1080,6 @@ enum class BootstrapResult : std::uint8_t {
     }
     const RegressionResult regression =
         regression_ppm(baseline_mean, candidate_mean, higher_is_better, samples[iteration]);
-    if (regression == RegressionResult::zero_baseline_undefined) {
-      return BootstrapResult::zero_baseline_undefined;
-    }
     if (regression == RegressionResult::arithmetic_overflow) {
       return BootstrapResult::arithmetic_overflow;
     }
@@ -1179,6 +1197,11 @@ struct Options final {
   JsonWriter writer;
   if (!writer.append("{\"reference_environment\":") ||
       !writer.append_string({environment.data(), 16U}) ||
+      !writer.append(",\"unbounded_regression_ppm_sentinels\":{\"improvement\":") ||
+      !writer.append_signed_number(unbounded_improvement_ppm) ||
+      !writer.append(",\"regression\":") ||
+      !writer.append_signed_number(unbounded_regression_ppm) ||
+      !writer.append("}") ||
       !writer.append(",\"results\":[")) {
     return false;
   }

@@ -12,14 +12,15 @@ function(laghu_configure_benchmarks)
     laghu_benchmark_fail("rule=build_identity_missing")
   endif()
   if(NOT DEFINED LAGHU_BUILD_IDENTITY_FEATURES_JSON OR
-      NOT DEFINED LAGHU_BUILD_IDENTITY_DEPENDENCIES_JSON)
+      NOT DEFINED LAGHU_BUILD_IDENTITY_DEPENDENCIES_JSON OR
+      NOT DEFINED LAGHU_HARDENING_METADATA_JSON)
     laghu_benchmark_fail("rule=build_identity_components_missing")
   endif()
 
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated/laghu")
   set(identity_header "${CMAKE_BINARY_DIR}/generated/laghu/benchmark_identity.hpp")
   file(WRITE "${identity_header}"
-"// SPDX-License-Identifier: AGPL-3.0-only\n#pragma once\n\n#include <string_view>\n\nnamespace laghu::benchmark::internal {\ninline constexpr std::string_view schema_version = \"${LAGHU_BENCHMARK_SCHEMA_VERSION}\";\ninline constexpr std::string_view build_id = \"${LAGHU_BUILD_ID}\";\ninline constexpr std::string_view build_profile = \"${LAGHU_BUILD_PROFILE}\";\ninline constexpr std::string_view compiler_id = \"${CMAKE_CXX_COMPILER_ID}\";\ninline constexpr std::string_view compiler_version = \"${CMAKE_CXX_COMPILER_VERSION}\";\ninline constexpr std::string_view sanitizer_profile = \"${LAGHU_SANITIZER_PROFILE}\";\ninline constexpr std::string_view standard_library_id = \"${LAGHU_STANDARD_LIBRARY_ID}\";\ninline constexpr std::string_view standard_library_version = \"${LAGHU_STANDARD_LIBRARY_VERSION}\";\ninline constexpr std::string_view target_architecture = \"${CMAKE_SYSTEM_PROCESSOR}\";\ninline constexpr std::string_view target_os = \"${CMAKE_SYSTEM_NAME}\";\ninline constexpr std::string_view features_json = R\"laghu(${LAGHU_BUILD_IDENTITY_FEATURES_JSON})laghu\";\ninline constexpr std::string_view dependencies_json = R\"laghu(${LAGHU_BUILD_IDENTITY_DEPENDENCIES_JSON})laghu\";\n}  // namespace laghu::benchmark::internal\n")
+"// SPDX-License-Identifier: AGPL-3.0-only\n#pragma once\n\n#include <string_view>\n\nnamespace laghu::benchmark::internal {\ninline constexpr std::string_view schema_version = \"${LAGHU_BENCHMARK_SCHEMA_VERSION}\";\ninline constexpr std::string_view build_id = \"${LAGHU_BUILD_ID}\";\ninline constexpr std::string_view build_profile = \"${LAGHU_BUILD_PROFILE}\";\ninline constexpr std::string_view compiler_id = \"${CMAKE_CXX_COMPILER_ID}\";\ninline constexpr std::string_view compiler_version = \"${CMAKE_CXX_COMPILER_VERSION}\";\ninline constexpr std::string_view sanitizer_profile = \"${LAGHU_SANITIZER_PROFILE}\";\ninline constexpr std::string_view standard_library_id = \"${LAGHU_STANDARD_LIBRARY_ID}\";\ninline constexpr std::string_view standard_library_version = \"${LAGHU_STANDARD_LIBRARY_VERSION}\";\ninline constexpr std::string_view target_architecture = \"${CMAKE_SYSTEM_PROCESSOR}\";\ninline constexpr std::string_view target_os = \"${CMAKE_SYSTEM_NAME}\";\ninline constexpr std::string_view features_json = R\"laghu(${LAGHU_BUILD_IDENTITY_FEATURES_JSON})laghu\";\ninline constexpr std::string_view dependencies_json = R\"laghu(${LAGHU_BUILD_IDENTITY_DEPENDENCIES_JSON})laghu\";\ninline constexpr std::string_view hardening_json = R\"laghu(${LAGHU_HARDENING_METADATA_JSON})laghu\";\n}  // namespace laghu::benchmark::internal\n")
   set(LAGHU_BENCHMARK_IDENTITY_HEADER "${identity_header}" CACHE INTERNAL
     "Laghu build-local benchmark identity header" FORCE)
 endfunction()
@@ -89,6 +90,7 @@ function(laghu_add_benchmark_validation_tests)
       "-DEXPECTED_FEATURE_COUNT=${benchmark_expected_feature_count}"
       "-DEXPECTED_DEPENDENCY_COUNT=${benchmark_expected_dependency_count}"
       "-DEXPECTED_BUILD_PROFILE=${LAGHU_BUILD_PROFILE}"
+      "-DEXPECTED_HARDENING_MODE=${CMAKE_BUILD_TYPE}"
       "-DEXPECTED_SANITIZER_PROFILE=${LAGHU_SANITIZER_PROFILE}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBenchmarkRunner.cmake")
   add_test(NAME laghu.benchmark.release_exclusion

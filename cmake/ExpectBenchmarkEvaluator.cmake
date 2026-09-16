@@ -7,9 +7,9 @@ set(work "${BUILD_DIRECTORY}/tests/benchmark-evaluator")
 file(REMOVE_RECURSE "${work}")
 file(MAKE_DIRECTORY "${work}")
 
-function(laghu_write_artifact path build_id cpu latency throughput cpu_time rss allocation syscall)
+function(laghu_write_artifact path build_id cpu latency throughput cpu_time rss allocation syscall hardening)
   set(document
-"{\"schema_version\":\"laghu-benchmark-v1\",\"build\":{\"build_id\":\"${build_id}\",\"compiler\":{\"id\":\"FixtureCxx\",\"version\":\"1\"},\"dependencies\":[],\"features\":[\"core\"],\"profile\":\"MINIMAL\",\"sanitizer_profile\":\"NONE\",\"standard_library\":{\"id\":\"fixture-stdlib\",\"version\":\"1\"},\"target\":{\"architecture\":\"fixture64\",\"os\":\"FixtureOS\"}},\"cpu\":{\"description\":{\"status\":\"available\",\"value\":\"${cpu}\"}},\"metrics\":{\"allocation_count\":{\"instrumented\":true,\"value\":100,\"status\":\"available\",\"samples_count\":[${allocation}]},\"cpu_time_ns\":{\"status\":\"available\",\"value\":100,\"samples_ns\":[${cpu_time}]},\"laghu_syscall_count\":{\"instrumented\":true,\"value\":100,\"status\":\"available\",\"samples_count\":[${syscall}]},\"latency_ns_per_interval\":{\"p50\":100,\"p95\":100,\"p99\":100,\"p99_9\":100,\"samples_ns\":[${latency}]},\"peak_rss_bytes\":{\"status\":\"available\",\"value\":100,\"samples_bytes\":[${rss}]},\"throughput_operations_per_second\":{\"status\":\"available\",\"value\":100,\"samples_operations_per_second\":[${throughput}]}},\"parameters\":{\"intervals\":10,\"operations_per_interval\":4096,\"warmup\":1},\"workload\":\"core-foundation\",\"workload_checksum\":1}\n")
+"{\"schema_version\":\"laghu-benchmark-v1\",\"build\":{\"build_id\":\"${build_id}\",\"compiler\":{\"id\":\"FixtureCxx\",\"version\":\"1\"},\"dependencies\":[],\"features\":[\"core\"],\"profile\":\"MINIMAL\",\"hardening\":${hardening},\"sanitizer_profile\":\"NONE\",\"standard_library\":{\"id\":\"fixture-stdlib\",\"version\":\"1\"},\"target\":{\"architecture\":\"fixture64\",\"os\":\"FixtureOS\"}},\"cpu\":{\"description\":{\"status\":\"available\",\"value\":\"${cpu}\"}},\"metrics\":{\"allocation_count\":{\"instrumented\":true,\"value\":100,\"status\":\"available\",\"samples_count\":[${allocation}]},\"cpu_time_ns\":{\"status\":\"available\",\"value\":100,\"samples_ns\":[${cpu_time}]},\"laghu_syscall_count\":{\"instrumented\":true,\"value\":100,\"status\":\"available\",\"samples_count\":[${syscall}]},\"latency_ns_per_interval\":{\"p50\":100,\"p95\":100,\"p99\":100,\"p99_9\":100,\"samples_ns\":[${latency}]},\"peak_rss_bytes\":{\"status\":\"available\",\"value\":100,\"samples_bytes\":[${rss}]},\"throughput_operations_per_second\":{\"status\":\"available\",\"value\":100,\"samples_operations_per_second\":[${throughput}]}},\"parameters\":{\"intervals\":10,\"operations_per_interval\":4096,\"warmup\":1},\"workload\":\"core-foundation\",\"workload_checksum\":1}\n")
   file(WRITE "${path}" "${document}")
 endfunction()
 
@@ -18,20 +18,35 @@ set(samples_120 "120,120,120,120,120,120,120,120,120,120")
 set(samples_104 "104,104,104,104,104,104,104,104,104,104")
 set(samples_080 "80,80,80,80,80,80,80,80,80,80")
 set(samples_000 "0,0,0,0,0,0,0,0,0,0")
+set(samples_001 "1,1,1,1,1,1,1,1,1,1")
+set(samples_sparse "0,0,0,0,0,0,0,0,0,10")
+set(samples_sparse_dense "0,10,10,10,10,10,10,10,10,10")
+set(fixture_hardening "{\"mode\":\"Release\"}")
+set(fixture_hardening_mismatch "{\"mode\":\"Debug\"}")
 laghu_write_artifact("${work}/baseline.json" baseline fixture-cpu
-  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}")
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${fixture_hardening}")
 laghu_write_artifact("${work}/lower-regression.json" candidate-lower fixture-cpu
-  "${samples_120}" "${samples_120}" "${samples_120}" "${samples_120}" "${samples_120}" "${samples_120}")
+  "${samples_120}" "${samples_120}" "${samples_120}" "${samples_120}" "${samples_120}" "${samples_120}" "${fixture_hardening}")
 laghu_write_artifact("${work}/higher-regression.json" candidate-higher fixture-cpu
-  "${samples_080}" "${samples_080}" "${samples_080}" "${samples_080}" "${samples_080}" "${samples_080}")
+  "${samples_080}" "${samples_080}" "${samples_080}" "${samples_080}" "${samples_080}" "${samples_080}" "${fixture_hardening}")
 laghu_write_artifact("${work}/noise.json" candidate-noise fixture-cpu
-  "${samples_104}" "${samples_104}" "${samples_104}" "${samples_104}" "${samples_104}" "${samples_104}")
+  "${samples_104}" "${samples_104}" "${samples_104}" "${samples_104}" "${samples_104}" "${samples_104}" "${fixture_hardening}")
 laghu_write_artifact("${work}/incompatible.json" candidate-incompatible fixture-other-cpu
-  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}")
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${fixture_hardening}")
 laghu_write_artifact("${work}/zero.json" candidate-zero fixture-cpu
-  "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}")
+  "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${fixture_hardening}")
 laghu_write_artifact("${work}/zero-baseline.json" baseline-zero fixture-cpu
-  "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}")
+  "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${samples_000}" "${fixture_hardening}")
+laghu_write_artifact("${work}/hardening-mismatch.json" candidate-hardening fixture-cpu
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${fixture_hardening_mismatch}")
+laghu_write_artifact("${work}/sparse-baseline.json" sparse-baseline fixture-cpu
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_sparse}" "${samples_sparse}" "${fixture_hardening}")
+laghu_write_artifact("${work}/sparse-candidate.json" sparse-candidate fixture-cpu
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_120}" "${samples_120}" "${fixture_hardening}")
+laghu_write_artifact("${work}/sparse-dense-baseline.json" sparse-dense-baseline fixture-cpu
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_sparse_dense}" "${fixture_hardening}")
+laghu_write_artifact("${work}/sparse-higher-regression.json" sparse-higher-regression fixture-cpu
+  "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_100}" "${samples_001}" "${fixture_hardening}")
 
 execute_process(
   COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --environment "${work}/baseline.json"
@@ -44,6 +59,15 @@ if(NOT environment_result EQUAL 0 OR NOT environment_length EQUAL 16 OR
     NOT environment MATCHES "^[0-9a-f]+$")
   message(FATAL_ERROR "Laghu benchmark evaluator expectation failed: environment=${environment}${environment_diagnostics}")
 endif()
+execute_process(
+  COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --environment "${work}/hardening-mismatch.json"
+  RESULT_VARIABLE hardening_environment_result
+  OUTPUT_VARIABLE hardening_environment
+  ERROR_VARIABLE hardening_environment_diagnostics)
+string(STRIP "${hardening_environment}" hardening_environment)
+if(NOT hardening_environment_result EQUAL 0 OR hardening_environment STREQUAL environment)
+  message(FATAL_ERROR "Laghu benchmark evaluator expectation failed: hardening_environment=${hardening_environment}${hardening_environment_diagnostics}")
+endif()
 
 set(manifest "${work}/thresholds.tsv")
 function(laghu_write_manifest metric direction mode)
@@ -51,17 +75,22 @@ function(laghu_write_manifest metric direction mode)
     "# workload\tmetric\tdirection\tallowed_regression_percent\tnoise_band_percent\treference_environment\tmode\ncore-foundation\t${metric}\t${direction}\t5\t1\t${environment}\t${mode}\n")
 endfunction()
 
-function(laghu_evaluator_run candidate expected_exit expected_text output)
+function(laghu_evaluator_run_against baseline candidate expected_exit expected_text output)
   execute_process(
-    COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --baseline "${work}/baseline.json"
+    COMMAND "${SCRIPT}" --build "${BUILD_DIRECTORY}" --baseline "${baseline}"
       --candidate "${candidate}" --manifest "${manifest}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE standard_output
     ERROR_VARIABLE diagnostics)
   if(NOT result EQUAL expected_exit OR NOT "${standard_output}${diagnostics}" MATCHES "${expected_text}")
-    message(FATAL_ERROR "Laghu benchmark evaluator expectation failed: candidate=${candidate}; expected_exit=${expected_exit}; actual_exit=${result}; output=${standard_output}${diagnostics}")
+    message(FATAL_ERROR "Laghu benchmark evaluator expectation failed: baseline=${baseline}; candidate=${candidate}; expected_exit=${expected_exit}; actual_exit=${result}; output=${standard_output}${diagnostics}")
   endif()
   set(${output} "${standard_output}" PARENT_SCOPE)
+endfunction()
+
+function(laghu_evaluator_run candidate expected_exit expected_text output)
+  laghu_evaluator_run_against("${work}/baseline.json" "${candidate}" "${expected_exit}" "${expected_text}" result_output)
+  set(${output} "${result_output}" PARENT_SCOPE)
 endfunction()
 
 foreach(metric IN ITEMS latency_ns_per_interval cpu_time_ns peak_rss_bytes allocation_count laghu_syscall_count)
@@ -92,6 +121,26 @@ laghu_evaluator_run("${work}/lower-regression.json" 0 "advisory_regression" advi
 
 laghu_write_manifest(latency_ns_per_interval lower hard)
 laghu_evaluator_run("${work}/incompatible.json" 65 "compatibility=hardware" incompatible_output)
+laghu_evaluator_run("${work}/hardening-mismatch.json" 65 "compatibility=build" hardening_output)
+
+laghu_write_manifest(allocation_count lower hard)
+laghu_evaluator_run_against("${work}/sparse-baseline.json" "${work}/sparse-candidate.json" 1
+  "\"metric\":\"allocation_count\"" sparse_lower_first)
+laghu_evaluator_run_against("${work}/sparse-baseline.json" "${work}/sparse-candidate.json" 1
+  "\"metric\":\"allocation_count\"" sparse_lower_second)
+if(NOT sparse_lower_first STREQUAL sparse_lower_second)
+  message(FATAL_ERROR "Laghu benchmark evaluator expectation failed: sparse_lower_not_deterministic")
+endif()
+string(FIND "${sparse_lower_first}" "\"unbounded_regression_ppm_sentinels\"" sentinel_index)
+if(sentinel_index EQUAL -1)
+  message(FATAL_ERROR "Laghu benchmark evaluator expectation failed: sparse_lower_sentinel_missing")
+endif()
+
+laghu_write_manifest(laghu_syscall_count higher hard)
+laghu_evaluator_run_against("${work}/sparse-baseline.json" "${work}/sparse-candidate.json" 0
+  "\"status\":\"pass\"" sparse_higher_output)
+laghu_evaluator_run_against("${work}/sparse-dense-baseline.json" "${work}/sparse-higher-regression.json" 1
+  "\"metric\":\"laghu_syscall_count\"" sparse_higher_regression_output)
 
 file(READ "${work}/baseline.json" unavailable_cpu_document)
 string(REPLACE "\"cpu_time_ns\":{\"status\":\"available\",\"value\":100,\"samples_ns\":[${samples_100}]}"

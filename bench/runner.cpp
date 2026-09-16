@@ -376,6 +376,8 @@ class JsonWriter final {
       writer.append(laghu::benchmark::internal::features_json) &&
       writer.append(",\"profile\":") &&
       writer.append_json_string(laghu::benchmark::internal::build_profile) &&
+      writer.append(",\"hardening\":") &&
+      writer.append(laghu::benchmark::internal::hardening_json) &&
       writer.append(",\"sanitizer_profile\":") &&
       writer.append_json_string(laghu::benchmark::internal::sanitizer_profile) &&
       writer.append(",\"standard_library\":{\"id\":") &&

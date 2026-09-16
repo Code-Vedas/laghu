@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 if(NOT DEFINED SCRIPT OR NOT DEFINED BUILD_DIRECTORY OR NOT DEFINED SOURCE_DIRECTORY OR
     NOT DEFINED EXPECTED_FEATURE_COUNT OR NOT DEFINED EXPECTED_DEPENDENCY_COUNT OR
-    NOT DEFINED EXPECTED_BUILD_PROFILE OR NOT DEFINED EXPECTED_SANITIZER_PROFILE)
-  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT EXPECTED_DEPENDENCY_COUNT EXPECTED_BUILD_PROFILE and EXPECTED_SANITIZER_PROFILE")
+    NOT DEFINED EXPECTED_BUILD_PROFILE OR NOT DEFINED EXPECTED_HARDENING_MODE OR
+    NOT DEFINED EXPECTED_SANITIZER_PROFILE)
+  message(FATAL_ERROR "Laghu benchmark expectation requires SCRIPT BUILD_DIRECTORY SOURCE_DIRECTORY EXPECTED_FEATURE_COUNT EXPECTED_DEPENDENCY_COUNT EXPECTED_BUILD_PROFILE EXPECTED_HARDENING_MODE and EXPECTED_SANITIZER_PROFILE")
 endif()
 
 function(laghu_benchmark_run output warmup)
@@ -45,6 +46,8 @@ foreach(output IN ITEMS "${first}" "${second}")
   string(JSON p999 GET "${output}" metrics latency_ns_per_interval p99_9)
   string(JSON sample_count LENGTH "${output}" metrics latency_ns_per_interval samples_ns)
   string(JSON profile GET "${output}" build profile)
+  string(JSON hardening_type TYPE "${output}" build hardening)
+  string(JSON hardening_mode GET "${output}" build hardening mode)
   string(JSON sanitizer_profile GET "${output}" build sanitizer_profile)
   string(JSON standard_library_id GET "${output}" build standard_library id)
   string(JSON standard_library_version GET "${output}" build standard_library version)
@@ -58,6 +61,8 @@ foreach(output IN ITEMS "${first}" "${second}")
       NOT interval_count EQUAL 5 OR NOT warmup_count EQUAL 1 OR NOT operations EQUAL 4096 OR
       NOT sample_count EQUAL 5 OR
       NOT profile STREQUAL EXPECTED_BUILD_PROFILE OR
+      NOT "${hardening_type}" STREQUAL "OBJECT" OR
+      NOT "${hardening_mode}" STREQUAL "${EXPECTED_HARDENING_MODE}" OR
       NOT sanitizer_profile STREQUAL EXPECTED_SANITIZER_PROFILE OR
       standard_library_id STREQUAL "" OR standard_library_version STREQUAL "" OR
       p50 GREATER p95 OR p95 GREATER p99 OR p99 GREATER p999 OR
