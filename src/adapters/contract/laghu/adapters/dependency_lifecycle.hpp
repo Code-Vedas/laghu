@@ -64,11 +64,15 @@ enum class DependencyLifecyclePhase : std::uint8_t {
   collecting,
   preflighted,
   preflight_failed,
+  preflight_rollback_failed,
   fork_ready,
   worker_ready,
   worker_rolled_back,
+  worker_rollback_failed,
   worker_cleaned,
+  worker_cleanup_failed,
   master_cleaned,
+  master_cleanup_failed,
 };
 
 // The registry is intentionally process-local. A master calls preflight(),
@@ -105,14 +109,20 @@ class DependencyLifecycleRegistry final {
   }
 
  private:
+  [[nodiscard]] core::Result<void> persistent_failure() const noexcept;
+  [[nodiscard]] core::Result<DependencyForkEpoch> persistent_fork_failure() const noexcept;
+  void set_terminal_failure(DependencyLifecyclePhase phase, core::Error failure) noexcept;
+
   std::array<DependencyLifecycleHooks, dependency_lifecycle_capacity> hooks_{};
   DependencyLifecyclePhase phase_{DependencyLifecyclePhase::collecting};
+  core::Error terminal_failure_{core::ErrorDomain::core, core::ErrorCode::invalid_state};
   std::uint64_t master_process_{};
   std::uint64_t worker_process_{};
   std::uint64_t fork_epoch_{};
   std::size_t count_{};
   std::size_t preflighted_count_{};
   std::size_t worker_initialized_count_{};
+  bool has_terminal_failure_{};
 };
 
 static_assert(std::is_trivially_copyable_v<DependencyLiveState>);

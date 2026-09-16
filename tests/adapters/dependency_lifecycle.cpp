@@ -48,6 +48,8 @@ struct Recorder final {
   DependencyLiveState live{};
   HookStage failure_stage{HookStage::preflight};
   std::uint8_t failure_slot{std::numeric_limits<std::uint8_t>::max()};
+  HookStage additional_failure_stage{HookStage::preflight};
+  std::uint8_t additional_failure_slot{std::numeric_limits<std::uint8_t>::max()};
 };
 
 struct HookContext final {
@@ -62,6 +64,10 @@ struct ChildReport final {
   std::uint8_t phase{};
   bool initialization_succeeded{};
   bool cleanup_succeeded{};
+  bool repeated_cleanup_succeeded{};
+  bool cleanup_failure_persisted{};
+  bool repeated_initialization_succeeded{};
+  bool initialization_failure_persisted{};
 };
 
 constexpr std::array dependency_ids{
@@ -81,8 +87,9 @@ constexpr std::array dependency_ids{
     DependencyId::protobuf_c,
 };
 
-[[nodiscard]] Result<void> fixture_error() noexcept {
-  return std::unexpected{Error{ErrorDomain::dependency, ErrorCode::dependency, -71,
+[[nodiscard]] Result<void> fixture_error(HookStage stage) noexcept {
+  const auto native_code = static_cast<std::int32_t>(-71 - static_cast<std::int32_t>(stage));
+  return std::unexpected{Error{ErrorDomain::dependency, ErrorCode::dependency, native_code,
                                "dependency lifecycle fixture failure"}};
 }
 
@@ -98,8 +105,10 @@ constexpr std::array dependency_ids{
   }
   hook.recorder->events[hook.recorder->event_count] = event_code(stage, hook.slot);
   ++hook.recorder->event_count;
-  if (hook.recorder->failure_stage == stage && hook.recorder->failure_slot == hook.slot) {
-    return fixture_error();
+  if ((hook.recorder->failure_stage == stage && hook.recorder->failure_slot == hook.slot) ||
+      (hook.recorder->additional_failure_stage == stage &&
+       hook.recorder->additional_failure_slot == hook.slot)) {
+    return fixture_error(stage);
   }
   return {};
 }
@@ -138,6 +147,21 @@ constexpr std::array dependency_ids{
 template <class T>
 [[nodiscard]] bool has_error(const Result<T>& result, ErrorCode expected) noexcept {
   return !result.has_value() && result.error().code() == expected;
+}
+
+template <class T>
+[[nodiscard]] bool has_error(const Result<T>& result, ErrorCode expected,
+                             std::int32_t native_code) noexcept {
+  return !result.has_value() && result.error().code() == expected &&
+         result.error().native_code() == native_code;
+}
+
+[[nodiscard]] bool same_error(const Result<void>& left, const Result<void>& right) noexcept {
+  return !left.has_value() && !right.has_value() &&
+         left.error().domain() == right.error().domain() &&
+         left.error().code() == right.error().code() &&
+         left.error().native_code() == right.error().native_code() &&
+         left.error().diagnostic_context() == right.error().diagnostic_context();
 }
 
 [[nodiscard]] bool events_equal(const Recorder& recorder,
@@ -285,10 +309,17 @@ template <class T>
     recorder.event_count = 0;
     const auto initialized = registry.worker_initialize(epoch);
     const auto cleaned = registry.worker_cleanup();
+    const auto repeated_cleanup = registry.worker_cleanup();
+    const auto repeated_initialization = registry.worker_initialize(epoch);
     ChildReport child_report{};
     child_report.process = static_cast<std::uint64_t>(::getpid());
     child_report.initialization_succeeded = initialized.has_value();
     child_report.cleanup_succeeded = cleaned.has_value();
+    child_report.repeated_cleanup_succeeded = repeated_cleanup.has_value();
+    child_report.cleanup_failure_persisted = same_error(cleaned, repeated_cleanup);
+    child_report.repeated_initialization_succeeded = repeated_initialization.has_value();
+    child_report.initialization_failure_persisted =
+        same_error(initialized, repeated_initialization);
     child_report.phase = static_cast<std::uint8_t>(registry.phase());
     if (recorder.event_count > child_report.events.size()) {
       static_cast<void>(::close(descriptors[1]));
@@ -371,6 +402,29 @@ template <class T>
       !has_error(registry.worker_initialize(*epoch), ErrorCode::invalid_state)) {
     return false;
   }
+  if (!has_error(registry.prepare_fork(2), ErrorCode::invalid_state)) {
+    return false;
+  }
+  recorder.live.sessions = 1;
+  if (!has_error(registry.prepare_fork(1), ErrorCode::invalid_state)) {
+    return false;
+  }
+  recorder.live.sessions = 0;
+  recorder.live.contexts = 1;
+  if (!has_error(registry.prepare_fork(1), ErrorCode::invalid_state)) {
+    return false;
+  }
+  recorder.live.contexts = 0;
+  recorder.live.threads = 1;
+  if (!has_error(registry.prepare_fork(1), ErrorCode::invalid_state)) {
+    return false;
+  }
+  recorder.live.threads = 0;
+  recorder.live.callbacks = 1;
+  if (!has_error(registry.prepare_fork(1), ErrorCode::invalid_state)) {
+    return false;
+  }
+  recorder.live.callbacks = 0;
   const DependencyForkEpoch wrong_epoch{epoch->master_process, epoch->value + 1};
   if (!has_error(registry.worker_initialize(wrong_epoch), ErrorCode::invalid_state)) {
     return false;
@@ -410,6 +464,31 @@ template <class T>
   return true;
 }
 
+[[nodiscard]] bool check_preflight_rollback_cleanup_failure() noexcept {
+  Recorder recorder{};
+  recorder.failure_stage = HookStage::preflight;
+  recorder.failure_slot = 1;
+  recorder.additional_failure_stage = HookStage::master_cleanup;
+  recorder.additional_failure_slot = 0;
+  std::array<HookContext, laghu::adapters::dependency_lifecycle_capacity> contexts{};
+  DependencyLifecycleRegistry registry{};
+  if (!register_dependencies(registry, recorder, contexts, 2)) {
+    return false;
+  }
+  const auto initial = registry.preflight();
+  const auto repeated = registry.preflight();
+  const auto cleanup = registry.master_cleanup();
+  const auto prepared = registry.prepare_fork(1);
+  return has_error(initial, ErrorCode::dependency, -74) &&
+         has_error(repeated, ErrorCode::dependency, -74) &&
+         has_error(cleanup, ErrorCode::dependency, -74) &&
+         has_error(prepared, ErrorCode::dependency, -74) &&
+         registry.phase() == DependencyLifecyclePhase::preflight_rollback_failed &&
+         events_equal(recorder, {event_code(HookStage::preflight, 0),
+                                 event_code(HookStage::preflight, 1),
+                                 event_code(HookStage::master_cleanup, 0)});
+}
+
 [[nodiscard]] bool check_partial_worker_initialization_rollback() noexcept {
   Recorder recorder{};
   std::array<HookContext, laghu::adapters::dependency_lifecycle_capacity> contexts{};
@@ -428,7 +507,42 @@ template <class T>
   ChildReport report{};
   if (!run_worker_child(registry, *epoch, recorder, report) ||
       report.initialization_succeeded || !report.cleanup_succeeded ||
+      !report.repeated_cleanup_succeeded || report.repeated_initialization_succeeded ||
       report.phase != static_cast<std::uint8_t>(DependencyLifecyclePhase::worker_rolled_back) ||
+      !child_events_equal(report, {event_code(HookStage::worker_initialize, 0),
+                                   event_code(HookStage::worker_initialize, 1),
+                                   event_code(HookStage::worker_cleanup, 0)})) {
+    return false;
+  }
+  return registry.master_cleanup().has_value() &&
+         events_equal(recorder, {event_code(HookStage::master_cleanup, 1),
+                                 event_code(HookStage::master_cleanup, 0)});
+}
+
+[[nodiscard]] bool check_worker_rollback_cleanup_failure() noexcept {
+  Recorder recorder{};
+  recorder.failure_stage = HookStage::worker_initialize;
+  recorder.failure_slot = 1;
+  recorder.additional_failure_stage = HookStage::worker_cleanup;
+  recorder.additional_failure_slot = 0;
+  std::array<HookContext, laghu::adapters::dependency_lifecycle_capacity> contexts{};
+  DependencyLifecycleRegistry registry{};
+  if (!register_dependencies(registry, recorder, contexts, 2) ||
+      !registry.preflight().has_value()) {
+    return false;
+  }
+  const auto epoch = registry.prepare_fork(1);
+  if (!epoch.has_value()) {
+    return false;
+  }
+  recorder.event_count = 0;
+  ChildReport report{};
+  if (!run_worker_child(registry, *epoch, recorder, report) ||
+      report.initialization_succeeded || report.cleanup_succeeded ||
+      report.repeated_cleanup_succeeded || !report.cleanup_failure_persisted ||
+      report.repeated_initialization_succeeded || !report.initialization_failure_persisted ||
+      report.phase != static_cast<std::uint8_t>(
+                          DependencyLifecyclePhase::worker_rollback_failed) ||
       !child_events_equal(report, {event_code(HookStage::worker_initialize, 0),
                                    event_code(HookStage::worker_initialize, 1),
                                    event_code(HookStage::worker_cleanup, 0)})) {
@@ -457,7 +571,10 @@ template <class T>
   ChildReport report{};
   if (!run_worker_child(registry, *epoch, recorder, report) ||
       !report.initialization_succeeded || report.cleanup_succeeded ||
-      report.phase != static_cast<std::uint8_t>(DependencyLifecyclePhase::worker_cleaned) ||
+      report.repeated_cleanup_succeeded || !report.cleanup_failure_persisted ||
+      report.repeated_initialization_succeeded ||
+      report.phase != static_cast<std::uint8_t>(
+                          DependencyLifecyclePhase::worker_cleanup_failed) ||
       !child_events_equal(report, {event_code(HookStage::worker_initialize, 0),
                                    event_code(HookStage::worker_initialize, 1),
                                    event_code(HookStage::worker_cleanup, 1),
@@ -465,6 +582,28 @@ template <class T>
     return false;
   }
   return registry.master_cleanup().has_value() &&
+         events_equal(recorder, {event_code(HookStage::master_cleanup, 1),
+                                 event_code(HookStage::master_cleanup, 0)});
+}
+
+[[nodiscard]] bool check_master_cleanup_failure() noexcept {
+  Recorder recorder{};
+  recorder.failure_stage = HookStage::master_cleanup;
+  recorder.failure_slot = 1;
+  std::array<HookContext, laghu::adapters::dependency_lifecycle_capacity> contexts{};
+  DependencyLifecycleRegistry registry{};
+  if (!register_dependencies(registry, recorder, contexts, 2) ||
+      !registry.preflight().has_value() || !registry.prepare_fork(1).has_value()) {
+    return false;
+  }
+  recorder.event_count = 0;
+  const auto initial = registry.master_cleanup();
+  const auto repeated = registry.master_cleanup();
+  const auto prepared = registry.prepare_fork(1);
+  return has_error(initial, ErrorCode::dependency, -74) &&
+         has_error(repeated, ErrorCode::dependency, -74) &&
+         has_error(prepared, ErrorCode::dependency, -74) &&
+         registry.phase() == DependencyLifecyclePhase::master_cleanup_failed &&
          events_equal(recorder, {event_code(HookStage::master_cleanup, 1),
                                  event_code(HookStage::master_cleanup, 0)});
 }
@@ -488,6 +627,8 @@ template <class T>
       !run_worker_child(registry, *epoch, recorder, second) ||
       !first.initialization_succeeded || !first.cleanup_succeeded ||
       !second.initialization_succeeded || !second.cleanup_succeeded ||
+      !first.repeated_cleanup_succeeded || !second.repeated_cleanup_succeeded ||
+      first.repeated_initialization_succeeded || second.repeated_initialization_succeeded ||
       first.process == 0 || second.process == 0 || first.process == second.process ||
       first.phase != static_cast<std::uint8_t>(DependencyLifecyclePhase::worker_cleaned) ||
       second.phase != static_cast<std::uint8_t>(DependencyLifecyclePhase::worker_cleaned) ||
@@ -518,10 +659,16 @@ int main() {
                             check_registration_and_fork_boundary},
       laghu::test::TestCase{"adapters.dependency_lifecycle.preflight_rollback",
                             check_preflight_failure_rollback},
+      laghu::test::TestCase{"adapters.dependency_lifecycle.preflight_rollback_cleanup_failure",
+                            check_preflight_rollback_cleanup_failure},
       laghu::test::TestCase{"adapters.dependency_lifecycle.worker_rollback",
                             check_partial_worker_initialization_rollback},
+      laghu::test::TestCase{"adapters.dependency_lifecycle.worker_rollback_cleanup_failure",
+                            check_worker_rollback_cleanup_failure},
       laghu::test::TestCase{"adapters.dependency_lifecycle.worker_cleanup_failure",
                             check_worker_cleanup_failure_continues},
+      laghu::test::TestCase{"adapters.dependency_lifecycle.master_cleanup_failure",
+                            check_master_cleanup_failure},
       laghu::test::TestCase{"adapters.dependency_lifecycle.fork_children",
                             check_independent_child_initialization_and_cleanup_order},
   };

@@ -40,6 +40,30 @@ namespace {
 DependencyLifecycleRegistry::DependencyLifecycleRegistry() noexcept
     : master_process_(current_process()) {}
 
+core::Result<void> DependencyLifecycleRegistry::persistent_failure() const noexcept {
+  if (!has_terminal_failure_) {
+    return lifecycle_failure(core::ErrorCode::invalid_state,
+                             "dependency lifecycle failure state is missing detail");
+  }
+  return std::unexpected{terminal_failure_};
+}
+
+core::Result<DependencyForkEpoch> DependencyLifecycleRegistry::persistent_fork_failure() const
+    noexcept {
+  if (!has_terminal_failure_) {
+    return fork_failure(core::ErrorCode::invalid_state,
+                        "dependency lifecycle failure state is missing detail");
+  }
+  return std::unexpected{terminal_failure_};
+}
+
+void DependencyLifecycleRegistry::set_terminal_failure(DependencyLifecyclePhase phase,
+                                                        core::Error failure) noexcept {
+  terminal_failure_ = failure;
+  has_terminal_failure_ = true;
+  phase_ = phase;
+}
+
 core::Result<void> DependencyLifecycleRegistry::register_dependency(
     DependencyLifecycleHooks hooks) noexcept {
   if (!is_master_process(*this)) {
@@ -78,6 +102,9 @@ core::Result<void> DependencyLifecycleRegistry::preflight() noexcept {
       phase_ == DependencyLifecyclePhase::fork_ready) {
     return {};
   }
+  if (phase_ == DependencyLifecyclePhase::preflight_rollback_failed) {
+    return persistent_failure();
+  }
   if (phase_ != DependencyLifecyclePhase::collecting) {
     return lifecycle_failure(core::ErrorCode::invalid_state,
                              "dependency lifecycle preflight transition is invalid");
@@ -85,10 +112,21 @@ core::Result<void> DependencyLifecycleRegistry::preflight() noexcept {
   for (std::size_t index = 0; index < count_; ++index) {
     const auto result = hooks_[index].preflight(hooks_[index].context);
     if (!result.has_value()) {
+      core::Error first_cleanup_failure{core::ErrorDomain::core, core::ErrorCode::invalid_state};
+      bool cleanup_failed{};
       while (preflighted_count_ != 0) {
         --preflighted_count_;
-        static_cast<void>(hooks_[preflighted_count_].master_cleanup(
-            hooks_[preflighted_count_].context));
+        const auto cleanup = hooks_[preflighted_count_].master_cleanup(
+            hooks_[preflighted_count_].context);
+        if (!cleanup.has_value() && !cleanup_failed) {
+          first_cleanup_failure = cleanup.error();
+          cleanup_failed = true;
+        }
+      }
+      if (cleanup_failed) {
+        set_terminal_failure(DependencyLifecyclePhase::preflight_rollback_failed,
+                             first_cleanup_failure);
+        return std::unexpected{first_cleanup_failure};
       }
       phase_ = DependencyLifecyclePhase::preflight_failed;
       return std::unexpected{result.error()};
@@ -105,10 +143,12 @@ core::Result<DependencyForkEpoch> DependencyLifecycleRegistry::prepare_fork(
     return fork_failure(core::ErrorCode::invalid_state,
                         "dependency lifecycle fork requires master owner");
   }
-  if (phase_ == DependencyLifecyclePhase::fork_ready) {
-    return DependencyForkEpoch{master_process_, fork_epoch_};
+  if (phase_ == DependencyLifecyclePhase::preflight_rollback_failed ||
+      phase_ == DependencyLifecyclePhase::master_cleanup_failed) {
+    return persistent_fork_failure();
   }
-  if (phase_ != DependencyLifecyclePhase::preflighted) {
+  if (phase_ != DependencyLifecyclePhase::preflighted &&
+      phase_ != DependencyLifecyclePhase::fork_ready) {
     return fork_failure(core::ErrorCode::invalid_state,
                         "dependency lifecycle fork transition is invalid");
   }
@@ -121,6 +161,9 @@ core::Result<DependencyForkEpoch> DependencyLifecycleRegistry::prepare_fork(
       return fork_failure(core::ErrorCode::invalid_state,
                           "dependency lifecycle fork requires quiescent state");
     }
+  }
+  if (phase_ == DependencyLifecyclePhase::fork_ready) {
+    return DependencyForkEpoch{master_process_, fork_epoch_};
   }
   if (fork_epoch_ == std::numeric_limits<std::uint64_t>::max()) {
     return fork_failure(core::ErrorCode::overflow,
@@ -142,6 +185,10 @@ core::Result<void> DependencyLifecycleRegistry::worker_initialize(
     return lifecycle_failure(core::ErrorCode::invalid_state,
                              "dependency lifecycle worker initialization requires forked child");
   }
+  if (phase_ == DependencyLifecyclePhase::worker_rollback_failed ||
+      phase_ == DependencyLifecyclePhase::worker_cleanup_failed) {
+    return persistent_failure();
+  }
   if (phase_ == DependencyLifecyclePhase::worker_ready && worker_process_ == process) {
     return {};
   }
@@ -153,10 +200,21 @@ core::Result<void> DependencyLifecycleRegistry::worker_initialize(
   for (std::size_t index = 0; index < count_; ++index) {
     const auto result = hooks_[index].worker_initialize(hooks_[index].context);
     if (!result.has_value()) {
+      core::Error first_cleanup_failure{core::ErrorDomain::core, core::ErrorCode::invalid_state};
+      bool cleanup_failed{};
       while (worker_initialized_count_ != 0) {
         --worker_initialized_count_;
-        static_cast<void>(hooks_[worker_initialized_count_].worker_cleanup(
-            hooks_[worker_initialized_count_].context));
+        const auto cleanup = hooks_[worker_initialized_count_].worker_cleanup(
+            hooks_[worker_initialized_count_].context);
+        if (!cleanup.has_value() && !cleanup_failed) {
+          first_cleanup_failure = cleanup.error();
+          cleanup_failed = true;
+        }
+      }
+      if (cleanup_failed) {
+        set_terminal_failure(DependencyLifecyclePhase::worker_rollback_failed,
+                             first_cleanup_failure);
+        return std::unexpected{first_cleanup_failure};
       }
       phase_ = DependencyLifecyclePhase::worker_rolled_back;
       return std::unexpected{result.error()};
@@ -172,6 +230,10 @@ core::Result<void> DependencyLifecycleRegistry::worker_cleanup() noexcept {
   if (process == 0 || process == master_process_ || process != worker_process_) {
     return lifecycle_failure(core::ErrorCode::invalid_state,
                              "dependency lifecycle worker cleanup requires worker owner");
+  }
+  if (phase_ == DependencyLifecyclePhase::worker_rollback_failed ||
+      phase_ == DependencyLifecyclePhase::worker_cleanup_failed) {
+    return persistent_failure();
   }
   if (phase_ == DependencyLifecyclePhase::worker_rolled_back ||
       phase_ == DependencyLifecyclePhase::worker_cleaned) {
@@ -193,10 +255,11 @@ core::Result<void> DependencyLifecycleRegistry::worker_cleanup() noexcept {
       failed = true;
     }
   }
-  phase_ = DependencyLifecyclePhase::worker_cleaned;
   if (failed) {
-    return std::unexpected{first_error};
+    set_terminal_failure(DependencyLifecyclePhase::worker_cleanup_failed, first_error);
+    return persistent_failure();
   }
+  phase_ = DependencyLifecyclePhase::worker_cleaned;
   return {};
 }
 
@@ -204,6 +267,10 @@ core::Result<void> DependencyLifecycleRegistry::master_cleanup() noexcept {
   if (!is_master_process(*this)) {
     return lifecycle_failure(core::ErrorCode::invalid_state,
                              "dependency lifecycle master cleanup requires master owner");
+  }
+  if (phase_ == DependencyLifecyclePhase::preflight_rollback_failed ||
+      phase_ == DependencyLifecyclePhase::master_cleanup_failed) {
+    return persistent_failure();
   }
   if (phase_ == DependencyLifecyclePhase::master_cleaned ||
       phase_ == DependencyLifecyclePhase::preflight_failed) {
@@ -226,10 +293,11 @@ core::Result<void> DependencyLifecycleRegistry::master_cleanup() noexcept {
       failed = true;
     }
   }
-  phase_ = DependencyLifecyclePhase::master_cleaned;
   if (failed) {
-    return std::unexpected{first_error};
+    set_terminal_failure(DependencyLifecyclePhase::master_cleanup_failed, first_error);
+    return persistent_failure();
   }
+  phase_ = DependencyLifecyclePhase::master_cleaned;
   return {};
 }
 
