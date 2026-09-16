@@ -638,6 +638,24 @@ function(laghu_add_validation_tests)
         -DEXPECT_FAIL=OFF
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()
+  foreach(missing_tool IN ITEMS c_compiler ar ranlib)
+    if(missing_tool STREQUAL c_compiler)
+      set(cmake_tool CMAKE_C_COMPILER)
+    elseif(missing_tool STREQUAL ar)
+      set(cmake_tool CMAKE_AR)
+    else()
+      set(cmake_tool CMAKE_RANLIB)
+    endif()
+    add_test(NAME "laghu.dependencies.negative_cross_missing_${missing_tool}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        -DSCENARIO=autoconf_cross_missing_${missing_tool}
+        -DEXPECT_FAIL=ON
+        "-DEXPECT_TEXT=rule=cross_tool_missing tool=${cmake_tool}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
   add_test(NAME laghu.dependencies.vendored_http3_transport
     COMMAND "${CMAKE_COMMAND}"
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"

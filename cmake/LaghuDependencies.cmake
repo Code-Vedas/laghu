@@ -701,19 +701,20 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
   else()
     find_program(laghu_make_program NAMES make REQUIRED)
   endif()
-  if(DEFINED CMAKE_C_COMPILER AND NOT CMAKE_C_COMPILER STREQUAL "")
-    set(laghu_autoconf_c_compiler "${CMAKE_C_COMPILER}")
-  else()
-    find_program(laghu_autoconf_c_compiler NAMES cc clang gcc REQUIRED)
-  endif()
-  if(NOT DEFINED CMAKE_RANLIB OR CMAKE_RANLIB STREQUAL "")
-    find_program(laghu_autoconf_ranlib NAMES ranlib REQUIRED)
-  else()
-    set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
-  endif()
   set(cross_arguments)
   set(laghu_autoconf_cross_host "")
   if(CMAKE_CROSSCOMPILING)
+    # A cross build must never silently borrow host binutils.  The selected
+    # CMake toolchain is the only authority for every Autoconf build tool.
+    foreach(cross_tool IN ITEMS CMAKE_C_COMPILER CMAKE_AR CMAKE_RANLIB)
+      if(NOT DEFINED ${cross_tool} OR "${${cross_tool}}" STREQUAL "")
+        message(FATAL_ERROR
+          "Laghu dependency mode failed: dependency=${id} rule=cross_tool_missing tool=${cross_tool}")
+      endif()
+    endforeach()
+    set(laghu_autoconf_c_compiler "${CMAKE_C_COMPILER}")
+    set(laghu_autoconf_ar "${CMAKE_AR}")
+    set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
     # Autoconf determines cross mode from --host.  Query the selected C
     # compiler instead of guessing a target triple from a CMake processor
     # spelling, then retain that exact toolchain through configure and make.
@@ -729,6 +730,22 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
         "Laghu dependency mode failed: dependency=${id} rule=cross_compiler_target_unavailable")
     endif()
     list(APPEND cross_arguments "--host=${laghu_autoconf_cross_host}")
+  else()
+    if(DEFINED CMAKE_C_COMPILER AND NOT CMAKE_C_COMPILER STREQUAL "")
+      set(laghu_autoconf_c_compiler "${CMAKE_C_COMPILER}")
+    else()
+      find_program(laghu_autoconf_c_compiler NAMES cc clang gcc REQUIRED)
+    endif()
+    if(DEFINED CMAKE_AR AND NOT CMAKE_AR STREQUAL "")
+      set(laghu_autoconf_ar "${CMAKE_AR}")
+    else()
+      find_program(laghu_autoconf_ar NAMES ar REQUIRED)
+    endif()
+    if(DEFINED CMAKE_RANLIB AND NOT CMAKE_RANLIB STREQUAL "")
+      set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
+    else()
+      find_program(laghu_autoconf_ranlib NAMES ranlib REQUIRED)
+    endif()
   endif()
   laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
   laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
@@ -765,8 +782,8 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
     # only the library dependency chain, never the target-side generators
     # gendata or gentr46map, so cross builds execute no target binaries.
     set(build_command
-      "${laghu_make_program}" -C "<SOURCE_DIR>/unistring" all
-      COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/gl" all
+      "${laghu_make_program}" -C "<SOURCE_DIR>/gl" all
+      COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/unistring" all
       COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/lib" libidn2.la)
     set(install_command
       "${laghu_make_program}" -C "<SOURCE_DIR>/lib"
@@ -774,12 +791,14 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
   else()
     # gen-des-tables is documented upstream as a preserved, unnecessary
     # generator. The release table is compiled directly into libcrypt.
+    # FreeBSD lld rejects compatibility aliases not needed for crypt_r.
+    list(APPEND dependency_arguments --disable-xcrypt-compat-files --enable-obsolete-api=no)
     set(build_command "${laghu_make_program}" libcrypt.la)
     set(install_command
       "${laghu_make_program}" install-libLTLIBRARIES install-nodist_includeHEADERS)
   endif()
   set(configure_environment "${CMAKE_COMMAND}" -E env
-    "CC=${laghu_autoconf_c_compiler}" "AR=${CMAKE_AR}" "RANLIB=${laghu_autoconf_ranlib}"
+    "CC=${laghu_autoconf_c_compiler}" "AR=${laghu_autoconf_ar}" "RANLIB=${laghu_autoconf_ranlib}"
     "MAKE=${laghu_make_program}")
   ExternalProject_Add("laghu_vendor_${id}"
     PREFIX "${prefix}"

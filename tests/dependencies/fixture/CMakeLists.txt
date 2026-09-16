@@ -196,6 +196,28 @@ elseif(SCENARIO STREQUAL "mode_vendored_idna_password")
   add_executable(laghu_dependency_mode_consumer consumer.cpp)
   target_link_libraries(laghu_dependency_mode_consumer PRIVATE
     laghu_dependency_libidn2 laghu_dependency_libxcrypt)
+elseif(SCENARIO MATCHES "^autoconf_cross_missing_(c_compiler|ar|ranlib)$")
+  # Keep this configure-only: the acquisition must reject an incomplete cross
+  # toolchain before it schedules a download or invokes a host fallback.
+  set(CMAKE_CROSSCOMPILING TRUE)
+  # Supply the two non-subject tools so each fixture verifies its own missing
+  # tool rather than failing first on an unrelated native CMake default.
+  set(CMAKE_C_COMPILER "${CMAKE_CXX_COMPILER}")
+  find_program(laghu_fixture_ar NAMES ar REQUIRED)
+  find_program(laghu_fixture_ranlib NAMES ranlib REQUIRED)
+  set(CMAKE_AR "${laghu_fixture_ar}")
+  set(CMAKE_RANLIB "${laghu_fixture_ranlib}")
+  if(SCENARIO STREQUAL "autoconf_cross_missing_c_compiler")
+    unset(CMAKE_C_COMPILER)
+    unset(CMAKE_C_COMPILER CACHE)
+  elseif(SCENARIO STREQUAL "autoconf_cross_missing_ar")
+    unset(CMAKE_AR)
+    unset(CMAKE_AR CACHE)
+  else()
+    unset(CMAKE_RANLIB)
+    unset(CMAKE_RANLIB CACHE)
+  endif()
+  laghu_acquire_vendored_autoconf_dependency(libidn2 laghu_dependency_missing_cross_tool)
 elseif(SCENARIO STREQUAL "mode_vendored_http3_transport")
   # ngtcp2 declares this option ON by default.  Preserve that upstream default
   # in the fixture to prove Laghu isolates its transport build from host TLS.
