@@ -68,6 +68,9 @@ static_assert(!std::is_convertible_v<int, laghu::core::Error>);
 static_assert(noexcept(laghu::core::Error::from_errno(0)));
 static_assert(noexcept(laghu::core::Error::from_dependency(
     laghu::core::DependencyStatus::unknown)));
+static_assert(noexcept(laghu::core::Error::from_dependency(
+    laghu::core::DependencyId::openssl, laghu::core::DependencyOperation::sha256,
+    laghu::core::DependencyStatus::crypto)));
 
 }  // namespace
 
@@ -98,7 +101,22 @@ static_assert(noexcept(laghu::core::Error::from_dependency(
   if (!check(dependency.domain() == laghu::core::ErrorDomain::dependency &&
              dependency.code() == laghu::core::ErrorCode::checksum &&
              dependency.native_code() == -9 &&
+             dependency.dependency_id() == laghu::core::DependencyId::none &&
+             dependency.dependency_operation() == laghu::core::DependencyOperation::none &&
+             dependency.dependency_status() == laghu::core::DependencyStatus::checksum &&
              dependency.security_relevance() == laghu::core::SecurityRelevance::security_relevant)) {
+    return false;
+  }
+
+  const auto typed_dependency = laghu::core::Error::from_dependency(
+      laghu::core::DependencyId::openssl, laghu::core::DependencyOperation::sha256,
+      laghu::core::DependencyStatus::crypto, -11);
+  if (!check(typed_dependency.domain() == laghu::core::ErrorDomain::dependency &&
+             typed_dependency.code() == laghu::core::ErrorCode::crypto &&
+             typed_dependency.dependency_id() == laghu::core::DependencyId::openssl &&
+             typed_dependency.dependency_operation() == laghu::core::DependencyOperation::sha256 &&
+             typed_dependency.dependency_status() == laghu::core::DependencyStatus::crypto &&
+             typed_dependency.native_code() == -11)) {
     return false;
   }
 
