@@ -46,6 +46,8 @@ enum class SecurityRelevance : std::uint8_t {
 };
 
 enum class DependencyStatus : std::uint8_t {
+  invalid_input,
+  invalid_range,
   unavailable,
   exhaustion,
   unsupported_version,
@@ -204,6 +206,10 @@ class Error final {
 
   [[nodiscard]] static constexpr ErrorCode normalize_dependency(DependencyStatus status) noexcept {
     switch (status) {
+      case DependencyStatus::invalid_input:
+        return ErrorCode::invalid_input;
+      case DependencyStatus::invalid_range:
+        return ErrorCode::invalid_range;
       case DependencyStatus::unavailable:
         return ErrorCode::unavailable_capability;
       case DependencyStatus::exhaustion:
@@ -227,7 +233,6 @@ class Error final {
   [[nodiscard]] static constexpr Retryability retryability_for(ErrorCode code) noexcept {
     switch (code) {
       case ErrorCode::exhaustion:
-      case ErrorCode::unavailable_capability:
       case ErrorCode::deadline:
       case ErrorCode::io:
       case ErrorCode::dependency:
@@ -235,6 +240,7 @@ class Error final {
       case ErrorCode::invalid_input:
       case ErrorCode::invalid_range:
       case ErrorCode::overflow:
+      case ErrorCode::unavailable_capability:
       case ErrorCode::invalid_state:
       case ErrorCode::cancellation:
       case ErrorCode::corrupt_data:

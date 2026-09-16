@@ -54,6 +54,8 @@ namespace {
 [[nodiscard]] constexpr core::DependencyStatus normalize_dependency_status(
     core::DependencyStatus value) noexcept {
   switch (value) {
+    case core::DependencyStatus::invalid_input:
+    case core::DependencyStatus::invalid_range:
     case core::DependencyStatus::unavailable:
     case core::DependencyStatus::exhaustion:
     case core::DependencyStatus::unsupported_version:
@@ -132,6 +134,10 @@ namespace {
 
 [[nodiscard]] constexpr std::string_view status_name(core::DependencyStatus value) noexcept {
   switch (value) {
+    case core::DependencyStatus::invalid_input:
+      return "invalid_input";
+    case core::DependencyStatus::invalid_range:
+      return "invalid_range";
     case core::DependencyStatus::unavailable:
       return "unavailable";
     case core::DependencyStatus::exhaustion:

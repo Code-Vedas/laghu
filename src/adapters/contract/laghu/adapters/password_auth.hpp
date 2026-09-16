@@ -12,7 +12,10 @@
 namespace laghu::adapters {
 
 struct PasswordVerificationLimits final {
-  static constexpr std::size_t maximum_supported_password_bytes = 1024;
+  // libxcrypt's CRYPT_MAX_PASSPHRASE_SIZE is 512 and includes the terminating
+  // NUL. Keep the dependency-specific constant out of this Laghu contract
+  // while preserving that accepted-provider limit exactly.
+  static constexpr std::size_t maximum_supported_password_bytes = 511;
 
   std::size_t maximum_password_bytes{};
   std::uint32_t minimum_bcrypt_cost{};

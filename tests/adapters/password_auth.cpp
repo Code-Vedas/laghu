@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include <array>
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 #include "laghu_test_support.hpp"
 
 #include <laghu/adapters/password_auth.hpp>
+#include <laghu/adapters/internal/password_auth.hpp>
 #include <laghu/core/contract.hpp>
 #include <laghu/core/identifiers.hpp>
 #include <laghu/core/views.hpp>
@@ -16,6 +19,8 @@ using laghu::adapters::PasswordAuthWorker;
 using laghu::adapters::PasswordVerificationLimits;
 using laghu::adapters::verify_password;
 using laghu::core::ErrorCode;
+using laghu::core::DependencyStatus;
+using laghu::core::Retryability;
 using laghu::core::Result;
 using laghu::core::TextView;
 using laghu::core::WorkerId;
@@ -94,6 +99,9 @@ constexpr std::string_view long_sha512_hash =
   sha512_limits.maximum_sha512_rounds = 4999;
   auto bad_limits = limits();
   bad_limits.maximum_password_bytes = 0;
+  auto libxcrypt_exceeding_limits = limits();
+  libxcrypt_exceeding_limits.maximum_password_bytes =
+      PasswordVerificationLimits::maximum_supported_password_bytes + 1;
   std::array<char, 73> oversized_bcrypt_password{};
   oversized_bcrypt_password.fill('p');
   constexpr std::array<char, 3> embedded_nul{'p', '\0', 'w'};
@@ -115,10 +123,44 @@ constexpr std::string_view long_sha512_hash =
                    ErrorCode::invalid_range) &&
          long_sha512.has_value() && *long_sha512 &&
          has_error(verify(worker, "password", bcrypt_hash, bad_limits), ErrorCode::invalid_input) &&
+         has_error(verify(worker, "password", bcrypt_hash, libxcrypt_exceeding_limits),
+                   ErrorCode::invalid_input) &&
          embedded.has_value() &&
          has_error(verify_password(worker, worker_id(), *embedded, TextView::from(bcrypt_hash), limits()),
                    ErrorCode::invalid_input) &&
          has_error(wrong_worker, ErrorCode::invalid_state);
+}
+
+[[nodiscard]] bool check_native_error_normalization() noexcept {
+  struct ExpectedError final {
+    std::int32_t native_code;
+    ErrorCode code;
+    DependencyStatus status;
+    Retryability retryability;
+  };
+  constexpr std::array expected{
+      ExpectedError{EINVAL, ErrorCode::invalid_input, DependencyStatus::invalid_input,
+                    Retryability::never},
+      ExpectedError{ERANGE, ErrorCode::invalid_range, DependencyStatus::invalid_range,
+                    Retryability::never},
+      ExpectedError{ENOMEM, ErrorCode::exhaustion, DependencyStatus::exhaustion,
+                    Retryability::may_retry},
+      ExpectedError{ENOSYS, ErrorCode::unavailable_capability, DependencyStatus::unavailable,
+                    Retryability::never},
+      ExpectedError{EOPNOTSUPP, ErrorCode::unavailable_capability,
+                    DependencyStatus::unavailable, Retryability::never},
+  };
+  for (const ExpectedError& expected_error : expected) {
+    const auto error = laghu::adapters::internal::password_auth_native_error(
+        expected_error.native_code, {});
+    if (error.code() != expected_error.code ||
+        error.dependency_status() != expected_error.status ||
+        error.retryability() != expected_error.retryability ||
+        error.native_code() != expected_error.native_code) {
+      return false;
+    }
+  }
+  return true;
 }
 
 [[nodiscard]] bool check_constant_time_mismatch_positions() noexcept {
@@ -146,6 +188,8 @@ int main() {
       laghu::test::TestCase{"adapters.password_auth.bcrypt_prefixes", check_permitted_bcrypt_prefixes},
       laghu::test::TestCase{"adapters.password_auth.rejected_schemes", check_rejected_schemes_and_malformed_hashes},
       laghu::test::TestCase{"adapters.password_auth.caller_limits", check_caller_limits_and_boundaries},
+      laghu::test::TestCase{"adapters.password_auth.native_error_normalization",
+                            check_native_error_normalization},
       laghu::test::TestCase{"adapters.password_auth.timing_positions", check_constant_time_mismatch_positions},
   };
   return laghu::test::run_tests(tests);

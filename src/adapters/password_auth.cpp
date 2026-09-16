@@ -9,16 +9,24 @@
 #include <crypt.h>
 
 #include <laghu/adapters/password_auth.hpp>
+#include <laghu/adapters/internal/password_auth.hpp>
 
 namespace laghu::adapters {
 namespace {
 
 constexpr std::size_t encoded_password_capacity = 256;
+constexpr std::size_t password_c_string_capacity =
+    PasswordVerificationLimits::maximum_supported_password_bytes + 1;
 constexpr std::uint32_t bcrypt_minimum_cost = 4;
 constexpr std::uint32_t bcrypt_maximum_cost = 31;
 constexpr std::uint32_t sha512_minimum_rounds = 1000;
 constexpr std::uint32_t sha512_maximum_rounds = 999999999;
 constexpr std::uint32_t sha512_crypt_standard_rounds = 5000;
+
+static_assert(CRYPT_MAX_PASSPHRASE_SIZE == password_c_string_capacity,
+              "Laghu password limit must match libxcrypt's passphrase contract");
+
+using PasswordCString = core::StaticCString<password_c_string_capacity>;
 
 enum class PasswordScheme : std::uint8_t {
   bcrypt,
@@ -32,9 +40,7 @@ struct ParsedPasswordHash final {
 
 class PasswordCStringGuard final {
  public:
-  explicit constexpr PasswordCStringGuard(
-      core::StaticCString<PasswordVerificationLimits::maximum_supported_password_bytes + 1>&
-          password) noexcept
+  explicit constexpr PasswordCStringGuard(PasswordCString& password) noexcept
       : password_(&password) {}
 
   PasswordCStringGuard(const PasswordCStringGuard&) = delete;
@@ -47,7 +53,7 @@ class PasswordCStringGuard final {
   }
 
  private:
-  core::StaticCString<PasswordVerificationLimits::maximum_supported_password_bytes + 1>* password_{};
+  PasswordCString* password_{};
 };
 
 class PasswordWorkerLease final {
@@ -237,19 +243,36 @@ class PasswordWorkerLease final {
   return difference == 0U;
 }
 
-[[nodiscard]] core::Error crypt_failure(int native_code,
-                                        const DependencyLogSink& log_sink) noexcept {
-  const core::DependencyStatus status = native_code == ENOMEM
-                                            ? core::DependencyStatus::exhaustion
-                                            : core::DependencyStatus::io;
+[[nodiscard]] core::DependencyStatus crypt_status(int native_code) noexcept {
+  if (native_code == EINVAL) {
+    return core::DependencyStatus::invalid_input;
+  }
+  if (native_code == ERANGE) {
+    return core::DependencyStatus::invalid_range;
+  }
+  if (native_code == ENOMEM) {
+    return core::DependencyStatus::exhaustion;
+  }
+  if (native_code == ENOSYS || native_code == ENOTSUP || native_code == EOPNOTSUPP) {
+    return core::DependencyStatus::unavailable;
+  }
+  return core::DependencyStatus::io;
+}
+
+}  // namespace
+
+namespace internal {
+
+core::Error password_auth_native_error(std::int32_t native_code,
+                                       const DependencyLogSink& log_sink) noexcept {
   const core::Error error = normalize_dependency_error(
       core::DependencyId::libxcrypt, core::DependencyOperation::password_verify,
-      status, static_cast<std::int32_t>(native_code));
+      crypt_status(native_code), native_code);
   log_dependency_error(log_sink, error);
   return error;
 }
 
-}  // namespace
+}  // namespace internal
 
 core::Result<bool> verify_password(PasswordAuthWorker& auth_worker, core::WorkerId worker,
                                    core::TextView password, core::TextView encoded_hash,
@@ -270,13 +293,11 @@ core::Result<bool> verify_password(PasswordAuthWorker& auth_worker, core::Worker
     return std::unexpected{input_error(core::ErrorCode::invalid_range,
                                        "password exceeds caller limit")};
   }
-  const auto bounded_password = password.to_c_string<
-      PasswordVerificationLimits::maximum_supported_password_bytes + 1>();
+  auto bounded_password = password.to_c_string<password_c_string_capacity>();
   if (!bounded_password.has_value()) {
     return std::unexpected{bounded_password.error()};
   }
-  auto password_copy = *bounded_password;
-  PasswordCStringGuard password_guard{password_copy};
+  PasswordCStringGuard password_guard{*bounded_password};
 
   const auto bounded_hash = encoded_hash.to_c_string<encoded_password_capacity>();
   if (!bounded_hash.has_value()) {
@@ -301,9 +322,9 @@ core::Result<bool> verify_password(PasswordAuthWorker& auth_worker, core::Worker
 
   crypt_data native_data{};
   errno = 0;
-  const char* native_result = crypt_r(password_copy.c_str(), bounded_hash->c_str(), &native_data);
+  const char* native_result = crypt_r(bounded_password->c_str(), bounded_hash->c_str(), &native_data);
   if (native_result == nullptr) {
-    return std::unexpected{crypt_failure(errno, log_sink)};
+    return std::unexpected{internal::password_auth_native_error(errno, log_sink)};
   }
   const auto output = bounded_crypt_output(native_result);
   if (!output.has_value()) {

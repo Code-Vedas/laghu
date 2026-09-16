@@ -711,6 +711,25 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
   else()
     set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
   endif()
+  set(cross_arguments)
+  set(laghu_autoconf_cross_host "")
+  if(CMAKE_CROSSCOMPILING)
+    # Autoconf determines cross mode from --host.  Query the selected C
+    # compiler instead of guessing a target triple from a CMake processor
+    # spelling, then retain that exact toolchain through configure and make.
+    execute_process(
+      COMMAND "${laghu_autoconf_c_compiler}" -dumpmachine
+      RESULT_VARIABLE compiler_target_result
+      OUTPUT_VARIABLE laghu_autoconf_cross_host
+      ERROR_VARIABLE compiler_target_diagnostics
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT compiler_target_result EQUAL 0 OR
+        NOT laghu_autoconf_cross_host MATCHES "^[A-Za-z0-9_.-]+$")
+      message(FATAL_ERROR
+        "Laghu dependency mode failed: dependency=${id} rule=cross_compiler_target_unavailable")
+    endif()
+    list(APPEND cross_arguments "--host=${laghu_autoconf_cross_host}")
+  endif()
   laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
   laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
   set(prefix "${CMAKE_BINARY_DIR}/_deps/${id}")
@@ -739,7 +758,25 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
   if(id STREQUAL libidn2)
     # The official libidn2 release contains its supported libunistring subset.
     # Use it so this direct dependency remains self-contained and immutable.
-    list(APPEND dependency_arguments --with-included-libunistring)
+    # Laghu consumes only headers and library artifacts.  Disable the optional
+    # CLI man-page target, which otherwise requires help2man during `make all`.
+    list(APPEND dependency_arguments --with-included-libunistring --disable-doc)
+    # The immutable release archive carries data.c and tr46map_data.c. Build
+    # only the library dependency chain, never the target-side generators
+    # gendata or gentr46map, so cross builds execute no target binaries.
+    set(build_command
+      "${laghu_make_program}" -C "<SOURCE_DIR>/unistring" all
+      COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/gl" all
+      COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/lib" libidn2.la)
+    set(install_command
+      "${laghu_make_program}" -C "<SOURCE_DIR>/lib"
+      install-libLTLIBRARIES install-includeHEADERS)
+  else()
+    # gen-des-tables is documented upstream as a preserved, unnecessary
+    # generator. The release table is compiled directly into libcrypt.
+    set(build_command "${laghu_make_program}" libcrypt.la)
+    set(install_command
+      "${laghu_make_program}" install-libLTLIBRARIES install-nodist_includeHEADERS)
   endif()
   set(configure_environment "${CMAKE_COMMAND}" -E env
     "CC=${laghu_autoconf_c_compiler}" "AR=${CMAKE_AR}" "RANLIB=${laghu_autoconf_ranlib}")
@@ -750,9 +787,9 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE
     CONFIGURE_COMMAND ${configure_environment} "<SOURCE_DIR>/configure"
       "--prefix=${install_directory}" "--libdir=${install_directory}/lib"
-      ${linkage_arguments} ${dependency_arguments}
-    BUILD_COMMAND "${laghu_make_program}"
-    INSTALL_COMMAND "${laghu_make_program}" install
+      ${linkage_arguments} ${cross_arguments} ${dependency_arguments}
+    BUILD_COMMAND ${build_command}
+    INSTALL_COMMAND ${install_command}
     BUILD_IN_SOURCE TRUE
     EXCLUDE_FROM_ALL TRUE
     BUILD_BYPRODUCTS "${library_path}")
@@ -775,6 +812,10 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_ID "${id}")
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_SOURCE VENDORED)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")
+  if(CMAKE_CROSSCOMPILING)
+    set_property(TARGET "${private_target}" PROPERTY
+      LAGHU_AUTOCONF_CROSS_HOST "${laghu_autoconf_cross_host}")
+  endif()
   if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
     laghu_add_static_artifact_proof("${id}" "${private_target}_artifact" static_proof_target)
     add_dependencies("${private_target}" "${static_proof_target}")
