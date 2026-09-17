@@ -25,8 +25,8 @@ constexpr std::uint32_t sha512_crypt_standard_rounds = 5000;
 
 static_assert(CRYPT_MAX_PASSPHRASE_SIZE == password_c_string_capacity,
               "Laghu password limit must match libxcrypt's passphrase contract");
-
-using PasswordCString = core::StaticCString<password_c_string_capacity>;
+static_assert(internal::SecretPassword::storage_capacity == password_c_string_capacity,
+              "Laghu password secret storage must match libxcrypt's passphrase contract");
 
 enum class PasswordScheme : std::uint8_t {
   bcrypt,
@@ -36,24 +36,6 @@ enum class PasswordScheme : std::uint8_t {
 struct ParsedPasswordHash final {
   PasswordScheme scheme{};
   std::uint32_t work_factor{};
-};
-
-class PasswordCStringGuard final {
- public:
-  explicit constexpr PasswordCStringGuard(PasswordCString& password) noexcept
-      : password_(&password) {}
-
-  PasswordCStringGuard(const PasswordCStringGuard&) = delete;
-  PasswordCStringGuard& operator=(const PasswordCStringGuard&) = delete;
-
-  ~PasswordCStringGuard() {
-    if (password_ != nullptr) {
-      password_->cleanse();
-    }
-  }
-
- private:
-  PasswordCString* password_{};
 };
 
 class PasswordWorkerLease final {
@@ -293,11 +275,10 @@ core::Result<bool> verify_password(PasswordAuthWorker& auth_worker, core::Worker
     return std::unexpected{input_error(core::ErrorCode::invalid_range,
                                        "password exceeds caller limit")};
   }
-  auto bounded_password = password.to_c_string<password_c_string_capacity>();
+  auto bounded_password = internal::SecretPassword::from(password);
   if (!bounded_password.has_value()) {
     return std::unexpected{bounded_password.error()};
   }
-  PasswordCStringGuard password_guard{*bounded_password};
 
   const auto bounded_hash = encoded_hash.to_c_string<encoded_password_capacity>();
   if (!bounded_hash.has_value()) {

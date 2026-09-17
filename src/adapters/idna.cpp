@@ -33,6 +33,29 @@ constexpr std::size_t native_output_storage_capacity =
   return is_ascii_label_character(character) || character == '.';
 }
 
+[[nodiscard]] core::Result<void> validate_input_label_structure(
+    std::string_view hostname) noexcept {
+  bool preceding_separator = true;
+  for (const char character : hostname) {
+    if (character == '.') {
+      if (preceding_separator) {
+        return std::unexpected{core::Error{core::ErrorDomain::core,
+                                           core::ErrorCode::invalid_input, 0,
+                                           "hostname contains an empty label"}};
+      }
+      preceding_separator = true;
+    } else {
+      preceding_separator = false;
+    }
+  }
+  if (preceding_separator) {
+    return std::unexpected{core::Error{core::ErrorDomain::core,
+                                       core::ErrorCode::invalid_input, 0,
+                                       "hostname contains an empty label"}};
+  }
+  return {};
+}
+
 [[nodiscard]] core::Result<void> validate_ascii_hostname(std::string_view hostname) noexcept {
   if (hostname.empty()) {
     return std::unexpected{core::Error{core::ErrorDomain::core, core::ErrorCode::invalid_input, 0,
@@ -171,6 +194,9 @@ core::Result<AsciiHostname> idna_to_ascii(core::TextView hostname,
                                          core::ErrorCode::invalid_input, 0,
                                          "hostname contains an invalid ASCII character"}};
     }
+  }
+  if (const auto valid = validate_input_label_structure(input->view()); !valid.has_value()) {
+    return std::unexpected{valid.error()};
   }
 
   std::uint8_t* native_output{};

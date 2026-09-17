@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 #include "laghu_test_support.hpp"
 
@@ -18,6 +20,7 @@ namespace {
 using laghu::adapters::PasswordAuthWorker;
 using laghu::adapters::PasswordVerificationLimits;
 using laghu::adapters::verify_password;
+using laghu::adapters::internal::SecretPassword;
 using laghu::core::ErrorCode;
 using laghu::core::DependencyStatus;
 using laghu::core::Retryability;
@@ -163,6 +166,26 @@ constexpr std::string_view long_sha512_hash =
   return true;
 }
 
+[[nodiscard]] bool check_secret_password_move_cleanses_source() noexcept {
+  auto first_result = SecretPassword::from(TextView::from("first-password"));
+  auto second_result = SecretPassword::from(TextView::from("second-password"));
+  if (!first_result.has_value() || !second_result.has_value()) {
+    return false;
+  }
+
+  SecretPassword first{std::move(*first_result)};
+  SecretPassword second{std::move(*second_result)};
+  auto replacement_result = SecretPassword::from(TextView::from("replacement-password"));
+  if (!replacement_result.has_value()) {
+    return false;
+  }
+  second = std::move(*replacement_result);
+
+  return first.view() == "first-password" && second.view() == "replacement-password" &&
+         first_result->is_cleansed() && second_result->is_cleansed() &&
+         replacement_result->is_cleansed();
+}
+
 [[nodiscard]] bool check_constant_time_mismatch_positions() noexcept {
   PasswordAuthWorker worker{worker_id(), 1};
   constexpr std::array<std::size_t, 3> positions{7, 33, 59};
@@ -183,6 +206,11 @@ constexpr std::string_view long_sha512_hash =
 }  // namespace
 
 int main() {
+  static_assert(!std::is_copy_constructible_v<SecretPassword>);
+  static_assert(!std::is_copy_assignable_v<SecretPassword>);
+  static_assert(std::is_nothrow_move_constructible_v<SecretPassword>);
+  static_assert(std::is_nothrow_move_assignable_v<SecretPassword>);
+
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.password_auth.known_answers", check_known_answer_vectors},
       laghu::test::TestCase{"adapters.password_auth.bcrypt_prefixes", check_permitted_bcrypt_prefixes},
@@ -190,6 +218,8 @@ int main() {
       laghu::test::TestCase{"adapters.password_auth.caller_limits", check_caller_limits_and_boundaries},
       laghu::test::TestCase{"adapters.password_auth.native_error_normalization",
                             check_native_error_normalization},
+      laghu::test::TestCase{"adapters.password_auth.secret_password_move",
+                            check_secret_password_move_cleanses_source},
       laghu::test::TestCase{"adapters.password_auth.timing_positions", check_constant_time_mismatch_positions},
   };
   return laghu::test::run_tests(tests);

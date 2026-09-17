@@ -89,6 +89,20 @@ using laghu::core::TextView;
          has_idn2_input_error(idna_to_ascii(*malformed));
 }
 
+[[nodiscard]] bool check_empty_label_is_caller_input_error() noexcept {
+  constexpr std::array<std::string_view, 3> invalid_hostnames{
+      ".leading.example", "two..labels.example", "trailing.example."};
+  for (const std::string_view hostname : invalid_hostnames) {
+    const auto result = idna_to_ascii(TextView::from(hostname));
+    if (!has_error(result, ErrorCode::invalid_input) ||
+        result.error().domain() != laghu::core::ErrorDomain::core ||
+        result.error().dependency_id() != DependencyId::none) {
+      return false;
+    }
+  }
+  return true;
+}
+
 [[nodiscard]] bool check_native_punycode_status_classification() noexcept {
   return idn2_status(IDN2_PUNYCODE_BIG_OUTPUT) == DependencyStatus::invalid_range &&
          idn2_status(IDN2_PUNYCODE_OVERFLOW) == DependencyStatus::invalid_input;
@@ -149,6 +163,8 @@ int main() {
       laghu::test::TestCase{"adapters.idna.input_and_limits", check_input_and_hostname_limits},
       laghu::test::TestCase{"adapters.idna.native_input_error_classification",
                             check_native_input_error_classification},
+      laghu::test::TestCase{"adapters.idna.empty_label_classification",
+                            check_empty_label_is_caller_input_error},
       laghu::test::TestCase{"adapters.idna.native_punycode_status_classification",
                             check_native_punycode_status_classification},
       laghu::test::TestCase{"adapters.idna.utf8_and_native_length_boundaries",
