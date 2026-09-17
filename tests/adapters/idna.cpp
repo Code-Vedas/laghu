@@ -3,9 +3,12 @@
 #include <cstddef>
 #include <string_view>
 
+#include <idn2.h>
+
 #include "laghu_test_support.hpp"
 
 #include <laghu/adapters/idna.hpp>
+#include <laghu/adapters/internal/idna.hpp>
 #include <laghu/core/contract.hpp>
 #include <laghu/core/views.hpp>
 
@@ -13,6 +16,7 @@ namespace {
 
 using laghu::adapters::AsciiHostname;
 using laghu::adapters::idna_to_ascii;
+using laghu::adapters::internal::idn2_status;
 using laghu::core::DependencyId;
 using laghu::core::DependencyOperation;
 using laghu::core::DependencyStatus;
@@ -80,6 +84,11 @@ using laghu::core::TextView;
          has_idn2_input_error(idna_to_ascii(*malformed));
 }
 
+[[nodiscard]] bool check_native_punycode_status_classification() noexcept {
+  return idn2_status(IDN2_PUNYCODE_BIG_OUTPUT) == DependencyStatus::invalid_range &&
+         idn2_status(IDN2_PUNYCODE_OVERFLOW) == DependencyStatus::invalid_input;
+}
+
 [[nodiscard]] bool check_utf8_input_and_native_length_boundaries() noexcept {
   std::array<char, 267> mapped_input{};
   for (std::size_t index = 0; index < 130; ++index) {
@@ -135,6 +144,8 @@ int main() {
       laghu::test::TestCase{"adapters.idna.input_and_limits", check_input_and_hostname_limits},
       laghu::test::TestCase{"adapters.idna.native_input_error_classification",
                             check_native_input_error_classification},
+      laghu::test::TestCase{"adapters.idna.native_punycode_status_classification",
+                            check_native_punycode_status_classification},
       laghu::test::TestCase{"adapters.idna.utf8_and_native_length_boundaries",
                             check_utf8_input_and_native_length_boundaries},
       laghu::test::TestCase{"adapters.idna.malformed_fuzz_vectors", check_malformed_fuzz_vectors},

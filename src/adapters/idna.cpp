@@ -7,6 +7,7 @@
 #include <idn2.h>
 
 #include <laghu/adapters/idna.hpp>
+#include <laghu/adapters/internal/idna.hpp>
 
 namespace laghu::adapters {
 namespace {
@@ -63,17 +64,21 @@ constexpr std::size_t native_output_storage_capacity =
   return {};
 }
 
-[[nodiscard]] core::DependencyStatus idn2_status(int status) noexcept {
+}  // namespace
+
+core::DependencyStatus internal::idn2_status(int status) noexcept {
   if (status == IDN2_MALLOC) {
     return core::DependencyStatus::exhaustion;
   }
   if (status == IDN2_NO_CODESET) {
     return core::DependencyStatus::unavailable;
   }
-  if (status == IDN2_TOO_BIG_DOMAIN || status == IDN2_TOO_BIG_LABEL) {
+  if (status == IDN2_TOO_BIG_DOMAIN || status == IDN2_TOO_BIG_LABEL ||
+      status == IDN2_PUNYCODE_BIG_OUTPUT) {
     return core::DependencyStatus::invalid_range;
   }
   if (status == IDN2_ENCODING_ERROR || status == IDN2_PUNYCODE_BAD_INPUT ||
+      status == IDN2_PUNYCODE_OVERFLOW ||
       status == IDN2_INVALID_ALABEL || status == IDN2_UALABEL_MISMATCH ||
       status == IDN2_NOT_NFC || status == IDN2_2HYPHEN ||
       status == IDN2_HYPHEN_STARTEND || status == IDN2_LEADING_COMBINING ||
@@ -88,10 +93,12 @@ constexpr std::size_t native_output_storage_capacity =
   return core::DependencyStatus::corrupt_data;
 }
 
+namespace {
+
 [[nodiscard]] core::Error idn2_failure(int status, const DependencyLogSink& log_sink) noexcept {
   const core::Error error = normalize_dependency_error(
       core::DependencyId::libidn2, core::DependencyOperation::idna_lookup,
-      idn2_status(status), static_cast<std::int32_t>(status));
+      internal::idn2_status(status), static_cast<std::int32_t>(status));
   log_dependency_error(log_sink, error);
   return error;
 }

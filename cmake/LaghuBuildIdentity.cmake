@@ -95,7 +95,8 @@ function(laghu_build_identity_input_hashes output)
   if(NOT idna_feature_index EQUAL -1)
     list(APPEND inputs
       src/adapters/contract/laghu/adapters/idna.hpp
-      src/adapters/idna.cpp)
+      src/adapters/idna.cpp
+      src/adapters/private/laghu/adapters/internal/idna.hpp)
   endif()
   list(FIND LAGHU_EFFECTIVE_FEATURES password_auth password_auth_feature_index)
   if(NOT password_auth_feature_index EQUAL -1)
