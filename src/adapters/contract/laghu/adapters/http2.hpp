@@ -77,9 +77,12 @@ struct Http2Event final {
   core::ByteView data{};
   std::uint32_t code{};
   std::uint32_t setting_value{};
+  std::int32_t last_stream_id{};
   std::int32_t window_increment{};
+  core::ByteView debug_data{};
   bool end_stream{};
   bool sensitive{};
+  bool settings_ack{};
 };
 
 enum class Http2CallbackAction : std::uint8_t {
@@ -120,6 +123,8 @@ class Http2Session final {
       Http2Limits limits, Http2EventSink event_sink = {},
       DependencyLogSink log_sink = {}) noexcept;
 
+  // A callback may pause parsing. When fewer than input.size() bytes are
+  // consumed, retain input and pass its unconsumed suffix to receive() again.
   [[nodiscard]] core::Result<std::size_t> receive(core::ByteView input) noexcept;
   // Returned bytes remain valid until the next operation on this session.
   [[nodiscard]] core::Result<core::ByteView> next_output() noexcept;

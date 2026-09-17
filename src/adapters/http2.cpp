@@ -6,6 +6,7 @@
 #include <limits>
 #include <new>
 #include <span>
+#include <sys/types.h>
 #include <utility>
 
 #include <nghttp2/nghttp2.h>
@@ -205,6 +206,7 @@ int on_frame_received(nghttp2_session*, const nghttp2_frame* frame,
   switch (frame->hd.type) {
     case NGHTTP2_SETTINGS:
       event.kind = Http2EventKind::settings;
+      event.settings_ack = (frame->hd.flags & NGHTTP2_FLAG_ACK) != 0U;
       if (frame->settings.niv == 0U) {
         return callback_result(state, event, false, false);
       }
@@ -222,8 +224,16 @@ int on_frame_received(nghttp2_session*, const nghttp2_frame* frame,
       event.code = frame->rst_stream.error_code;
       break;
     case NGHTTP2_GOAWAY:
+      if (frame->goaway.opaque_data_len > state.limits.maximum_debug_data_bytes) {
+        state.input_limit_failed = true;
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+      }
       event.kind = Http2EventKind::goaway;
       event.code = frame->goaway.error_code;
+      event.last_stream_id = frame->goaway.last_stream_id;
+      event.debug_data = *core::ByteView::from(
+          {reinterpret_cast<const std::byte*>(frame->goaway.opaque_data),
+           frame->goaway.opaque_data_len});
       break;
     case NGHTTP2_WINDOW_UPDATE:
       event.kind = Http2EventKind::window_update;
@@ -327,13 +337,13 @@ core::Result<std::size_t> Http2Session::receive(core::ByteView input) noexcept {
     return std::unexpected{valid.error()};
   }
   const auto* const bytes = reinterpret_cast<const std::uint8_t*>(input.data());
-  const nghttp2_ssize result = nghttp2_session_mem_recv2(
+  const ssize_t result = nghttp2_session_mem_recv(
       static_cast<nghttp2_session*>(native_session_), bytes, input.size());
   auto& state = *static_cast<NativeState*>(native_state_);
   if (state.input_limit_failed) {
     state.input_limit_failed = false;
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
-                                      "HTTP/2 peer header block exceeds its bound")};
+                                      "HTTP/2 peer input exceeds its configured bound")};
   }
   if (result < 0) {
     return std::unexpected{native_error(core::DependencyOperation::http2_receive,
@@ -347,7 +357,7 @@ core::Result<core::ByteView> Http2Session::next_output() noexcept {
     return std::unexpected{valid.error()};
   }
   const std::uint8_t* data{};
-  const nghttp2_ssize result = nghttp2_session_mem_send2(
+  const ssize_t result = nghttp2_session_mem_send(
       static_cast<nghttp2_session*>(native_session_), &data);
   if (result < 0) {
     auto& state = *static_cast<NativeState*>(native_state_);

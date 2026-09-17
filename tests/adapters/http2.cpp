@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -57,13 +58,18 @@ struct FixedSource final {
 
 struct Events final {
   std::size_t settings{};
+  std::size_t settings_acks{};
   std::size_t headers{};
   std::size_t closed{};
   std::size_t reset{};
   std::size_t goaway{};
   std::size_t window_updates{};
   std::int32_t last_stream{};
+  std::int32_t goaway_last_stream{};
+  bool goaway_metadata{};
   bool fail_on_settings{};
+  bool pause_on_header{};
+  bool paused{};
 
   static Http2CallbackAction write(void* context, const Http2Event& event) noexcept {
     auto& self = *static_cast<Events*>(context);
@@ -73,10 +79,15 @@ struct Events final {
     switch (event.kind) {
       case Http2EventKind::settings:
         ++self.settings;
+        self.settings_acks += event.settings_ack ? 1U : 0U;
         return self.fail_on_settings ? Http2CallbackAction::fail_session
                                      : Http2CallbackAction::continue_processing;
       case Http2EventKind::header:
         ++self.headers;
+        if (self.pause_on_header && !self.paused) {
+          self.paused = true;
+          return Http2CallbackAction::pause;
+        }
         break;
       case Http2EventKind::stream_closed:
         ++self.closed;
@@ -86,6 +97,8 @@ struct Events final {
         break;
       case Http2EventKind::goaway:
         ++self.goaway;
+        self.goaway_last_stream = event.last_stream_id;
+        self.goaway_metadata = event.code == 0 && event.debug_data.size() == 4U;
         break;
       case Http2EventKind::window_update:
         ++self.window_updates;
@@ -174,7 +187,8 @@ struct Events final {
     }
     const auto interest = client->interest();
     return interest.has_value() && !interest->timer && client_events.settings > 0U &&
-           server_events.settings > 0U && client_events.closed > 0U &&
+           server_events.settings > 0U && client_events.settings_acks > 0U &&
+           server_events.settings_acks > 0U && client_events.closed > 0U &&
            server_events.closed > 0U;
   }();
   return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
@@ -219,12 +233,110 @@ struct Events final {
     const auto control_output = server->next_output();
     if (!control_output.has_value() || control_output->empty() ||
         !client->receive(*control_output).has_value() ||
-        !transfer(*server, *client) ||
-        !server->submit_connection_window_update(1024).has_value() ||
-        !server->submit_goaway(stream->wire_value(), 0, bytes("done")).has_value()) {
+        !transfer(*server, *client)) {
       return false;
     }
-    return true;
+    return server->submit_connection_window_update(1024).has_value();
+  }();
+  return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
+}
+
+[[nodiscard]] bool check_goaway() noexcept {
+  const auto worker = WorkerId::from_uint64(66);
+  if (!worker.has_value()) {
+    return false;
+  }
+  FixedSource client_source{};
+  FixedSource server_source{};
+  MemoryBudget client_budget{*worker, client_source.storage.size()};
+  MemoryBudget server_budget{*worker, server_source.storage.size()};
+  BoundedArena client_arena{*worker, client_budget, block_source(client_source), 4096,
+                            client_source.storage.size()};
+  BoundedArena server_arena{*worker, server_budget, block_source(server_source), 4096,
+                            server_source.storage.size()};
+  const bool passed = [&]() noexcept {
+    Events events{};
+    auto client = Http2Session::create(*worker, Http2Role::client, client_arena, limits(),
+                                       Http2EventSink{&events, Events::write});
+    auto server = Http2Session::create(*worker, Http2Role::server, server_arena, limits());
+    constexpr std::array settings{Http2Setting{3, 8}};
+    if (!client.has_value() || !server.has_value() ||
+        !client->submit_settings(settings).has_value() ||
+        !server->submit_settings(settings).has_value() || !transfer(*client, *server) ||
+        !transfer(*server, *client) ||
+        !server->submit_goaway(0, 0, bytes("done")).has_value() ||
+        !transfer(*server, *client)) {
+      return false;
+    }
+    return events.goaway == 1U && events.goaway_last_stream == 0 && events.goaway_metadata;
+  }();
+  return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
+}
+
+[[nodiscard]] bool check_pause_resumption() noexcept {
+  const auto worker = WorkerId::from_uint64(65);
+  if (!worker.has_value()) {
+    return false;
+  }
+  FixedSource client_source{};
+  FixedSource server_source{};
+  MemoryBudget client_budget{*worker, client_source.storage.size()};
+  MemoryBudget server_budget{*worker, server_source.storage.size()};
+  BoundedArena client_arena{*worker, client_budget, block_source(client_source), 4096,
+                            client_source.storage.size()};
+  BoundedArena server_arena{*worker, server_budget, block_source(server_source), 4096,
+                            server_source.storage.size()};
+  const bool passed = [&]() noexcept {
+    Events events{};
+    auto client = Http2Session::create(*worker, Http2Role::client, client_arena, limits());
+    auto server = Http2Session::create(*worker, Http2Role::server, server_arena, limits(),
+                                       Http2EventSink{&events, Events::write});
+    constexpr std::array settings{Http2Setting{3, 8}};
+    if (!client.has_value() || !server.has_value() ||
+        !client->submit_settings(settings).has_value() ||
+        !server->submit_settings(settings).has_value() || !transfer(*client, *server) ||
+        !transfer(*server, *client)) {
+      return false;
+    }
+    const std::array headers{
+        Http2Header{bytes(":method"), bytes("GET"), false},
+        Http2Header{bytes(":scheme"), bytes("https"), false},
+        Http2Header{bytes(":authority"), bytes("example.test"), false},
+        Http2Header{bytes(":path"), bytes("/paused"), false},
+    };
+    if (!client->submit_headers(headers, true).has_value() ||
+        !client->submit_headers(headers, true).has_value()) {
+      return false;
+    }
+    std::array<std::byte, 4096> wire{};
+    std::size_t wire_size{};
+    for (std::size_t iteration = 0; iteration < 8; ++iteration) {
+      const auto output = client->next_output();
+      if (!output.has_value()) {
+        return false;
+      }
+      if (output->empty()) {
+        break;
+      }
+      if (output->size() > wire.size() - wire_size) {
+        return false;
+      }
+      std::copy(output->span().begin(), output->span().end(),
+                wire.begin() + static_cast<std::ptrdiff_t>(wire_size));
+      wire_size += output->size();
+    }
+    events.pause_on_header = true;
+    const auto input = *ByteView::from({wire.data(), wire_size});
+    const auto consumed = server->receive(input);
+    if (!consumed.has_value() || *consumed == 0U || *consumed >= wire_size || !events.paused) {
+      return false;
+    }
+    const auto remaining = input.slice(*consumed, wire_size - *consumed);
+    if (!remaining.has_value()) {
+      return false;
+    }
+    const auto resumed = server->receive(*remaining);
+    return resumed.has_value() && *resumed == remaining->size() && events.headers == 8U;
   }();
   return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
 }
@@ -356,10 +468,12 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.http2.exchange", check_exchange},
       laghu::test::TestCase{"adapters.http2.control_frames", check_control_frames},
+      laghu::test::TestCase{"adapters.http2.goaway", check_goaway},
       laghu::test::TestCase{"adapters.http2.failures", check_failures},
       laghu::test::TestCase{"adapters.http2.callback_containment", check_callback_containment},
       laghu::test::TestCase{"adapters.http2.incoming_header_limit",
                             check_incoming_header_limit},
+      laghu::test::TestCase{"adapters.http2.pause_resumption", check_pause_resumption},
   };
   return laghu::test::run_tests(tests);
 }
