@@ -46,6 +46,7 @@ namespace {
     case core::DependencyOperation::spki_decode:
     case core::DependencyOperation::idna_lookup:
     case core::DependencyOperation::password_verify:
+    case core::DependencyOperation::json_parse:
       return value;
   }
   return core::DependencyOperation::none;
@@ -128,6 +129,8 @@ namespace {
       return "idna_lookup";
     case core::DependencyOperation::password_verify:
       return "password_verify";
+    case core::DependencyOperation::json_parse:
+      return "json_parse";
   }
   return "none";
 }

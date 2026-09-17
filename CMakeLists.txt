@@ -209,6 +209,25 @@ if(NOT laghu_password_auth_feature_index EQUAL -1)
   endif()
 endif()
 
+list(FIND LAGHU_EFFECTIVE_FEATURES structured_data laghu_structured_data_feature_index)
+if(NOT laghu_structured_data_feature_index EQUAL -1)
+  add_library(laghu_structured_data STATIC
+    src/adapters/structured_data.cpp
+    $<TARGET_OBJECTS:laghu_dependency_logging_impl>)
+  laghu_apply_first_party_contract(laghu_structured_data)
+  laghu_configure_api_consumer(laghu_structured_data adapters)
+  laghu_register_subsystem_target(laghu_structured_data adapters)
+  laghu_link_subsystems(laghu_structured_data laghu_core)
+  target_link_libraries(laghu_structured_data PRIVATE laghu_feature_structured_data)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # yyjson is a C header with inline implementation details. Keep the narrow
+    # waiver on this adapter translation unit; third-party code receives none
+    # of Laghu's warning policy and no Laghu API exposes its declarations.
+    set_source_files_properties(src/adapters/structured_data.cpp PROPERTIES
+      COMPILE_OPTIONS "-Wno-old-style-cast;-Wno-unsafe-buffer-usage;-Wno-zero-as-null-pointer-constant")
+  endif()
+endif()
+
 add_executable(laghu_core_smoke src/core/smoke.cpp)
 laghu_apply_first_party_contract(laghu_core_smoke)
 laghu_configure_api_consumer(laghu_core_smoke core)
@@ -313,6 +332,24 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(fuzz/binary_envelope.cpp PROPERTIES
     COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
 endif()
+if(TARGET laghu_structured_data)
+  laghu_add_fuzz_target(yyjson fuzz/yyjson.cpp
+    SUBSYSTEM adapters
+    LIBRARIES laghu_structured_data laghu_core)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # libFuzzer supplies its input only as a pointer and byte count.
+    set_source_files_properties(fuzz/yyjson.cpp PROPERTIES
+      COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+  endif()
+  if(LAGHU_FUZZING_ENABLED)
+    add_test(NAME laghu.fuzz.yyjson.corpus
+      COMMAND "${CMAKE_SOURCE_DIR}/scripts/fuzz"
+        --build "${CMAKE_BINARY_DIR}"
+        --target yyjson
+        --corpus "${CMAKE_SOURCE_DIR}/fuzz/corpus/yyjson"
+        --runs 1)
+  endif()
+endif()
 laghu_write_fuzz_target_registry()
 laghu_add_fuzz_validation_tests()
 
@@ -404,6 +441,24 @@ if(TARGET laghu_password_auth)
     laghu_password_auth_failure_token_test)
 endif()
 
+if(TARGET laghu_structured_data)
+  add_executable(laghu_structured_data_test tests/adapters/structured_data.cpp)
+  laghu_apply_first_party_contract(laghu_structured_data_test)
+  laghu_configure_api_consumer(laghu_structured_data_test adapters)
+  target_link_libraries(laghu_structured_data_test PRIVATE
+    laghu_structured_data laghu_test_support)
+  laghu_add_native_test(laghu.adapters.structured_data laghu_structured_data_test)
+
+  # This target intentionally does not link the yyjson adapter or dependency.
+  # It proves the contract remains self-contained and does not expose yyjson.
+  add_executable(laghu_structured_data_contract_test
+    tests/adapters/structured_data_contract.cpp)
+  laghu_apply_first_party_contract(laghu_structured_data_contract_test)
+  laghu_configure_api_consumer(laghu_structured_data_contract_test adapters)
+  laghu_add_native_test(laghu.adapters.structured_data.contract
+    laghu_structured_data_contract_test)
+endif()
+
 laghu_add_sanitizer_fixture_targets()
 
 add_executable(laghu_os_iovec_translation_test tests/os/iovec_translation.cpp)
@@ -472,6 +527,10 @@ endif()
 if(TARGET laghu_password_auth_test)
   list(APPEND laghu_verify_targets
     laghu_password_auth laghu_password_auth_test laghu_password_auth_failure_token_test)
+endif()
+if(TARGET laghu_structured_data_test)
+  list(APPEND laghu_verify_targets
+    laghu_structured_data laghu_structured_data_test laghu_structured_data_contract_test)
 endif()
 laghu_collect_fuzz_targets(laghu_fuzz_verify_targets)
 list(APPEND laghu_verify_targets ${laghu_fuzz_verify_targets})
