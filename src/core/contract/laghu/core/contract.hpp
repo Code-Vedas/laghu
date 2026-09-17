@@ -114,6 +114,10 @@ enum class DependencyOperation : std::uint8_t {
   idna_lookup,
   password_verify,
   json_parse,
+  http2_session,
+  http2_receive,
+  http2_send,
+  http2_submit,
 };
 
 class Error final {
