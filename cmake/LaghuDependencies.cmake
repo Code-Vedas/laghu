@@ -18,7 +18,9 @@ set(LAGHU_DEPENDENCY_IDS
   zlib_ng
   brotli
   zstd
-  libmaxminddb)
+  libmaxminddb
+  libidn2
+  libxcrypt)
 
 set(LAGHU_DEPENDENCY_SOURCES VENDORED SYSTEM)
 set(LAGHU_DEPENDENCY_LINK_MODES STATIC DYNAMIC)
@@ -155,6 +157,16 @@ function(laghu_dependency_registry_initialize)
     ARCHIVE_SHA256 65ff92382c71ef6634b8c13e278651a2efa68f1de28ef3c31fc32369fa0bb3e3
     PROBE_SOURCE tests/dependencies/probes/libmaxminddb.cpp FEATURES geoip PKG_CONFIG_NAMES libmaxminddb
     CMAKE_TARGETS maxminddb)
+  laghu_declare_dependency(libidn2
+    VENDORED_VERSION 2.3.8 SYSTEM_FLOOR 2.3.7
+    ARCHIVE_URL https://ftp.gnu.org/gnu/libidn/libidn2-2.3.8.tar.gz
+    ARCHIVE_SHA256 f557911bf6171621e1f72ff35f5b1825bb35b52ed45325dcdee931e5d3c0787a
+    PROBE_SOURCE tests/dependencies/probes/libidn2.cpp FEATURES idna PKG_CONFIG_NAMES libidn2)
+  laghu_declare_dependency(libxcrypt
+    VENDORED_VERSION 4.5.2 SYSTEM_FLOOR 4.4.36
+    ARCHIVE_URL https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz
+    ARCHIVE_SHA256 71513a31c01a428bccd5367a32fd95f115d6dac50fb5b60c779d5c7942aec071
+    PROBE_SOURCE tests/dependencies/probes/libxcrypt.cpp FEATURES password_auth PKG_CONFIG_NAMES libcrypt libxcrypt)
 endfunction()
 
 function(laghu_validate_dependency_version id version)
@@ -240,6 +252,9 @@ function(laghu_require_system_dependency id)
     add_library("${system_TARGET}" INTERFACE)
     target_include_directories("${system_TARGET}" SYSTEM INTERFACE ${${found_prefix}_INCLUDE_DIRS})
     target_link_libraries("${system_TARGET}" INTERFACE ${system_libraries})
+    # A system package is accepted only after its dependency-specific
+    # compile/link probe has built; a link preference is not a symbol proof.
+    add_dependencies("${system_TARGET}" "laghu_dependency_probe_${id}")
     set_property(TARGET "${system_TARGET}" PROPERTY LAGHU_DEPENDENCY_ID "${id}")
     set_property(TARGET "${system_TARGET}" PROPERTY LAGHU_DEPENDENCY_SOURCE SYSTEM)
     set_property(TARGET "${system_TARGET}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE "${system_LINK_MODE}")
@@ -676,6 +691,244 @@ function(laghu_acquire_vendored_tls_dependency id private_target)
   endif()
 endfunction()
 
+# libidn2 and libxcrypt publish immutable Autoconf release archives rather
+# than CMake projects. Keep their acquisition equally private: their headers,
+# libraries, and generated package files stay inside the build tree.
+function(laghu_acquire_vendored_autoconf_dependency id private_target)
+  include(ExternalProject)
+  if(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
+    find_program(laghu_make_program NAMES gmake REQUIRED)
+  else()
+    find_program(laghu_make_program NAMES make REQUIRED)
+  endif()
+  set(cross_arguments)
+  set(laghu_autoconf_cross_host "")
+  if(CMAKE_CROSSCOMPILING)
+    # A cross build must never silently borrow host binutils.  The selected
+    # CMake toolchain is the only authority for every Autoconf build tool.
+    foreach(cross_tool IN ITEMS CMAKE_C_COMPILER CMAKE_AR CMAKE_RANLIB)
+      if(NOT DEFINED ${cross_tool} OR "${${cross_tool}}" STREQUAL "")
+        message(FATAL_ERROR
+          "Laghu dependency mode failed: dependency=${id} rule=cross_tool_missing tool=${cross_tool}")
+      endif()
+    endforeach()
+    set(laghu_autoconf_c_compiler "${CMAKE_C_COMPILER}")
+    set(laghu_autoconf_ar "${CMAKE_AR}")
+    set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
+    set(laghu_autoconf_c_compiler_arguments)
+    if(DEFINED CMAKE_C_COMPILER_ARG1 AND NOT CMAKE_C_COMPILER_ARG1 STREQUAL "")
+      separate_arguments(laghu_autoconf_c_compiler_arguments NATIVE_COMMAND
+        "${CMAKE_C_COMPILER_ARG1}")
+    endif()
+    # CMake only defines CMAKE_<LANG>_COMPILER_TARGET for compilers whose
+    # target selection is separate from the compiler executable, such as
+    # Clang.  Keep it in CC so both configure tests and the library build use
+    # the selected target rather than the build host.
+    if(DEFINED CMAKE_C_COMPILER_TARGET AND NOT CMAKE_C_COMPILER_TARGET STREQUAL "")
+      list(APPEND laghu_autoconf_c_compiler_arguments
+        "--target=${CMAKE_C_COMPILER_TARGET}")
+    endif()
+    # Autoconf determines cross mode from --host.  Query the selected C
+    # compiler instead of guessing a target triple from a CMake processor
+    # spelling, then retain that exact toolchain through configure and make.
+    execute_process(
+      COMMAND "${laghu_autoconf_c_compiler}" ${laghu_autoconf_c_compiler_arguments} -dumpmachine
+      RESULT_VARIABLE compiler_target_result
+      OUTPUT_VARIABLE laghu_autoconf_cross_host
+      ERROR_VARIABLE compiler_target_diagnostics
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT compiler_target_result EQUAL 0 OR
+        NOT laghu_autoconf_cross_host MATCHES "^[A-Za-z0-9_.-]+$")
+      message(FATAL_ERROR
+        "Laghu dependency mode failed: dependency=${id} rule=cross_compiler_target_unavailable")
+    endif()
+    list(APPEND cross_arguments "--host=${laghu_autoconf_cross_host}")
+  else()
+    if(DEFINED CMAKE_C_COMPILER AND NOT CMAKE_C_COMPILER STREQUAL "")
+      set(laghu_autoconf_c_compiler "${CMAKE_C_COMPILER}")
+    else()
+      find_program(laghu_autoconf_c_compiler NAMES cc clang gcc REQUIRED)
+    endif()
+    if(DEFINED CMAKE_AR AND NOT CMAKE_AR STREQUAL "")
+      set(laghu_autoconf_ar "${CMAKE_AR}")
+    else()
+      find_program(laghu_autoconf_ar NAMES ar REQUIRED)
+    endif()
+    if(DEFINED CMAKE_RANLIB AND NOT CMAKE_RANLIB STREQUAL "")
+      set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
+    else()
+      find_program(laghu_autoconf_ranlib NAMES ranlib REQUIRED)
+    endif()
+    set(laghu_autoconf_c_compiler_arguments)
+    if(DEFINED CMAKE_C_COMPILER_ARG1 AND NOT CMAKE_C_COMPILER_ARG1 STREQUAL "")
+      separate_arguments(laghu_autoconf_c_compiler_arguments NATIVE_COMMAND
+        "${CMAKE_C_COMPILER_ARG1}")
+    endif()
+  endif()
+  set(laghu_autoconf_cc_parts "${laghu_autoconf_c_compiler}"
+    ${laghu_autoconf_c_compiler_arguments})
+  string(JOIN " " laghu_autoconf_cc ${laghu_autoconf_cc_parts})
+
+  # The root project is intentionally C++-only, but these immutable upstream
+  # dependencies are C Autoconf projects.  Translate CMake's C toolchain
+  # inputs into the conventional Autoconf environment without borrowing C++
+  # flags.  CMake has no independent C preprocessor-flags cache variable, so
+  # CMAKE_C_FLAGS are deliberately supplied to both CFLAGS and CPPFLAGS: this
+  # keeps compiler definitions, include paths, and target/sysroot flags active
+  # in configure's preprocessor-only checks as well as C compilation.
+  set(laghu_autoconf_cflags_parts)
+  foreach(flag_variable IN ITEMS CMAKE_C_FLAGS)
+    if(DEFINED ${flag_variable} AND NOT "${${flag_variable}}" STREQUAL "")
+      list(APPEND laghu_autoconf_cflags_parts "${${flag_variable}}")
+    endif()
+  endforeach()
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "")
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" laghu_autoconf_build_type)
+    set(laghu_autoconf_cflags_variable "CMAKE_C_FLAGS_${laghu_autoconf_build_type}")
+    if(DEFINED ${laghu_autoconf_cflags_variable} AND
+        NOT "${${laghu_autoconf_cflags_variable}}" STREQUAL "")
+      list(APPEND laghu_autoconf_cflags_parts "${${laghu_autoconf_cflags_variable}}")
+    endif()
+  endif()
+  if(DEFINED CMAKE_SYSROOT_COMPILE AND NOT CMAKE_SYSROOT_COMPILE STREQUAL "")
+    set(laghu_autoconf_compile_sysroot "${CMAKE_SYSROOT_COMPILE}")
+  else()
+    set(laghu_autoconf_compile_sysroot "${CMAKE_SYSROOT}")
+  endif()
+  if(NOT laghu_autoconf_compile_sysroot STREQUAL "")
+    list(APPEND laghu_autoconf_cflags_parts "--sysroot=${laghu_autoconf_compile_sysroot}")
+  endif()
+  string(JOIN " " laghu_autoconf_cflags ${laghu_autoconf_cflags_parts})
+
+  set(laghu_autoconf_ldflags_parts)
+  foreach(flag_variable IN ITEMS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+    if(DEFINED ${flag_variable} AND NOT "${${flag_variable}}" STREQUAL "")
+      list(APPEND laghu_autoconf_ldflags_parts "${${flag_variable}}")
+    endif()
+  endforeach()
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "")
+    foreach(linker_kind IN ITEMS EXE SHARED)
+      set(laghu_autoconf_linker_flags_variable
+        "CMAKE_${linker_kind}_LINKER_FLAGS_${laghu_autoconf_build_type}")
+      if(DEFINED ${laghu_autoconf_linker_flags_variable} AND
+          NOT "${${laghu_autoconf_linker_flags_variable}}" STREQUAL "")
+        list(APPEND laghu_autoconf_ldflags_parts
+          "${${laghu_autoconf_linker_flags_variable}}")
+      endif()
+    endforeach()
+  endif()
+  if(DEFINED CMAKE_SYSROOT_LINK AND NOT CMAKE_SYSROOT_LINK STREQUAL "")
+    set(laghu_autoconf_link_sysroot "${CMAKE_SYSROOT_LINK}")
+  else()
+    set(laghu_autoconf_link_sysroot "${CMAKE_SYSROOT}")
+  endif()
+  if(NOT laghu_autoconf_link_sysroot STREQUAL "")
+    list(APPEND laghu_autoconf_ldflags_parts "--sysroot=${laghu_autoconf_link_sysroot}")
+  endif()
+  string(JOIN " " laghu_autoconf_ldflags ${laghu_autoconf_ldflags_parts})
+  laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
+  laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
+  set(prefix "${CMAKE_BINARY_DIR}/_deps/${id}")
+  set(install_directory "${prefix}/install")
+  if(id STREQUAL libidn2)
+    set(library_basename idn2)
+  elseif(id STREQUAL libxcrypt)
+    set(library_basename crypt)
+  else()
+    message(FATAL_ERROR "Laghu dependency mode failed: dependency=${id} rule=unsupported_autoconf_dependency")
+  endif()
+  if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+    set(library_type STATIC)
+    set(linkage_arguments --disable-shared --enable-static)
+    set(library_path "${install_directory}/lib/lib${library_basename}.a")
+  elseif(CMAKE_SYSTEM_NAME STREQUAL Darwin)
+    set(library_type SHARED)
+    set(linkage_arguments --enable-shared --disable-static)
+    set(library_path "${install_directory}/lib/lib${library_basename}.dylib")
+  else()
+    set(library_type SHARED)
+    set(linkage_arguments --enable-shared --disable-static)
+    set(library_path "${install_directory}/lib/lib${library_basename}.so")
+  endif()
+  set(dependency_arguments)
+  if(id STREQUAL libidn2)
+    # The official libidn2 release contains its supported libunistring subset.
+    # Use it so this direct dependency remains self-contained and immutable.
+    # Laghu consumes only headers and library artifacts.  Disable the optional
+    # CLI man-page target, which otherwise requires help2man during `make all`.
+    list(APPEND dependency_arguments --with-included-libunistring --disable-doc)
+    # The immutable release archive carries data.c and tr46map_data.c. Build
+    # only the library dependency chain, never the target-side generators
+    # gendata or gentr46map, so cross builds execute no target binaries.
+    set(build_command
+      "${laghu_make_program}" -C "<SOURCE_DIR>/gl" all
+      COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/unistring" all
+      COMMAND "${laghu_make_program}" -C "<SOURCE_DIR>/lib" libidn2.la)
+    set(install_command
+      "${laghu_make_program}" -C "<SOURCE_DIR>/lib"
+      install-libLTLIBRARIES install-includeHEADERS)
+  else()
+    # gen-des-tables is documented upstream as a preserved, unnecessary
+    # generator. The release table is compiled directly into libcrypt.
+    # FreeBSD lld rejects compatibility aliases not needed for crypt_r.
+    list(APPEND dependency_arguments --disable-xcrypt-compat-files --enable-obsolete-api=no)
+    set(build_command "${laghu_make_program}" libcrypt.la)
+    set(install_command
+      "${laghu_make_program}" install-libLTLIBRARIES install-nodist_includeHEADERS)
+  endif()
+  set(configure_environment "${CMAKE_COMMAND}" -E env
+    "CC=${laghu_autoconf_cc}" "AR=${laghu_autoconf_ar}" "RANLIB=${laghu_autoconf_ranlib}"
+    "MAKE=${laghu_make_program}" "CFLAGS=${laghu_autoconf_cflags}"
+    "CPPFLAGS=${laghu_autoconf_cflags}" "LDFLAGS=${laghu_autoconf_ldflags}")
+  ExternalProject_Add("laghu_vendor_${id}"
+    PREFIX "${prefix}"
+    URL "${archive_url}"
+    URL_HASH "SHA256=${archive_sha256}"
+    # Preserve official release timestamps.  Autotools otherwise treats
+    # generated files as stale, attempts maintainer-only regeneration, and
+    # may execute a cross-compiled generator.
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    CONFIGURE_COMMAND ${configure_environment} "<SOURCE_DIR>/configure"
+      "--prefix=${install_directory}" "--libdir=${install_directory}/lib"
+      ${linkage_arguments} ${cross_arguments} ${dependency_arguments}
+    BUILD_COMMAND ${build_command}
+    INSTALL_COMMAND ${install_command}
+    BUILD_IN_SOURCE TRUE
+    EXCLUDE_FROM_ALL TRUE
+    BUILD_BYPRODUCTS "${library_path}")
+  laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SELECTED_VERSION_${id}" "${vendored_version}")
+  add_library("${private_target}_artifact" "${library_type}" IMPORTED GLOBAL)
+  set_target_properties("${private_target}_artifact" PROPERTIES
+    IMPORTED_LOCATION "${library_path}")
+  add_dependencies("${private_target}_artifact" "laghu_vendor_${id}")
+  add_library("${private_target}" INTERFACE)
+  target_include_directories("${private_target}" SYSTEM INTERFACE "${install_directory}/include")
+  target_link_libraries("${private_target}" INTERFACE "${private_target}_artifact")
+  add_dependencies("${private_target}" "laghu_vendor_${id}")
+  laghu_add_dependency_symbol_probe(
+    ID "${id}"
+    TARGET "laghu_dependency_probe_${id}"
+    INCLUDE_DIRECTORIES "${install_directory}/include"
+    LIBRARIES "${private_target}_artifact")
+  add_dependencies("${private_target}" "laghu_dependency_probe_${id}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_ID "${id}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_SOURCE VENDORED)
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_CC "${laghu_autoconf_cc}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_CFLAGS "${laghu_autoconf_cflags}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_CPPFLAGS "${laghu_autoconf_cflags}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_LDFLAGS "${laghu_autoconf_ldflags}")
+  if(CMAKE_CROSSCOMPILING)
+    set_property(TARGET "${private_target}" PROPERTY
+      LAGHU_AUTOCONF_CROSS_HOST "${laghu_autoconf_cross_host}")
+  endif()
+  if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
+    laghu_add_static_artifact_proof("${id}" "${private_target}_artifact" static_proof_target)
+    add_dependencies("${private_target}" "${static_proof_target}")
+  endif()
+endfunction()
+
 function(laghu_write_dependency_selection_metadata output active_dependencies)
   set(entries)
   foreach(id IN LISTS active_dependencies)
@@ -714,6 +967,8 @@ function(laghu_configure_dependency_modes)
         LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")
     elseif(id STREQUAL openssl OR id STREQUAL libressl)
       laghu_acquire_vendored_tls_dependency("${id}" "${private_target}")
+    elseif(id STREQUAL libidn2 OR id STREQUAL libxcrypt)
+      laghu_acquire_vendored_autoconf_dependency("${id}" "${private_target}")
     else()
       laghu_acquire_vendored_cmake_dependency("${id}" "${private_target}")
     endif()

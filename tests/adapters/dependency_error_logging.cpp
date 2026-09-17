@@ -111,6 +111,23 @@ void fixture_library_failure(void (*callback)(void*, std::int32_t) noexcept,
          capture.records.front().message() == "operation=sha256 status=io";
 }
 
+[[nodiscard]] bool check_idna_and_password_normalization() noexcept {
+  const laghu::core::Error idna = laghu::adapters::normalize_dependency_error(
+      laghu::core::DependencyId::libidn2, laghu::core::DependencyOperation::idna_lookup,
+      laghu::core::DependencyStatus::corrupt_data, -201);
+  const laghu::core::Error password = laghu::adapters::normalize_dependency_error(
+      laghu::core::DependencyId::libxcrypt,
+      laghu::core::DependencyOperation::password_verify,
+      laghu::core::DependencyStatus::io, -202);
+  return idna.code() == laghu::core::ErrorCode::corrupt_data &&
+         idna.diagnostic_context() ==
+             "dependency=libidn2 operation=idna_lookup status=corrupt_data" &&
+         password.code() == laghu::core::ErrorCode::io &&
+         password.retryability() == laghu::core::Retryability::may_retry &&
+         password.diagnostic_context() ==
+             "dependency=libxcrypt operation=password_verify status=io";
+}
+
 [[nodiscard]] bool check_truncated_diagnostic_is_not_logged() noexcept {
   constexpr std::string_view raw_request_marker = "authorization=very-secret-request";
   std::array<char, laghu::core::Error::diagnostic_context_capacity + 8> diagnostic{};
@@ -174,6 +191,8 @@ int main() {
                             check_invalid_values_and_disabled_sink},
       laghu::test::TestCase{"adapters.dependency_error_logging.classifications",
                             check_retry_and_security_classifications},
+      laghu::test::TestCase{"adapters.dependency_error_logging.idna_and_password",
+                            check_idna_and_password_normalization},
       laghu::test::TestCase{"adapters.dependency_error_logging.truncation",
                             check_truncated_diagnostic_is_not_logged},
       laghu::test::TestCase{"adapters.dependency_error_logging.callback",

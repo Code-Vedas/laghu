@@ -63,14 +63,24 @@ elseif(SCENARIO STREQUAL "full")
   set(LAGHU_FEATURES "")
   laghu_configure_build_variant()
   laghu_fixture_expect_features(
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip"
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip")
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth"
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth")
   laghu_fixture_expect_metadata(FULL
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip"
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip")
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth"
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth")
   foreach(feature IN LISTS LAGHU_FEATURE_IDS)
     laghu_fixture_expect_target("${feature}" ON)
   endforeach()
+elseif(SCENARIO STREQUAL "custom_idna_password")
+  set(LAGHU_BUILD_PROFILE CUSTOM)
+  set(LAGHU_FEATURES "idna;password_auth")
+  laghu_configure_build_variant()
+  laghu_fixture_expect_features("idna;password_auth" "core;idna;password_auth")
+  laghu_fixture_expect_metadata(CUSTOM "idna;password_auth" "core;idna;password_auth")
+  laghu_fixture_expect_target(core ON)
+  laghu_fixture_expect_target(idna ON)
+  laghu_fixture_expect_target(password_auth ON)
+  laghu_fixture_expect_target(tls OFF)
 elseif(SCENARIO STREQUAL "custom_closure")
   set(LAGHU_BUILD_PROFILE CUSTOM)
   set(LAGHU_FEATURES http3)

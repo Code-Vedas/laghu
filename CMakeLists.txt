@@ -140,12 +140,20 @@ add_library(laghu_dependency_lifecycle_impl OBJECT src/adapters/dependency_lifec
 laghu_apply_first_party_contract(laghu_dependency_lifecycle_impl)
 laghu_configure_api_consumer(laghu_dependency_lifecycle_impl adapters)
 
+# Dependency-error normalization is shared by optional adapters while its
+# implementation remains private and unregistered in the subsystem DAG.
+add_library(laghu_dependency_logging_impl OBJECT src/adapters/dependency.cpp)
+laghu_apply_first_party_contract(laghu_dependency_logging_impl)
+laghu_configure_api_consumer(laghu_dependency_logging_impl adapters)
+target_include_directories(laghu_dependency_logging_impl PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/adapters/private")
+
 list(FIND LAGHU_EFFECTIVE_FEATURES tls laghu_tls_feature_index)
 if(NOT laghu_tls_feature_index EQUAL -1)
   add_library(laghu_crypto STATIC
-    src/adapters/dependency.cpp
     src/adapters/crypto_provider.cpp
     src/adapters/entropy.cpp
+    $<TARGET_OBJECTS:laghu_dependency_logging_impl>
     $<TARGET_OBJECTS:laghu_dependency_lifecycle_impl>)
   laghu_apply_first_party_contract(laghu_crypto)
   laghu_configure_api_consumer(laghu_crypto adapters)
@@ -159,6 +167,45 @@ if(NOT laghu_tls_feature_index EQUAL -1)
     target_compile_definitions(laghu_crypto PRIVATE LAGHU_CRYPTO_DEPENDENCY_LIBRESSL=1)
   else()
     message(FATAL_ERROR "Laghu dependency logging failed: tls_provider=${LAGHU_TLS_PROVIDER}")
+  endif()
+endif()
+
+list(FIND LAGHU_EFFECTIVE_FEATURES idna laghu_idna_feature_index)
+if(NOT laghu_idna_feature_index EQUAL -1)
+  add_library(laghu_idna STATIC
+    src/adapters/idna.cpp
+    $<TARGET_OBJECTS:laghu_dependency_logging_impl>)
+  laghu_apply_first_party_contract(laghu_idna)
+  laghu_configure_api_consumer(laghu_idna adapters)
+  target_include_directories(laghu_idna PRIVATE "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  laghu_register_subsystem_target(laghu_idna adapters)
+  laghu_link_subsystems(laghu_idna laghu_core)
+  target_link_libraries(laghu_idna PRIVATE laghu_feature_idna)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # libidn2 owns the returned C string; this adapter bounds that native
+    # pointer before it crosses into the Laghu-owned hostname value.
+    set_source_files_properties(src/adapters/idna.cpp PROPERTIES
+      COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+  endif()
+endif()
+
+list(FIND LAGHU_EFFECTIVE_FEATURES password_auth laghu_password_auth_feature_index)
+if(NOT laghu_password_auth_feature_index EQUAL -1)
+  add_library(laghu_password_auth STATIC
+    src/adapters/password_auth.cpp
+    $<TARGET_OBJECTS:laghu_dependency_logging_impl>)
+  laghu_apply_first_party_contract(laghu_password_auth)
+  laghu_configure_api_consumer(laghu_password_auth adapters)
+  target_include_directories(laghu_password_auth PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  laghu_register_subsystem_target(laghu_password_auth adapters)
+  laghu_link_subsystems(laghu_password_auth laghu_core)
+  target_link_libraries(laghu_password_auth PRIVATE laghu_feature_password_auth)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # libxcrypt's C result has no span form; this adapter bounds it before the
+    # constant-time comparison with the caller's encoded hash.
+    set_source_files_properties(src/adapters/password_auth.cpp PROPERTIES
+      COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
   endif()
 endif()
 
@@ -329,6 +376,34 @@ if(TARGET laghu_crypto)
   laghu_add_native_test(laghu.crypto.entropy_seam laghu_crypto_entropy_seam_test)
 endif()
 
+if(TARGET laghu_idna)
+  add_executable(laghu_idna_test tests/adapters/idna.cpp)
+  laghu_apply_first_party_contract(laghu_idna_test)
+  laghu_configure_api_consumer(laghu_idna_test adapters)
+  target_include_directories(laghu_idna_test PRIVATE "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  target_link_libraries(laghu_idna_test PRIVATE laghu_idna laghu_feature_idna laghu_test_support)
+  laghu_add_native_test(laghu.adapters.idna laghu_idna_test)
+endif()
+
+if(TARGET laghu_password_auth)
+  add_executable(laghu_password_auth_test tests/adapters/password_auth.cpp)
+  laghu_apply_first_party_contract(laghu_password_auth_test)
+  laghu_configure_api_consumer(laghu_password_auth_test adapters)
+  target_include_directories(laghu_password_auth_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  target_link_libraries(laghu_password_auth_test PRIVATE laghu_password_auth laghu_test_support)
+  laghu_add_native_test(laghu.adapters.password_auth laghu_password_auth_test)
+
+  add_executable(laghu_password_auth_failure_token_test
+    tests/adapters/password_auth_failure_token.cpp)
+  laghu_apply_first_party_contract(laghu_password_auth_failure_token_test)
+  laghu_configure_api_consumer(laghu_password_auth_failure_token_test adapters)
+  target_link_libraries(laghu_password_auth_failure_token_test PRIVATE
+    laghu_password_auth laghu_test_support)
+  laghu_add_native_test(laghu.adapters.password_auth.failure_token
+    laghu_password_auth_failure_token_test)
+endif()
+
 laghu_add_sanitizer_fixture_targets()
 
 add_executable(laghu_os_iovec_translation_test tests/os/iovec_translation.cpp)
@@ -390,6 +465,13 @@ set(laghu_verify_targets
 if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets
     laghu_crypto laghu_crypto_provider_test laghu_crypto_entropy_seam_test)
+endif()
+if(TARGET laghu_idna_test)
+  list(APPEND laghu_verify_targets laghu_idna laghu_idna_test)
+endif()
+if(TARGET laghu_password_auth_test)
+  list(APPEND laghu_verify_targets
+    laghu_password_auth laghu_password_auth_test laghu_password_auth_failure_token_test)
 endif()
 laghu_collect_fuzz_targets(laghu_fuzz_verify_targets)
 list(APPEND laghu_verify_targets ${laghu_fuzz_verify_targets})

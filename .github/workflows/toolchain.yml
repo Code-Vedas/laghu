@@ -32,7 +32,7 @@ jobs:
             /etc/apt/sources.list.d/google-chrome.sources
           sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install --yes ninja-build ${{ matrix.packages }}
+          sudo apt-get install --yes ninja-build libcrypt-dev libidn2-dev ${{ matrix.packages }}
       - name: Verify C++23 toolchain contract
         env:
           CXXFLAGS: ${{ matrix.cxxflags }}
@@ -43,9 +43,24 @@ jobs:
           cmake -S . -B "$RUNNER_TEMP/laghu-full" -G Ninja \
             -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
             -DLAGHU_BUILD_PROFILE=FULL
-          cmake --build "$RUNNER_TEMP/laghu-full" --target laghu_crypto_provider_test
+          cmake --build "$RUNNER_TEMP/laghu-full" --target \
+            laghu_crypto_provider_test laghu_idna_test laghu_password_auth_test \
+            laghu_password_auth_failure_token_test
           ctest --test-dir "$RUNNER_TEMP/laghu-full" --output-on-failure \
-            -R '^laghu.crypto.provider$'
+            -R '^laghu\.(crypto\.provider|adapters\.(idna|password_auth|password_auth\.failure_token))$'
+      - name: Verify system dynamic IDNA and password adapters
+        if: matrix.name == 'gcc-14-libstdc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-system-adapters" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            '-DLAGHU_FEATURES=idna;password_auth' \
+            -DLAGHU_DEPENDENCY_SOURCE=SYSTEM \
+            -DLAGHU_DEPENDENCY_LINK_MODE=DYNAMIC
+          cmake --build "$RUNNER_TEMP/laghu-system-adapters" --target \
+            laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-system-adapters" --output-on-failure \
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token)$'
       - name: Verify Clang 19 crypto adapter
         if: matrix.name == 'clang-19-libc++'
         run: |
@@ -58,6 +73,18 @@ jobs:
             --target laghu_crypto_provider_test
           ctest --test-dir "$RUNNER_TEMP/laghu-clang-crypto" --output-on-failure \
             -R '^laghu.crypto.provider$'
+      - name: Verify Clang 19 IDNA and password adapters
+        if: matrix.name == 'clang-19-libc++'
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-clang-adapters" -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }}" \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            '-DLAGHU_FEATURES=idna;password_auth'
+          cmake --build "$RUNNER_TEMP/laghu-clang-adapters" --target \
+            laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-clang-adapters" --output-on-failure \
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token)$'
       - name: Verify LibreSSL crypto adapter
         if: matrix.name == 'gcc-14-libstdc++'
         run: |
@@ -107,6 +134,16 @@ jobs:
             --target laghu_crypto_provider_test
           ctest --test-dir "$RUNNER_TEMP/laghu-crypto" --output-on-failure \
             -R '^laghu.crypto.provider$'
+      - name: Verify Apple Clang IDNA and password adapters
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-adapters" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            '-DLAGHU_FEATURES=idna;password_auth'
+          cmake --build "$RUNNER_TEMP/laghu-adapters" --target \
+            laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-adapters" --output-on-failure \
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token)$'
       - uses: actions/upload-artifact@v7
         with:
           name: toolchain-capabilities-macos-appleclang
@@ -133,6 +170,14 @@ jobs:
             cmake --build /tmp/laghu-crypto --target laghu_crypto_provider_test
             ctest --test-dir /tmp/laghu-crypto --output-on-failure \
               -R '^laghu.crypto.provider$'
+            cmake -S . -B /tmp/laghu-adapters -G Ninja \
+              -DCMAKE_CXX_COMPILER=clang++ \
+              -DLAGHU_BUILD_PROFILE=CUSTOM \
+              '-DLAGHU_FEATURES=idna;password_auth'
+            cmake --build /tmp/laghu-adapters --target \
+              laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test
+            ctest --test-dir /tmp/laghu-adapters --output-on-failure \
+              -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token)$'
   linux-aarch64-cross:
     runs-on: ubuntu-24.04
     steps:
@@ -184,6 +229,18 @@ jobs:
             -R '^laghu.crypto.provider$'
           ctest --test-dir "$RUNNER_TEMP/laghu-asan-crypto" --output-on-failure \
             -R '^laghu.crypto.entropy_seam$'
+      - name: Run IDNA and password adapters under ASan and UBSan
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-asan-adapters" -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
+            -DLAGHU_SANITIZER_PROFILE=ASAN_UBSAN \
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            '-DLAGHU_FEATURES=idna;password_auth'
+          cmake --build "$RUNNER_TEMP/laghu-asan-adapters" --target \
+            laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test
+          ctest --test-dir "$RUNNER_TEMP/laghu-asan-adapters" --output-on-failure \
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token)$'
       - name: Replay binary-envelope fuzz corpus under ASan and UBSan
         run: |
           cmake -S . -B "$RUNNER_TEMP/laghu-fuzz" -G Ninja \

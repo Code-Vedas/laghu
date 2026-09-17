@@ -487,7 +487,7 @@ function(laghu_add_validation_tests)
       -DDEPENDENCY=laghu_core
       "-DAR=${CMAKE_AR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/VerifyStaticArtifact.cmake")
-  foreach(fixture IN ITEMS minimal full custom_closure)
+  foreach(fixture IN ITEMS minimal full custom_closure custom_idna_password)
     add_test(NAME "laghu.build_variants.positive.${fixture}"
       COMMAND "${CMAKE_COMMAND}"
         "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
@@ -623,6 +623,47 @@ function(laghu_add_validation_tests)
         -DEXPECT_FAIL=OFF
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()
+  foreach(link_mode IN ITEMS STATIC DYNAMIC)
+    add_test(NAME "laghu.dependencies.vendored_idna_password_${link_mode}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        "-DLAGHU_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+        "-DLAGHU_EXPECT_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
+        -DSCENARIO=mode_vendored_idna_password
+        -DSOURCE=VENDORED
+        "-DLINK_MODE=${link_mode}"
+        -DTLS_PROVIDER=OPENSSL
+        -DEXPECT_FAIL=OFF
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
+  foreach(missing_tool IN ITEMS c_compiler ar ranlib)
+    if(missing_tool STREQUAL c_compiler)
+      set(cmake_tool CMAKE_C_COMPILER)
+    elseif(missing_tool STREQUAL ar)
+      set(cmake_tool CMAKE_AR)
+    else()
+      set(cmake_tool CMAKE_RANLIB)
+    endif()
+    add_test(NAME "laghu.dependencies.negative_cross_missing_${missing_tool}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+        -DSCENARIO=autoconf_cross_missing_${missing_tool}
+        -DEXPECT_FAIL=ON
+        "-DEXPECT_TEXT=rule=cross_tool_missing tool=${cmake_tool}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
+  endforeach()
+  add_test(NAME laghu.dependencies.cross_autoconf_toolchain_environment
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+      -DSCENARIO=autoconf_cross_toolchain_environment
+      -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   add_test(NAME laghu.dependencies.vendored_http3_transport
     COMMAND "${CMAKE_COMMAND}"
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"

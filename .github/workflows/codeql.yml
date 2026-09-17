@@ -54,8 +54,10 @@ jobs:
           cmake -S . -B "$RUNNER_TEMP/laghu-codeql" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 \
-            -DLAGHU_BUILD_PROFILE=MINIMAL
-          cmake --build "$RUNNER_TEMP/laghu-codeql"
+            -DLAGHU_BUILD_PROFILE=CUSTOM \
+            '-DLAGHU_FEATURES=idna;password_auth'
+          cmake --build "$RUNNER_TEMP/laghu-codeql" --target \
+            laghu laghu_idna laghu_password_auth
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
