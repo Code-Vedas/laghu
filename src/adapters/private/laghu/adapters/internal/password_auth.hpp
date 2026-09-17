@@ -38,7 +38,7 @@ class SecretPassword final {
       output.bytes_[index] = character;
     }
     output.size_ = password.size();
-    return std::move(output);
+    return output;
   }
 
   SecretPassword(const SecretPassword&) = delete;
