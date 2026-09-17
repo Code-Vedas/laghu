@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -30,6 +31,14 @@ struct TraversalFrame final {
   yyjson_obj_iter object_iterator{};
 };
 
+// One caller-arena-backed array is reused while each object is validated. The
+// traversal is iterative and validates an object before entering any child, so
+// simultaneous per-object scratch storage is unnecessary.
+struct ObjectKey final {
+  const char* characters{};
+  std::size_t size{};
+};
+
 struct DocumentState final {
   bool active{};
   std::uint64_t epoch{1};
@@ -51,59 +60,72 @@ struct DocumentState final {
 
 [[nodiscard]] core::Result<void> validate_limits(const JsonDocumentLimits& limits) noexcept {
   if (limits.maximum_document_bytes == 0 || limits.maximum_nesting == 0 ||
-      limits.maximum_object_members == 0 || limits.maximum_string_bytes == 0 ||
-      limits.maximum_aggregate_values == 0) {
+      limits.maximum_string_bytes == 0 || limits.maximum_aggregate_values == 0) {
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
-                                      "JSON document limits must all be positive")};
+                                      "JSON document, nesting, string, and aggregate limits must be positive")};
   }
   if (limits.maximum_nesting > std::numeric_limits<std::size_t>::max() /
                                    sizeof(TraversalFrame)) {
     return std::unexpected{core_error(core::ErrorCode::overflow,
                                       "JSON nesting limit overflows traversal storage")};
   }
+  if (limits.maximum_object_members > std::numeric_limits<std::size_t>::max() /
+                                          sizeof(ObjectKey)) {
+    return std::unexpected{core_error(core::ErrorCode::overflow,
+                                      "JSON member limit overflows duplicate-key storage")};
+  }
   return {};
 }
 
-[[nodiscard]] bool equal_key(const yyjson_val* left, const yyjson_val* right) noexcept {
-  const std::size_t left_size = yyjson_get_len(left);
-  const std::size_t right_size = yyjson_get_len(right);
-  if (left_size != right_size) {
-    return false;
-  }
-  const char* const left_characters = yyjson_get_str(left);
-  const char* const right_characters = yyjson_get_str(right);
-  if (left_characters == nullptr || right_characters == nullptr) {
-    return false;
-  }
-  for (std::size_t index = 0; index < left_size; ++index) {
-    if (left_characters[index] != right_characters[index]) {
-      return false;
-    }
-  }
-  return true;
+[[nodiscard]] bool key_less(const ObjectKey& left, const ObjectKey& right) noexcept {
+  const std::size_t common_size = left.size < right.size ? left.size : right.size;
+  const int comparison = common_size == 0U
+                             ? 0
+                             : std::memcmp(left.characters, right.characters, common_size);
+  return comparison < 0 || (comparison == 0 && left.size < right.size);
+}
+
+[[nodiscard]] bool equal_key(const ObjectKey& left, const ObjectKey& right) noexcept {
+  return left.size == right.size &&
+         (left.size == 0U || std::memcmp(left.characters, right.characters, left.size) == 0);
 }
 
 [[nodiscard]] core::Result<void> validate_object(
-    yyjson_val* object, const JsonDocumentLimits& limits) noexcept {
-  if (yyjson_obj_size(object) > limits.maximum_object_members) {
+    yyjson_val* object, ObjectKey* key_scratch, std::size_t key_capacity,
+    const JsonDocumentLimits& limits) noexcept {
+  const std::size_t member_count = yyjson_obj_size(object);
+  if (member_count > limits.maximum_object_members) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                       "JSON object exceeds the caller member limit")};
   }
-  yyjson_obj_iter outer = yyjson_obj_iter_with(object);
-  while (yyjson_val* const key = yyjson_obj_iter_next(&outer)) {
+  if (member_count > key_capacity || (member_count != 0U && key_scratch == nullptr)) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "JSON duplicate-key storage is unavailable")};
+  }
+
+  std::size_t key_count{};
+  yyjson_obj_iter iterator = yyjson_obj_iter_with(object);
+  while (yyjson_val* const key = yyjson_obj_iter_next(&iterator)) {
     const char* const characters = yyjson_get_str(key);
     if (characters == nullptr || yyjson_get_len(key) > limits.maximum_string_bytes) {
       return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                         "JSON object key exceeds the caller string limit")};
     }
-    std::size_t matches{};
-    yyjson_obj_iter inner = yyjson_obj_iter_with(object);
-    while (yyjson_val* const candidate = yyjson_obj_iter_next(&inner)) {
-      if (equal_key(key, candidate)) {
-        ++matches;
-      }
+    if (key_count == member_count) {
+      return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                        "yyjson object member iteration is inconsistent")};
     }
-    if (matches != 1U) {
+    key_scratch[key_count] = ObjectKey{characters, yyjson_get_len(key)};
+    ++key_count;
+  }
+  if (key_count != member_count) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "yyjson object member iteration is incomplete")};
+  }
+
+  std::sort(key_scratch, key_scratch + key_count, key_less);
+  for (std::size_t index = 1; index < key_count; ++index) {
+    if (equal_key(key_scratch[index - 1U], key_scratch[index])) {
       return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                         "JSON object contains duplicate members")};
     }
@@ -113,7 +135,7 @@ struct DocumentState final {
 
 [[nodiscard]] core::Result<void> validate_document(
     yyjson_doc* document, TraversalFrame* frames, std::size_t frame_capacity,
-    const JsonDocumentLimits& limits) noexcept {
+    ObjectKey* key_scratch, std::size_t key_capacity, const JsonDocumentLimits& limits) noexcept {
   if (yyjson_doc_get_val_count(document) > limits.maximum_aggregate_values) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                       "JSON document exceeds the caller aggregate limit")};
@@ -143,7 +165,8 @@ struct DocumentState final {
         continue;
       }
       if (yyjson_is_obj(frame.value)) {
-        if (const auto valid = validate_object(frame.value, limits); !valid.has_value()) {
+        if (const auto valid = validate_object(frame.value, key_scratch, key_capacity, limits);
+            !valid.has_value()) {
           return std::unexpected{valid.error()};
         }
         frame.object_iterator = yyjson_obj_iter_with(frame.value);
@@ -287,13 +310,30 @@ core::Result<JsonDocument> JsonDocument::parse(core::WorkerId worker, core::Byte
   }
   auto* const frames = reinterpret_cast<TraversalFrame*>(frame_bytes_view->data());
 
+  const std::size_t key_scratch_bytes = limits.maximum_object_members * sizeof(ObjectKey);
+  const auto key_scratch_storage =
+      arena.try_allocate(worker, key_scratch_bytes, alignof(ObjectKey));
+  if (!key_scratch_storage.has_value()) {
+    return std::unexpected{key_scratch_storage.error()};
+  }
+  const auto key_scratch_bytes_view = key_scratch_storage->bytes();
+  if (!key_scratch_bytes_view.has_value()) {
+    return std::unexpected{key_scratch_bytes_view.error()};
+  }
+  auto* const key_scratch = reinterpret_cast<ObjectKey*>(key_scratch_bytes_view->data());
+
   const std::size_t remaining_capacity = arena.maximum_capacity() - arena.used();
-  if (remaining_capacity < yyjson_pool_minimum_bytes) {
+  constexpr std::size_t pool_alignment = alignof(std::max_align_t);
+  const std::size_t alignment_remainder = arena.used() % pool_alignment;
+  const std::size_t pool_padding =
+      alignment_remainder == 0U ? 0U : pool_alignment - alignment_remainder;
+  if (remaining_capacity < pool_padding ||
+      remaining_capacity - pool_padding < yyjson_pool_minimum_bytes) {
     return std::unexpected{core_error(core::ErrorCode::exhaustion,
                                       "bounded arena cannot hold a yyjson allocation pool")};
   }
-  const auto pool_storage =
-      arena.try_allocate(worker, remaining_capacity, alignof(std::max_align_t));
+  const auto pool_storage = arena.try_allocate(worker, remaining_capacity - pool_padding,
+                                               pool_alignment);
   if (!pool_storage.has_value()) {
     return std::unexpected{pool_storage.error()};
   }
@@ -312,11 +352,15 @@ core::Result<JsonDocument> JsonDocument::parse(core::WorkerId worker, core::Byte
   yyjson_doc* const native_document = yyjson_read_opts(
       mutable_input, document_bytes.size(), YYJSON_READ_NOFLAG, &allocator, &read_error);
   if (native_document == nullptr) {
-    return std::unexpected{yyjson_error(core::DependencyStatus::invalid_input,
-                                        static_cast<std::int32_t>(read_error.code), log_sink)};
+    const core::DependencyStatus status = read_error.code == YYJSON_READ_ERROR_MEMORY_ALLOCATION
+                                              ? core::DependencyStatus::exhaustion
+                                              : core::DependencyStatus::invalid_input;
+    return std::unexpected{
+        yyjson_error(status, static_cast<std::int32_t>(read_error.code), log_sink)};
   }
   if (const auto valid_document = validate_document(native_document, frames,
-                                                    limits.maximum_nesting, limits);
+                                                    limits.maximum_nesting, key_scratch,
+                                                    limits.maximum_object_members, limits);
       !valid_document.has_value()) {
     yyjson_doc_free(native_document);
     return std::unexpected{valid_document.error()};

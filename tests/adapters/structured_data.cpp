@@ -26,7 +26,7 @@ using laghu::core::Result;
 using laghu::core::WorkerId;
 
 struct FixedBlockSource final {
-  std::array<std::byte, 4096> storage{};
+  std::array<std::byte, 16384> storage{};
   bool fail_acquire{};
   std::size_t acquire_calls{};
   std::size_t reset_calls{};
@@ -180,16 +180,120 @@ struct FixedBlockSource final {
 }
 
 [[nodiscard]] bool check_duplicate_member_rejection(WorkerId worker) noexcept {
+  constexpr std::array<std::string_view, 2> inputs{
+      "{\"duplicate\":1,\"duplicate\":2}",
+      "{\"embedded\\u0000nul\":1,\"embedded\\u0000nul\":2}",
+  };
+  for (const std::string_view input_text : inputs) {
+    FixedBlockSource source{};
+    MemoryBudget budget{worker, source.storage.size()};
+    BoundedArena arena{worker, budget, fixed_source(source), 256, source.storage.size()};
+    const auto input = bytes(input_text);
+    if (!input.has_value()) {
+      return false;
+    }
+    const auto document = JsonDocument::parse(worker, *input, arena, normal_limits());
+    if (document.has_value() || document.error().code() != ErrorCode::invalid_input ||
+        document.error().domain() != laghu::core::ErrorDomain::core ||
+        !reset_arena(arena, worker)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool check_many_distinct_members(WorkerId worker) noexcept {
+  constexpr std::size_t member_count = 64U;
+  constexpr std::array hexadecimal{"0", "1", "2", "3", "4", "5", "6", "7",
+                                   "8", "9", "a", "b", "c", "d", "e", "f"};
+  std::array<char, 1024> input_storage{};
+  std::size_t input_size{};
+  input_storage[input_size++] = '{';
+  for (std::size_t index = 0; index < member_count; ++index) {
+    input_storage[input_size++] = '"';
+    input_storage[input_size++] = 'k';
+    input_storage[input_size++] = hexadecimal[(index >> 4U) & 0x0FU][0];
+    input_storage[input_size++] = hexadecimal[index & 0x0FU][0];
+    input_storage[input_size++] = '"';
+    input_storage[input_size++] = ':';
+    input_storage[input_size++] = '0';
+    if (index + 1U != member_count) {
+      input_storage[input_size++] = ',';
+    }
+  }
+  input_storage[input_size++] = '}';
+
   FixedBlockSource source{};
   MemoryBudget budget{worker, source.storage.size()};
   BoundedArena arena{worker, budget, fixed_source(source), 256, source.storage.size()};
-  const auto input = bytes("{\"duplicate\":1,\"duplicate\":2}");
+  const auto input = bytes(std::string_view{input_storage.data(), input_size});
   if (!input.has_value()) {
     return false;
   }
-  const auto document = JsonDocument::parse(worker, *input, arena, normal_limits());
-  return !document.has_value() && document.error().code() == ErrorCode::invalid_input &&
-         document.error().domain() == laghu::core::ErrorDomain::core && reset_arena(arena, worker);
+  constexpr JsonDocumentLimits limits{1024, 8, member_count, 64, 256};
+  bool result{};
+  {
+    const auto document = JsonDocument::parse(worker, *input, arena, limits);
+    if (!document.has_value()) {
+      return false;
+    }
+    const auto root = document->root();
+    const auto size = root.has_value() ? root->object_size()
+                                       : Result<std::size_t>{std::unexpected{root.error()}};
+    result = size.has_value() && *size == member_count;
+  }
+  return result && reset_arena(arena, worker);
+}
+
+[[nodiscard]] bool check_zero_member_limit(WorkerId worker) noexcept {
+  FixedBlockSource source{};
+  MemoryBudget budget{worker, source.storage.size()};
+  BoundedArena arena{worker, budget, fixed_source(source), 256, source.storage.size()};
+  const auto input = bytes("{}");
+  if (!input.has_value()) {
+    return false;
+  }
+  constexpr JsonDocumentLimits limits{16, 8, 0, 64, 8};
+  bool result{};
+  {
+    const auto document = JsonDocument::parse(worker, *input, arena, limits);
+    if (!document.has_value()) {
+      return false;
+    }
+    const auto root = document->root();
+    const auto size = root.has_value() ? root->object_size()
+                                       : Result<std::size_t>{std::unexpected{root.error()}};
+    result = size.has_value() && *size == 0U;
+  }
+  return result && reset_arena(arena, worker);
+}
+
+[[nodiscard]] bool check_yyjson_pool_exhaustion(WorkerId worker) noexcept {
+  constexpr std::size_t value_count = 384U;
+  std::array<char, value_count * 2U + 1U> input_storage{};
+  std::size_t input_size{};
+  input_storage[input_size++] = '[';
+  for (std::size_t index = 0; index < value_count; ++index) {
+    input_storage[input_size++] = '0';
+    if (index + 1U != value_count) {
+      input_storage[input_size++] = ',';
+    }
+  }
+  input_storage[input_size++] = ']';
+
+  FixedBlockSource source{};
+  MemoryBudget budget{worker, 2048};
+  BoundedArena arena{worker, budget, fixed_source(source), 256, 2048};
+  const auto input = bytes(std::string_view{input_storage.data(), input_size});
+  if (!input.has_value()) {
+    return false;
+  }
+  constexpr JsonDocumentLimits limits{1024, 8, 8, 64, 512};
+  const auto document = JsonDocument::parse(worker, *input, arena, limits);
+  return !document.has_value() && document.error().code() == ErrorCode::exhaustion &&
+         document.error().domain() == laghu::core::ErrorDomain::dependency &&
+         document.error().dependency_id() == laghu::core::DependencyId::yyjson &&
+         source.acquire_calls == 1U && reset_arena(arena, worker);
 }
 
 [[nodiscard]] bool check_allocation_failure(WorkerId worker) noexcept {
@@ -254,6 +358,21 @@ struct FixedBlockSource final {
   return worker.has_value() && check_duplicate_member_rejection(*worker);
 }
 
+[[nodiscard]] bool test_many_distinct_members() noexcept {
+  const auto worker = WorkerId::from_uint64(58);
+  return worker.has_value() && check_many_distinct_members(*worker);
+}
+
+[[nodiscard]] bool test_yyjson_pool_exhaustion() noexcept {
+  const auto worker = WorkerId::from_uint64(58);
+  return worker.has_value() && check_yyjson_pool_exhaustion(*worker);
+}
+
+[[nodiscard]] bool test_zero_member_limit() noexcept {
+  const auto worker = WorkerId::from_uint64(58);
+  return worker.has_value() && check_zero_member_limit(*worker);
+}
+
 [[nodiscard]] bool test_allocation_failure() noexcept {
   const auto worker = WorkerId::from_uint64(58);
   return worker.has_value() && check_allocation_failure(*worker);
@@ -273,6 +392,12 @@ int main() {
       laghu::test::TestCase{"adapters.structured_data.limits", test_caller_limits},
       laghu::test::TestCase{"adapters.structured_data.duplicate_members",
                             test_duplicate_member_rejection},
+      laghu::test::TestCase{"adapters.structured_data.many_distinct_members",
+                            test_many_distinct_members},
+      laghu::test::TestCase{"adapters.structured_data.zero_member_limit",
+                            test_zero_member_limit},
+      laghu::test::TestCase{"adapters.structured_data.yyjson_pool_exhaustion",
+                            test_yyjson_pool_exhaustion},
       laghu::test::TestCase{"adapters.structured_data.allocation_failure", test_allocation_failure},
       laghu::test::TestCase{"adapters.structured_data.borrowed_value_lifetime",
                             test_borrowed_value_lifetime},
