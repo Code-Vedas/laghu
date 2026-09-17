@@ -46,9 +46,13 @@ using laghu::core::TextView;
 
 [[nodiscard]] bool check_unicode_golden_vectors() noexcept {
   const auto german = idna_to_ascii(TextView::from("b\xC3\xBC""cher.example"));
+  const auto decomposed_german = idna_to_ascii(
+      TextView::from("bu\xCC\x88""cher.example"));
   const auto japanese = idna_to_ascii(
       TextView::from("\xE4\xBE\x8B\xE3\x81\x88.\xE3\x83\x86\xE3\x82\xB9\xE3\x83\x88"));
   return german.has_value() && german->value() == "xn--bcher-kva.example" &&
+         decomposed_german.has_value() &&
+         decomposed_german->value() == "xn--bcher-kva.example" &&
          japanese.has_value() && japanese->value() == "xn--r8jz45g.xn--zckzah";
 }
 
@@ -68,6 +72,7 @@ using laghu::core::TextView;
   const auto invalid_result = idna_to_ascii(*invalid);
   return embedded.has_value() && invalid.has_value() && label.has_value() &&
          hostname.has_value() && has_error(idna_to_ascii(*embedded), ErrorCode::invalid_input) &&
+         has_error(idna_to_ascii(TextView{}), ErrorCode::invalid_input) &&
          has_idn2_input_error(invalid_result) &&
          has_idn2_range_error(idna_to_ascii(*label)) &&
          has_error(idna_to_ascii(*hostname), ErrorCode::invalid_range) &&

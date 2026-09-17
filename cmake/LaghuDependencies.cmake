@@ -715,11 +715,24 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
     set(laghu_autoconf_c_compiler "${CMAKE_C_COMPILER}")
     set(laghu_autoconf_ar "${CMAKE_AR}")
     set(laghu_autoconf_ranlib "${CMAKE_RANLIB}")
+    set(laghu_autoconf_c_compiler_arguments)
+    if(DEFINED CMAKE_C_COMPILER_ARG1 AND NOT CMAKE_C_COMPILER_ARG1 STREQUAL "")
+      separate_arguments(laghu_autoconf_c_compiler_arguments NATIVE_COMMAND
+        "${CMAKE_C_COMPILER_ARG1}")
+    endif()
+    # CMake only defines CMAKE_<LANG>_COMPILER_TARGET for compilers whose
+    # target selection is separate from the compiler executable, such as
+    # Clang.  Keep it in CC so both configure tests and the library build use
+    # the selected target rather than the build host.
+    if(DEFINED CMAKE_C_COMPILER_TARGET AND NOT CMAKE_C_COMPILER_TARGET STREQUAL "")
+      list(APPEND laghu_autoconf_c_compiler_arguments
+        "--target=${CMAKE_C_COMPILER_TARGET}")
+    endif()
     # Autoconf determines cross mode from --host.  Query the selected C
     # compiler instead of guessing a target triple from a CMake processor
     # spelling, then retain that exact toolchain through configure and make.
     execute_process(
-      COMMAND "${laghu_autoconf_c_compiler}" -dumpmachine
+      COMMAND "${laghu_autoconf_c_compiler}" ${laghu_autoconf_c_compiler_arguments} -dumpmachine
       RESULT_VARIABLE compiler_target_result
       OUTPUT_VARIABLE laghu_autoconf_cross_host
       ERROR_VARIABLE compiler_target_diagnostics
@@ -746,7 +759,73 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
     else()
       find_program(laghu_autoconf_ranlib NAMES ranlib REQUIRED)
     endif()
+    set(laghu_autoconf_c_compiler_arguments)
+    if(DEFINED CMAKE_C_COMPILER_ARG1 AND NOT CMAKE_C_COMPILER_ARG1 STREQUAL "")
+      separate_arguments(laghu_autoconf_c_compiler_arguments NATIVE_COMMAND
+        "${CMAKE_C_COMPILER_ARG1}")
+    endif()
   endif()
+  set(laghu_autoconf_cc_parts "${laghu_autoconf_c_compiler}"
+    ${laghu_autoconf_c_compiler_arguments})
+  string(JOIN " " laghu_autoconf_cc ${laghu_autoconf_cc_parts})
+
+  # The root project is intentionally C++-only, but these immutable upstream
+  # dependencies are C Autoconf projects.  Translate CMake's C toolchain
+  # inputs into the conventional Autoconf environment without borrowing C++
+  # flags.  CMake has no independent C preprocessor-flags cache variable, so
+  # CMAKE_C_FLAGS are deliberately supplied to both CFLAGS and CPPFLAGS: this
+  # keeps compiler definitions, include paths, and target/sysroot flags active
+  # in configure's preprocessor-only checks as well as C compilation.
+  set(laghu_autoconf_cflags_parts)
+  foreach(flag_variable IN ITEMS CMAKE_C_FLAGS)
+    if(DEFINED ${flag_variable} AND NOT "${${flag_variable}}" STREQUAL "")
+      list(APPEND laghu_autoconf_cflags_parts "${${flag_variable}}")
+    endif()
+  endforeach()
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "")
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" laghu_autoconf_build_type)
+    set(laghu_autoconf_cflags_variable "CMAKE_C_FLAGS_${laghu_autoconf_build_type}")
+    if(DEFINED ${laghu_autoconf_cflags_variable} AND
+        NOT "${${laghu_autoconf_cflags_variable}}" STREQUAL "")
+      list(APPEND laghu_autoconf_cflags_parts "${${laghu_autoconf_cflags_variable}}")
+    endif()
+  endif()
+  if(DEFINED CMAKE_SYSROOT_COMPILE AND NOT CMAKE_SYSROOT_COMPILE STREQUAL "")
+    set(laghu_autoconf_compile_sysroot "${CMAKE_SYSROOT_COMPILE}")
+  else()
+    set(laghu_autoconf_compile_sysroot "${CMAKE_SYSROOT}")
+  endif()
+  if(NOT laghu_autoconf_compile_sysroot STREQUAL "")
+    list(APPEND laghu_autoconf_cflags_parts "--sysroot=${laghu_autoconf_compile_sysroot}")
+  endif()
+  string(JOIN " " laghu_autoconf_cflags ${laghu_autoconf_cflags_parts})
+
+  set(laghu_autoconf_ldflags_parts)
+  foreach(flag_variable IN ITEMS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+    if(DEFINED ${flag_variable} AND NOT "${${flag_variable}}" STREQUAL "")
+      list(APPEND laghu_autoconf_ldflags_parts "${${flag_variable}}")
+    endif()
+  endforeach()
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "")
+    foreach(linker_kind IN ITEMS EXE SHARED)
+      set(laghu_autoconf_linker_flags_variable
+        "CMAKE_${linker_kind}_LINKER_FLAGS_${laghu_autoconf_build_type}")
+      if(DEFINED ${laghu_autoconf_linker_flags_variable} AND
+          NOT "${${laghu_autoconf_linker_flags_variable}}" STREQUAL "")
+        list(APPEND laghu_autoconf_ldflags_parts
+          "${${laghu_autoconf_linker_flags_variable}}")
+      endif()
+    endforeach()
+  endif()
+  if(DEFINED CMAKE_SYSROOT_LINK AND NOT CMAKE_SYSROOT_LINK STREQUAL "")
+    set(laghu_autoconf_link_sysroot "${CMAKE_SYSROOT_LINK}")
+  else()
+    set(laghu_autoconf_link_sysroot "${CMAKE_SYSROOT}")
+  endif()
+  if(NOT laghu_autoconf_link_sysroot STREQUAL "")
+    list(APPEND laghu_autoconf_ldflags_parts "--sysroot=${laghu_autoconf_link_sysroot}")
+  endif()
+  string(JOIN " " laghu_autoconf_ldflags ${laghu_autoconf_ldflags_parts})
   laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
   laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
   set(prefix "${CMAKE_BINARY_DIR}/_deps/${id}")
@@ -798,8 +877,9 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
       "${laghu_make_program}" install-libLTLIBRARIES install-nodist_includeHEADERS)
   endif()
   set(configure_environment "${CMAKE_COMMAND}" -E env
-    "CC=${laghu_autoconf_c_compiler}" "AR=${laghu_autoconf_ar}" "RANLIB=${laghu_autoconf_ranlib}"
-    "MAKE=${laghu_make_program}")
+    "CC=${laghu_autoconf_cc}" "AR=${laghu_autoconf_ar}" "RANLIB=${laghu_autoconf_ranlib}"
+    "MAKE=${laghu_make_program}" "CFLAGS=${laghu_autoconf_cflags}"
+    "CPPFLAGS=${laghu_autoconf_cflags}" "LDFLAGS=${laghu_autoconf_ldflags}")
   ExternalProject_Add("laghu_vendor_${id}"
     PREFIX "${prefix}"
     URL "${archive_url}"
@@ -835,6 +915,10 @@ function(laghu_acquire_vendored_autoconf_dependency id private_target)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_ID "${id}")
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_SOURCE VENDORED)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_CC "${laghu_autoconf_cc}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_CFLAGS "${laghu_autoconf_cflags}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_CPPFLAGS "${laghu_autoconf_cflags}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_AUTOCONF_LDFLAGS "${laghu_autoconf_ldflags}")
   if(CMAKE_CROSSCOMPILING)
     set_property(TARGET "${private_target}" PROPERTY
       LAGHU_AUTOCONF_CROSS_HOST "${laghu_autoconf_cross_host}")

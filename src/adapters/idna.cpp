@@ -155,6 +155,11 @@ core::Result<AsciiHostname> AsciiHostname::from_ascii(std::string_view hostname)
 
 core::Result<AsciiHostname> idna_to_ascii(core::TextView hostname,
                                           DependencyLogSink log_sink) noexcept {
+  if (hostname.empty()) {
+    return std::unexpected{core::Error{core::ErrorDomain::core,
+                                       core::ErrorCode::invalid_input, 0,
+                                       "hostname must not be empty"}};
+  }
   const auto input = hostname.to_c_string<utf8_input_storage_capacity>();
   if (!input.has_value()) {
     return std::unexpected{input.error()};

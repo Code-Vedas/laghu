@@ -656,6 +656,14 @@ function(laghu_add_validation_tests)
         "-DEXPECT_TEXT=rule=cross_tool_missing tool=${cmake_tool}"
         -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   endforeach()
+  add_test(NAME laghu.dependencies.cross_autoconf_toolchain_environment
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+      -DSCENARIO=autoconf_cross_toolchain_environment
+      -DEXPECT_FAIL=OFF
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectDependencyConfigure.cmake")
   add_test(NAME laghu.dependencies.vendored_http3_transport
     COMMAND "${CMAKE_COMMAND}"
       "-DLAGHU_SOURCE=${CMAKE_SOURCE_DIR}"

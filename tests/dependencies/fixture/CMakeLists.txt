@@ -196,6 +196,84 @@ elseif(SCENARIO STREQUAL "mode_vendored_idna_password")
   add_executable(laghu_dependency_mode_consumer consumer.cpp)
   target_link_libraries(laghu_dependency_mode_consumer PRIVATE
     laghu_dependency_libidn2 laghu_dependency_libxcrypt)
+elseif(SCENARIO STREQUAL "autoconf_cross_toolchain_environment")
+  # This configure-only fixture proves the environment sent to Autoconf. It
+  # uses a native compiler merely to obtain a valid --host triple; no vendor
+  # download or target executable is scheduled during configuration.
+  set(CMAKE_CROSSCOMPILING TRUE)
+  set(CMAKE_C_COMPILER "${CMAKE_CXX_COMPILER}")
+  set(CMAKE_C_COMPILER_ARG1 "-fPIC")
+  set(CMAKE_C_COMPILER_ID "${CMAKE_CXX_COMPILER_ID}")
+  find_program(laghu_fixture_ar NAMES ar REQUIRED)
+  find_program(laghu_fixture_ranlib NAMES ranlib REQUIRED)
+  set(CMAKE_AR "${laghu_fixture_ar}")
+  set(CMAKE_RANLIB "${laghu_fixture_ranlib}")
+  set(CMAKE_C_FLAGS "-DFIXTURE_CROSS=1 -I/laghu-fixture/include")
+  set(CMAKE_BUILD_TYPE Release)
+  set(CMAKE_C_FLAGS_RELEASE "-O3")
+  set(CMAKE_EXE_LINKER_FLAGS "-Wl,--as-needed")
+  set(CMAKE_SHARED_LINKER_FLAGS "-Wl,-z,now")
+  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Wl,-z,relro")
+  set(CMAKE_SYSROOT_COMPILE "/laghu-fixture/compile-sysroot")
+  set(CMAKE_SYSROOT_LINK "/laghu-fixture/link-sysroot")
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    execute_process(
+      COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine
+      RESULT_VARIABLE fixture_target_result
+      OUTPUT_VARIABLE fixture_target
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT fixture_target_result EQUAL 0 OR fixture_target STREQUAL "")
+      message(FATAL_ERROR "Laghu dependency fixture cannot determine the Clang target")
+    endif()
+    set(CMAKE_C_COMPILER_TARGET "${fixture_target}")
+  endif()
+  laghu_acquire_vendored_autoconf_dependency(libidn2 laghu_dependency_cross_environment)
+  foreach(property IN ITEMS LAGHU_AUTOCONF_CC LAGHU_AUTOCONF_CFLAGS
+      LAGHU_AUTOCONF_CPPFLAGS LAGHU_AUTOCONF_LDFLAGS)
+    get_target_property(value laghu_dependency_cross_environment "${property}")
+    if(value STREQUAL "" OR value MATCHES "-NOTFOUND$")
+      message(FATAL_ERROR
+        "Laghu dependency fixture cross Autoconf environment is missing: property=${property}")
+    endif()
+  endforeach()
+  get_target_property(autoconf_cc laghu_dependency_cross_environment LAGHU_AUTOCONF_CC)
+  get_target_property(autoconf_cflags laghu_dependency_cross_environment LAGHU_AUTOCONF_CFLAGS)
+  get_target_property(autoconf_cppflags laghu_dependency_cross_environment LAGHU_AUTOCONF_CPPFLAGS)
+  get_target_property(autoconf_ldflags laghu_dependency_cross_environment LAGHU_AUTOCONF_LDFLAGS)
+  foreach(expected IN ITEMS -fPIC)
+    string(FIND "${autoconf_cc}" "${expected}" expected_offset)
+    if(expected_offset EQUAL -1)
+      message(FATAL_ERROR
+        "Laghu dependency fixture cross Autoconf compiler argument is missing: value=${expected}")
+    endif()
+  endforeach()
+  foreach(expected IN ITEMS -DFIXTURE_CROSS=1 -I/laghu-fixture/include -O3
+      --sysroot=/laghu-fixture/compile-sysroot)
+    string(FIND "${autoconf_cflags}" "${expected}" expected_offset)
+    if(expected_offset EQUAL -1)
+      message(FATAL_ERROR
+        "Laghu dependency fixture cross Autoconf C flags are missing: value=${expected}")
+    endif()
+    string(FIND "${autoconf_cppflags}" "${expected}" expected_offset)
+    if(expected_offset EQUAL -1)
+      message(FATAL_ERROR
+        "Laghu dependency fixture cross Autoconf CPP flags are missing: value=${expected}")
+    endif()
+  endforeach()
+  foreach(expected IN ITEMS -Wl,--as-needed -Wl,-z,now -Wl,-z,relro
+      --sysroot=/laghu-fixture/link-sysroot)
+    string(FIND "${autoconf_ldflags}" "${expected}" expected_offset)
+    if(expected_offset EQUAL -1)
+      message(FATAL_ERROR
+        "Laghu dependency fixture cross Autoconf linker flags are missing: value=${expected}")
+    endif()
+  endforeach()
+  if(CMAKE_C_COMPILER_TARGET)
+    string(FIND "${autoconf_cc}" "--target=${CMAKE_C_COMPILER_TARGET}" target_offset)
+    if(target_offset EQUAL -1)
+      message(FATAL_ERROR "Laghu dependency fixture cross Autoconf target is missing")
+    endif()
+  endif()
 elseif(SCENARIO MATCHES "^autoconf_cross_missing_(c_compiler|ar|ranlib)$")
   # Keep this configure-only: the acquisition must reject an incomplete cross
   # toolchain before it schedules a download or invokes a host fallback.
