@@ -35,7 +35,7 @@ using laghu::core::Result;
 using laghu::core::WorkerId;
 
 struct FixedSource final {
-  std::array<std::byte, 131072> storage{};
+  alignas(std::max_align_t) std::array<std::byte, 131072> storage{};
   bool fail{};
 
   static Result<MutableByteView> acquire(void* context, std::size_t minimum) noexcept {
@@ -78,6 +78,7 @@ struct Events final {
   bool paused{};
   bool reject_data{};
   bool data_ended{};
+  bool header_ended{};
 
   static Http2CallbackAction write(void* context, const Http2Event& event) noexcept {
     auto& self = *static_cast<Events*>(context);
@@ -92,6 +93,7 @@ struct Events final {
                                      : Http2CallbackAction::continue_processing;
       case Http2EventKind::header:
         ++self.headers;
+        self.header_ended = self.header_ended || event.end_stream;
         if (self.pause_on_header && !self.paused) {
           self.paused = true;
           return Http2CallbackAction::pause;
@@ -258,7 +260,7 @@ struct OutboundData final {
     const auto stream = client->submit_headers(request_headers, true);
     if (!stream.has_value() || !transfer(*client, *server) ||
         server_events.headers != request_headers.size() ||
-        server_events.last_stream != stream->wire_value()) {
+        server_events.last_stream != stream->wire_value() || !server_events.header_ended) {
       return false;
     }
     const std::array response_headers{

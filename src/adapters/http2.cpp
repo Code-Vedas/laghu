@@ -270,6 +270,7 @@ int on_header(nghttp2_session*, const nghttp2_frame* frame,
   event.stream = stream_id(frame->hd.stream_id);
   event.name = *name_view;
   event.value = *value_view;
+  event.end_stream = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0U;
   event.sensitive = (flags & NGHTTP2_NV_FLAG_NO_INDEX) != 0U;
   return callback_result(state, event, true, true);
 }
