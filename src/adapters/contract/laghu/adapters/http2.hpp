@@ -70,6 +70,7 @@ enum class Http2EventKind : std::uint8_t {
 };
 
 struct Http2Event final {
+  // Byte views are valid only for the duration of the sink callback.
   Http2EventKind kind{Http2EventKind::frame_received};
   Http2StreamId stream{};
   core::ByteView name{};
@@ -87,9 +88,32 @@ struct Http2Event final {
 
 enum class Http2CallbackAction : std::uint8_t {
   continue_processing,
+  // Supported only for header and DATA events. Resume receive() with the
+  // unconsumed input suffix.
   pause,
+  // Supported for header-begin, header, and DATA events. Other uses fail the
+  // session rather than silently ignoring the action.
   reject_stream,
   fail_session,
+};
+
+enum class Http2DataReadState : std::uint8_t { more, end, deferred };
+
+struct Http2DataReadResult final {
+  std::size_t bytes{};
+  Http2DataReadState state{Http2DataReadState::more};
+};
+
+using Http2DataRead = core::Result<Http2DataReadResult> (*)(
+    void*, core::MutableByteView) noexcept;
+
+struct Http2DataProvider final {
+  // The caller owns both fields and must keep them valid until the provider
+  // reports end, its stream closes, or the session is destroyed.
+  void* context{};
+  Http2DataRead read{};
+
+  [[nodiscard]] constexpr bool enabled() const noexcept { return read != nullptr; }
 };
 
 using Http2EventWrite = Http2CallbackAction (*)(void*, const Http2Event&) noexcept;
@@ -118,6 +142,8 @@ class Http2Session final {
   Http2Session& operator=(Http2Session&& other) noexcept;
   ~Http2Session();
 
+  // The arena object must outlive the session. Resetting it invalidates the
+  // session and all subsequent operations, but the arena object must remain.
   [[nodiscard]] static core::Result<Http2Session> create(
       core::WorkerId worker, Http2Role role, core::BoundedArena& arena,
       Http2Limits limits, Http2EventSink event_sink = {},
@@ -137,6 +163,10 @@ class Http2Session final {
       bool end_stream) noexcept;
   [[nodiscard]] core::Result<void> submit_settings(
       std::span<const Http2Setting> settings) noexcept;
+  [[nodiscard]] core::Result<void> submit_data(
+      Http2StreamId stream, Http2DataProvider& provider, bool end_stream) noexcept;
+  // Resumes only an outbound provider that previously reported deferred.
+  [[nodiscard]] core::Result<void> resume_data(Http2StreamId stream) noexcept;
   [[nodiscard]] core::Result<void> submit_reset(Http2StreamId stream,
                                                 std::uint32_t error_code) noexcept;
   [[nodiscard]] core::Result<void> submit_goaway(std::int32_t last_stream_id,
@@ -172,6 +202,7 @@ static_assert(std::is_trivially_copyable_v<Http2Limits>);
 static_assert(std::is_trivially_copyable_v<Http2Header>);
 static_assert(std::is_trivially_copyable_v<Http2Event>);
 static_assert(std::is_trivially_copyable_v<Http2EventSink>);
+static_assert(std::is_trivially_copyable_v<Http2DataProvider>);
 static_assert(!std::is_copy_constructible_v<Http2Session>);
 
 }  // namespace laghu::adapters

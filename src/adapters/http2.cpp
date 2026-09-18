@@ -34,8 +34,11 @@ struct NativeState final {
   AllocationHeader* free_allocations{};
   std::array<std::int32_t, maximum_pending_resets> pending_reset_streams{};
   std::size_t pending_reset_count{};
+  core::Error data_provider_error{core::ErrorDomain::core, core::ErrorCode::invalid_state,
+                                  0, "HTTP/2 data provider failed"};
   bool input_limit_failed{};
   bool pending_reset_overflow{};
+  bool data_provider_failed{};
 };
 
 [[nodiscard]] core::DependencyStatus native_status(int code) noexcept {
@@ -181,9 +184,49 @@ void* memory_realloc(void* pointer, std::size_t size, void* context) noexcept {
     }
     state.pending_reset_streams[state.pending_reset_count] = rejected_stream;
     ++state.pending_reset_count;
-    return 0;
+    return NGHTTP2_ERR_PAUSE;
   }
   return NGHTTP2_ERR_CALLBACK_FAILURE;
+}
+
+ssize_t on_data_source_read(nghttp2_session*, std::int32_t, std::uint8_t* buffer,
+                            std::size_t length, std::uint32_t* data_flags,
+                            nghttp2_data_source* source, void* user_data) noexcept {
+  auto& state = *static_cast<NativeState*>(user_data);
+  auto* const provider = static_cast<Http2DataProvider*>(source->ptr);
+  if (provider == nullptr || !provider->enabled()) {
+    state.data_provider_error = core_error(core::ErrorCode::invalid_state,
+                                           "HTTP/2 data provider is inactive");
+    state.data_provider_failed = true;
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  const auto output = core::MutableByteView::from(
+      {reinterpret_cast<std::byte*>(buffer), length});
+  if (!output.has_value()) {
+    state.data_provider_error = output.error();
+    state.data_provider_failed = true;
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  const auto produced = provider->read(provider->context, *output);
+  if (!produced.has_value()) {
+    state.data_provider_error = produced.error();
+    state.data_provider_failed = true;
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  if (produced->bytes > length ||
+      (produced->state == Http2DataReadState::deferred && produced->bytes != 0U)) {
+    state.data_provider_error = core_error(core::ErrorCode::invalid_range,
+                                           "HTTP/2 data provider returned an invalid size");
+    state.data_provider_failed = true;
+    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  }
+  if (produced->state == Http2DataReadState::deferred) {
+    return NGHTTP2_ERR_DEFERRED;
+  }
+  if (produced->state == Http2DataReadState::end) {
+    *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+  }
+  return static_cast<ssize_t>(produced->bytes);
 }
 
 int on_begin_headers(nghttp2_session*, const nghttp2_frame* frame,
@@ -333,6 +376,10 @@ core::Result<Http2Session> Http2Session::create(
     core::WorkerId worker, Http2Role role, core::BoundedArena& arena,
     Http2Limits limits, Http2EventSink event_sink,
     DependencyLogSink log_sink) noexcept {
+  if (role != Http2Role::client && role != Http2Role::server) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_input,
+                                      "HTTP/2 role is invalid")};
+  }
   if (const auto valid = validate_limits(limits); !valid.has_value()) {
     return std::unexpected{valid.error()};
   }
@@ -345,7 +392,9 @@ core::Result<Http2Session> Http2Session::create(
     return std::unexpected{state_bytes.error()};
   }
   auto* const state = ::new (state_bytes->data()) NativeState{
-      &arena, worker, limits, event_sink, log_sink, 0, 0, nullptr, {}, 0, false, false};
+      &arena, worker, limits, event_sink, log_sink, 0, 0, nullptr, {}, 0,
+      core_error(core::ErrorCode::invalid_state, "HTTP/2 data provider failed"),
+      false, false, false};
 
   nghttp2_session_callbacks* callbacks{};
   int result = nghttp2_session_callbacks_new(&callbacks);
@@ -438,8 +487,12 @@ core::Result<core::ByteView> Http2Session::next_output() noexcept {
   const std::uint8_t* data{};
   const ssize_t result = nghttp2_session_mem_send(
       static_cast<nghttp2_session*>(native_session_), &data);
+  auto& state = *static_cast<NativeState*>(native_state_);
+  if (state.data_provider_failed) {
+    state.data_provider_failed = false;
+    return std::unexpected{state.data_provider_error};
+  }
   if (result < 0) {
-    auto& state = *static_cast<NativeState*>(native_state_);
     return std::unexpected{native_error(core::DependencyOperation::http2_send,
                                         static_cast<int>(result), state.log_sink)};
   }
@@ -541,6 +594,47 @@ core::Result<void> Http2Session::submit_settings(
   auto& state = *static_cast<NativeState*>(native_state_);
   const int result = nghttp2_submit_settings(static_cast<nghttp2_session*>(native_session_),
                                               NGHTTP2_FLAG_NONE, entries.data(), settings.size());
+  if (result != 0) {
+    return std::unexpected{native_error(core::DependencyOperation::http2_submit,
+                                        result, state.log_sink)};
+  }
+  return {};
+}
+
+core::Result<void> Http2Session::submit_data(
+    Http2StreamId stream, Http2DataProvider& provider, bool end_stream) noexcept {
+  if (const auto valid = require_valid(); !valid.has_value()) {
+    return std::unexpected{valid.error()};
+  }
+  if (!stream.valid() || !provider.enabled()) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_input,
+                                      "HTTP/2 data submission is invalid")};
+  }
+  nghttp2_data_provider native_provider{};
+  native_provider.source.ptr = &provider;
+  native_provider.read_callback = on_data_source_read;
+  auto& state = *static_cast<NativeState*>(native_state_);
+  const std::uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
+  const int result = nghttp2_submit_data(static_cast<nghttp2_session*>(native_session_),
+                                         flags, stream.wire_value(), &native_provider);
+  if (result != 0) {
+    return std::unexpected{native_error(core::DependencyOperation::http2_submit,
+                                        result, state.log_sink)};
+  }
+  return {};
+}
+
+core::Result<void> Http2Session::resume_data(Http2StreamId stream) noexcept {
+  if (const auto valid = require_valid(); !valid.has_value()) {
+    return std::unexpected{valid.error()};
+  }
+  if (!stream.valid()) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_input,
+                                      "HTTP/2 stream ID is invalid")};
+  }
+  auto& state = *static_cast<NativeState*>(native_state_);
+  const int result = nghttp2_session_resume_data(
+      static_cast<nghttp2_session*>(native_session_), stream.wire_value());
   if (result != 0) {
     return std::unexpected{native_error(core::DependencyOperation::http2_submit,
                                         result, state.log_sink)};

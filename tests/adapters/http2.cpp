@@ -14,6 +14,9 @@
 namespace {
 
 using laghu::adapters::Http2CallbackAction;
+using laghu::adapters::Http2DataProvider;
+using laghu::adapters::Http2DataReadResult;
+using laghu::adapters::Http2DataReadState;
 using laghu::adapters::Http2Event;
 using laghu::adapters::Http2EventKind;
 using laghu::adapters::Http2EventSink;
@@ -121,6 +124,32 @@ struct Events final {
         break;
     }
     return Http2CallbackAction::continue_processing;
+  }
+};
+
+struct OutboundData final {
+  ByteView bytes{};
+  std::size_t offset{};
+  bool defer_once{};
+
+  static Result<Http2DataReadResult> read(void* context,
+                                          MutableByteView output) noexcept {
+    auto& self = *static_cast<OutboundData*>(context);
+    if (self.defer_once) {
+      self.defer_once = false;
+      return Http2DataReadResult{0, Http2DataReadState::deferred};
+    }
+    const std::size_t remaining = self.bytes.size() - self.offset;
+    const std::size_t count = remaining < output.size() ? remaining : output.size();
+    const auto source = self.bytes.slice(self.offset, count);
+    if (!source.has_value()) {
+      return std::unexpected{source.error()};
+    }
+    std::copy(source->span().begin(), source->span().end(), output.span().begin());
+    self.offset += count;
+    return Http2DataReadResult{
+        count, self.offset == self.bytes.size() ? Http2DataReadState::end
+                                                : Http2DataReadState::more};
   }
 };
 
@@ -298,6 +327,24 @@ struct Events final {
       return false;
     }
 
+    const auto outbound_stream = client->submit_headers(headers, false);
+    if (!outbound_stream.has_value() || !transfer(*client, *server)) {
+      return false;
+    }
+    OutboundData outbound{bytes("outbound"), 0, true};
+    Http2DataProvider provider{&outbound, OutboundData::read};
+    if (!client->submit_data(*outbound_stream, provider, true).has_value()) {
+      return false;
+    }
+    const auto deferred = client->next_output();
+    const std::size_t data_events_before_resume = server_events.data_events;
+    if (!deferred.has_value() || !deferred->empty() ||
+        !client->resume_data(*outbound_stream).has_value() ||
+        !transfer(*client, *server) ||
+        server_events.data_events <= data_events_before_resume || !server_events.data_ended) {
+      return false;
+    }
+
     const auto empty_stream = client->submit_headers(headers, false);
     if (!empty_stream.has_value() || !transfer(*client, *server) ||
         !receive_data_frame(*server, empty_stream->wire_value(), {}, true) ||
@@ -324,10 +371,19 @@ struct Events final {
     if (!rejected_input.has_value()) {
       return false;
     }
-    const auto rejected = server->receive(*rejected_input);
-    if (!rejected.has_value() || *rejected != rejected_input->size() ||
-        !transfer(*server, *client)) {
-      return false;
+    std::size_t rejected_offset{};
+    while (rejected_offset < rejected_input->size()) {
+      const auto remaining = rejected_input->slice(
+          rejected_offset, rejected_input->size() - rejected_offset);
+      if (!remaining.has_value()) {
+        return false;
+      }
+      const auto rejected = server->receive(*remaining);
+      if (!rejected.has_value() || *rejected == 0U ||
+          *rejected > remaining->size() || !transfer(*server, *client)) {
+        return false;
+      }
+      rejected_offset += *rejected;
     }
     return client_events.reset >= 2U;
   }();
@@ -535,6 +591,11 @@ struct Events final {
   FixedSource source{};
   MemoryBudget budget{*worker, 512};
   BoundedArena tiny_arena{*worker, budget, block_source(source), 128, 512};
+  const auto invalid_role = Http2Session::create(
+      *worker, static_cast<Http2Role>(255), tiny_arena, limits());
+  if (invalid_role.has_value() || invalid_role.error().code() != ErrorCode::invalid_input) {
+    return false;
+  }
   const auto exhausted = Http2Session::create(*worker, Http2Role::client, tiny_arena, limits());
   const bool bounded_failure =
       !exhausted.has_value() && exhausted.error().code() == ErrorCode::exhaustion &&
