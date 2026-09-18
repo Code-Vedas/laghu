@@ -332,7 +332,9 @@ bool encrypted_quic_packet_loopback() noexcept {
     const auto output = *core::MutableByteView::from(packet);
     const auto written = client->write_packet(output, -1, {}, false, 1);
     if (!written.has_value() || written->packet_bytes == 0U ||
-        written->path.local.port != 4433 || written->path.remote.port != 4434 ||
+        written->path.local.port != 4433 || written->path.remote.port != 4434) return false;
+    const auto duplicate = client->write_packet(output, -1, {}, false, 1);
+    if (duplicate.has_value() || duplicate.error().code() != core::ErrorCode::invalid_state ||
         !client->packet_transmitted(1).has_value()) return false;
     const auto wire = *core::ByteView::from(
         std::span<const std::byte>{packet}.first(written->packet_bytes));
@@ -380,6 +382,11 @@ bool h3_stream_smoke_flow() noexcept {
     if (!client.has_value() || !server.has_value() ||
         !client->bind_streams(2, 6, 10).has_value() ||
         !server->bind_streams(3, 7, 11).has_value()) return false;
+    std::array<std::byte, 16385> oversized_value{};
+    const std::array oversized_headers{adapters::Http3Header{
+        bytes(":path"), *core::ByteView::from(oversized_value)}};
+    if (client->submit_request(0, oversized_headers).has_value() ||
+        server->submit_response(0, oversized_headers).has_value()) return false;
     const std::array headers{
         adapters::Http3Header{bytes(":method"), bytes("GET")},
         adapters::Http3Header{bytes(":scheme"), bytes("https")},
@@ -392,7 +399,7 @@ bool h3_stream_smoke_flow() noexcept {
       if (!output.has_value()) return false;
       if (output->stream_id < 0) continue;
       const auto consumed = server->receive(output->stream_id, output->bytes, output->fin);
-      if (!consumed.has_value() || *consumed != output->bytes.size() ||
+      if (!consumed.has_value() || *consumed > output->bytes.size() ||
           !client->mark_output_written(output->stream_id, output->bytes.size()).has_value() ||
           !client->acknowledge_stream_data(
               output->stream_id, output->bytes.size()).has_value()) {

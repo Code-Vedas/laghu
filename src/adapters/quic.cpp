@@ -657,7 +657,12 @@ core::Result<QuicPacketWrite> QuicSession::write_packet(
     core::MutableByteView output, std::int64_t stream_id, core::ByteView stream_data,
     bool fin, std::uint64_t now_ns) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return std::unexpected{valid.error()};
-  const auto required = static_cast<State*>(state_)->maximum_packet_bytes;
+  auto& state = *static_cast<State*>(state_);
+  if (state.packet_pending_transmit) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "QUIC packet transmission is still pending")};
+  }
+  const auto required = state.maximum_packet_bytes;
   if (output.size() < required) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                       "QUIC output is smaller than the configured packet buffer")};
@@ -673,7 +678,6 @@ core::Result<QuicPacketWrite> QuicSession::write_packet(
       nullptr, reinterpret_cast<std::uint8_t*>(output.data()), output.size(), &consumed,
       flags, stream_id, stream_data.empty() ? nullptr : &vector,
       stream_data.empty() ? 0U : 1U, now_ns);
-  auto& state = *static_cast<State*>(state_);
   if (result < 0 && terminal_error(static_cast<int>(result))) state.terminal = true;
   if (const auto random = require_random(state); !random.has_value()) {
     return std::unexpected{random.error()};

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <new>
 #include <span>
 #include <utility>
@@ -19,6 +20,7 @@ struct State final {
   nghttp3_mem native_memory{};
   Http3EventSink events{};
   DependencyLogSink log{};
+  std::size_t maximum_field_section_bytes{};
   bool terminal{};
 };
 
@@ -85,17 +87,20 @@ struct NativeHeaders final {
 };
 
 [[nodiscard]] core::Result<NativeHeaders> native_headers(
-    std::span<const Http3Header> headers) noexcept {
+    std::span<const Http3Header> headers, std::size_t maximum_bytes) noexcept {
   if (headers.empty() || headers.size() > NativeHeaders::capacity) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                       "HTTP/3 headers must contain 1 to 64 fields")};
   }
   NativeHeaders result{};
+  std::size_t total{};
   for (const auto& header : headers) {
-    if (header.name.empty()) {
+    if (header.name.empty() || header.name.size() > maximum_bytes - total ||
+        header.value.size() > maximum_bytes - total - header.name.size()) {
       return std::unexpected{core_error(core::ErrorCode::invalid_input,
-                                        "HTTP/3 header name must not be empty")};
+                                        "HTTP/3 headers exceed the configured field-section limit")};
     }
+    total += header.name.size() + header.value.size();
     result.values[result.size] = {
                       const_cast<std::uint8_t*>(reinterpret_cast<const std::uint8_t*>(header.name.data())),
                       const_cast<std::uint8_t*>(reinterpret_cast<const std::uint8_t*>(header.value.data())),
@@ -118,7 +123,8 @@ core::Result<Http3Session> Http3Session::create(
     Http3Role role, NativeMemoryPool& memory, Http3Limits limits,
     Http3EventSink events, DependencyLogSink log_sink) noexcept {
   if ((role != Http3Role::client && role != Http3Role::server) ||
-      limits.maximum_field_section_bytes == 0) {
+      limits.maximum_field_section_bytes == 0 ||
+      limits.maximum_field_section_bytes > std::numeric_limits<std::size_t>::max()) {
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                       "HTTP/3 role or field-section limit is invalid")};
   }
@@ -131,7 +137,8 @@ core::Result<Http3Session> Http3Session::create(
   void* const storage = internal::arena_malloc(sizeof(State), &allocator);
   if (storage == nullptr) return std::unexpected{core_error(
       core::ErrorCode::exhaustion, "HTTP/3 session storage is exhausted")};
-  auto* const state = ::new (storage) State{{&memory}, {}, events, log_sink, false};
+  auto* const state = ::new (storage) State{{&memory}, {}, events, log_sink,
+      static_cast<std::size_t>(limits.maximum_field_section_bytes), false};
   nghttp3_callbacks callbacks{};
   callbacks.begin_headers = begin_headers;
   callbacks.recv_header = recv_header;
@@ -192,7 +199,7 @@ core::Result<std::size_t> Http3Session::receive(std::int64_t stream, core::ByteV
     return std::unexpected{native_error(core::DependencyOperation::http3_receive,
                                         static_cast<int>(result), state.log)};
   }
-  return data.size();
+  return static_cast<std::size_t>(result);
 }
 core::Result<Http3Output> Http3Session::next_output() noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return std::unexpected{valid.error()};
@@ -230,7 +237,8 @@ core::Result<void> Http3Session::acknowledge_stream_data(std::int64_t stream,
 core::Result<void> Http3Session::submit_request(std::int64_t stream,
                                                 std::span<const Http3Header> headers) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return valid;
-  const auto native = native_headers(headers);
+  const auto native = native_headers(
+      headers, static_cast<State*>(state_)->maximum_field_section_bytes);
   if (!native.has_value()) return std::unexpected{native.error()};
   const int result = nghttp3_conn_submit_request(static_cast<nghttp3_conn*>(connection_), stream,
                                                   native->values.data(), native->size, nullptr, nullptr);
@@ -241,7 +249,8 @@ core::Result<void> Http3Session::submit_request(std::int64_t stream,
 core::Result<void> Http3Session::submit_response(std::int64_t stream,
                                                  std::span<const Http3Header> headers) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return valid;
-  const auto native = native_headers(headers);
+  const auto native = native_headers(
+      headers, static_cast<State*>(state_)->maximum_field_section_bytes);
   if (!native.has_value()) return std::unexpected{native.error()};
   const int result = nghttp3_conn_submit_response(static_cast<nghttp3_conn*>(connection_), stream,
                                                    native->values.data(), native->size, nullptr);
