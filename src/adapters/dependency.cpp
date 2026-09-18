@@ -51,6 +51,15 @@ namespace {
     case core::DependencyOperation::http2_receive:
     case core::DependencyOperation::http2_send:
     case core::DependencyOperation::http2_submit:
+    case core::DependencyOperation::quic_session:
+    case core::DependencyOperation::quic_receive:
+    case core::DependencyOperation::quic_send:
+    case core::DependencyOperation::quic_stream:
+    case core::DependencyOperation::quic_expiry:
+    case core::DependencyOperation::http3_session:
+    case core::DependencyOperation::http3_receive:
+    case core::DependencyOperation::http3_send:
+    case core::DependencyOperation::http3_submit:
       return value;
   }
   return core::DependencyOperation::none;
@@ -143,6 +152,24 @@ namespace {
       return "http2_send";
     case core::DependencyOperation::http2_submit:
       return "http2_submit";
+    case core::DependencyOperation::quic_session:
+      return "quic_session";
+    case core::DependencyOperation::quic_receive:
+      return "quic_receive";
+    case core::DependencyOperation::quic_send:
+      return "quic_send";
+    case core::DependencyOperation::quic_stream:
+      return "quic_stream";
+    case core::DependencyOperation::quic_expiry:
+      return "quic_expiry";
+    case core::DependencyOperation::http3_session:
+      return "http3_session";
+    case core::DependencyOperation::http3_receive:
+      return "http3_receive";
+    case core::DependencyOperation::http3_send:
+      return "http3_send";
+    case core::DependencyOperation::http3_submit:
+      return "http3_submit";
   }
   return "none";
 }

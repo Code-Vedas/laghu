@@ -596,6 +596,13 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
   endif()
   add_library("${private_target}" INTERFACE)
   target_link_libraries("${private_target}" INTERFACE "${vendored_target}")
+  if(id STREQUAL ngtcp2 OR id STREQUAL nghttp3)
+    # These upstream targets publish only their installed include directory.
+    # Laghu consumes them directly from FetchContent's source/build trees.
+    target_include_directories("${private_target}" SYSTEM INTERFACE
+      "${${content_name}_SOURCE_DIR}/lib/includes"
+      "${${content_name}_BINARY_DIR}/lib/includes")
+  endif()
   if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
     add_dependencies("${private_target}" "${static_proof_target}")
   endif()
