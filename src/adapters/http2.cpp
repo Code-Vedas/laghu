@@ -19,7 +19,8 @@ namespace {
 constexpr std::size_t maximum_pending_resets = 64;
 
 struct alignas(std::max_align_t) AllocationHeader final {
-  std::size_t size{};
+  std::size_t capacity{};
+  std::size_t used_size{};
   AllocationHeader* next{};
 };
 
@@ -71,7 +72,7 @@ struct NativeState final {
   const std::size_t payload_size = size == 0U ? 1U : size;
   AllocationHeader* previous{};
   AllocationHeader* reusable = state.free_allocations;
-  while (reusable != nullptr && reusable->size < payload_size) {
+  while (reusable != nullptr && reusable->capacity < payload_size) {
     previous = reusable;
     reusable = reusable->next;
   }
@@ -81,6 +82,7 @@ struct NativeState final {
     } else {
       previous->next = reusable->next;
     }
+    reusable->used_size = payload_size;
     reusable->next = nullptr;
     return static_cast<void*>(reusable + 1);
   }
@@ -96,7 +98,8 @@ struct NativeState final {
   if (!bytes.has_value()) {
     return nullptr;
   }
-  auto* const header = ::new (bytes->data()) AllocationHeader{payload_size, nullptr};
+  auto* const header = ::new (bytes->data()) AllocationHeader{
+      payload_size, payload_size, nullptr};
   return static_cast<void*>(header + 1);
 }
 
@@ -137,14 +140,15 @@ void* memory_realloc(void* pointer, std::size_t size, void* context) noexcept {
     return nullptr;
   }
   auto* const old_header = static_cast<AllocationHeader*>(pointer) - 1;
-  if (size <= old_header->size) {
+  if (size <= old_header->capacity) {
+    old_header->used_size = size;
     return pointer;
   }
   void* const output = arena_allocate(state, size);
   if (output == nullptr) {
     return nullptr;
   }
-  const std::size_t copied = old_header->size < size ? old_header->size : size;
+  const std::size_t copied = old_header->used_size < size ? old_header->used_size : size;
   std::memcpy(output, pointer, copied);
   memory_free(pointer, context);
   return output;
