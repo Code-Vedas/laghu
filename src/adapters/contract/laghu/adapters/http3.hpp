@@ -53,6 +53,8 @@ class Http3Session final {
   Http3Session& operator=(Http3Session&& other) noexcept;
   ~Http3Session();
 
+  // The arena object must outlive the session. The arena cannot be reset while
+  // this session holds its pin.
   [[nodiscard]] static core::Result<Http3Session> create(
       Http3Role role, core::WorkerId worker, core::BoundedArena& arena,
       Http3Limits limits, Http3EventSink events = {},
@@ -64,8 +66,10 @@ class Http3Session final {
                                                   core::ByteView data,
                                                   bool fin) noexcept;
   [[nodiscard]] core::Result<Http3Output> next_output() noexcept;
-  [[nodiscard]] core::Result<void> acknowledge_output(std::int64_t stream_id,
+  [[nodiscard]] core::Result<void> mark_output_written(std::int64_t stream_id,
                                                        std::size_t bytes) noexcept;
+  [[nodiscard]] core::Result<void> acknowledge_stream_data(std::int64_t stream_id,
+                                                           std::uint64_t bytes) noexcept;
   [[nodiscard]] core::Result<void> submit_request(
       std::int64_t stream_id, std::span<const Http3Header> headers) noexcept;
   [[nodiscard]] core::Result<void> submit_response(

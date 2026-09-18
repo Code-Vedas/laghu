@@ -95,7 +95,7 @@ class BoundedArena final {
   BoundedArena& operator=(BoundedArena&&) = delete;
 
   ~BoundedArena() {
-    if (reservation_.is_active()) {
+    if (reservation_.is_active() || live_pins_ != 0U) {
       std::terminate();
     }
   }

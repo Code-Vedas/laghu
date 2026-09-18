@@ -188,7 +188,9 @@ bool h3_stream_smoke_flow() noexcept {
       if (!output.has_value()) return false;
       if (output->stream_id < 0) continue;
       if (!server->receive(output->stream_id, output->bytes, output->fin).has_value() ||
-          !client->acknowledge_output(output->stream_id, output->bytes.size()).has_value()) {
+          !client->mark_output_written(output->stream_id, output->bytes.size()).has_value() ||
+          !client->acknowledge_stream_data(
+              output->stream_id, output->bytes.size()).has_value()) {
         return false;
       }
     }

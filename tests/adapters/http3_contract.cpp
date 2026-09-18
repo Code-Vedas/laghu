@@ -8,5 +8,11 @@ static_assert(!std::is_copy_constructible_v<laghu::adapters::QuicSession>);
 static_assert(!std::is_copy_constructible_v<laghu::adapters::Http3Session>);
 static_assert(std::is_trivially_copyable_v<laghu::adapters::QuicConnectionId>);
 static_assert(std::is_trivially_copyable_v<laghu::adapters::Http3Event>);
+static_assert(std::is_member_function_pointer_v<
+    decltype(&laghu::adapters::QuicSession::open_unidirectional_stream)>);
+static_assert(std::is_member_function_pointer_v<
+    decltype(&laghu::adapters::Http3Session::mark_output_written)>);
+static_assert(std::is_member_function_pointer_v<
+    decltype(&laghu::adapters::Http3Session::acknowledge_stream_data)>);
 
 int main() { return 0; }

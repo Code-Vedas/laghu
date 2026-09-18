@@ -194,10 +194,19 @@ core::Result<Http3Output> Http3Session::next_output() noexcept {
       reinterpret_cast<const std::byte*>(vector.base), vector.len});
   return Http3Output{stream, view, fin != 0};
 }
-core::Result<void> Http3Session::acknowledge_output(std::int64_t stream,
-                                                    std::size_t bytes) noexcept {
+core::Result<void> Http3Session::mark_output_written(std::int64_t stream,
+                                                     std::size_t bytes) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return valid;
   const int result = nghttp3_conn_add_write_offset(static_cast<nghttp3_conn*>(connection_), stream, bytes);
+  if (result != 0) return std::unexpected{native_error(core::DependencyOperation::http3_send,
+      result, static_cast<State*>(state_)->log)};
+  return {};
+}
+core::Result<void> Http3Session::acknowledge_stream_data(std::int64_t stream,
+                                                         std::uint64_t bytes) noexcept {
+  if (const auto valid = require_valid(); !valid.has_value()) return valid;
+  const int result = nghttp3_conn_add_ack_offset(
+      static_cast<nghttp3_conn*>(connection_), stream, bytes);
   if (result != 0) return std::unexpected{native_error(core::DependencyOperation::http3_send,
       result, static_cast<State*>(state_)->log)};
   return {};

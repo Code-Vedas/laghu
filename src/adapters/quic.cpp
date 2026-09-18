@@ -596,6 +596,19 @@ core::Result<std::int64_t> QuicSession::open_bidirectional_stream() noexcept {
   return stream;
 }
 
+core::Result<std::int64_t> QuicSession::open_unidirectional_stream() noexcept {
+  if (const auto valid = require_valid(); !valid.has_value()) return std::unexpected{valid.error()};
+  std::int64_t stream{};
+  const int result = ngtcp2_conn_open_uni_stream(static_cast<ngtcp2_conn*>(connection_), &stream,
+                                                  nullptr);
+  if (const auto random = require_random(*static_cast<State*>(state_)); !random.has_value()) {
+    return std::unexpected{random.error()};
+  }
+  if (result != 0) return std::unexpected{native_error(core::DependencyOperation::quic_stream,
+      result, static_cast<State*>(state_)->log)};
+  return stream;
+}
+
 core::Result<void> QuicSession::reset_stream(std::int64_t stream, std::uint64_t code) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return valid;
   const int result = ngtcp2_conn_shutdown_stream_write(static_cast<ngtcp2_conn*>(connection_),

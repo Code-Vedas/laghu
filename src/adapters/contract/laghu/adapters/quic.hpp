@@ -158,6 +158,8 @@ class QuicSession final {
   QuicSession& operator=(QuicSession&& other) noexcept;
   ~QuicSession();
 
+  // The arena object must outlive the session. The arena cannot be reset while
+  // this session holds its pin.
   [[nodiscard]] static core::Result<QuicSession> create(
       QuicRole role, const QuicConnectionId& destination,
       const QuicConnectionId& source, core::BoundedArena& arena,
@@ -172,6 +174,7 @@ class QuicSession final {
       core::MutableByteView output, std::int64_t stream_id,
       core::ByteView stream_data, bool fin, std::uint64_t now_ns) noexcept;
   [[nodiscard]] core::Result<std::int64_t> open_bidirectional_stream() noexcept;
+  [[nodiscard]] core::Result<std::int64_t> open_unidirectional_stream() noexcept;
   [[nodiscard]] core::Result<void> reset_stream(std::int64_t stream_id,
                                                 std::uint64_t code) noexcept;
   [[nodiscard]] core::Result<void> stop_sending(std::int64_t stream_id,
