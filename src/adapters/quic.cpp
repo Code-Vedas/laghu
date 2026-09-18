@@ -464,6 +464,7 @@ core::Result<QuicSession> QuicSession::create(
       destination.worker().value() != source.worker().value() ||
       destination.generation().value() != source.generation().value() ||
       limits.maximum_packet_bytes < NGTCP2_MAX_UDP_PAYLOAD_SIZE ||
+      limits.maximum_packet_bytes > NGTCP2_MAX_TX_UDP_PAYLOAD_SIZE ||
       crypto.random_fill == nullptr || crypto.start == nullptr ||
       crypto.receive == nullptr || crypto.retry == nullptr || crypto.update == nullptr) {
     return std::unexpected{core_error(core::ErrorCode::invalid_input,

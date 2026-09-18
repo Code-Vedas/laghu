@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 
@@ -98,8 +99,15 @@ bool invalid_metadata_and_allocation_fail() noexcept {
   const auto h3 = adapters::Http3Session::create(adapters::Http3Role::client, worker,
                                                   arena, {1024, 0, 0});
   const auto first = adapters::QuicConnectionId::create(bytes("12345678"), worker, generation);
+  const auto same_worker = adapters::QuicConnectionId::create(bytes("abcdefgh"), worker, generation);
   const auto second = adapters::QuicConnectionId::create(bytes("abcdefgh"), other, generation);
-  return !oversized.has_value() && !h3.has_value() && first.has_value() && second.has_value();
+  if (!first.has_value() || !same_worker.has_value()) return false;
+  const auto excessive_packet = adapters::QuicSession::create(adapters::QuicRole::client,
+      *first, *same_worker, arena,
+      {65536, 16384, 8, 8, std::numeric_limits<std::uint16_t>::max()}, crypto_callbacks());
+  return !oversized.has_value() && !h3.has_value() && second.has_value() &&
+         !excessive_packet.has_value() &&
+         excessive_packet.error().code() == core::ErrorCode::invalid_input;
 }
 
 bool malformed_inputs_are_typed() noexcept {
