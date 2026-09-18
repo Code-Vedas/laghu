@@ -111,6 +111,12 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/contract/laghu/adapters/structured_data.hpp
       src/adapters/structured_data.cpp)
   endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES http2 http2_feature_index)
+  if(NOT http2_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/http2.hpp
+      src/adapters/http2.cpp)
+  endif()
   set(entries)
   foreach(input IN LISTS inputs)
     set(path "${CMAKE_SOURCE_DIR}/${input}")

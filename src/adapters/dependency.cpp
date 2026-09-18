@@ -47,6 +47,10 @@ namespace {
     case core::DependencyOperation::idna_lookup:
     case core::DependencyOperation::password_verify:
     case core::DependencyOperation::json_parse:
+    case core::DependencyOperation::http2_session:
+    case core::DependencyOperation::http2_receive:
+    case core::DependencyOperation::http2_send:
+    case core::DependencyOperation::http2_submit:
       return value;
   }
   return core::DependencyOperation::none;
@@ -131,6 +135,14 @@ namespace {
       return "password_verify";
     case core::DependencyOperation::json_parse:
       return "json_parse";
+    case core::DependencyOperation::http2_session:
+      return "http2_session";
+    case core::DependencyOperation::http2_receive:
+      return "http2_receive";
+    case core::DependencyOperation::http2_send:
+      return "http2_send";
+    case core::DependencyOperation::http2_submit:
+      return "http2_submit";
   }
   return "none";
 }
