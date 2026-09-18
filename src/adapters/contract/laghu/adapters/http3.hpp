@@ -37,6 +37,7 @@ struct Http3Limits final {
 };
 
 struct Http3Output final {
+  // The byte view remains valid only until the next operation on this session.
   std::int64_t stream_id{-1};
   core::ByteView bytes{};
   bool fin{};

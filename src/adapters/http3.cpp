@@ -240,7 +240,9 @@ core::Result<void> Http3Session::shutdown() noexcept {
   return {};
 }
 void Http3Session::release() noexcept {
-  if (connection_ != nullptr) nghttp3_conn_del(static_cast<nghttp3_conn*>(connection_));
+  if (connection_ != nullptr && arena_ != nullptr && arena_->generation() == generation_) {
+    nghttp3_conn_del(static_cast<nghttp3_conn*>(connection_));
+  }
   connection_ = nullptr; state_ = nullptr; arena_ = nullptr; generation_ = 0;
 }
 void Http3Session::move_from(Http3Session&& other) noexcept {
