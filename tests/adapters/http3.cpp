@@ -125,7 +125,7 @@ bool malformed_inputs_are_typed() noexcept {
   return reset_arena(arena, worker) && passed;
 }
 
-bool arena_reset_invalidates_sessions_safely() noexcept {
+bool arena_reset_requires_session_cleanup() noexcept {
   auto worker = *core::WorkerId::from_uint64(1);
   auto generation = *core::GenerationId::from_uint64(2);
   core::MemoryBudget budget{worker, 1024U * 1024U};
@@ -135,16 +135,17 @@ bool arena_reset_invalidates_sessions_safely() noexcept {
   auto destination = *adapters::QuicConnectionId::create(
       bytes("destination-id"), worker, generation);
   auto source_id = *adapters::QuicConnectionId::create(bytes("source-id"), worker, generation);
-  auto quic = adapters::QuicSession::create(adapters::QuicRole::client, destination,
-      source_id, arena, {65536, 16384, 8, 8, 1500}, crypto_callbacks());
-  auto h3 = adapters::Http3Session::create(adapters::Http3Role::client, worker, arena,
-                                            {16384, 0, 0});
-  if (!quic.has_value() || !h3.has_value() || !reset_arena(arena, worker)) return false;
-  std::array<std::byte, 1500> packet{};
-  const auto output = *core::MutableByteView::from(packet);
-  return quic->expiry_ns() == 0U &&
-         !quic->write_packet(output, -1, {}, false, 1).has_value() &&
-         !h3->next_output().has_value();
+  {
+    auto quic = adapters::QuicSession::create(adapters::QuicRole::client, destination,
+        source_id, arena, {65536, 16384, 8, 8, 1500}, crypto_callbacks());
+    auto h3 = adapters::Http3Session::create(adapters::Http3Role::client, worker, arena,
+                                              {16384, 0, 0});
+    if (!quic.has_value() || !h3.has_value() || reset_arena(arena, worker)) return false;
+    std::array<std::byte, 1200> packet{};
+    const auto output = *core::MutableByteView::from(packet);
+    if (quic->write_packet(output, -1, {}, false, 1).has_value()) return false;
+  }
+  return reset_arena(arena, worker);
 }
 
 struct HeaderEvents final {
@@ -185,7 +186,7 @@ bool h3_stream_smoke_flow() noexcept {
     for (std::size_t attempt = 0; attempt < 16 && events.headers < headers.size(); ++attempt) {
       const auto output = client->next_output();
       if (!output.has_value()) return false;
-      if (output->stream_id < 0 || output->bytes.empty()) continue;
+      if (output->stream_id < 0) continue;
       if (!server->receive(output->stream_id, output->bytes, output->fin).has_value() ||
           !client->acknowledge_output(output->stream_id, output->bytes.size()).has_value()) {
         return false;
@@ -205,7 +206,7 @@ int main() {
       laghu::test::TestCase{"adapters.http3.separate_contracts", contracts_construct_and_remain_separate},
       laghu::test::TestCase{"adapters.http3.cid_and_allocation", invalid_metadata_and_allocation_fail},
       laghu::test::TestCase{"adapters.http3.malformed_input", malformed_inputs_are_typed},
-      laghu::test::TestCase{"adapters.http3.arena_reset", arena_reset_invalidates_sessions_safely},
+      laghu::test::TestCase{"adapters.http3.arena_reset", arena_reset_requires_session_cleanup},
       laghu::test::TestCase{"adapters.http3.stream_smoke", h3_stream_smoke_flow},
   };
   return laghu::test::run_tests(tests);

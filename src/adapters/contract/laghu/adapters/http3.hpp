@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <span>
 #include <type_traits>
+#include <utility>
 
 #include <laghu/adapters/dependency.hpp>
 #include <laghu/core/bounded_arena.hpp>
@@ -20,6 +21,7 @@ enum class Http3EventKind : std::uint8_t {
 
 struct Http3Header final { core::ByteView name{}; core::ByteView value{}; };
 struct Http3Event final {
+  // All views are valid only for the duration of the sink callback.
   Http3EventKind kind{Http3EventKind::data};
   std::int64_t stream_id{-1};
   core::ByteView name{};
@@ -73,9 +75,10 @@ class Http3Session final {
   [[nodiscard]] core::Result<void> shutdown() noexcept;
 
  private:
-  constexpr Http3Session(void* connection, void* state, const core::BoundedArena& arena,
-                         std::uint64_t generation) noexcept
-      : connection_(connection), state_(state), arena_(&arena), generation_(generation) {}
+  Http3Session(void* connection, void* state, const core::BoundedArena& arena,
+               std::uint64_t generation, core::ArenaPin pin) noexcept
+      : connection_(connection), state_(state), arena_(&arena), generation_(generation),
+        pin_(std::move(pin)) {}
   [[nodiscard]] core::Result<void> require_valid() const noexcept;
   void release() noexcept;
   void move_from(Http3Session&& other) noexcept;
@@ -83,6 +86,7 @@ class Http3Session final {
   void* state_{};
   const core::BoundedArena* arena_{};
   std::uint64_t generation_{};
+  core::ArenaPin pin_{};
 };
 
 static_assert(std::is_trivially_copyable_v<Http3Header>);

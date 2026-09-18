@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 #include <laghu/adapters/dependency.hpp>
 #include <laghu/core/bounded_arena.hpp>
@@ -46,16 +47,19 @@ enum class QuicEventKind : std::uint8_t {
   handshake_completed,
   stream_opened,
   stream_data,
+  stream_data_acked,
   stream_reset,
   stop_sending,
   stream_closed,
 };
 
 struct QuicEvent final {
+  // Any data view is valid only for the duration of the sink callback.
   QuicEventKind kind{QuicEventKind::stream_data};
   QuicEncryptionLevel encryption_level{QuicEncryptionLevel::initial};
   std::int64_t stream_id{-1};
   std::uint64_t offset{};
+  std::uint64_t length{};
   std::uint64_t application_error{};
   core::ByteView data{};
   bool fin{};
@@ -162,6 +166,8 @@ class QuicSession final {
 
   [[nodiscard]] core::Result<void> receive_packet(core::ByteView packet,
                                                   std::uint64_t now_ns) noexcept;
+  // Submitted stream data remains caller-owned and must stay unchanged until
+  // stream_data_acked covers it or stream_closed releases outstanding data.
   [[nodiscard]] core::Result<QuicPacketWrite> write_packet(
       core::MutableByteView output, std::int64_t stream_id,
       core::ByteView stream_data, bool fin, std::uint64_t now_ns) noexcept;
@@ -174,9 +180,10 @@ class QuicSession final {
   [[nodiscard]] core::Result<void> handle_expiry(std::uint64_t now_ns) noexcept;
 
  private:
-  constexpr QuicSession(void* connection, void* state, const core::BoundedArena& arena,
-                        std::uint64_t generation) noexcept
-      : connection_(connection), state_(state), arena_(&arena), generation_(generation) {}
+  QuicSession(void* connection, void* state, const core::BoundedArena& arena,
+              std::uint64_t generation, core::ArenaPin pin) noexcept
+      : connection_(connection), state_(state), arena_(&arena), generation_(generation),
+        pin_(std::move(pin)) {}
   [[nodiscard]] core::Result<void> require_valid() const noexcept;
   void release() noexcept;
   void move_from(QuicSession&& other) noexcept;
@@ -185,6 +192,7 @@ class QuicSession final {
   void* state_{};
   const core::BoundedArena* arena_{};
   std::uint64_t generation_{};
+  core::ArenaPin pin_{};
 };
 
 static_assert(std::is_trivially_copyable_v<QuicConnectionId>);

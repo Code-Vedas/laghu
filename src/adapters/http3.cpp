@@ -121,6 +121,8 @@ core::Result<Http3Session> Http3Session::create(
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                       "HTTP/3 role or field-section limit is invalid")};
   }
+  auto pin = arena.pin(worker);
+  if (!pin.has_value()) return std::unexpected{pin.error()};
   const auto storage = arena.try_allocate(worker, sizeof(State), alignof(State));
   if (!storage.has_value()) return std::unexpected{storage.error()};
   const auto bytes = storage->bytes();
@@ -149,7 +151,7 @@ core::Result<Http3Session> Http3Session::create(
       : nghttp3_conn_server_new(&connection, &callbacks, &settings, &state->native_memory, state);
   if (result != 0) return std::unexpected{native_error(core::DependencyOperation::http3_session,
                                                        result, log_sink)};
-  return Http3Session{connection, state, arena, arena.generation()};
+  return Http3Session{connection, state, arena, arena.generation(), std::move(*pin)};
 }
 
 core::Result<void> Http3Session::require_valid() const noexcept {
@@ -187,7 +189,7 @@ core::Result<Http3Output> Http3Session::next_output() noexcept {
                                                  &stream, &fin, &vector, 1);
   if (count < 0) return std::unexpected{native_error(core::DependencyOperation::http3_send,
       static_cast<int>(count), static_cast<State*>(state_)->log)};
-  if (count == 0) return Http3Output{};
+  if (count == 0) return Http3Output{stream, {}, fin != 0};
   const auto view = *core::ByteView::from(std::span<const std::byte>{
       reinterpret_cast<const std::byte*>(vector.base), vector.len});
   return Http3Output{stream, view, fin != 0};
@@ -244,12 +246,14 @@ void Http3Session::release() noexcept {
     nghttp3_conn_del(static_cast<nghttp3_conn*>(connection_));
   }
   connection_ = nullptr; state_ = nullptr; arena_ = nullptr; generation_ = 0;
+  pin_ = {};
 }
 void Http3Session::move_from(Http3Session&& other) noexcept {
   connection_ = std::exchange(other.connection_, nullptr);
   state_ = std::exchange(other.state_, nullptr);
   arena_ = std::exchange(other.arena_, nullptr);
   generation_ = std::exchange(other.generation_, 0);
+  pin_ = std::move(other.pin_);
 }
 
 }  // namespace laghu::adapters

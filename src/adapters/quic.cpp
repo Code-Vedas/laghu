@@ -31,6 +31,7 @@ struct State final {
   std::array<std::byte, QuicConnectionId::capacity> initial_dcid{};
   std::size_t initial_dcid_size{};
   std::size_t application_iv_size{};
+  std::size_t maximum_packet_bytes{};
   bool random_failed{};
 };
 
@@ -45,7 +46,8 @@ struct ActionContext final {
 }
 
 [[nodiscard]] core::DependencyStatus status_for(int code) noexcept {
-  if (code == NGTCP2_ERR_NOMEM) return core::DependencyStatus::exhaustion;
+  if (code == NGTCP2_ERR_NOMEM || code == NGTCP2_ERR_STREAM_ID_BLOCKED ||
+      code == NGTCP2_ERR_STREAM_DATA_BLOCKED) return core::DependencyStatus::exhaustion;
   if (code == NGTCP2_ERR_INVALID_ARGUMENT) return core::DependencyStatus::invalid_input;
   if (code == NGTCP2_ERR_CRYPTO) return core::DependencyStatus::crypto;
   return core::DependencyStatus::corrupt_data;
@@ -240,7 +242,8 @@ int recv_crypto(ngtcp2_conn* connection, ngtcp2_encryption_level level, std::uin
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
   if (state.events.write == nullptr) return 0;
-  const QuicEvent event{QuicEventKind::handshake_data, mapped, -1, offset, 0, view, false};
+  const QuicEvent event{QuicEventKind::handshake_data, mapped, -1, offset,
+                        static_cast<std::uint64_t>(size), 0, view, false};
   return state.events.write(state.events.context, event) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 int encrypt(std::uint8_t* destination, const ngtcp2_crypto_aead* aead,
@@ -382,25 +385,32 @@ int stream_data(ngtcp2_conn*, std::uint32_t flags, std::int64_t stream,
   const auto view = *core::ByteView::from(std::span<const std::byte>{
       reinterpret_cast<const std::byte*>(data), size});
   return emit(*static_cast<State*>(user_data),
-      {QuicEventKind::stream_data, QuicEncryptionLevel::application, stream, offset, 0,
-       view, (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0U});
+      {QuicEventKind::stream_data, QuicEncryptionLevel::application, stream, offset,
+       static_cast<std::uint64_t>(size), 0, view,
+       (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0U});
+}
+int stream_data_acked(ngtcp2_conn*, std::int64_t stream, std::uint64_t offset,
+                      std::uint64_t size, void* user_data, void*) {
+  return emit(*static_cast<State*>(user_data),
+      {QuicEventKind::stream_data_acked, QuicEncryptionLevel::application, stream,
+       offset, size});
 }
 int stream_reset(ngtcp2_conn*, std::int64_t stream, std::uint64_t,
                  std::uint64_t code, void* user_data, void*) {
   return emit(*static_cast<State*>(user_data),
-      {QuicEventKind::stream_reset, QuicEncryptionLevel::application, stream, 0, code});
+      {QuicEventKind::stream_reset, QuicEncryptionLevel::application, stream, 0, 0, code});
 }
 int stop_sending_received(ngtcp2_conn*, std::int64_t stream, std::uint64_t code,
                           void* user_data, void*) {
   return emit(*static_cast<State*>(user_data),
-      {QuicEventKind::stop_sending, QuicEncryptionLevel::application, stream, 0, code});
+      {QuicEventKind::stop_sending, QuicEncryptionLevel::application, stream, 0, 0, code});
 }
 int stream_closed(ngtcp2_conn*, std::uint32_t, std::int64_t stream,
                   std::uint64_t receive_code, std::uint64_t transmit_code,
                   void* user_data, void*) {
   const std::uint64_t code = receive_code != 0U ? receive_code : transmit_code;
   return emit(*static_cast<State*>(user_data),
-      {QuicEventKind::stream_closed, QuicEncryptionLevel::application, stream, 0, code});
+      {QuicEventKind::stream_closed, QuicEncryptionLevel::application, stream, 0, 0, code});
 }
 void delete_aead(ngtcp2_conn*, ngtcp2_crypto_aead_ctx* native, void*) {
   auto& context = *static_cast<QuicKeyContext*>(native->native_handle);
@@ -451,12 +461,15 @@ core::Result<QuicSession> QuicSession::create(
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                       "QUIC role, CID ownership, limits, or crypto callbacks are invalid")};
   }
+  auto pin = arena.pin(source.worker());
+  if (!pin.has_value()) return std::unexpected{pin.error()};
   const auto storage = arena.try_allocate(source.worker(), sizeof(State), alignof(State));
   if (!storage.has_value()) return std::unexpected{storage.error()};
   const auto bytes = storage->bytes();
   if (!bytes.has_value()) return std::unexpected{bytes.error()};
   auto* const state = ::new (bytes->data()) State{{&arena, source.worker(), nullptr}, {}, {}, {}, {},
-      crypto, events, log_sink, role, {}, destination.value().size(), 0, false};
+      crypto, events, log_sink, role, {}, destination.value().size(), 0,
+      limits.maximum_packet_bytes, false};
   std::copy(destination.value().span().begin(), destination.value().span().end(),
             state->initial_dcid.begin());
   state->local.sin_family = AF_INET;
@@ -474,6 +487,7 @@ core::Result<QuicSession> QuicSession::create(
   callbacks.decrypt = decrypt;
   callbacks.hp_mask = header_mask;
   callbacks.recv_stream_data = stream_data;
+  callbacks.acked_stream_data_offset = stream_data_acked;
   callbacks.stream_open = stream_opened;
   callbacks.stream_reset = stream_reset;
   callbacks.recv_stop_sending = stop_sending_received;
@@ -519,7 +533,7 @@ core::Result<QuicSession> QuicSession::create(
     return std::unexpected{native_error(core::DependencyOperation::quic_session,
                                         result, log_sink)};
   }
-  return QuicSession{connection, state, arena, arena.generation()};
+  return QuicSession{connection, state, arena, arena.generation(), std::move(*pin)};
 }
 
 core::Result<void> QuicSession::require_valid() const noexcept {
@@ -547,9 +561,10 @@ core::Result<QuicPacketWrite> QuicSession::write_packet(
     core::MutableByteView output, std::int64_t stream_id, core::ByteView stream_data,
     bool fin, std::uint64_t now_ns) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return std::unexpected{valid.error()};
-  if (output.size() < NGTCP2_MAX_UDP_PAYLOAD_SIZE) {
+  const auto required = static_cast<State*>(state_)->maximum_packet_bytes;
+  if (output.size() < required) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
-                                      "QUIC output is smaller than the minimum packet buffer")};
+                                      "QUIC output is smaller than the configured packet buffer")};
   }
   ngtcp2_ssize consumed{-1};
   const ngtcp2_vec vector{reinterpret_cast<std::uint8_t*>(const_cast<std::byte*>(stream_data.data())),
@@ -618,12 +633,14 @@ void QuicSession::release() noexcept {
     ngtcp2_conn_del(static_cast<ngtcp2_conn*>(connection_));
   }
   connection_ = nullptr; state_ = nullptr; arena_ = nullptr; generation_ = 0;
+  pin_ = {};
 }
 void QuicSession::move_from(QuicSession&& other) noexcept {
   connection_ = std::exchange(other.connection_, nullptr);
   state_ = std::exchange(other.state_, nullptr);
   arena_ = std::exchange(other.arena_, nullptr);
   generation_ = std::exchange(other.generation_, 0);
+  pin_ = std::move(other.pin_);
 }
 
 }  // namespace laghu::adapters
