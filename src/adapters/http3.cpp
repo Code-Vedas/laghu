@@ -192,7 +192,7 @@ core::Result<std::size_t> Http3Session::receive(std::int64_t stream, core::ByteV
     return std::unexpected{native_error(core::DependencyOperation::http3_receive,
                                         static_cast<int>(result), state.log)};
   }
-  return static_cast<std::size_t>(result);
+  return data.size();
 }
 core::Result<Http3Output> Http3Session::next_output() noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return std::unexpected{valid.error()};

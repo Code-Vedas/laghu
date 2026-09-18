@@ -42,6 +42,8 @@ struct FixedSource final {
   return true;
 }
 
+[[nodiscard]] bool fail_random(void*, core::MutableByteView) noexcept { return false; }
+
 [[nodiscard]] bool crypto_start(void*, adapters::QuicRole, core::ByteView,
                                 const adapters::QuicCryptoActions&) noexcept { return true; }
 [[nodiscard]] bool crypto_receive(void*, adapters::QuicEncryptionLevel, std::uint64_t,
@@ -113,7 +115,8 @@ struct DeterministicCrypto final {
   }
 
   static bool protect_header(void*, void*, core::MutableByteView output,
-                             core::ByteView) noexcept {
+                             core::ByteView sample) noexcept {
+    if (output.size() != 5U || sample.size() != 16U) return false;
     std::fill(output.span().begin(), output.span().end(), std::byte{});
     return true;
   }
@@ -196,6 +199,27 @@ bool invalid_metadata_and_allocation_fail() noexcept {
   return !oversized.has_value() && !h3.has_value() && second.has_value() &&
          !excessive_packet.has_value() &&
          excessive_packet.error().code() == core::ErrorCode::invalid_input;
+}
+
+bool constructor_random_failure_is_rejected() noexcept {
+  auto worker = *core::WorkerId::from_uint64(8);
+  auto generation = *core::GenerationId::from_uint64(9);
+  core::MemoryBudget budget{worker, 512U * 1024U};
+  FixedSource source{};
+  core::BoundedArena arena{worker, budget,
+      {&source, FixedSource::acquire, FixedSource::reset}, 512U * 1024U, 512U * 1024U};
+  adapters::NativeMemoryPool memory{worker, arena};
+  const auto destination = *adapters::QuicConnectionId::create(
+      bytes("destination-id"), worker, generation);
+  const auto source_id = *adapters::QuicConnectionId::create(
+      bytes("source-id"), worker, generation);
+  auto crypto = crypto_callbacks();
+  crypto.random_fill = fail_random;
+  const auto session = adapters::QuicSession::create(adapters::QuicRole::client,
+      destination, source_id, memory, loopback_path(4433, 4434),
+      {65536, 16384, 8, 8, 1500}, crypto, {}, connection_id_sink());
+  return !session.has_value() && session.error().code() == core::ErrorCode::crypto &&
+         reset_arena(arena, worker);
 }
 
 bool malformed_inputs_are_typed() noexcept {
@@ -367,7 +391,8 @@ bool h3_stream_smoke_flow() noexcept {
       const auto output = client->next_output();
       if (!output.has_value()) return false;
       if (output->stream_id < 0) continue;
-      if (!server->receive(output->stream_id, output->bytes, output->fin).has_value() ||
+      const auto consumed = server->receive(output->stream_id, output->bytes, output->fin);
+      if (!consumed.has_value() || *consumed != output->bytes.size() ||
           !client->mark_output_written(output->stream_id, output->bytes.size()).has_value() ||
           !client->acknowledge_stream_data(
               output->stream_id, output->bytes.size()).has_value()) {
@@ -387,6 +412,7 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.http3.separate_contracts", contracts_construct_and_remain_separate},
       laghu::test::TestCase{"adapters.http3.cid_and_allocation", invalid_metadata_and_allocation_fail},
+      laghu::test::TestCase{"adapters.http3.constructor_rng_failure", constructor_random_failure_is_rejected},
       laghu::test::TestCase{"adapters.http3.malformed_input", malformed_inputs_are_typed},
       laghu::test::TestCase{"adapters.http3.arena_reset", arena_reset_requires_session_cleanup},
       laghu::test::TestCase{"adapters.http3.native_memory_reuse", native_memory_reuses_freed_blocks},

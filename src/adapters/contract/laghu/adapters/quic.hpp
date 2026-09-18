@@ -185,7 +185,7 @@ class QuicSession final {
       const QuicConnectionId& source, NativeMemoryPool& memory,
       QuicPath initial_path,
       QuicLimits limits, QuicCryptoCallbacks crypto,
-      QuicEventSink events = {}, QuicConnectionIdSink connection_ids = {},
+      QuicEventSink events, QuicConnectionIdSink connection_ids,
       DependencyLogSink log_sink = {}) noexcept;
 
   [[nodiscard]] core::Result<void> receive_packet(QuicPath path, core::ByteView packet,

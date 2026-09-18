@@ -98,13 +98,15 @@ struct ActionContext final {
   QuicEndpoint output{};
   if (input.addr != nullptr && input.addr->sa_family == AF_INET6 &&
       input.addrlen >= sizeof(sockaddr_in6)) {
-    const auto& address = *reinterpret_cast<const sockaddr_in6*>(input.addr);
+    sockaddr_in6 address{};
+    std::memcpy(&address, input.addr, sizeof(address));
     output.family = QuicAddressFamily::ipv6;
     output.port = ntohs(address.sin6_port);
     std::memcpy(output.address.data(), &address.sin6_addr, 16U);
   } else if (input.addr != nullptr && input.addr->sa_family == AF_INET &&
              input.addrlen >= sizeof(sockaddr_in)) {
-    const auto& address = *reinterpret_cast<const sockaddr_in*>(input.addr);
+    sockaddr_in address{};
+    std::memcpy(&address, input.addr, sizeof(address));
     output.family = QuicAddressFamily::ipv4;
     output.port = ntohs(address.sin_port);
     std::memcpy(output.address.data(), &address.sin_addr, 4U);
@@ -350,7 +352,7 @@ int header_mask(std::uint8_t* destination, const ngtcp2_crypto_cipher* cipher,
   const auto& algorithm = *static_cast<const QuicHeaderAlgorithm*>(cipher->native_handle);
   auto& context = *static_cast<QuicKeyContext*>(key->native_handle);
   const auto output = *core::MutableByteView::from(std::span<std::byte>{
-      reinterpret_cast<std::byte*>(destination), NGTCP2_HP_SAMPLELEN});
+      reinterpret_cast<std::byte*>(destination), NGTCP2_HP_MASKLEN});
   const auto sample_view = *core::ByteView::from(std::span<const std::byte>{
       reinterpret_cast<const std::byte*>(sample), NGTCP2_HP_SAMPLELEN});
   return algorithm.protect(algorithm.callback_context, context.handle, output, sample_view)
@@ -616,6 +618,12 @@ core::Result<QuicSession> QuicSession::create(
     internal::arena_free(storage, &allocator);
     return std::unexpected{native_error(core::DependencyOperation::quic_session,
                                         result, log_sink)};
+  }
+  if (const auto random = require_random(*state); !random.has_value()) {
+    ngtcp2_conn_del(connection);
+    state->~State();
+    internal::arena_free(storage, &allocator);
+    return std::unexpected{random.error()};
   }
   return QuicSession{connection, state, arena, arena.generation(), std::move(*pin)};
 }
