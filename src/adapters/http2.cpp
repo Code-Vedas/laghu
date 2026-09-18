@@ -16,6 +16,8 @@
 namespace laghu::adapters {
 namespace {
 
+constexpr std::size_t maximum_pending_resets = 64;
+
 struct alignas(std::max_align_t) AllocationHeader final {
   std::size_t size{};
   AllocationHeader* next{};
@@ -30,8 +32,10 @@ struct NativeState final {
   std::size_t header_bytes{};
   std::size_t header_fields{};
   AllocationHeader* free_allocations{};
-  std::int32_t pending_reset_stream{};
+  std::array<std::int32_t, maximum_pending_resets> pending_reset_streams{};
+  std::size_t pending_reset_count{};
   bool input_limit_failed{};
+  bool pending_reset_overflow{};
 };
 
 [[nodiscard]] core::DependencyStatus native_status(int code) noexcept {
@@ -165,7 +169,18 @@ void* memory_realloc(void* pointer, std::size_t size, void* context) noexcept {
   }
   if (action == Http2CallbackAction::reject_stream && event.kind == Http2EventKind::data &&
       event.stream.valid()) {
-    state.pending_reset_stream = event.stream.wire_value();
+    const std::int32_t rejected_stream = event.stream.wire_value();
+    for (std::size_t index = 0; index < state.pending_reset_count; ++index) {
+      if (state.pending_reset_streams[index] == rejected_stream) {
+        return 0;
+      }
+    }
+    if (state.pending_reset_count == state.pending_reset_streams.size()) {
+      state.pending_reset_overflow = true;
+      return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    state.pending_reset_streams[state.pending_reset_count] = rejected_stream;
+    ++state.pending_reset_count;
     return 0;
   }
   return NGHTTP2_ERR_CALLBACK_FAILURE;
@@ -330,7 +345,7 @@ core::Result<Http2Session> Http2Session::create(
     return std::unexpected{state_bytes.error()};
   }
   auto* const state = ::new (state_bytes->data()) NativeState{
-      &arena, worker, limits, event_sink, log_sink, 0, 0, nullptr, 0, false};
+      &arena, worker, limits, event_sink, log_sink, 0, 0, nullptr, {}, 0, false, false};
 
   nghttp2_session_callbacks* callbacks{};
   int result = nghttp2_session_callbacks_new(&callbacks);
@@ -391,21 +406,28 @@ core::Result<std::size_t> Http2Session::receive(core::ByteView input) noexcept {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                       "HTTP/2 peer input exceeds its configured bound")};
   }
+  if (state.pending_reset_overflow) {
+    state.pending_reset_overflow = false;
+    state.pending_reset_count = 0;
+    return std::unexpected{core_error(core::ErrorCode::exhaustion,
+                                      "HTTP/2 rejected-stream queue is exhausted")};
+  }
   if (result < 0) {
     return std::unexpected{native_error(core::DependencyOperation::http2_receive,
                                         static_cast<int>(result), state.log_sink)};
   }
-  if (state.pending_reset_stream != 0) {
-    const std::int32_t reset_stream = state.pending_reset_stream;
-    state.pending_reset_stream = 0;
+  for (std::size_t index = 0; index < state.pending_reset_count; ++index) {
+    const std::int32_t reset_stream = state.pending_reset_streams[index];
     const int reset_result = nghttp2_submit_rst_stream(
         static_cast<nghttp2_session*>(native_session_), NGHTTP2_FLAG_NONE,
         reset_stream, NGHTTP2_CANCEL);
-    if (reset_result != 0) {
+    if (reset_result != 0 && reset_result != NGHTTP2_ERR_STREAM_CLOSED) {
+      state.pending_reset_count = 0;
       return std::unexpected{native_error(core::DependencyOperation::http2_submit,
                                           reset_result, state.log_sink)};
     }
   }
+  state.pending_reset_count = 0;
   return static_cast<std::size_t>(result);
 }
 

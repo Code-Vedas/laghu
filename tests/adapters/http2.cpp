@@ -150,29 +150,40 @@ struct Events final {
   return false;
 }
 
-[[nodiscard]] bool receive_data_frame(Http2Session& session, std::int32_t stream_id,
-                                      std::span<const std::byte> payload,
-                                      bool end_stream) noexcept {
-  if (stream_id <= 0 || payload.size() > 0x00ff'ffffU) {
-    return false;
-  }
-  std::array<std::byte, 128> frame{};
-  if (payload.size() > frame.size() - 9U) {
+[[nodiscard]] bool append_data_frame(std::span<std::byte> output, std::size_t& used,
+                                     std::int32_t stream_id,
+                                     std::span<const std::byte> payload,
+                                     bool end_stream) noexcept {
+  if (stream_id <= 0 || payload.size() > 0x00ff'ffffU || used > output.size() ||
+      payload.size() > output.size() - used || 9U > output.size() - used - payload.size()) {
     return false;
   }
   const auto length = static_cast<std::uint32_t>(payload.size());
   const auto stream = static_cast<std::uint32_t>(stream_id);
-  frame[0] = static_cast<std::byte>((length >> 16U) & 0xffU);
-  frame[1] = static_cast<std::byte>((length >> 8U) & 0xffU);
-  frame[2] = static_cast<std::byte>(length & 0xffU);
-  frame[3] = std::byte{0};
-  frame[4] = end_stream ? std::byte{1} : std::byte{0};
-  frame[5] = static_cast<std::byte>((stream >> 24U) & 0x7fU);
-  frame[6] = static_cast<std::byte>((stream >> 16U) & 0xffU);
-  frame[7] = static_cast<std::byte>((stream >> 8U) & 0xffU);
-  frame[8] = static_cast<std::byte>(stream & 0xffU);
-  std::copy(payload.begin(), payload.end(), frame.begin() + 9);
-  const auto input = ByteView::from({frame.data(), 9U + payload.size()});
+  output[used] = static_cast<std::byte>((length >> 16U) & 0xffU);
+  output[used + 1U] = static_cast<std::byte>((length >> 8U) & 0xffU);
+  output[used + 2U] = static_cast<std::byte>(length & 0xffU);
+  output[used + 3U] = std::byte{0};
+  output[used + 4U] = end_stream ? std::byte{1} : std::byte{0};
+  output[used + 5U] = static_cast<std::byte>((stream >> 24U) & 0x7fU);
+  output[used + 6U] = static_cast<std::byte>((stream >> 16U) & 0xffU);
+  output[used + 7U] = static_cast<std::byte>((stream >> 8U) & 0xffU);
+  output[used + 8U] = static_cast<std::byte>(stream & 0xffU);
+  std::copy(payload.begin(), payload.end(),
+            output.begin() + static_cast<std::ptrdiff_t>(used + 9U));
+  used += 9U + payload.size();
+  return true;
+}
+
+[[nodiscard]] bool receive_data_frame(Http2Session& session, std::int32_t stream_id,
+                                      std::span<const std::byte> payload,
+                                      bool end_stream) noexcept {
+  std::array<std::byte, 128> frame{};
+  std::size_t used{};
+  if (!append_data_frame(frame, used, stream_id, payload, end_stream)) {
+    return false;
+  }
+  const auto input = ByteView::from({frame.data(), used});
   if (!input.has_value()) {
     return false;
   }
@@ -282,6 +293,10 @@ struct Events final {
     if (!automatic_output.has_value() || !automatic_output->empty()) {
       return false;
     }
+    if (!server->submit_stream_window_update(*data_stream, 3).has_value() ||
+        !transfer(*server, *client) || client_events.window_updates == 0U) {
+      return false;
+    }
 
     const auto empty_stream = client->submit_headers(headers, false);
     if (!empty_stream.has_value() || !transfer(*client, *server) ||
@@ -290,16 +305,31 @@ struct Events final {
       return false;
     }
 
-    const auto rejected_stream = client->submit_headers(headers, false);
-    if (!rejected_stream.has_value() || !transfer(*client, *server)) {
+    const auto first_rejected_stream = client->submit_headers(headers, false);
+    const auto second_rejected_stream = client->submit_headers(headers, false);
+    if (!first_rejected_stream.has_value() || !second_rejected_stream.has_value() ||
+        !transfer(*client, *server)) {
       return false;
     }
     server_events.reject_data = true;
-    if (!receive_data_frame(*server, rejected_stream->wire_value(), bytes("reject").span(), false) ||
+    std::array<std::byte, 256> rejected_frames{};
+    std::size_t rejected_size{};
+    if (!append_data_frame(rejected_frames, rejected_size,
+                           first_rejected_stream->wire_value(), bytes("first").span(), false) ||
+        !append_data_frame(rejected_frames, rejected_size,
+                           second_rejected_stream->wire_value(), bytes("second").span(), false)) {
+      return false;
+    }
+    const auto rejected_input = ByteView::from({rejected_frames.data(), rejected_size});
+    if (!rejected_input.has_value()) {
+      return false;
+    }
+    const auto rejected = server->receive(*rejected_input);
+    if (!rejected.has_value() || *rejected != rejected_input->size() ||
         !transfer(*server, *client)) {
       return false;
     }
-    return client_events.reset > 0U;
+    return client_events.reset >= 2U;
   }();
   return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
 }
