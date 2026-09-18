@@ -173,6 +173,7 @@ class QuicSession final {
   [[nodiscard]] core::Result<QuicPacketWrite> write_packet(
       core::MutableByteView output, std::int64_t stream_id,
       core::ByteView stream_data, bool fin, std::uint64_t now_ns) noexcept;
+  [[nodiscard]] core::Result<void> packet_transmitted(std::uint64_t now_ns) noexcept;
   [[nodiscard]] core::Result<std::int64_t> open_bidirectional_stream() noexcept;
   [[nodiscard]] core::Result<std::int64_t> open_unidirectional_stream() noexcept;
   [[nodiscard]] core::Result<void> reset_stream(std::int64_t stream_id,

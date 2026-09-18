@@ -19,6 +19,7 @@ struct State final {
   nghttp3_mem native_memory{};
   Http3EventSink events{};
   DependencyLogSink log{};
+  bool terminal{};
 };
 
 [[nodiscard]] core::Error core_error(core::ErrorCode code, const char* text) noexcept {
@@ -127,7 +128,8 @@ core::Result<Http3Session> Http3Session::create(
   if (!storage.has_value()) return std::unexpected{storage.error()};
   const auto bytes = storage->bytes();
   if (!bytes.has_value()) return std::unexpected{bytes.error()};
-  auto* const state = ::new (bytes->data()) State{{&arena, worker, nullptr}, {}, events, log_sink};
+  auto* const state = ::new (bytes->data()) State{{&arena, worker, nullptr}, {}, events,
+                                                   log_sink, false};
   nghttp3_callbacks callbacks{};
   callbacks.begin_headers = begin_headers;
   callbacks.recv_header = recv_header;
@@ -156,7 +158,7 @@ core::Result<Http3Session> Http3Session::create(
 
 core::Result<void> Http3Session::require_valid() const noexcept {
   if (connection_ == nullptr || state_ == nullptr || arena_ == nullptr ||
-      arena_->generation() != generation_) {
+      arena_->generation() != generation_ || static_cast<State*>(state_)->terminal) {
     return std::unexpected{core_error(core::ErrorCode::invalid_state,
                                       "HTTP/3 session is inactive or its arena was reset")};
   }
@@ -178,8 +180,12 @@ core::Result<std::size_t> Http3Session::receive(std::int64_t stream, core::ByteV
   if (const auto valid = require_valid(); !valid.has_value()) return std::unexpected{valid.error()};
   const auto result = nghttp3_conn_read_stream2(static_cast<nghttp3_conn*>(connection_), stream,
       reinterpret_cast<const std::uint8_t*>(data.data()), data.size(), fin ? 1 : 0, 0);
-  if (result < 0) return std::unexpected{native_error(core::DependencyOperation::http3_receive,
-      static_cast<int>(result), static_cast<State*>(state_)->log)};
+  if (result < 0) {
+    auto& state = *static_cast<State*>(state_);
+    state.terminal = true;
+    return std::unexpected{native_error(core::DependencyOperation::http3_receive,
+                                        static_cast<int>(result), state.log)};
+  }
   return static_cast<std::size_t>(result);
 }
 core::Result<Http3Output> Http3Session::next_output() noexcept {
@@ -187,8 +193,12 @@ core::Result<Http3Output> Http3Session::next_output() noexcept {
   std::int64_t stream{-1}; int fin{}; nghttp3_vec vector{};
   const auto count = nghttp3_conn_writev_stream(static_cast<nghttp3_conn*>(connection_),
                                                  &stream, &fin, &vector, 1);
-  if (count < 0) return std::unexpected{native_error(core::DependencyOperation::http3_send,
-      static_cast<int>(count), static_cast<State*>(state_)->log)};
+  if (count < 0) {
+    auto& state = *static_cast<State*>(state_);
+    state.terminal = true;
+    return std::unexpected{native_error(core::DependencyOperation::http3_send,
+                                        static_cast<int>(count), state.log)};
+  }
   if (count == 0) return Http3Output{stream, {}, fin != 0};
   const auto view = *core::ByteView::from(std::span<const std::byte>{
       reinterpret_cast<const std::byte*>(vector.base), vector.len});

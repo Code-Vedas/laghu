@@ -120,7 +120,7 @@ bool malformed_inputs_are_typed() noexcept {
                                               {16384, 0, 0});
     if (!h3.has_value()) return false;
     const auto frame = h3->receive(0, bytes("malformed"), true);
-    return !packet.has_value() && !frame.has_value();
+    return !packet.has_value() && !frame.has_value() && !h3->next_output().has_value();
   }();
   return reset_arena(arena, worker) && passed;
 }
@@ -143,7 +143,8 @@ bool arena_reset_requires_session_cleanup() noexcept {
     if (!quic.has_value() || !h3.has_value() || reset_arena(arena, worker)) return false;
     std::array<std::byte, 1200> packet{};
     const auto output = *core::MutableByteView::from(packet);
-    if (quic->write_packet(output, -1, {}, false, 1).has_value()) return false;
+    if (quic->write_packet(output, -1, {}, false, 1).has_value() ||
+        quic->packet_transmitted(1).has_value()) return false;
   }
   return reset_arena(arena, worker);
 }

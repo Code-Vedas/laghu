@@ -33,6 +33,8 @@ struct State final {
   std::size_t application_iv_size{};
   std::size_t maximum_packet_bytes{};
   bool random_failed{};
+  bool terminal{};
+  bool packet_pending_transmit{};
 };
 
 struct ActionContext final {
@@ -51,6 +53,12 @@ struct ActionContext final {
   if (code == NGTCP2_ERR_INVALID_ARGUMENT) return core::DependencyStatus::invalid_input;
   if (code == NGTCP2_ERR_CRYPTO) return core::DependencyStatus::crypto;
   return core::DependencyStatus::corrupt_data;
+}
+
+[[nodiscard]] bool terminal_error(int code) noexcept {
+  return code == NGTCP2_ERR_RETRY || code == NGTCP2_ERR_DROP_CONN ||
+         code == NGTCP2_ERR_DRAINING || code == NGTCP2_ERR_CLOSING ||
+         ngtcp2_err_is_fatal(code) != 0;
 }
 
 [[nodiscard]] core::Error native_error(core::DependencyOperation operation, int code,
@@ -469,7 +477,7 @@ core::Result<QuicSession> QuicSession::create(
   if (!bytes.has_value()) return std::unexpected{bytes.error()};
   auto* const state = ::new (bytes->data()) State{{&arena, source.worker(), nullptr}, {}, {}, {}, {},
       crypto, events, log_sink, role, {}, destination.value().size(), 0,
-      limits.maximum_packet_bytes, false};
+      limits.maximum_packet_bytes, false, false, false};
   std::copy(destination.value().span().begin(), destination.value().span().end(),
             state->initial_dcid.begin());
   state->local.sin_family = AF_INET;
@@ -538,7 +546,7 @@ core::Result<QuicSession> QuicSession::create(
 
 core::Result<void> QuicSession::require_valid() const noexcept {
   if (connection_ == nullptr || state_ == nullptr || arena_ == nullptr ||
-      arena_->generation() != generation_) {
+      arena_->generation() != generation_ || static_cast<State*>(state_)->terminal) {
     return std::unexpected{core_error(core::ErrorCode::invalid_state,
                                       "QUIC session is inactive or its arena was reset")};
   }
@@ -551,6 +559,7 @@ core::Result<void> QuicSession::receive_packet(core::ByteView packet,
   auto& state = *static_cast<State*>(state_);
   const int result = ngtcp2_conn_read_pkt(static_cast<ngtcp2_conn*>(connection_), &state.path, nullptr,
       reinterpret_cast<const std::uint8_t*>(packet.data()), packet.size(), now_ns);
+  if (result < 0 && terminal_error(result)) state.terminal = true;
   if (const auto random = require_random(state); !random.has_value()) return random;
   if (result != 0) return std::unexpected{native_error(core::DependencyOperation::quic_receive,
       result, static_cast<State*>(state_)->log)};
@@ -574,13 +583,28 @@ core::Result<QuicPacketWrite> QuicSession::write_packet(
       nullptr, reinterpret_cast<std::uint8_t*>(output.data()), output.size(), &consumed,
       flags, stream_id, stream_data.empty() ? nullptr : &vector,
       stream_data.empty() ? 0U : 1U, now_ns);
-  if (const auto random = require_random(*static_cast<State*>(state_)); !random.has_value()) {
+  auto& state = *static_cast<State*>(state_);
+  if (result < 0 && terminal_error(static_cast<int>(result))) state.terminal = true;
+  if (const auto random = require_random(state); !random.has_value()) {
     return std::unexpected{random.error()};
   }
   if (result < 0) return std::unexpected{native_error(core::DependencyOperation::quic_send,
       static_cast<int>(result), static_cast<State*>(state_)->log)};
+  if (result > 0) state.packet_pending_transmit = true;
   return QuicPacketWrite{static_cast<std::size_t>(result),
       consumed < 0 ? 0U : static_cast<std::size_t>(consumed)};
+}
+
+core::Result<void> QuicSession::packet_transmitted(std::uint64_t now_ns) noexcept {
+  if (const auto valid = require_valid(); !valid.has_value()) return valid;
+  auto& state = *static_cast<State*>(state_);
+  if (!state.packet_pending_transmit) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "QUIC has no generated packet awaiting transmission")};
+  }
+  ngtcp2_conn_update_pkt_tx_time(static_cast<ngtcp2_conn*>(connection_), now_ns);
+  state.packet_pending_transmit = false;
+  return {};
 }
 
 core::Result<std::int64_t> QuicSession::open_bidirectional_stream() noexcept {
