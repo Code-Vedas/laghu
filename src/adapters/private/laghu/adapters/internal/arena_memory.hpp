@@ -7,6 +7,7 @@
 #include <new>
 
 #include <laghu/core/bounded_arena.hpp>
+#include <laghu/adapters/native_memory.hpp>
 
 namespace laghu::adapters::internal {
 
@@ -17,21 +18,38 @@ struct alignas(std::max_align_t) ArenaAllocation final {
 };
 
 struct ArenaMemory final {
-  core::BoundedArena* arena{};
-  core::WorkerId worker;
-  ArenaAllocation* free_list{};
+  NativeMemoryPool* pool{};
+};
+
+struct ArenaMemoryAccess final {
+  static void synchronize(NativeMemoryPool& pool) noexcept {
+    if (pool.generation_ != pool.arena_->generation()) {
+      pool.generation_ = pool.arena_->generation();
+      pool.free_list_ = nullptr;
+    }
+  }
+  static core::BoundedArena& arena(NativeMemoryPool& pool) noexcept { return *pool.arena_; }
+  static core::WorkerId worker(const NativeMemoryPool& pool) noexcept { return pool.worker_; }
+  static void*& free_list(NativeMemoryPool& pool) noexcept { return pool.free_list_; }
 };
 
 inline void* arena_malloc(std::size_t requested, void* context) noexcept {
   auto& memory = *static_cast<ArenaMemory*>(context);
+  ArenaMemoryAccess::synchronize(*memory.pool);
   const std::size_t size = requested == 0U ? 1U : requested;
-  ArenaAllocation** link = &memory.free_list;
-  while (*link != nullptr && (*link)->capacity < size) {
-    link = &(*link)->next;
+  ArenaAllocation* previous{};
+  auto* allocation = static_cast<ArenaAllocation*>(
+      ArenaMemoryAccess::free_list(*memory.pool));
+  while (allocation != nullptr && allocation->capacity < size) {
+    previous = allocation;
+    allocation = allocation->next;
   }
-  if (*link != nullptr) {
-    ArenaAllocation* const allocation = *link;
-    *link = allocation->next;
+  if (allocation != nullptr) {
+    if (previous == nullptr) {
+      ArenaMemoryAccess::free_list(*memory.pool) = allocation->next;
+    } else {
+      previous->next = allocation->next;
+    }
     allocation->used = size;
     allocation->next = nullptr;
     return allocation + 1;
@@ -39,10 +57,11 @@ inline void* arena_malloc(std::size_t requested, void* context) noexcept {
   if (size > std::numeric_limits<std::size_t>::max() - sizeof(ArenaAllocation)) {
     return nullptr;
   }
-  const auto allocation = memory.arena->try_allocate(
-      memory.worker, sizeof(ArenaAllocation) + size, alignof(std::max_align_t));
-  if (!allocation.has_value()) return nullptr;
-  const auto bytes = allocation->bytes();
+  const auto arena_allocation = ArenaMemoryAccess::arena(*memory.pool).try_allocate(
+      ArenaMemoryAccess::worker(*memory.pool), sizeof(ArenaAllocation) + size,
+      alignof(std::max_align_t));
+  if (!arena_allocation.has_value()) return nullptr;
+  const auto bytes = arena_allocation->bytes();
   if (!bytes.has_value()) return nullptr;
   auto* const header = ::new (bytes->data()) ArenaAllocation{size, size, nullptr};
   return header + 1;
@@ -51,9 +70,11 @@ inline void* arena_malloc(std::size_t requested, void* context) noexcept {
 inline void arena_free(void* pointer, void* context) noexcept {
   if (pointer == nullptr) return;
   auto& memory = *static_cast<ArenaMemory*>(context);
+  ArenaMemoryAccess::synchronize(*memory.pool);
   auto* const allocation = static_cast<ArenaAllocation*>(pointer) - 1;
-  allocation->next = memory.free_list;
-  memory.free_list = allocation;
+  allocation->next = static_cast<ArenaAllocation*>(
+      ArenaMemoryAccess::free_list(*memory.pool));
+  ArenaMemoryAccess::free_list(*memory.pool) = allocation;
 }
 
 inline void* arena_calloc(std::size_t count, std::size_t size, void* context) noexcept {

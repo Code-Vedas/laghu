@@ -21,13 +21,14 @@ namespace {
 struct State final {
   internal::ArenaMemory memory;
   ngtcp2_mem native_memory{};
-  sockaddr_in local{};
-  sockaddr_in remote{};
-  ngtcp2_path path{};
+  ngtcp2_path_storage path{};
   QuicCryptoCallbacks crypto{};
   QuicEventSink events{};
+  QuicConnectionIdSink connection_ids{};
   DependencyLogSink log{};
   QuicRole role{QuicRole::client};
+  core::WorkerId worker;
+  core::GenerationId generation;
   std::array<std::byte, QuicConnectionId::capacity> initial_dcid{};
   std::size_t initial_dcid_size{};
   std::size_t application_iv_size{};
@@ -59,6 +60,60 @@ struct ActionContext final {
   return code == NGTCP2_ERR_RETRY || code == NGTCP2_ERR_DROP_CONN ||
          code == NGTCP2_ERR_DRAINING || code == NGTCP2_ERR_CLOSING ||
          ngtcp2_err_is_fatal(code) != 0;
+}
+
+[[nodiscard]] bool valid_endpoint(const QuicEndpoint& endpoint) noexcept {
+  return (endpoint.family == QuicAddressFamily::ipv4 ||
+          endpoint.family == QuicAddressFamily::ipv6) && endpoint.port != 0U;
+}
+
+[[nodiscard]] bool store_endpoint(const QuicEndpoint& endpoint,
+                                  ngtcp2_sockaddr_union& storage,
+                                  ngtcp2_addr& output) noexcept {
+  if (!valid_endpoint(endpoint)) return false;
+  std::memset(&storage, 0, sizeof(storage));
+  if (endpoint.family == QuicAddressFamily::ipv4) {
+    auto& address = storage.in;
+    address.sin_family = AF_INET;
+    address.sin_port = htons(endpoint.port);
+    std::memcpy(&address.sin_addr, endpoint.address.data(), 4U);
+    output = {reinterpret_cast<ngtcp2_sockaddr*>(&address), sizeof(address)};
+    return true;
+  }
+  auto& address = storage.in6;
+  address.sin6_family = AF_INET6;
+  address.sin6_port = htons(endpoint.port);
+  std::memcpy(&address.sin6_addr, endpoint.address.data(), 16U);
+  output = {reinterpret_cast<ngtcp2_sockaddr*>(&address), sizeof(address)};
+  return true;
+}
+
+[[nodiscard]] bool store_path(const QuicPath& path, ngtcp2_path_storage& output) noexcept {
+  output.path.user_data = nullptr;
+  return store_endpoint(path.local, output.local_addrbuf, output.path.local) &&
+         store_endpoint(path.remote, output.remote_addrbuf, output.path.remote);
+}
+
+[[nodiscard]] QuicEndpoint endpoint_from(const ngtcp2_addr& input) noexcept {
+  QuicEndpoint output{};
+  if (input.addr != nullptr && input.addr->sa_family == AF_INET6 &&
+      input.addrlen >= sizeof(sockaddr_in6)) {
+    const auto& address = *reinterpret_cast<const sockaddr_in6*>(input.addr);
+    output.family = QuicAddressFamily::ipv6;
+    output.port = ntohs(address.sin6_port);
+    std::memcpy(output.address.data(), &address.sin6_addr, 16U);
+  } else if (input.addr != nullptr && input.addr->sa_family == AF_INET &&
+             input.addrlen >= sizeof(sockaddr_in)) {
+    const auto& address = *reinterpret_cast<const sockaddr_in*>(input.addr);
+    output.family = QuicAddressFamily::ipv4;
+    output.port = ntohs(address.sin_port);
+    std::memcpy(output.address.data(), &address.sin_addr, 4U);
+  }
+  return output;
+}
+
+[[nodiscard]] QuicPath path_from(const ngtcp2_path& input) noexcept {
+  return {endpoint_from(input.local), endpoint_from(input.remote)};
 }
 
 [[nodiscard]] core::Error native_error(core::DependencyOperation operation, int code,
@@ -361,6 +416,13 @@ int new_connection_id(ngtcp2_conn*, ngtcp2_cid* cid, ngtcp2_stateless_reset_toke
     state.random_failed = true;
     return NGTCP2_ERR_CALLBACK_FAILURE;
   }
+  const auto value = *core::ByteView::from(std::span<const std::byte>{
+      reinterpret_cast<const std::byte*>(bytes.data()), size});
+  const auto owned = QuicConnectionId::create(value, state.worker, state.generation);
+  if (!owned.has_value() || state.connection_ids.write == nullptr ||
+      !state.connection_ids.write(state.connection_ids.context, *owned)) {
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+  }
   ngtcp2_cid_init(cid, bytes.data(), size);
   return 0;
 }
@@ -458,34 +520,45 @@ QuicSession::~QuicSession() { release(); }
 
 core::Result<QuicSession> QuicSession::create(
     QuicRole role, const QuicConnectionId& destination, const QuicConnectionId& source,
-    core::BoundedArena& arena, QuicLimits limits, QuicCryptoCallbacks crypto,
-    QuicEventSink events, DependencyLogSink log_sink) noexcept {
+    NativeMemoryPool& memory, QuicPath initial_path, QuicLimits limits,
+    QuicCryptoCallbacks crypto, QuicEventSink events,
+    QuicConnectionIdSink connection_ids, DependencyLogSink log_sink) noexcept {
   if ((role != QuicRole::client && role != QuicRole::server) ||
       destination.worker().value() != source.worker().value() ||
       destination.generation().value() != source.generation().value() ||
       limits.maximum_packet_bytes < NGTCP2_MAX_UDP_PAYLOAD_SIZE ||
       limits.maximum_packet_bytes > NGTCP2_MAX_TX_UDP_PAYLOAD_SIZE ||
       crypto.random_fill == nullptr || crypto.start == nullptr ||
-      crypto.receive == nullptr || crypto.retry == nullptr || crypto.update == nullptr) {
+      crypto.receive == nullptr || crypto.retry == nullptr || crypto.update == nullptr ||
+      connection_ids.write == nullptr || !valid_endpoint(initial_path.local) ||
+      !valid_endpoint(initial_path.remote)) {
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                       "QUIC role, CID ownership, limits, or crypto callbacks are invalid")};
   }
+  internal::ArenaMemoryAccess::synchronize(memory);
+  auto& arena = internal::ArenaMemoryAccess::arena(memory);
+  if (internal::ArenaMemoryAccess::worker(memory).value() != source.worker().value()) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "QUIC memory pool belongs to a different worker")};
+  }
   auto pin = arena.pin(source.worker());
   if (!pin.has_value()) return std::unexpected{pin.error()};
-  const auto storage = arena.try_allocate(source.worker(), sizeof(State), alignof(State));
-  if (!storage.has_value()) return std::unexpected{storage.error()};
-  const auto bytes = storage->bytes();
-  if (!bytes.has_value()) return std::unexpected{bytes.error()};
-  auto* const state = ::new (bytes->data()) State{{&arena, source.worker(), nullptr}, {}, {}, {}, {},
-      crypto, events, log_sink, role, {}, destination.value().size(), 0,
+  internal::ArenaMemory allocator{&memory};
+  void* const storage = internal::arena_malloc(sizeof(State), &allocator);
+  if (storage == nullptr) return std::unexpected{core_error(
+      core::ErrorCode::exhaustion, "QUIC session storage is exhausted")};
+  auto* const state = ::new (storage) State{{&memory}, {}, {}, crypto, events,
+      connection_ids, log_sink, role, source.worker(), source.generation(), {},
+      destination.value().size(), 0,
       limits.maximum_packet_bytes, false, false, false};
   std::copy(destination.value().span().begin(), destination.value().span().end(),
             state->initial_dcid.begin());
-  state->local.sin_family = AF_INET;
-  state->remote.sin_family = AF_INET;
-  state->path = {
-      {reinterpret_cast<sockaddr*>(&state->local), sizeof(state->local)},
-      {reinterpret_cast<sockaddr*>(&state->remote), sizeof(state->remote)}, nullptr};
+  if (!store_path(initial_path, state->path)) {
+    state->~State();
+    internal::arena_free(storage, &allocator);
+    return std::unexpected{core_error(core::ErrorCode::invalid_input,
+                                      "QUIC initial path is invalid")};
+  }
 
   ngtcp2_callbacks callbacks{};
   callbacks.client_initial = client_initial;
@@ -534,11 +607,13 @@ core::Result<QuicSession> QuicSession::create(
                           internal::arena_calloc, internal::arena_realloc};
   ngtcp2_conn* connection{};
   const int result = role == QuicRole::client
-      ? ngtcp2_conn_client_new(&connection, &dcid, &scid, &state->path, NGTCP2_PROTO_VER_V1,
+      ? ngtcp2_conn_client_new(&connection, &dcid, &scid, &state->path.path, NGTCP2_PROTO_VER_V1,
                               &callbacks, &settings, &params, &state->native_memory, state)
-      : ngtcp2_conn_server_new(&connection, &dcid, &scid, &state->path, NGTCP2_PROTO_VER_V1,
+      : ngtcp2_conn_server_new(&connection, &dcid, &scid, &state->path.path, NGTCP2_PROTO_VER_V1,
                               &callbacks, &settings, &params, &state->native_memory, state);
   if (result != 0) {
+    state->~State();
+    internal::arena_free(storage, &allocator);
     return std::unexpected{native_error(core::DependencyOperation::quic_session,
                                         result, log_sink)};
   }
@@ -554,11 +629,14 @@ core::Result<void> QuicSession::require_valid() const noexcept {
   return {};
 }
 
-core::Result<void> QuicSession::receive_packet(core::ByteView packet,
+core::Result<void> QuicSession::receive_packet(QuicPath path, core::ByteView packet,
                                                 std::uint64_t now_ns) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return valid;
   auto& state = *static_cast<State*>(state_);
-  const int result = ngtcp2_conn_read_pkt(static_cast<ngtcp2_conn*>(connection_), &state.path, nullptr,
+  ngtcp2_path_storage input{};
+  if (!store_path(path, input)) return std::unexpected{core_error(
+      core::ErrorCode::invalid_input, "QUIC packet path is invalid")};
+  const int result = ngtcp2_conn_read_pkt(static_cast<ngtcp2_conn*>(connection_), &input.path, nullptr,
       reinterpret_cast<const std::uint8_t*>(packet.data()), packet.size(), now_ns);
   if (result < 0 && terminal_error(result)) state.terminal = true;
   if (const auto random = require_random(state); !random.has_value()) return random;
@@ -580,7 +658,10 @@ core::Result<QuicPacketWrite> QuicSession::write_packet(
   const ngtcp2_vec vector{reinterpret_cast<std::uint8_t*>(const_cast<std::byte*>(stream_data.data())),
                            stream_data.size()};
   const std::uint32_t flags = fin ? NGTCP2_WRITE_STREAM_FLAG_FIN : NGTCP2_WRITE_STREAM_FLAG_NONE;
-  const auto result = ngtcp2_conn_writev_stream(static_cast<ngtcp2_conn*>(connection_), nullptr,
+  ngtcp2_path_storage output_path{};
+  ngtcp2_path_storage_zero(&output_path);
+  const auto result = ngtcp2_conn_writev_stream(static_cast<ngtcp2_conn*>(connection_),
+      &output_path.path,
       nullptr, reinterpret_cast<std::uint8_t*>(output.data()), output.size(), &consumed,
       flags, stream_id, stream_data.empty() ? nullptr : &vector,
       stream_data.empty() ? 0U : 1U, now_ns);
@@ -593,7 +674,8 @@ core::Result<QuicPacketWrite> QuicSession::write_packet(
       static_cast<int>(result), static_cast<State*>(state_)->log)};
   if (result > 0) state.packet_pending_transmit = true;
   return QuicPacketWrite{static_cast<std::size_t>(result),
-      consumed < 0 ? 0U : static_cast<std::size_t>(consumed)};
+      consumed < 0 ? 0U : static_cast<std::size_t>(consumed),
+      result > 0 ? path_from(output_path.path) : QuicPath{}};
 }
 
 core::Result<void> QuicSession::packet_transmitted(std::uint64_t now_ns) noexcept {
@@ -659,7 +741,11 @@ std::uint64_t QuicSession::expiry_ns() const noexcept {
 core::Result<void> QuicSession::handle_expiry(std::uint64_t now_ns) noexcept {
   if (const auto valid = require_valid(); !valid.has_value()) return valid;
   const int result = ngtcp2_conn_handle_expiry(static_cast<ngtcp2_conn*>(connection_), now_ns);
-  if (const auto random = require_random(*static_cast<State*>(state_)); !random.has_value()) {
+  auto& state = *static_cast<State*>(state_);
+  if (result == NGTCP2_ERR_IDLE_CLOSE || (result < 0 && terminal_error(result))) {
+    state.terminal = true;
+  }
+  if (const auto random = require_random(state); !random.has_value()) {
     return random;
   }
   if (result != 0) return std::unexpected{native_error(core::DependencyOperation::quic_expiry,
@@ -669,6 +755,10 @@ core::Result<void> QuicSession::handle_expiry(std::uint64_t now_ns) noexcept {
 void QuicSession::release() noexcept {
   if (connection_ != nullptr && arena_ != nullptr && arena_->generation() == generation_) {
     ngtcp2_conn_del(static_cast<ngtcp2_conn*>(connection_));
+    auto* const state = static_cast<State*>(state_);
+    internal::ArenaMemory allocator{state->memory.pool};
+    state->~State();
+    internal::arena_free(state, &allocator);
   }
   connection_ = nullptr; state_ = nullptr; arena_ = nullptr; generation_ = 0;
   pin_ = {};

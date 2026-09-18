@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <laghu/adapters/dependency.hpp>
+#include <laghu/adapters/native_memory.hpp>
 #include <laghu/core/bounded_arena.hpp>
 #include <laghu/core/identifiers.hpp>
 #include <laghu/core/views.hpp>
@@ -17,6 +18,18 @@ namespace laghu::adapters {
 enum class QuicRole : std::uint8_t { client, server };
 enum class QuicEncryptionLevel : std::uint8_t { initial, early_data, handshake, application };
 enum class QuicKeyDirection : std::uint8_t { receive, transmit };
+enum class QuicAddressFamily : std::uint8_t { ipv4, ipv6 };
+
+struct QuicEndpoint final {
+  QuicAddressFamily family{QuicAddressFamily::ipv4};
+  std::array<std::byte, 16> address{};
+  std::uint16_t port{};
+};
+
+struct QuicPath final {
+  QuicEndpoint local{};
+  QuicEndpoint remote{};
+};
 
 class QuicConnectionId final {
  public:
@@ -69,6 +82,12 @@ using QuicEventWrite = bool (*)(void*, const QuicEvent&) noexcept;
 struct QuicEventSink final {
   void* context{};
   QuicEventWrite write{};
+};
+
+using QuicConnectionIdWrite = bool (*)(void*, const QuicConnectionId&) noexcept;
+struct QuicConnectionIdSink final {
+  void* context{};
+  QuicConnectionIdWrite write{};
 };
 
 using QuicRandomFill = bool (*)(void*, core::MutableByteView) noexcept;
@@ -148,6 +167,7 @@ struct QuicLimits final {
 struct QuicPacketWrite final {
   std::size_t packet_bytes{};
   std::size_t stream_bytes{};
+  QuicPath path{};
 };
 
 class QuicSession final {
@@ -158,15 +178,17 @@ class QuicSession final {
   QuicSession& operator=(QuicSession&& other) noexcept;
   ~QuicSession();
 
-  // The arena object must outlive the session. The arena cannot be reset while
-  // this session holds its pin.
+  // The memory pool and its arena must outlive the session. The arena cannot
+  // be reset while this session holds its pin.
   [[nodiscard]] static core::Result<QuicSession> create(
       QuicRole role, const QuicConnectionId& destination,
-      const QuicConnectionId& source, core::BoundedArena& arena,
+      const QuicConnectionId& source, NativeMemoryPool& memory,
+      QuicPath initial_path,
       QuicLimits limits, QuicCryptoCallbacks crypto,
-      QuicEventSink events = {}, DependencyLogSink log_sink = {}) noexcept;
+      QuicEventSink events = {}, QuicConnectionIdSink connection_ids = {},
+      DependencyLogSink log_sink = {}) noexcept;
 
-  [[nodiscard]] core::Result<void> receive_packet(core::ByteView packet,
+  [[nodiscard]] core::Result<void> receive_packet(QuicPath path, core::ByteView packet,
                                                   std::uint64_t now_ns) noexcept;
   // Submitted stream data remains caller-owned and must stay unchanged until
   // stream_data_acked covers it or stream_closed releases outstanding data.

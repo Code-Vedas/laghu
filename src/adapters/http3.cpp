@@ -115,21 +115,23 @@ Http3Session& Http3Session::operator=(Http3Session&& other) noexcept {
 Http3Session::~Http3Session() { release(); }
 
 core::Result<Http3Session> Http3Session::create(
-    Http3Role role, core::WorkerId worker, core::BoundedArena& arena, Http3Limits limits,
+    Http3Role role, NativeMemoryPool& memory, Http3Limits limits,
     Http3EventSink events, DependencyLogSink log_sink) noexcept {
   if ((role != Http3Role::client && role != Http3Role::server) ||
       limits.maximum_field_section_bytes == 0) {
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                       "HTTP/3 role or field-section limit is invalid")};
   }
+  internal::ArenaMemoryAccess::synchronize(memory);
+  auto& arena = internal::ArenaMemoryAccess::arena(memory);
+  const auto worker = internal::ArenaMemoryAccess::worker(memory);
   auto pin = arena.pin(worker);
   if (!pin.has_value()) return std::unexpected{pin.error()};
-  const auto storage = arena.try_allocate(worker, sizeof(State), alignof(State));
-  if (!storage.has_value()) return std::unexpected{storage.error()};
-  const auto bytes = storage->bytes();
-  if (!bytes.has_value()) return std::unexpected{bytes.error()};
-  auto* const state = ::new (bytes->data()) State{{&arena, worker, nullptr}, {}, events,
-                                                   log_sink, false};
+  internal::ArenaMemory allocator{&memory};
+  void* const storage = internal::arena_malloc(sizeof(State), &allocator);
+  if (storage == nullptr) return std::unexpected{core_error(
+      core::ErrorCode::exhaustion, "HTTP/3 session storage is exhausted")};
+  auto* const state = ::new (storage) State{{&memory}, {}, events, log_sink, false};
   nghttp3_callbacks callbacks{};
   callbacks.begin_headers = begin_headers;
   callbacks.recv_header = recv_header;
@@ -151,8 +153,12 @@ core::Result<Http3Session> Http3Session::create(
   const int result = role == Http3Role::client
       ? nghttp3_conn_client_new(&connection, &callbacks, &settings, &state->native_memory, state)
       : nghttp3_conn_server_new(&connection, &callbacks, &settings, &state->native_memory, state);
-  if (result != 0) return std::unexpected{native_error(core::DependencyOperation::http3_session,
-                                                       result, log_sink)};
+  if (result != 0) {
+    state->~State();
+    internal::arena_free(storage, &allocator);
+    return std::unexpected{native_error(core::DependencyOperation::http3_session,
+                                        result, log_sink)};
+  }
   return Http3Session{connection, state, arena, arena.generation(), std::move(*pin)};
 }
 
@@ -263,6 +269,10 @@ core::Result<void> Http3Session::shutdown() noexcept {
 void Http3Session::release() noexcept {
   if (connection_ != nullptr && arena_ != nullptr && arena_->generation() == generation_) {
     nghttp3_conn_del(static_cast<nghttp3_conn*>(connection_));
+    auto* const state = static_cast<State*>(state_);
+    internal::ArenaMemory allocator{state->memory.pool};
+    state->~State();
+    internal::arena_free(state, &allocator);
   }
   connection_ = nullptr; state_ = nullptr; arena_ = nullptr; generation_ = 0;
   pin_ = {};

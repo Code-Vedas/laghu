@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <laghu/adapters/dependency.hpp>
+#include <laghu/adapters/native_memory.hpp>
 #include <laghu/core/bounded_arena.hpp>
 #include <laghu/core/views.hpp>
 
@@ -53,10 +54,10 @@ class Http3Session final {
   Http3Session& operator=(Http3Session&& other) noexcept;
   ~Http3Session();
 
-  // The arena object must outlive the session. The arena cannot be reset while
-  // this session holds its pin.
+  // The memory pool and its arena must outlive the session. The arena cannot
+  // be reset while this session holds its pin.
   [[nodiscard]] static core::Result<Http3Session> create(
-      Http3Role role, core::WorkerId worker, core::BoundedArena& arena,
+      Http3Role role, NativeMemoryPool& memory,
       Http3Limits limits, Http3EventSink events = {},
       DependencyLogSink log_sink = {}) noexcept;
   [[nodiscard]] core::Result<void> bind_streams(std::int64_t control,

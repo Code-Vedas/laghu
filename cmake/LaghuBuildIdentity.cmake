@@ -121,6 +121,7 @@ function(laghu_build_identity_input_hashes output)
   if(NOT http3_feature_index EQUAL -1)
     list(APPEND inputs
       src/adapters/contract/laghu/adapters/http3.hpp
+      src/adapters/contract/laghu/adapters/native_memory.hpp
       src/adapters/contract/laghu/adapters/quic.hpp
       src/adapters/http3.cpp
       src/adapters/quic.cpp
