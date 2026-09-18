@@ -64,12 +64,17 @@ struct Events final {
   std::size_t reset{};
   std::size_t goaway{};
   std::size_t window_updates{};
+  std::size_t data_events{};
+  std::size_t data_bytes{};
+  std::size_t ended_frames{};
   std::int32_t last_stream{};
   std::int32_t goaway_last_stream{};
   bool goaway_metadata{};
   bool fail_on_settings{};
   bool pause_on_header{};
   bool paused{};
+  bool reject_data{};
+  bool data_ended{};
 
   static Http2CallbackAction write(void* context, const Http2Event& event) noexcept {
     auto& self = *static_cast<Events*>(context);
@@ -88,6 +93,15 @@ struct Events final {
           self.paused = true;
           return Http2CallbackAction::pause;
         }
+        break;
+      case Http2EventKind::data:
+        ++self.data_events;
+        self.data_bytes += event.data.size();
+        self.data_ended = self.data_ended || event.end_stream;
+        return self.reject_data ? Http2CallbackAction::reject_stream
+                                : Http2CallbackAction::continue_processing;
+      case Http2EventKind::frame_received:
+        self.ended_frames += event.end_stream ? 1U : 0U;
         break;
       case Http2EventKind::stream_closed:
         ++self.closed;
@@ -134,6 +148,36 @@ struct Events final {
     }
   }
   return false;
+}
+
+[[nodiscard]] bool receive_data_frame(Http2Session& session, std::int32_t stream_id,
+                                      std::span<const std::byte> payload,
+                                      bool end_stream) noexcept {
+  if (stream_id <= 0 || payload.size() > 0x00ff'ffffU) {
+    return false;
+  }
+  std::array<std::byte, 128> frame{};
+  if (payload.size() > frame.size() - 9U) {
+    return false;
+  }
+  const auto length = static_cast<std::uint32_t>(payload.size());
+  const auto stream = static_cast<std::uint32_t>(stream_id);
+  frame[0] = static_cast<std::byte>((length >> 16U) & 0xffU);
+  frame[1] = static_cast<std::byte>((length >> 8U) & 0xffU);
+  frame[2] = static_cast<std::byte>(length & 0xffU);
+  frame[3] = std::byte{0};
+  frame[4] = end_stream ? std::byte{1} : std::byte{0};
+  frame[5] = static_cast<std::byte>((stream >> 24U) & 0x7fU);
+  frame[6] = static_cast<std::byte>((stream >> 16U) & 0xffU);
+  frame[7] = static_cast<std::byte>((stream >> 8U) & 0xffU);
+  frame[8] = static_cast<std::byte>(stream & 0xffU);
+  std::copy(payload.begin(), payload.end(), frame.begin() + 9);
+  const auto input = ByteView::from({frame.data(), 9U + payload.size()});
+  if (!input.has_value()) {
+    return false;
+  }
+  const auto consumed = session.receive(*input);
+  return consumed.has_value() && *consumed == input->size();
 }
 
 [[nodiscard]] bool check_exchange() noexcept {
@@ -190,6 +234,118 @@ struct Events final {
            server_events.settings > 0U && client_events.settings_acks > 0U &&
            server_events.settings_acks > 0U && client_events.closed > 0U &&
            server_events.closed > 0U;
+  }();
+  return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
+}
+
+[[nodiscard]] bool check_data_and_flow_control() noexcept {
+  const auto worker = WorkerId::from_uint64(67);
+  if (!worker.has_value()) {
+    return false;
+  }
+  FixedSource client_source{};
+  FixedSource server_source{};
+  MemoryBudget client_budget{*worker, client_source.storage.size()};
+  MemoryBudget server_budget{*worker, server_source.storage.size()};
+  BoundedArena client_arena{*worker, client_budget, block_source(client_source), 4096,
+                            client_source.storage.size()};
+  BoundedArena server_arena{*worker, server_budget, block_source(server_source), 4096,
+                            server_source.storage.size()};
+  const bool passed = [&]() noexcept {
+    Events client_events{};
+    Events server_events{};
+    auto client = Http2Session::create(*worker, Http2Role::client, client_arena, limits(),
+                                       Http2EventSink{&client_events, Events::write});
+    auto server = Http2Session::create(*worker, Http2Role::server, server_arena, limits(),
+                                       Http2EventSink{&server_events, Events::write});
+    constexpr std::array settings{Http2Setting{3, 8}};
+    if (!client.has_value() || !server.has_value() ||
+        !client->submit_settings(settings).has_value() ||
+        !server->submit_settings(settings).has_value() || !transfer(*client, *server) ||
+        !transfer(*server, *client)) {
+      return false;
+    }
+    const std::array headers{
+        Http2Header{bytes(":method"), bytes("POST"), false},
+        Http2Header{bytes(":scheme"), bytes("https"), false},
+        Http2Header{bytes(":authority"), bytes("example.test"), false},
+        Http2Header{bytes(":path"), bytes("/data"), false},
+    };
+    const auto data_stream = client->submit_headers(headers, false);
+    if (!data_stream.has_value() || !transfer(*client, *server) ||
+        !receive_data_frame(*server, data_stream->wire_value(), bytes("abc").span(), true) ||
+        server_events.data_events != 1U || server_events.data_bytes != 3U ||
+        !server_events.data_ended) {
+      return false;
+    }
+    const auto automatic_output = server->next_output();
+    if (!automatic_output.has_value() || !automatic_output->empty()) {
+      return false;
+    }
+
+    const auto empty_stream = client->submit_headers(headers, false);
+    if (!empty_stream.has_value() || !transfer(*client, *server) ||
+        !receive_data_frame(*server, empty_stream->wire_value(), {}, true) ||
+        server_events.ended_frames == 0U) {
+      return false;
+    }
+
+    const auto rejected_stream = client->submit_headers(headers, false);
+    if (!rejected_stream.has_value() || !transfer(*client, *server)) {
+      return false;
+    }
+    server_events.reject_data = true;
+    if (!receive_data_frame(*server, rejected_stream->wire_value(), bytes("reject").span(), false) ||
+        !transfer(*server, *client)) {
+      return false;
+    }
+    return client_events.reset > 0U;
+  }();
+  return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
+}
+
+[[nodiscard]] bool check_allocator_reuse() noexcept {
+  const auto worker = WorkerId::from_uint64(68);
+  if (!worker.has_value()) {
+    return false;
+  }
+  constexpr std::size_t session_capacity = 32768;
+  FixedSource client_source{};
+  FixedSource server_source{};
+  MemoryBudget client_budget{*worker, session_capacity};
+  MemoryBudget server_budget{*worker, session_capacity};
+  BoundedArena client_arena{*worker, client_budget, block_source(client_source), 4096,
+                            session_capacity};
+  BoundedArena server_arena{*worker, server_budget, block_source(server_source), 4096,
+                            session_capacity};
+  const bool passed = [&]() noexcept {
+    auto client = Http2Session::create(*worker, Http2Role::client, client_arena, limits());
+    auto server = Http2Session::create(*worker, Http2Role::server, server_arena, limits());
+    constexpr std::array settings{Http2Setting{3, 8}};
+    if (!client.has_value() || !server.has_value() ||
+        !client->submit_settings(settings).has_value() ||
+        !server->submit_settings(settings).has_value() || !transfer(*client, *server) ||
+        !transfer(*server, *client)) {
+      return false;
+    }
+    const std::array request{
+        Http2Header{bytes(":method"), bytes("GET"), false},
+        Http2Header{bytes(":scheme"), bytes("https"), false},
+        Http2Header{bytes(":authority"), bytes("example.test"), false},
+        Http2Header{bytes(":path"), bytes("/reuse"), false},
+    };
+    const std::array response{
+        Http2Header{bytes(":status"), bytes("204"), false},
+    };
+    for (std::size_t iteration = 0; iteration < 128; ++iteration) {
+      const auto stream = client->submit_headers(request, true);
+      if (!stream.has_value() || !transfer(*client, *server) ||
+          !server->submit_headers(*stream, response, true).has_value() ||
+          !transfer(*server, *client)) {
+        return false;
+      }
+    }
+    return true;
   }();
   return reset_arena(client_arena, *worker) && reset_arena(server_arena, *worker) && passed;
 }
@@ -467,6 +623,9 @@ struct Events final {
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"adapters.http2.exchange", check_exchange},
+      laghu::test::TestCase{"adapters.http2.data_and_flow_control",
+                            check_data_and_flow_control},
+      laghu::test::TestCase{"adapters.http2.allocator_reuse", check_allocator_reuse},
       laghu::test::TestCase{"adapters.http2.control_frames", check_control_frames},
       laghu::test::TestCase{"adapters.http2.goaway", check_goaway},
       laghu::test::TestCase{"adapters.http2.failures", check_failures},

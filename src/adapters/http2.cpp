@@ -18,6 +18,7 @@ namespace {
 
 struct alignas(std::max_align_t) AllocationHeader final {
   std::size_t size{};
+  AllocationHeader* next{};
 };
 
 struct NativeState final {
@@ -28,6 +29,8 @@ struct NativeState final {
   DependencyLogSink log_sink{};
   std::size_t header_bytes{};
   std::size_t header_fields{};
+  AllocationHeader* free_allocations{};
+  std::int32_t pending_reset_stream{};
   bool input_limit_failed{};
 };
 
@@ -59,6 +62,21 @@ struct NativeState final {
 
 [[nodiscard]] void* arena_allocate(NativeState& state, std::size_t size) noexcept {
   const std::size_t payload_size = size == 0U ? 1U : size;
+  AllocationHeader* previous{};
+  AllocationHeader* reusable = state.free_allocations;
+  while (reusable != nullptr && reusable->size < payload_size) {
+    previous = reusable;
+    reusable = reusable->next;
+  }
+  if (reusable != nullptr) {
+    if (previous == nullptr) {
+      state.free_allocations = reusable->next;
+    } else {
+      previous->next = reusable->next;
+    }
+    reusable->next = nullptr;
+    return static_cast<void*>(reusable + 1);
+  }
   if (payload_size > std::numeric_limits<std::size_t>::max() - sizeof(AllocationHeader)) {
     return nullptr;
   }
@@ -71,7 +89,7 @@ struct NativeState final {
   if (!bytes.has_value()) {
     return nullptr;
   }
-  auto* const header = ::new (bytes->data()) AllocationHeader{payload_size};
+  auto* const header = ::new (bytes->data()) AllocationHeader{payload_size, nullptr};
   return static_cast<void*>(header + 1);
 }
 
@@ -79,7 +97,15 @@ void* memory_malloc(std::size_t size, void* context) noexcept {
   return arena_allocate(*static_cast<NativeState*>(context), size);
 }
 
-void memory_free(void*, void*) noexcept {}
+void memory_free(void* pointer, void* context) noexcept {
+  if (pointer == nullptr) {
+    return;
+  }
+  auto& state = *static_cast<NativeState*>(context);
+  auto* const header = static_cast<AllocationHeader*>(pointer) - 1;
+  header->next = state.free_allocations;
+  state.free_allocations = header;
+}
 
 void* memory_calloc(std::size_t count, std::size_t size, void* context) noexcept {
   auto& state = *static_cast<NativeState*>(context);
@@ -100,15 +126,20 @@ void* memory_realloc(void* pointer, std::size_t size, void* context) noexcept {
     return arena_allocate(state, size);
   }
   if (size == 0U) {
+    memory_free(pointer, context);
     return nullptr;
   }
   auto* const old_header = static_cast<AllocationHeader*>(pointer) - 1;
+  if (size <= old_header->size) {
+    return pointer;
+  }
   void* const output = arena_allocate(state, size);
   if (output == nullptr) {
     return nullptr;
   }
   const std::size_t copied = old_header->size < size ? old_header->size : size;
   std::memcpy(output, pointer, copied);
+  memory_free(pointer, context);
   return output;
 }
 
@@ -131,6 +162,11 @@ void* memory_realloc(void* pointer, std::size_t size, void* context) noexcept {
   }
   if (action == Http2CallbackAction::reject_stream && rejectable) {
     return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+  }
+  if (action == Http2CallbackAction::reject_stream && event.kind == Http2EventKind::data &&
+      event.stream.valid()) {
+    state.pending_reset_stream = event.stream.wire_value();
+    return 0;
   }
   return NGHTTP2_ERR_CALLBACK_FAILURE;
 }
@@ -294,7 +330,7 @@ core::Result<Http2Session> Http2Session::create(
     return std::unexpected{state_bytes.error()};
   }
   auto* const state = ::new (state_bytes->data()) NativeState{
-      &arena, worker, limits, event_sink, log_sink, 0, 0, false};
+      &arena, worker, limits, event_sink, log_sink, 0, 0, nullptr, 0, false};
 
   nghttp2_session_callbacks* callbacks{};
   int result = nghttp2_session_callbacks_new(&callbacks);
@@ -308,13 +344,23 @@ core::Result<Http2Session> Http2Session::create(
   nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, on_frame_received);
   nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, on_stream_closed);
 
+  nghttp2_option* options{};
+  result = nghttp2_option_new(&options);
+  if (result != 0) {
+    nghttp2_session_callbacks_del(callbacks);
+    return std::unexpected{native_error(core::DependencyOperation::http2_session,
+                                        result, log_sink)};
+  }
+  nghttp2_option_set_no_auto_window_update(options, 1);
+
   nghttp2_mem memory{state, memory_malloc, memory_free, memory_calloc, memory_realloc};
   nghttp2_session* native_session{};
   if (role == Http2Role::client) {
-    result = nghttp2_session_client_new3(&native_session, callbacks, state, nullptr, &memory);
+    result = nghttp2_session_client_new3(&native_session, callbacks, state, options, &memory);
   } else {
-    result = nghttp2_session_server_new3(&native_session, callbacks, state, nullptr, &memory);
+    result = nghttp2_session_server_new3(&native_session, callbacks, state, options, &memory);
   }
+  nghttp2_option_del(options);
   nghttp2_session_callbacks_del(callbacks);
   if (result != 0) {
     return std::unexpected{native_error(core::DependencyOperation::http2_session,
@@ -348,6 +394,17 @@ core::Result<std::size_t> Http2Session::receive(core::ByteView input) noexcept {
   if (result < 0) {
     return std::unexpected{native_error(core::DependencyOperation::http2_receive,
                                         static_cast<int>(result), state.log_sink)};
+  }
+  if (state.pending_reset_stream != 0) {
+    const std::int32_t reset_stream = state.pending_reset_stream;
+    state.pending_reset_stream = 0;
+    const int reset_result = nghttp2_submit_rst_stream(
+        static_cast<nghttp2_session*>(native_session_), NGHTTP2_FLAG_NONE,
+        reset_stream, NGHTTP2_CANCEL);
+    if (reset_result != 0) {
+      return std::unexpected{native_error(core::DependencyOperation::http2_submit,
+                                          reset_result, state.log_sink)};
+    }
   }
   return static_cast<std::size_t>(result);
 }
