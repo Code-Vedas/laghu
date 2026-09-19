@@ -26,7 +26,7 @@ struct State;
 
 struct QuerySlot final {
   State* owner{};
-  ares_channel_t* channel{};
+  ares_channel channel{};
   DnsQueryToken token;
   std::array<DnsAddress, DnsResolver::maximum_address_capacity> completed_addresses{};
   core::Error completed_error{core::ErrorDomain::core, core::ErrorCode::invalid_state};
