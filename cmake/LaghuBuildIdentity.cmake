@@ -117,6 +117,16 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/contract/laghu/adapters/http2.hpp
       src/adapters/http2.cpp)
   endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES http3 http3_feature_index)
+  if(NOT http3_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/http3.hpp
+      src/adapters/contract/laghu/adapters/native_memory.hpp
+      src/adapters/contract/laghu/adapters/quic.hpp
+      src/adapters/http3.cpp
+      src/adapters/quic.cpp
+      src/adapters/private/laghu/adapters/internal/arena_memory.hpp)
+  endif()
   set(entries)
   foreach(input IN LISTS inputs)
     set(path "${CMAKE_SOURCE_DIR}/${input}")

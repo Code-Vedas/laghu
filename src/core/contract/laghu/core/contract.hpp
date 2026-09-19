@@ -118,6 +118,15 @@ enum class DependencyOperation : std::uint8_t {
   http2_receive,
   http2_send,
   http2_submit,
+  quic_session,
+  quic_receive,
+  quic_send,
+  quic_stream,
+  quic_expiry,
+  http3_session,
+  http3_receive,
+  http3_send,
+  http3_submit,
 };
 
 class Error final {
