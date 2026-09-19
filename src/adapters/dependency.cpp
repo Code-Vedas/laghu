@@ -60,6 +60,8 @@ namespace {
     case core::DependencyOperation::http3_receive:
     case core::DependencyOperation::http3_send:
     case core::DependencyOperation::http3_submit:
+    case core::DependencyOperation::dns_session:
+    case core::DependencyOperation::dns_query:
       return value;
   }
   return core::DependencyOperation::none;
@@ -170,6 +172,10 @@ namespace {
       return "http3_send";
     case core::DependencyOperation::http3_submit:
       return "http3_submit";
+    case core::DependencyOperation::dns_session:
+      return "dns_session";
+    case core::DependencyOperation::dns_query:
+      return "dns_query";
   }
   return "none";
 }

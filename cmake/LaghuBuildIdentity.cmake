@@ -127,6 +127,12 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/quic.cpp
       src/adapters/private/laghu/adapters/internal/arena_memory.hpp)
   endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES async_dns async_dns_feature_index)
+  if(NOT async_dns_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/dns.hpp
+      src/adapters/dns.cpp)
+  endif()
   set(entries)
   foreach(input IN LISTS inputs)
     set(path "${CMAKE_SOURCE_DIR}/${input}")
