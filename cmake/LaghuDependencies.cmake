@@ -541,6 +541,7 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
     EXCLUDE_FROM_ALL
     ${patch_arguments}
     ${source_subdir_arguments})
+  set(laghu_saved_build_testing "${BUILD_TESTING}")
   set(BUILD_TESTING OFF)
   if(LAGHU_DEPENDENCY_LINK_MODE STREQUAL STATIC)
     set(BUILD_SHARED_LIBS OFF)
@@ -586,6 +587,9 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
   # restore the caller-owned value after its subdirectory is configured.
   set(laghu_saved_build_type "${CMAKE_BUILD_TYPE}")
   FetchContent_MakeAvailable("${content_name}")
+  set(BUILD_TESTING "${laghu_saved_build_testing}" CACHE BOOL
+    "Enable Laghu tests" FORCE)
+  set(BUILD_TESTING "${laghu_saved_build_testing}")
   set(CMAKE_BUILD_TYPE "${laghu_saved_build_type}" CACHE STRING
     "Choose the type of build" FORCE)
   laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
