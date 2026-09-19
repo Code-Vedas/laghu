@@ -31,6 +31,7 @@ struct QuerySlot final {
   bool active{};
   bool native_done{};
   bool canceling{};
+  bool socket_capacity_failed{};
 };
 
 struct SocketSlot final {
@@ -50,7 +51,6 @@ struct State final {
   std::uint64_t next_token{1};
   std::size_t outstanding{};
   std::size_t socket_count{};
-  bool socket_overflow{};
   bool has_explicit_nameservers{};
   bool shutting_down{};
 };
@@ -101,7 +101,7 @@ struct State final {
 [[nodiscard]] QuerySlot* find_query(State& state, DnsQueryToken token) noexcept {
   if (!token.valid()) return nullptr;
   for (auto& query : state.queries) {
-    if (query.active && query.token.value() == token.value()) return &query;
+    if (query.active && !query.native_done && query.token.value() == token.value()) return &query;
   }
   return nullptr;
 }
@@ -111,6 +111,7 @@ void finish_query(QuerySlot& query) noexcept {
   query.active = false;
   query.native_done = false;
   query.canceling = false;
+  query.socket_capacity_failed = false;
   query.channel = nullptr;
 }
 
@@ -130,7 +131,7 @@ void socket_state(void* context, ares_socket_t descriptor, int readable, int wri
   }
   if (readable == 0 && writable == 0) return;
   if (state.socket_count == state.sockets.size()) {
-    state.socket_overflow = true;
+    query.socket_capacity_failed = true;
     return;
   }
   state.sockets[state.socket_count] = {descriptor, &query, readable != 0, writable != 0};
@@ -297,6 +298,22 @@ void retire_channel(QuerySlot& query) noexcept {
   finish_query(query);
 }
 
+void fail_socket_capacity(QuerySlot& query) noexcept {
+  State& state = *query.owner;
+  const DnsQueryToken token = query.token;
+  const DnsQuerySink sink = state.sink;
+  query.canceling = true;
+  ares_cancel(query.channel);
+  retire_channel(query);
+  const core::Error error = core_error(core::ErrorCode::exhaustion,
+                                       "DNS socket interest capacity exhausted");
+  const DnsQueryResult result{token, {}, &error};
+  sink.complete(sink.context, result);
+}
+
+static_assert(DnsResolver::maximum_socket_capacity >=
+              DnsResolver::maximum_query_capacity * ARES_GETSOCK_MAXNUM);
+
 }  // namespace
 
 DnsResolver::DnsResolver(DnsResolver&& other) noexcept
@@ -387,6 +404,7 @@ core::Result<DnsQueryToken> DnsResolver::resolve(core::TextView hostname,
   slot->active = true;
   slot->native_done = false;
   slot->canceling = false;
+  slot->socket_capacity_failed = false;
   if (const auto initialized = initialize_channel(state, *slot); !initialized.has_value()) {
     finish_query(*slot);
     return std::unexpected{initialized.error()};
@@ -398,7 +416,11 @@ core::Result<DnsQueryToken> DnsResolver::resolve(core::TextView hostname,
   hints.ai_socktype = SOCK_STREAM;
   ares_getaddrinfo(slot->channel, native_hostname->c_str(), nullptr, &hints,
                    address_complete, slot);
-  if (slot->native_done) retire_channel(*slot);
+  if (slot->native_done) {
+    retire_channel(*slot);
+  } else if (slot->socket_capacity_failed) {
+    fail_socket_capacity(*slot);
+  }
   return token;
 }
 
@@ -435,10 +457,6 @@ core::Result<std::size_t> DnsResolver::socket_interests(
                                       "DNS resolver is inactive")};
   }
   const auto& state = *static_cast<const State*>(state_);
-  if (state.socket_overflow) {
-    return std::unexpected{core_error(core::ErrorCode::exhaustion,
-                                      "DNS socket interest capacity exhausted")};
-  }
   if (output.size() < state.socket_count) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
                                       "DNS socket interest output is too small")};
@@ -477,7 +495,13 @@ core::Result<void> DnsResolver::process_events(
                                       "DNS resolver is inactive")};
   }
   auto& state = *static_cast<State*>(state_);
-  for (const auto& event : events) {
+  if (events.size() > maximum_socket_capacity) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_range,
+                                      "DNS socket event input exceeds capacity")};
+  }
+  std::array<QuerySlot*, maximum_socket_capacity> event_queries{};
+  for (std::size_t event_index = 0; event_index < events.size(); ++event_index) {
+    const auto& event = events[event_index];
     if (event.descriptor < 0 || (!event.readable && !event.writable)) {
       return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                         "DNS socket event is invalid")};
@@ -493,13 +517,19 @@ core::Result<void> DnsResolver::process_events(
       return std::unexpected{core_error(core::ErrorCode::invalid_state,
                                         "DNS socket event is not registered")};
     }
+    event_queries[event_index] = query;
+  }
+  for (std::size_t event_index = 0; event_index < events.size(); ++event_index) {
+    const auto& event = events[event_index];
+    QuerySlot* const query = event_queries[event_index];
+    if (!query->active || query->channel == nullptr) continue;
     ares_process_fd(query->channel, event.readable ? event.descriptor : ARES_SOCKET_BAD,
                     event.writable ? event.descriptor : ARES_SOCKET_BAD);
-    if (query->native_done) retire_channel(*query);
-  }
-  if (state.socket_overflow) {
-    return std::unexpected{core_error(core::ErrorCode::exhaustion,
-                                      "DNS socket interest capacity exhausted")};
+    if (query->native_done) {
+      retire_channel(*query);
+    } else if (query->socket_capacity_failed) {
+      fail_socket_capacity(*query);
+    }
   }
   return {};
 }
@@ -519,7 +549,11 @@ core::Result<void> DnsResolver::process_timeout() noexcept {
     QuerySlot& query = *pending[index];
     if (!query.active || query.channel == nullptr) continue;
     ares_process_fd(query.channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
-    if (query.native_done) retire_channel(query);
+    if (query.native_done) {
+      retire_channel(query);
+    } else if (query.socket_capacity_failed) {
+      fail_socket_capacity(query);
+    }
   }
   return {};
 }

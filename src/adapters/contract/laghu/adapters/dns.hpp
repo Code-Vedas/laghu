@@ -100,7 +100,7 @@ class DnsResolver final {
  public:
   static constexpr std::size_t maximum_query_capacity = 64;
   static constexpr std::size_t maximum_address_capacity = 32;
-  static constexpr std::size_t maximum_socket_capacity = 32;
+  static constexpr std::size_t maximum_socket_capacity = maximum_query_capacity * 16;
   static constexpr std::size_t maximum_nameserver_capacity = 8;
 
   DnsResolver() noexcept = default;

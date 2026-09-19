@@ -51,7 +51,9 @@ struct Completion final {
   laghu::core::DependencyId dependency{laghu::core::DependencyId::none};
   laghu::core::DependencyOperation operation{laghu::core::DependencyOperation::none};
   std::size_t calls{};
+  DnsResolver* cancel_on_completion{};
   bool succeeded{};
+  bool completed_token_was_inactive{};
 };
 
 void completed(void* context, const DnsQueryResult& result) noexcept {
@@ -67,6 +69,10 @@ void completed(void* context, const DnsQueryResult& result) noexcept {
   completion.count = result.addresses.size();
   for (std::size_t index = 0; index < completion.count; ++index) {
     completion.addresses[index] = result.addresses[index];
+  }
+  if (completion.cancel_on_completion != nullptr) {
+    completion.completed_token_was_inactive =
+        !completion.cancel_on_completion->cancel(result.token).has_value();
   }
 }
 
@@ -381,6 +387,40 @@ bool cancellation_and_query_exhaustion() noexcept {
          !moved.cancel(*first).has_value();
 }
 
+bool completion_is_inactive_during_callback() noexcept {
+  Fixture fixture;
+  if (!start_fixture(fixture, ReplyKind::success)) return false;
+  Completion completion{};
+  const std::array servers{nameserver(fixture.port)};
+  auto resolver = make_resolver(completion, servers, 1U);
+  if (!resolver.has_value()) return false;
+  completion.cancel_on_completion = &*resolver;
+  const auto query = resolver->resolve(TextView::from("complete.test"), DnsQueryFamily::ipv4);
+  return query.has_value() && drive(*resolver, completion) && completion.succeeded &&
+         completion.calls == 1U && completion.completed_token_was_inactive &&
+         resolver->outstanding_queries() == 0U;
+}
+
+bool socket_capacity_covers_query_capacity() noexcept {
+  Completion completion{};
+  const std::array servers{nameserver(9)};
+  auto resolver = make_resolver(completion, servers, DnsResolver::maximum_query_capacity, 20U);
+  if (!resolver.has_value()) return false;
+  std::array<laghu::adapters::DnsQueryToken, DnsResolver::maximum_query_capacity> tokens{};
+  for (auto& token : tokens) {
+    const auto query = resolver->resolve(TextView::from("capacity.test"), DnsQueryFamily::ipv4);
+    if (!query.has_value()) return false;
+    token = *query;
+  }
+  std::array<DnsSocketInterest, DnsResolver::maximum_socket_capacity> interests{};
+  const auto count = resolver->socket_interests(interests);
+  if (!count.has_value() || *count <= 32U) return false;
+  for (const auto token : tokens) {
+    if (!resolver->cancel(token).has_value()) return false;
+  }
+  return resolver->outstanding_queries() == 0U;
+}
+
 bool timeout_and_input_validation() noexcept {
   Completion completion{};
   const std::array servers{nameserver(9)};
@@ -412,6 +452,8 @@ int main() {
       laghu::test::TestCase{"malformed-reply", malformed_reply},
       laghu::test::TestCase{"tcp-fallback", tcp_fallback},
       laghu::test::TestCase{"cancel-exhaustion", cancellation_and_query_exhaustion},
+      laghu::test::TestCase{"completion-inactive", completion_is_inactive_during_callback},
+      laghu::test::TestCase{"socket-capacity", socket_capacity_covers_query_capacity},
       laghu::test::TestCase{"timeout-input", timeout_and_input_validation},
   };
   return laghu::test::run_tests(tests);
