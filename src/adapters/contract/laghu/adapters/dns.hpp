@@ -49,6 +49,9 @@ class DnsQueryToken final {
 
 struct DnsQueryResult final {
   DnsQueryToken token;
+  // Both borrowed fields are valid only for the duration of DnsQueryComplete.
+  // Copy owned values inside the callback; retaining this result does not
+  // extend either lifetime.
   std::span<const DnsAddress> addresses;
   const core::Error* error{};
 

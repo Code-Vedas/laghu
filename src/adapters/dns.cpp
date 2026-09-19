@@ -26,28 +26,32 @@ struct State;
 
 struct QuerySlot final {
   State* owner{};
+  ares_channel_t* channel{};
   DnsQueryToken token;
   bool active{};
-  bool canceled{};
+  bool native_done{};
+  bool canceling{};
 };
 
 struct SocketSlot final {
   int descriptor{-1};
+  QuerySlot* query{};
   bool readable{};
   bool writable{};
 };
 
 struct State final {
-  ares_channel_t* channel{};
   DnsResolverLimits limits{};
   DnsQuerySink sink{};
   DependencyLogSink log{};
   std::array<QuerySlot, DnsResolver::maximum_query_capacity> queries{};
   std::array<SocketSlot, DnsResolver::maximum_socket_capacity> sockets{};
+  std::array<char, 512> nameserver_csv{};
   std::uint64_t next_token{1};
   std::size_t outstanding{};
   std::size_t socket_count{};
   bool socket_overflow{};
+  bool has_explicit_nameservers{};
   bool shutting_down{};
 };
 
@@ -105,14 +109,14 @@ struct State final {
 void finish_query(QuerySlot& query) noexcept {
   if (!query.active) return;
   query.active = false;
-  query.canceled = false;
-  if (query.owner != nullptr && query.owner->outstanding != 0U) {
-    --query.owner->outstanding;
-  }
+  query.native_done = false;
+  query.canceling = false;
+  query.channel = nullptr;
 }
 
 void socket_state(void* context, ares_socket_t descriptor, int readable, int writable) {
-  auto& state = *static_cast<State*>(context);
+  auto& query = *static_cast<QuerySlot*>(context);
+  auto& state = *query.owner;
   for (std::size_t index = 0; index < state.socket_count; ++index) {
     if (state.sockets[index].descriptor != descriptor) continue;
     if (readable == 0 && writable == 0) {
@@ -129,7 +133,7 @@ void socket_state(void* context, ares_socket_t descriptor, int readable, int wri
     state.socket_overflow = true;
     return;
   }
-  state.sockets[state.socket_count] = {descriptor, readable != 0, writable != 0};
+  state.sockets[state.socket_count] = {descriptor, &query, readable != 0, writable != 0};
   ++state.socket_count;
 }
 
@@ -156,9 +160,16 @@ void socket_state(void* context, ares_socket_t descriptor, int readable, int wri
 void address_complete(void* context, int status, int, ares_addrinfo* native_result) {
   auto& query = *static_cast<QuerySlot*>(context);
   State& state = *query.owner;
-  if (query.canceled || state.shutting_down) {
+  if (state.shutting_down) {
     if (native_result != nullptr) ares_freeaddrinfo(native_result);
-    finish_query(query);
+    query.native_done = true;
+    return;
+  }
+
+  if (query.canceling && status == ARES_ECANCELLED) {
+    if (native_result != nullptr) ares_freeaddrinfo(native_result);
+    query.native_done = true;
+    if (state.outstanding != 0U) --state.outstanding;
     return;
   }
 
@@ -192,7 +203,8 @@ void address_complete(void* context, int status, int, ares_addrinfo* native_resu
   if (native_result != nullptr) ares_freeaddrinfo(native_result);
   const DnsQueryToken token = query.token;
   const DnsQuerySink sink = state.sink;
-  finish_query(query);
+  query.native_done = true;
+  if (state.outstanding != 0U) --state.outstanding;
   const DnsQueryResult result{token, std::span{addresses}.first(count), failure};
   sink.complete(sink.context, result);
 }
@@ -244,6 +256,47 @@ void address_complete(void* context, int status, int, ares_addrinfo* native_resu
   return {};
 }
 
+[[nodiscard]] core::Result<void> initialize_channel(State& state,
+                                                    QuerySlot& query) noexcept {
+  ares_options options{};
+  options.flags = ARES_FLAG_NOSEARCH;
+  options.timeout = static_cast<int>(state.limits.timeout_milliseconds);
+  options.tries = static_cast<int>(state.limits.attempts);
+  options.sock_state_cb = socket_state;
+  options.sock_state_cb_data = &query;
+  int option_mask = ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES |
+                    ARES_OPT_SOCK_STATE_CB;
+#if defined(ARES_OPT_QUERY_CACHE)
+  // c-ares 1.31+ caches answers by default. Laghu owns caching policy, so the
+  // adapter disables the native cache. Older accepted c-ares releases have no
+  // native query cache and do not expose this option.
+  options.qcache_max_ttl = 0;
+  option_mask |= ARES_OPT_QUERY_CACHE;
+#endif
+  const int initialized = ares_init_options(&query.channel, &options, option_mask);
+  if (initialized != ARES_SUCCESS) {
+    return std::unexpected{native_error(core::DependencyOperation::dns_session,
+                                         initialized, state.log)};
+  }
+  if (state.has_explicit_nameservers) {
+    const int configured = ares_set_servers_ports_csv(query.channel,
+                                                       state.nameserver_csv.data());
+    if (configured != ARES_SUCCESS) {
+      const core::Error error = native_error(core::DependencyOperation::dns_session,
+                                              configured, state.log);
+      ares_destroy(query.channel);
+      query.channel = nullptr;
+      return std::unexpected{error};
+    }
+  }
+  return {};
+}
+
+void retire_channel(QuerySlot& query) noexcept {
+  if (query.channel != nullptr) ares_destroy(query.channel);
+  finish_query(query);
+}
+
 }  // namespace
 
 DnsResolver::DnsResolver(DnsResolver&& other) noexcept
@@ -282,48 +335,16 @@ core::Result<DnsResolver> DnsResolver::create(
   state->log = log_sink;
   for (auto& query : state->queries) query.owner = state;
 
-  ares_options options{};
-  options.flags = ARES_FLAG_NOSEARCH;
-  options.timeout = static_cast<int>(config.limits.timeout_milliseconds);
-  options.tries = static_cast<int>(config.limits.attempts);
-  options.sock_state_cb = socket_state;
-  options.sock_state_cb_data = state;
-  int option_mask = ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_TRIES |
-                    ARES_OPT_SOCK_STATE_CB;
-#if defined(ARES_OPT_QUERY_CACHE)
-  // c-ares 1.31+ caches answers by default. Laghu owns caching policy, so the
-  // adapter disables the native cache. Older accepted c-ares releases have no
-  // native query cache and do not expose this option.
-  options.qcache_max_ttl = 0;
-  option_mask |= ARES_OPT_QUERY_CACHE;
-#endif
-  const int initialized = ares_init_options(&state->channel, &options, option_mask);
-  if (initialized != ARES_SUCCESS) {
-    const core::Error error = native_error(core::DependencyOperation::dns_session,
-                                            initialized, log_sink);
-    delete state;
-    return std::unexpected{error};
-  }
-
   if (!config.nameservers.empty()) {
-    std::array<char, 512> csv{};
     std::size_t size{};
     for (const auto& nameserver : config.nameservers) {
-      if (const auto appended = append_nameserver(nameserver, csv, size);
+      if (const auto appended = append_nameserver(nameserver, state->nameserver_csv, size);
           !appended.has_value()) {
-        ares_destroy(state->channel);
         delete state;
         return std::unexpected{appended.error()};
       }
     }
-    const int configured = ares_set_servers_ports_csv(state->channel, csv.data());
-    if (configured != ARES_SUCCESS) {
-      const core::Error error = native_error(core::DependencyOperation::dns_session,
-                                              configured, log_sink);
-      ares_destroy(state->channel);
-      delete state;
-      return std::unexpected{error};
-    }
+    state->has_explicit_nameservers = true;
   }
   return DnsResolver{state};
 }
@@ -364,14 +385,20 @@ core::Result<DnsQueryToken> DnsResolver::resolve(core::TextView hostname,
   slot->token = DnsQueryToken{state.next_token++};
   const DnsQueryToken token = slot->token;
   slot->active = true;
-  slot->canceled = false;
+  slot->native_done = false;
+  slot->canceling = false;
+  if (const auto initialized = initialize_channel(state, *slot); !initialized.has_value()) {
+    finish_query(*slot);
+    return std::unexpected{initialized.error()};
+  }
   ++state.outstanding;
   ares_addrinfo_hints hints{};
   hints.ai_family = family == DnsQueryFamily::ipv4 ? AF_INET
       : family == DnsQueryFamily::ipv6 ? AF_INET6 : AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
-  ares_getaddrinfo(state.channel, native_hostname->c_str(), nullptr, &hints,
+  ares_getaddrinfo(slot->channel, native_hostname->c_str(), nullptr, &hints,
                    address_complete, slot);
+  if (slot->native_done) retire_channel(*slot);
   return token;
 }
 
@@ -382,11 +409,18 @@ core::Result<void> DnsResolver::cancel(DnsQueryToken token) noexcept {
   }
   auto& state = *static_cast<State*>(state_);
   QuerySlot* const query = find_query(state, token);
-  if (query == nullptr || query->canceled) {
+  if (query == nullptr || query->canceling) {
     return std::unexpected{core_error(core::ErrorCode::invalid_state,
                                       "DNS query token is inactive")};
   }
-  query->canceled = true;
+  query->canceling = true;
+  ares_cancel(query->channel);
+  if (!query->native_done) {
+    query->canceling = false;
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "DNS dependency did not complete cancellation")};
+  }
+  retire_channel(*query);
   const core::Error error{core::ErrorDomain::core, core::ErrorCode::cancellation, 0,
                           "DNS query was canceled"};
   const DnsQueryResult result{token, {}, &error};
@@ -419,12 +453,21 @@ core::Result<std::size_t> DnsResolver::socket_interests(
 DnsTimeout DnsResolver::next_timeout() const noexcept {
   if (state_ == nullptr) return {};
   const auto& state = *static_cast<const State*>(state_);
-  timeval timeout{};
-  if (ares_timeout(state.channel, nullptr, &timeout) == nullptr) return {};
-  const std::uint64_t seconds = timeout.tv_sec < 0 ? 0U : static_cast<std::uint64_t>(timeout.tv_sec);
-  const std::uint64_t microseconds = timeout.tv_usec < 0 ? 0U :
-      static_cast<std::uint64_t>(timeout.tv_usec);
-  return {true, seconds * 1000U + (microseconds + 999U) / 1000U};
+  DnsTimeout result{};
+  for (const auto& query : state.queries) {
+    if (!query.active || query.channel == nullptr) continue;
+    timeval timeout{};
+    if (ares_timeout(query.channel, nullptr, &timeout) == nullptr) continue;
+    const std::uint64_t seconds = timeout.tv_sec < 0 ? 0U :
+        static_cast<std::uint64_t>(timeout.tv_sec);
+    const std::uint64_t microseconds = timeout.tv_usec < 0 ? 0U :
+        static_cast<std::uint64_t>(timeout.tv_usec);
+    const std::uint64_t milliseconds = seconds * 1000U + (microseconds + 999U) / 1000U;
+    if (!result.active || milliseconds < result.milliseconds) {
+      result = {true, milliseconds};
+    }
+  }
+  return result;
 }
 
 core::Result<void> DnsResolver::process_events(
@@ -439,8 +482,20 @@ core::Result<void> DnsResolver::process_events(
       return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                         "DNS socket event is invalid")};
     }
-    ares_process_fd(state.channel, event.readable ? event.descriptor : ARES_SOCKET_BAD,
+    QuerySlot* query{};
+    for (std::size_t index = 0; index < state.socket_count; ++index) {
+      if (state.sockets[index].descriptor == event.descriptor) {
+        query = state.sockets[index].query;
+        break;
+      }
+    }
+    if (query == nullptr || !query->active || query->channel == nullptr) {
+      return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                        "DNS socket event is not registered")};
+    }
+    ares_process_fd(query->channel, event.readable ? event.descriptor : ARES_SOCKET_BAD,
                     event.writable ? event.descriptor : ARES_SOCKET_BAD);
+    if (query->native_done) retire_channel(*query);
   }
   if (state.socket_overflow) {
     return std::unexpected{core_error(core::ErrorCode::exhaustion,
@@ -455,7 +510,17 @@ core::Result<void> DnsResolver::process_timeout() noexcept {
                                       "DNS resolver is inactive")};
   }
   auto& state = *static_cast<State*>(state_);
-  ares_process_fd(state.channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
+  std::array<QuerySlot*, maximum_query_capacity> pending{};
+  std::size_t count{};
+  for (auto& query : state.queries) {
+    if (query.active && query.channel != nullptr) pending[count++] = &query;
+  }
+  for (std::size_t index = 0; index < count; ++index) {
+    QuerySlot& query = *pending[index];
+    if (!query.active || query.channel == nullptr) continue;
+    ares_process_fd(query.channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
+    if (query.native_done) retire_channel(query);
+  }
   return {};
 }
 
@@ -467,7 +532,9 @@ void DnsResolver::release() noexcept {
   if (state_ == nullptr) return;
   auto* state = static_cast<State*>(state_);
   state->shutting_down = true;
-  ares_destroy(state->channel);
+  for (auto& query : state->queries) {
+    if (query.channel != nullptr) ares_destroy(query.channel);
+  }
   delete state;
   state_ = nullptr;
 }

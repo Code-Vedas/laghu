@@ -365,12 +365,19 @@ bool cancellation_and_query_exhaustion() noexcept {
   const auto first = moved.resolve(TextView::from("cancel.test"), DnsQueryFamily::ipv4);
   const auto exhausted = moved.resolve(TextView::from("second.test"), DnsQueryFamily::ipv4);
   const auto missing_output = moved.socket_interests({});
-  return first.has_value() && !exhausted.has_value() &&
-         exhausted.error().code() == ErrorCode::exhaustion &&
-         !missing_output.has_value() && missing_output.error().code() == ErrorCode::invalid_range &&
-         !resolver->resolve(TextView::from("inactive.test")).has_value() &&
-         moved.cancel(*first).has_value() && completion.calls == 1U &&
-         completion.error == ErrorCode::cancellation &&
+  if (!first.has_value() || exhausted.has_value() ||
+      exhausted.error().code() != ErrorCode::exhaustion ||
+      missing_output.has_value() || missing_output.error().code() != ErrorCode::invalid_range ||
+      resolver->resolve(TextView::from("inactive.test")).has_value() ||
+      !moved.cancel(*first).has_value() || completion.calls != 1U ||
+      completion.error != ErrorCode::cancellation || moved.outstanding_queries() != 0U) {
+    return false;
+  }
+  const auto replacement = moved.resolve(TextView::from("replacement.test"),
+                                          DnsQueryFamily::ipv4);
+  return replacement.has_value() && moved.outstanding_queries() == 1U &&
+         moved.cancel(*replacement).has_value() && completion.calls == 2U &&
+         completion.error == ErrorCode::cancellation && moved.outstanding_queries() == 0U &&
          !moved.cancel(*first).has_value();
 }
 
