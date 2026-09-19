@@ -512,6 +512,24 @@ bool timeout_callback_may_destroy_resolver() noexcept {
   return processed.has_value() && resolver == nullptr && completion.calls == 1U;
 }
 
+bool system_resolver_lookup() noexcept {
+  Completion completion{};
+  auto resolver = make_resolver(completion, {});
+  if (!resolver.has_value() ||
+      !resolver->resolve(TextView::from("localhost"), DnsQueryFamily::ipv4).has_value() ||
+      !drive(*resolver, completion) || !completion.succeeded || completion.count == 0U) {
+    return false;
+  }
+  for (std::size_t index = 0; index < completion.count; ++index) {
+    const auto& address = completion.addresses[index];
+    if (address.family == DnsAddressFamily::ipv4 &&
+        address.bytes[0] == std::byte{127}) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool timeout_and_input_validation() noexcept {
   Fixture silent;
   if (!bind_fixture(silent, false)) return false;
@@ -550,6 +568,7 @@ int main() {
       laghu::test::TestCase{"reentrant-submit", completed_slot_supports_reentrant_submission},
       laghu::test::TestCase{"event-callback-destroy", event_callback_may_destroy_resolver},
       laghu::test::TestCase{"timeout-callback-destroy", timeout_callback_may_destroy_resolver},
+      laghu::test::TestCase{"system-resolver", system_resolver_lookup},
       laghu::test::TestCase{"timeout-input", timeout_and_input_validation},
   };
   return laghu::test::run_tests(tests);
