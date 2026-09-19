@@ -17,6 +17,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <ares.h>
+
 #include "laghu_test_support.hpp"
 
 #include <laghu/adapters/dns.hpp>
@@ -52,8 +54,10 @@ struct Completion final {
   laghu::core::DependencyOperation operation{laghu::core::DependencyOperation::none};
   std::size_t calls{};
   DnsResolver* cancel_on_completion{};
+  DnsResolver* submit_on_completion{};
   bool succeeded{};
   bool completed_token_was_inactive{};
+  bool replacement_submitted{};
 };
 
 void completed(void* context, const DnsQueryResult& result) noexcept {
@@ -73,6 +77,10 @@ void completed(void* context, const DnsQueryResult& result) noexcept {
   if (completion.cancel_on_completion != nullptr) {
     completion.completed_token_was_inactive =
         !completion.cancel_on_completion->cancel(result.token).has_value();
+  }
+  if (completion.submit_on_completion != nullptr) {
+    completion.replacement_submitted = completion.submit_on_completion->resolve(
+        TextView::from("replacement.test"), DnsQueryFamily::ipv4).has_value();
   }
 }
 
@@ -421,9 +429,29 @@ bool socket_capacity_covers_query_capacity() noexcept {
   return resolver->outstanding_queries() == 0U;
 }
 
-bool timeout_and_input_validation() noexcept {
+bool completed_slot_supports_reentrant_submission() noexcept {
+  Fixture fixture;
+  if (!start_fixture(fixture, ReplyKind::success)) return false;
   Completion completion{};
-  const std::array servers{nameserver(9)};
+  const std::array servers{nameserver(fixture.port)};
+  auto resolver = make_resolver(completion, servers, DnsResolver::maximum_query_capacity, 50U);
+  if (!resolver.has_value()) return false;
+  completion.submit_on_completion = &*resolver;
+  for (std::size_t index = 0; index < DnsResolver::maximum_query_capacity; ++index) {
+    if (!resolver->resolve(TextView::from("occupied.test"), DnsQueryFamily::ipv4).has_value()) {
+      return false;
+    }
+  }
+  return drive(*resolver, completion) && completion.calls == 1U && completion.succeeded &&
+         completion.replacement_submitted &&
+         resolver->outstanding_queries() == DnsResolver::maximum_query_capacity;
+}
+
+bool timeout_and_input_validation() noexcept {
+  Fixture silent;
+  if (!bind_fixture(silent, false)) return false;
+  Completion completion{};
+  const std::array servers{nameserver(silent.port)};
   auto resolver = make_resolver(completion, servers, 1U, 10U);
   Completion system_completion{};
   auto system_resolver = make_resolver(system_completion, {});
@@ -439,7 +467,7 @@ bool timeout_and_input_validation() noexcept {
   oversized.fill('a');
   const auto query = resolver->resolve(TextView::from("timeout.test"), DnsQueryFamily::ipv4);
   return query.has_value() && drive(*resolver, completion) && !completion.succeeded &&
-         completion.error == ErrorCode::io &&
+         completion.error == ErrorCode::io && completion.native_code == ARES_ETIMEOUT &&
          !resolver->resolve(TextView::from(oversized.data(), oversized.size()).value()).has_value();
 }
 
@@ -454,6 +482,7 @@ int main() {
       laghu::test::TestCase{"cancel-exhaustion", cancellation_and_query_exhaustion},
       laghu::test::TestCase{"completion-inactive", completion_is_inactive_during_callback},
       laghu::test::TestCase{"socket-capacity", socket_capacity_covers_query_capacity},
+      laghu::test::TestCase{"reentrant-submit", completed_slot_supports_reentrant_submission},
       laghu::test::TestCase{"timeout-input", timeout_and_input_validation},
   };
   return laghu::test::run_tests(tests);

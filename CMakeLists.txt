@@ -454,7 +454,8 @@ if(TARGET laghu_dns)
     set_source_files_properties(tests/adapters/dns.cpp PROPERTIES
       COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
   endif()
-  target_link_libraries(laghu_dns_test PRIVATE laghu_dns laghu_test_support)
+  target_link_libraries(laghu_dns_test PRIVATE
+    laghu_dns laghu_test_support laghu_feature_async_dns)
   laghu_add_native_test(laghu.adapters.dns laghu_dns_test)
 
   add_executable(laghu_dns_contract_test tests/adapters/dns_contract.cpp)

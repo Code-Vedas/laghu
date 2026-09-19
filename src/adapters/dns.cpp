@@ -28,10 +28,14 @@ struct QuerySlot final {
   State* owner{};
   ares_channel_t* channel{};
   DnsQueryToken token;
+  std::array<DnsAddress, DnsResolver::maximum_address_capacity> completed_addresses{};
+  core::Error completed_error{core::ErrorDomain::core, core::ErrorCode::invalid_state};
+  std::size_t completed_address_count{};
   bool active{};
   bool native_done{};
   bool canceling{};
   bool socket_capacity_failed{};
+  bool completed_with_error{};
 };
 
 struct SocketSlot final {
@@ -112,6 +116,8 @@ void finish_query(QuerySlot& query) noexcept {
   query.native_done = false;
   query.canceling = false;
   query.socket_capacity_failed = false;
+  query.completed_address_count = 0;
+  query.completed_with_error = false;
   query.channel = nullptr;
 }
 
@@ -174,40 +180,35 @@ void address_complete(void* context, int status, int, ares_addrinfo* native_resu
     return;
   }
 
-  std::array<DnsAddress, DnsResolver::maximum_address_capacity> addresses{};
-  std::size_t count{};
-  core::Error error{core::ErrorDomain::core, core::ErrorCode::invalid_state};
-  const core::Error* failure{};
+  query.completed_address_count = 0;
+  query.completed_with_error = false;
   if (status != ARES_SUCCESS) {
-    error = native_error(core::DependencyOperation::dns_query, status, state.log);
-    failure = &error;
+    query.completed_error = native_error(core::DependencyOperation::dns_query, status, state.log);
+    query.completed_with_error = true;
   } else {
     for (ares_addrinfo_node* node = native_result == nullptr ? nullptr : native_result->nodes;
          node != nullptr; node = node->ai_next) {
       DnsAddress address{};
       if (!copy_address(*node, address)) continue;
-      if (count == state.limits.maximum_result_addresses) {
-        error = core_error(core::ErrorCode::exhaustion,
-                           "DNS result exceeds caller address capacity");
-        failure = &error;
-        count = 0;
+      if (query.completed_address_count == state.limits.maximum_result_addresses) {
+        query.completed_error = core_error(core::ErrorCode::exhaustion,
+                                            "DNS result exceeds caller address capacity");
+        query.completed_with_error = true;
+        query.completed_address_count = 0;
         break;
       }
-      addresses[count] = address;
-      ++count;
+      query.completed_addresses[query.completed_address_count] = address;
+      ++query.completed_address_count;
     }
-    if (failure == nullptr && count == 0U) {
-      error = native_error(core::DependencyOperation::dns_query, ARES_ENODATA, state.log);
-      failure = &error;
+    if (!query.completed_with_error && query.completed_address_count == 0U) {
+      query.completed_error = native_error(core::DependencyOperation::dns_query,
+                                            ARES_ENODATA, state.log);
+      query.completed_with_error = true;
     }
   }
   if (native_result != nullptr) ares_freeaddrinfo(native_result);
-  const DnsQueryToken token = query.token;
-  const DnsQuerySink sink = state.sink;
   query.native_done = true;
   if (state.outstanding != 0U) --state.outstanding;
-  const DnsQueryResult result{token, std::span{addresses}.first(count), failure};
-  sink.complete(sink.context, result);
 }
 
 [[nodiscard]] core::Result<void> append_nameserver(
@@ -296,6 +297,20 @@ void address_complete(void* context, int status, int, ares_addrinfo* native_resu
 void retire_channel(QuerySlot& query) noexcept {
   if (query.channel != nullptr) ares_destroy(query.channel);
   finish_query(query);
+}
+
+void dispatch_completion(QuerySlot& query) noexcept {
+  State& state = *query.owner;
+  const DnsQueryToken token = query.token;
+  const DnsQuerySink sink = state.sink;
+  const auto addresses = query.completed_addresses;
+  const std::size_t address_count = query.completed_address_count;
+  const core::Error error = query.completed_error;
+  const bool failed = query.completed_with_error;
+  retire_channel(query);
+  const DnsQueryResult result{token, std::span{addresses}.first(address_count),
+                              failed ? &error : nullptr};
+  sink.complete(sink.context, result);
 }
 
 void fail_socket_capacity(QuerySlot& query) noexcept {
@@ -405,6 +420,8 @@ core::Result<DnsQueryToken> DnsResolver::resolve(core::TextView hostname,
   slot->native_done = false;
   slot->canceling = false;
   slot->socket_capacity_failed = false;
+  slot->completed_address_count = 0;
+  slot->completed_with_error = false;
   if (const auto initialized = initialize_channel(state, *slot); !initialized.has_value()) {
     finish_query(*slot);
     return std::unexpected{initialized.error()};
@@ -417,7 +434,7 @@ core::Result<DnsQueryToken> DnsResolver::resolve(core::TextView hostname,
   ares_getaddrinfo(slot->channel, native_hostname->c_str(), nullptr, &hints,
                    address_complete, slot);
   if (slot->native_done) {
-    retire_channel(*slot);
+    dispatch_completion(*slot);
   } else if (slot->socket_capacity_failed) {
     fail_socket_capacity(*slot);
   }
@@ -500,6 +517,7 @@ core::Result<void> DnsResolver::process_events(
                                       "DNS socket event input exceeds capacity")};
   }
   std::array<QuerySlot*, maximum_socket_capacity> event_queries{};
+  std::array<std::uint64_t, maximum_socket_capacity> event_tokens{};
   for (std::size_t event_index = 0; event_index < events.size(); ++event_index) {
     const auto& event = events[event_index];
     if (event.descriptor < 0 || (!event.readable && !event.writable)) {
@@ -518,15 +536,19 @@ core::Result<void> DnsResolver::process_events(
                                         "DNS socket event is not registered")};
     }
     event_queries[event_index] = query;
+    event_tokens[event_index] = query->token.value();
   }
   for (std::size_t event_index = 0; event_index < events.size(); ++event_index) {
     const auto& event = events[event_index];
     QuerySlot* const query = event_queries[event_index];
-    if (!query->active || query->channel == nullptr) continue;
+    if (!query->active || query->channel == nullptr ||
+        query->token.value() != event_tokens[event_index]) {
+      continue;
+    }
     ares_process_fd(query->channel, event.readable ? event.descriptor : ARES_SOCKET_BAD,
                     event.writable ? event.descriptor : ARES_SOCKET_BAD);
     if (query->native_done) {
-      retire_channel(*query);
+      dispatch_completion(*query);
     } else if (query->socket_capacity_failed) {
       fail_socket_capacity(*query);
     }
@@ -541,16 +563,24 @@ core::Result<void> DnsResolver::process_timeout() noexcept {
   }
   auto& state = *static_cast<State*>(state_);
   std::array<QuerySlot*, maximum_query_capacity> pending{};
+  std::array<std::uint64_t, maximum_query_capacity> pending_tokens{};
   std::size_t count{};
   for (auto& query : state.queries) {
-    if (query.active && query.channel != nullptr) pending[count++] = &query;
+    if (query.active && query.channel != nullptr) {
+      pending[count] = &query;
+      pending_tokens[count] = query.token.value();
+      ++count;
+    }
   }
   for (std::size_t index = 0; index < count; ++index) {
     QuerySlot& query = *pending[index];
-    if (!query.active || query.channel == nullptr) continue;
+    if (!query.active || query.channel == nullptr ||
+        query.token.value() != pending_tokens[index]) {
+      continue;
+    }
     ares_process_fd(query.channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
     if (query.native_done) {
-      retire_channel(query);
+      dispatch_completion(query);
     } else if (query.socket_capacity_failed) {
       fail_socket_capacity(query);
     }
