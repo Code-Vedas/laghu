@@ -95,7 +95,9 @@ struct DnsTimeout final {
 };
 
 // One resolver belongs to one event-loop owner. Its callbacks are synchronous
-// with process_events(), process_timeout(), cancel(), or destruction.
+// with process_events(), process_timeout(), or cancel() and may destroy or
+// replace the resolver. Destruction abandons outstanding queries without
+// invoking their completion callbacks.
 class DnsResolver final {
  public:
   static constexpr std::size_t maximum_query_capacity = 64;

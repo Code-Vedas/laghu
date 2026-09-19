@@ -549,8 +549,10 @@ core::Result<void> DnsResolver::process_events(
                     event.writable ? event.descriptor : ARES_SOCKET_BAD);
     if (query->native_done) {
       dispatch_completion(*query);
+      return {};
     } else if (query->socket_capacity_failed) {
       fail_socket_capacity(*query);
+      return {};
     }
   }
   return {};
@@ -581,8 +583,10 @@ core::Result<void> DnsResolver::process_timeout() noexcept {
     ares_process_fd(query.channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
     if (query.native_done) {
       dispatch_completion(query);
+      return {};
     } else if (query.socket_capacity_failed) {
       fail_socket_capacity(query);
+      return {};
     }
   }
   return {};

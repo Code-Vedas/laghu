@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include <span>
 #include <utility>
 
@@ -55,6 +56,7 @@ struct Completion final {
   std::size_t calls{};
   DnsResolver* cancel_on_completion{};
   DnsResolver* submit_on_completion{};
+  DnsResolver** destroy_on_completion{};
   bool succeeded{};
   bool completed_token_was_inactive{};
   bool replacement_submitted{};
@@ -81,6 +83,10 @@ void completed(void* context, const DnsQueryResult& result) noexcept {
   if (completion.submit_on_completion != nullptr) {
     completion.replacement_submitted = completion.submit_on_completion->resolve(
         TextView::from("replacement.test"), DnsQueryFamily::ipv4).has_value();
+  }
+  if (completion.destroy_on_completion != nullptr) {
+    delete *completion.destroy_on_completion;
+    *completion.destroy_on_completion = nullptr;
   }
 }
 
@@ -447,6 +453,65 @@ bool completed_slot_supports_reentrant_submission() noexcept {
          resolver->outstanding_queries() == DnsResolver::maximum_query_capacity;
 }
 
+bool event_callback_may_destroy_resolver() noexcept {
+  Fixture fixture;
+  if (!start_fixture(fixture, ReplyKind::success)) return false;
+  Completion completion{};
+  const std::array servers{nameserver(fixture.port)};
+  auto created = make_resolver(completion, servers, 1U);
+  if (!created.has_value()) return false;
+  auto* resolver = new (std::nothrow) DnsResolver(std::move(*created));
+  if (resolver == nullptr) return false;
+  completion.destroy_on_completion = &resolver;
+  if (!resolver->resolve(TextView::from("destroy.test"), DnsQueryFamily::ipv4).has_value()) {
+    delete resolver;
+    return false;
+  }
+  std::array<DnsSocketInterest, DnsResolver::maximum_socket_capacity> interests{};
+  const auto count = resolver->socket_interests(interests);
+  if (!count.has_value() || *count == 0U) {
+    delete resolver;
+    return false;
+  }
+  pollfd descriptor{interests[0].descriptor, POLLIN, 0};
+  if (::poll(&descriptor, 1, 1000) <= 0) {
+    delete resolver;
+    return false;
+  }
+  const std::array events{
+      DnsSocketEvent{descriptor.fd, true, false},
+      DnsSocketEvent{descriptor.fd, true, false},
+  };
+  const auto processed = resolver->process_events(events);
+  return processed.has_value() && resolver == nullptr && completion.calls == 1U;
+}
+
+bool timeout_callback_may_destroy_resolver() noexcept {
+  Fixture silent;
+  if (!bind_fixture(silent, false)) return false;
+  Completion completion{};
+  const std::array servers{nameserver(silent.port)};
+  auto created = make_resolver(completion, servers, 2U, 1U);
+  if (!created.has_value()) return false;
+  auto* resolver = new (std::nothrow) DnsResolver(std::move(*created));
+  if (resolver == nullptr) return false;
+  completion.destroy_on_completion = &resolver;
+  if (!resolver->resolve(TextView::from("first.test"), DnsQueryFamily::ipv4).has_value() ||
+      !resolver->resolve(TextView::from("second.test"), DnsQueryFamily::ipv4).has_value()) {
+    delete resolver;
+    return false;
+  }
+  const DnsTimeout timeout = resolver->next_timeout();
+  if (!timeout.active || timeout.milliseconds > 1000U) {
+    delete resolver;
+    return false;
+  }
+  (void)::poll(nullptr, 0, static_cast<int>(timeout.milliseconds + 10U));
+  const auto processed = resolver->process_timeout();
+  if (resolver != nullptr) delete resolver;
+  return processed.has_value() && resolver == nullptr && completion.calls == 1U;
+}
+
 bool timeout_and_input_validation() noexcept {
   Fixture silent;
   if (!bind_fixture(silent, false)) return false;
@@ -483,6 +548,8 @@ int main() {
       laghu::test::TestCase{"completion-inactive", completion_is_inactive_during_callback},
       laghu::test::TestCase{"socket-capacity", socket_capacity_covers_query_capacity},
       laghu::test::TestCase{"reentrant-submit", completed_slot_supports_reentrant_submission},
+      laghu::test::TestCase{"event-callback-destroy", event_callback_may_destroy_resolver},
+      laghu::test::TestCase{"timeout-callback-destroy", timeout_callback_may_destroy_resolver},
       laghu::test::TestCase{"timeout-input", timeout_and_input_validation},
   };
   return laghu::test::run_tests(tests);
