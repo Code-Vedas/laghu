@@ -134,6 +134,8 @@ function(laghu_build_identity_input_hashes output)
       if(NOT codec_common_added)
         list(APPEND inputs
           src/adapters/contract/laghu/adapters/codecs.hpp
+          src/adapters/contract/laghu/adapters/native_memory.hpp
+          src/adapters/private/laghu/adapters/internal/arena_memory.hpp
           src/adapters/private/laghu/adapters/internal/codecs.hpp
           src/adapters/codecs.cpp
           bench/codecs.cpp

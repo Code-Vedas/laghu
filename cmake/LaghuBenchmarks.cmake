@@ -100,7 +100,8 @@ function(laghu_add_benchmark_targets)
   add_executable(laghu_benchmark_workload_counters_test tests/benchmarks/workload_counters.cpp)
   laghu_apply_first_party_contract(laghu_benchmark_workload_counters_test)
   target_include_directories(laghu_benchmark_workload_counters_test PRIVATE
-    "${CMAKE_SOURCE_DIR}/bench/private")
+    "${CMAKE_SOURCE_DIR}/bench/private"
+    "${CMAKE_SOURCE_DIR}/src/core/contract")
   target_link_libraries(laghu_benchmark_workload_counters_test PRIVATE laghu_test_support)
   laghu_add_native_test(laghu.benchmark.workload_counters laghu_benchmark_workload_counters_test)
 endfunction()

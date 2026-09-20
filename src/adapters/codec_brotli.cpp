@@ -38,6 +38,21 @@ void brotli_free(void* context, void* pointer) noexcept {
   return error;
 }
 
+[[nodiscard]] bool brotli_allocation_error(
+    BrotliDecoderErrorCode code) noexcept {
+  switch (code) {
+    case BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES:
+    case BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS:
+    case BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP:
+    case BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1:
+    case BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2:
+    case BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES:
+      return true;
+    default:
+      return false;
+  }
+}
+
 [[nodiscard]] core::Result<CodecProgress> brotli_process(
     void* opaque, core::ByteView input, core::MutableByteView output,
     bool finishing) noexcept {
@@ -77,10 +92,14 @@ void brotli_free(void* context, void* pointer) noexcept {
         state.decoder, &available_input, &next_input, &available_output,
         &next_output, nullptr);
     if (result == BROTLI_DECODER_RESULT_ERROR) {
+      const BrotliDecoderErrorCode code =
+          BrotliDecoderGetErrorCode(state.decoder);
       return std::unexpected{brotli_error(
-          core::DependencyStatus::corrupt_data,
+          brotli_allocation_error(code)
+              ? core::DependencyStatus::exhaustion
+              : core::DependencyStatus::corrupt_data,
           core::DependencyOperation::codec_process,
-          static_cast<int>(BrotliDecoderGetErrorCode(state.decoder)), state.log)};
+          static_cast<int>(code), state.log)};
     }
     finished = result == BROTLI_DECODER_RESULT_SUCCESS;
     needs_input = result == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT;

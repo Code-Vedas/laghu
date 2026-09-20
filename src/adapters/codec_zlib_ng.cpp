@@ -70,7 +70,7 @@ void zlib_free(void* context, void* pointer) noexcept {
   const std::size_t consumed = offered_input - state.stream.avail_in;
   const std::size_t produced = offered_output - state.stream.avail_out;
   const bool finished = result == Z_STREAM_END;
-  if (finished && state.stream.avail_in != 0U) {
+  if (finished && consumed != input.size()) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::corrupt_data, "compressed stream has trailing data")};
   }
@@ -79,13 +79,13 @@ void zlib_free(void* context, void* pointer) noexcept {
         core::DependencyOperation::codec_process, result, state.log)};
   }
   if (finishing && state.accounting.direction == CodecDirection::decode &&
-      !finished && state.stream.avail_out != 0U) {
+      !finished && consumed == input.size() && state.stream.avail_out != 0U) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::corrupt_data, "compressed stream is truncated")};
   }
   internal::record(state.accounting, consumed, produced, finished);
   return CodecProgress{consumed, produced,
-                       !finished && state.stream.avail_in == 0U,
+                       !finished && consumed == input.size(),
                        !finished && state.stream.avail_out == 0U,
                        finished};
 }
