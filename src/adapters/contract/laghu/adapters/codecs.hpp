@@ -34,6 +34,8 @@ struct CodecProgress final {
 };
 
 inline constexpr std::size_t codec_state_storage_words = 64U;
+// A storage span must remain alive and exclusively assigned to its CodecStream
+// until that stream is destroyed.
 using CodecStateStorage = std::span<std::max_align_t, codec_state_storage_words>;
 
 class CodecStream final {
@@ -76,6 +78,7 @@ class CodecStream final {
   const core::BoundedArena* arena_{};
   std::uint64_t generation_{};
   core::ArenaPin pin_{};
+  bool finalizing_{};
 };
 
 [[nodiscard]] core::Result<CodecStream> create_zlib_ng_codec(

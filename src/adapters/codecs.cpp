@@ -33,6 +33,11 @@ core::Result<CodecProgress> CodecStream::process(
   if (const auto valid = require_valid(); !valid.has_value()) {
     return std::unexpected{valid.error()};
   }
+  if (finalizing_) {
+    return std::unexpected{internal::codec_error(
+        core::ErrorCode::invalid_state,
+        "codec stream finalization has already started")};
+  }
   return operations_->process(state_, input, output, false);
 }
 
@@ -41,6 +46,7 @@ core::Result<CodecProgress> CodecStream::finish(
   if (const auto valid = require_valid(); !valid.has_value()) {
     return std::unexpected{valid.error()};
   }
+  finalizing_ = true;
   return operations_->process(state_, core::ByteView{}, output, true);
 }
 
@@ -61,6 +67,7 @@ void CodecStream::release() noexcept {
   arena_ = nullptr;
   generation_ = 0U;
   pin_ = {};
+  finalizing_ = false;
 }
 
 void CodecStream::move_from(CodecStream&& other) noexcept {
@@ -69,6 +76,7 @@ void CodecStream::move_from(CodecStream&& other) noexcept {
   arena_ = std::exchange(other.arena_, nullptr);
   generation_ = std::exchange(other.generation_, 0U);
   pin_ = std::move(other.pin_);
+  finalizing_ = std::exchange(other.finalizing_, false);
 }
 
 }  // namespace laghu::adapters

@@ -273,6 +273,35 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
            stream.error().dependency_status() == laghu::core::DependencyStatus::exhaustion));
 }
 
+[[nodiscard]] bool finalization_is_latched() noexcept {
+  constexpr std::string_view payload = "finalization state payload";
+  Fixture fixture;
+  auto stream = LAGHU_CODEC_FACTORY(
+      CodecDirection::encode, fixture.storage(), fixture.memory,
+      generous_limits);
+  if (!stream.has_value()) return false;
+  std::array<std::byte, 4096> output{};
+  const auto progress = stream->process(
+      bytes(text_bytes(payload)), mutable_bytes(output));
+  if (!progress.has_value()) return false;
+  std::array<std::byte, 1> first_finish_output{};
+  const auto first_finish = stream->finish(mutable_bytes(first_finish_output));
+  if (!first_finish.has_value() || first_finish->finished) return false;
+  const auto invalid_process = stream->process(
+      bytes(text_bytes("x")), mutable_bytes(output));
+  if (invalid_process.has_value() ||
+      invalid_process.error().code() != ErrorCode::invalid_state) return false;
+  std::size_t finish_calls = 1U;
+  bool finished = first_finish->finished;
+  while (!finished && finish_calls < 32U) {
+    const auto completion = stream->finish(mutable_bytes(output));
+    if (!completion.has_value()) return false;
+    finished = completion->finished;
+    ++finish_calls;
+  }
+  return finished;
+}
+
 }  // namespace
 
 int main() {
@@ -286,6 +315,7 @@ int main() {
 #endif
       laghu::test::TestCase{"codec.failures-cancel", failures_and_cancel},
       laghu::test::TestCase{"codec.allocation-failure", allocation_failure},
+      laghu::test::TestCase{"codec.finalization-latched", finalization_is_latched},
   };
   return laghu::test::run_tests(tests);
 }
