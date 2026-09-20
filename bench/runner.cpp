@@ -39,6 +39,7 @@ enum class ExitCode : int {
   success = 0,
   invalid_arguments = 64,
   metric_unavailable = 69,
+  workload_failure = 70,
   output_failure = 74,
 };
 
@@ -447,7 +448,14 @@ int main(int argc, char** argv) {
   WorkloadCounters warmup_counters{};
   std::uint64_t checksum{};
   for (std::uint64_t interval = 0U; interval < options.warmup_intervals; ++interval) {
-    checksum ^= laghu::benchmark::internal::run_workload(interval + 1U, warmup_counters);
+    const auto result = laghu::benchmark::internal::run_workload(
+        interval + 1U, warmup_counters);
+    if (!result.has_value()) {
+      static_cast<void>(write_all(STDERR_FILENO,
+                                  "laghu-benchmark: warmup workload failed\n"));
+      return static_cast<int>(ExitCode::workload_failure);
+    }
+    checksum ^= *result;
   }
 
   std::array<std::uint64_t, maximum_intervals> durations{};
@@ -471,8 +479,14 @@ int main(int argc, char** argv) {
     const NumericMetric cpu_begin = process_cpu_time();
     const std::uint64_t allocation_begin = measured_counters.allocation_count();
     const std::uint64_t syscall_begin = measured_counters.laghu_syscall_count();
-    checksum ^= laghu::benchmark::internal::run_workload(
+    const auto result = laghu::benchmark::internal::run_workload(
         static_cast<std::uint64_t>(interval) + options.warmup_intervals + 1U, measured_counters);
+    if (!result.has_value()) {
+      static_cast<void>(write_all(STDERR_FILENO,
+                                  "laghu-benchmark: measured workload failed\n"));
+      return static_cast<int>(ExitCode::workload_failure);
+    }
+    checksum ^= *result;
     const NumericMetric cpu_end = process_cpu_time();
     if (!monotonic_now(end) || end < begin) {
       static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: monotonic clock is invalid\n"));

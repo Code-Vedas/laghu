@@ -563,7 +563,8 @@ if(TARGET laghu_codecs)
       laghu_apply_first_party_contract("laghu_codec_${laghu_codec_suffix}_test")
       laghu_configure_api_consumer("laghu_codec_${laghu_codec_suffix}_test" adapters)
       target_compile_definitions("laghu_codec_${laghu_codec_suffix}_test" PRIVATE
-        "LAGHU_CODEC_FACTORY=laghu::adapters::create_${laghu_codec_suffix}_codec")
+        "LAGHU_CODEC_FACTORY=laghu::adapters::create_${laghu_codec_suffix}_codec"
+        "LAGHU_CODEC_${laghu_codec_suffix}=1")
       target_link_libraries("laghu_codec_${laghu_codec_suffix}_test" PRIVATE
         "laghu_codec_${laghu_codec_suffix}" laghu_test_support)
       laghu_add_native_test("laghu.adapters.codec.${laghu_codec_suffix}"

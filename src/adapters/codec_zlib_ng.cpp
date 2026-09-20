@@ -51,7 +51,8 @@ void zlib_free(void* context, void* pointer) noexcept {
       !valid.has_value()) return std::unexpected{valid.error()};
   const std::size_t output_size = internal::bounded_output_size(
       state.accounting, output.size());
-  if (output_size == 0U) {
+  if (output_size == 0U &&
+      state.accounting.direction == CodecDirection::encode) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::exhaustion, "codec output limit is exhausted")};
   }
@@ -133,8 +134,9 @@ core::Result<CodecStream> create_zlib_ng_codec(
   state.stream.zfree = zlib_free;
   state.stream.opaque = &state.memory;
   const int result = direction == CodecDirection::encode
-      ? zng_deflateInit(&state.stream, Z_DEFAULT_COMPRESSION)
-      : zng_inflateInit(&state.stream);
+      ? zng_deflateInit2(&state.stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                         MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY)
+      : zng_inflateInit2(&state.stream, MAX_WBITS + 32);
   if (result != Z_OK) {
     state.~ZlibState();
     return std::unexpected{zlib_error(

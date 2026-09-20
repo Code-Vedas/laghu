@@ -262,7 +262,6 @@ function(laghu_require_system_dependency id)
     endif()
   endif()
   list(REMOVE_DUPLICATES system_include_directories)
-  list(REMOVE_DUPLICATES system_libraries)
   laghu_add_dependency_symbol_probe(
     ID "${id}"
     TARGET "laghu_dependency_probe_${id}"

@@ -95,7 +95,7 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
   while (input_offset < input.size() && !finished) {
     const std::size_t offered_input = std::min(input_chunk, input.size() - input_offset);
     const std::size_t offered_output = std::min(output_chunk, output.size() - output_offset);
-    if (offered_output == 0U) return false;
+    if (offered_output == 0U && direction == CodecDirection::encode) return false;
     const auto progress = stream->process(
         bytes(input.subspan(input_offset, offered_input)),
         mutable_bytes(output.subspan(output_offset, offered_output)));
@@ -103,11 +103,12 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
     input_offset += progress->input_consumed;
     output_offset += progress->output_produced;
     finished = progress->finished;
-    if (progress->input_consumed == 0U && progress->output_produced == 0U) return false;
+    if (!finished && progress->input_consumed == 0U &&
+        progress->output_produced == 0U) return false;
   }
   while (!finished) {
     const std::size_t offered_output = std::min(output_chunk, output.size() - output_offset);
-    if (offered_output == 0U) return false;
+    if (offered_output == 0U && direction == CodecDirection::encode) return false;
     const auto progress = stream->finish(
         mutable_bytes(output.subspan(output_offset, offered_output)));
     if (!progress.has_value()) return false;
@@ -118,6 +119,52 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
   produced = output_offset;
   return input_offset == input.size();
 }
+
+[[nodiscard]] bool exact_output_limit() noexcept {
+  constexpr std::string_view payload = "exact output limit";
+  std::array<std::byte, 4096> compressed{};
+  std::size_t compressed_size{};
+  if (!transform(CodecDirection::encode, text_bytes(payload), compressed,
+                 payload.size(), compressed.size(), compressed_size)) return false;
+  std::array<std::byte, payload.size()> decoded{};
+  std::size_t decoded_size{};
+  return transform(
+      CodecDirection::decode,
+      std::span<const std::byte>{compressed}.first(compressed_size), decoded,
+      compressed_size - 1U, decoded.size(), decoded_size,
+      CodecLimits{compressed_size, decoded.size(), 16U}) &&
+      decoded_size == payload.size() &&
+      std::equal(decoded.begin(), decoded.end(), text_bytes(payload).begin());
+}
+
+#if defined(LAGHU_CODEC_zlib_ng)
+[[nodiscard]] bool gzip_interoperability() noexcept {
+  constexpr std::array gzip_hello{
+      std::byte{0x1f}, std::byte{0x8b}, std::byte{0x08}, std::byte{0x00},
+      std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00},
+      std::byte{0x00}, std::byte{0x03}, std::byte{0xcb}, std::byte{0x48},
+      std::byte{0xcd}, std::byte{0xc9}, std::byte{0xc9}, std::byte{0x07},
+      std::byte{0x00}, std::byte{0x86}, std::byte{0xa6}, std::byte{0x10},
+      std::byte{0x36}, std::byte{0x05}, std::byte{0x00}, std::byte{0x00},
+      std::byte{0x00}};
+  constexpr std::string_view expected = "hello";
+  std::array<std::byte, expected.size()> decoded{};
+  std::size_t decoded_size{};
+  if (!transform(CodecDirection::decode, gzip_hello, decoded,
+                 gzip_hello.size() - 1U, decoded.size(), decoded_size,
+                 CodecLimits{gzip_hello.size(), decoded.size(), 8U}) ||
+      decoded_size != expected.size() ||
+      !std::equal(decoded.begin(), decoded.end(), text_bytes(expected).begin())) {
+    return false;
+  }
+  std::array<std::byte, 128> encoded{};
+  std::size_t encoded_size{};
+  return transform(CodecDirection::encode, text_bytes(expected), encoded,
+                   expected.size(), encoded.size(), encoded_size) &&
+      encoded_size >= 18U && encoded[0] == std::byte{0x1f} &&
+      encoded[1] == std::byte{0x8b} && encoded[2] == std::byte{0x08};
+}
+#endif
 
 [[nodiscard]] bool round_trip(std::size_t input_chunk,
                               std::size_t output_chunk) noexcept {
@@ -233,6 +280,10 @@ int main() {
       laghu::test::TestCase{"codec.round-trip", []() noexcept { return round_trip(4096U, 4096U); }},
       laghu::test::TestCase{"codec.byte-at-a-time", []() noexcept { return round_trip(1U, 1U); }},
       laghu::test::TestCase{"codec.empty", empty_round_trip},
+      laghu::test::TestCase{"codec.exact-output-limit", exact_output_limit},
+#if defined(LAGHU_CODEC_zlib_ng)
+      laghu::test::TestCase{"codec.gzip-interoperability", gzip_interoperability},
+#endif
       laghu::test::TestCase{"codec.failures-cancel", failures_and_cancel},
       laghu::test::TestCase{"codec.allocation-failure", allocation_failure},
   };

@@ -46,7 +46,8 @@ void brotli_free(void* context, void* pointer) noexcept {
       !valid.has_value()) return std::unexpected{valid.error()};
   const std::size_t output_size = internal::bounded_output_size(
       state.accounting, output.size());
-  if (output_size == 0U) {
+  if (output_size == 0U &&
+      state.accounting.direction == CodecDirection::encode) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::exhaustion, "codec output limit is exhausted")};
   }

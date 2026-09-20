@@ -8,14 +8,14 @@
 const std::string_view laghu::benchmark::internal::workload_name{"core-foundation"};
 const std::uint64_t laghu::benchmark::internal::operations_per_interval = 4096U;
 
-std::uint64_t laghu::benchmark::internal::run_workload(
+laghu::core::Result<std::uint64_t> laghu::benchmark::internal::run_workload(
     std::uint64_t seed, WorkloadCounters& counters) noexcept {
   std::uint64_t state = seed;
   for (std::uint64_t iteration = 0U; iteration < operations_per_interval;
        ++iteration) {
     const auto incremented = laghu::core::checked_add(state, std::uint64_t{0x9e3779b9U});
     if (!incremented.has_value()) {
-      return state;
+      return std::unexpected{incremented.error()};
     }
     state = *incremented ^ (state >> 13U);
   }
