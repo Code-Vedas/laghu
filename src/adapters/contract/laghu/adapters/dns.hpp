@@ -8,6 +8,7 @@
 #include <type_traits>
 
 #include <laghu/adapters/dependency.hpp>
+#include <laghu/adapters/dependency_lifecycle.hpp>
 #include <laghu/core/views.hpp>
 
 namespace laghu::adapters {
@@ -72,9 +73,36 @@ struct DnsResolverLimits final {
   std::uint32_t attempts{};
 };
 
+// Caller-owned process-local c-ares state that must outlive every resolver
+// created from it. Register hooks() with the shared dependency lifecycle before
+// forking; resolver creation is permitted only after worker initialization and
+// before worker cleanup.
+class DnsDependencyLifecycle final {
+ public:
+  DnsDependencyLifecycle() noexcept = default;
+  DnsDependencyLifecycle(const DnsDependencyLifecycle&) = delete;
+  DnsDependencyLifecycle& operator=(const DnsDependencyLifecycle&) = delete;
+
+  [[nodiscard]] DependencyLifecycleHooks hooks() noexcept;
+
+ private:
+  friend class DnsResolver;
+
+  [[nodiscard]] static core::Result<void> preflight(void* context) noexcept;
+  [[nodiscard]] static core::Result<void> worker_initialize(void* context) noexcept;
+  [[nodiscard]] static core::Result<void> worker_cleanup(void* context) noexcept;
+  [[nodiscard]] static core::Result<void> master_cleanup(void* context) noexcept;
+  [[nodiscard]] static DependencyLiveState live_state(void* context) noexcept;
+
+  std::uint64_t process_{};
+  std::uint32_t live_resolvers_{};
+  bool initialized_{};
+};
+
 struct DnsResolverConfig final {
   DnsResolverLimits limits;
   std::span<const DnsNameserver> nameservers;
+  DnsDependencyLifecycle* lifecycle{};
 };
 
 struct DnsSocketInterest final {

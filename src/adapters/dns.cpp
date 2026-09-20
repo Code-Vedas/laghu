@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <ares.h>
 
@@ -46,6 +47,7 @@ struct SocketSlot final {
 };
 
 struct State final {
+  DnsDependencyLifecycle* lifecycle{};
   DnsResolverLimits limits{};
   DnsQuerySink sink{};
   DependencyLogSink log{};
@@ -58,6 +60,11 @@ struct State final {
   bool has_explicit_nameservers{};
   bool shutting_down{};
 };
+
+[[nodiscard]] std::uint64_t current_process() noexcept {
+  const pid_t process = ::getpid();
+  return process > 0 ? static_cast<std::uint64_t>(process) : 0U;
+}
 
 [[nodiscard]] constexpr core::Error core_error(core::ErrorCode code,
                                                 std::string_view diagnostic) noexcept {
@@ -331,6 +338,69 @@ static_assert(DnsResolver::maximum_socket_capacity >=
 
 }  // namespace
 
+DependencyLifecycleHooks DnsDependencyLifecycle::hooks() noexcept {
+  return {core::DependencyId::c_ares, this, preflight, worker_initialize,
+          worker_cleanup, master_cleanup, live_state};
+}
+
+core::Result<void> DnsDependencyLifecycle::preflight(void* context) noexcept {
+  auto* lifecycle = static_cast<DnsDependencyLifecycle*>(context);
+  if (lifecycle == nullptr || lifecycle->initialized_ || lifecycle->live_resolvers_ != 0U) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "c-ares preflight requires inactive lifecycle")};
+  }
+  return {};
+}
+
+core::Result<void> DnsDependencyLifecycle::worker_initialize(void* context) noexcept {
+  auto* lifecycle = static_cast<DnsDependencyLifecycle*>(context);
+  const std::uint64_t process = current_process();
+  if (lifecycle == nullptr || process == 0U || lifecycle->live_resolvers_ != 0U ||
+      (lifecycle->initialized_ && lifecycle->process_ != process)) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "c-ares worker initialization state is invalid")};
+  }
+  if (lifecycle->initialized_) return {};
+  const int status = ares_library_init(ARES_LIB_INIT_ALL);
+  if (status != ARES_SUCCESS) {
+    return std::unexpected{normalize_dependency_error(
+        core::DependencyId::c_ares, core::DependencyOperation::dns_session,
+        status_for(status), status)};
+  }
+  lifecycle->process_ = process;
+  lifecycle->initialized_ = true;
+  return {};
+}
+
+core::Result<void> DnsDependencyLifecycle::worker_cleanup(void* context) noexcept {
+  auto* lifecycle = static_cast<DnsDependencyLifecycle*>(context);
+  if (lifecycle == nullptr ||
+      (lifecycle->initialized_ && lifecycle->process_ != current_process()) ||
+      lifecycle->live_resolvers_ != 0U) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "c-ares cleanup requires quiescent worker state")};
+  }
+  if (lifecycle->initialized_) ares_library_cleanup();
+  lifecycle->process_ = 0U;
+  lifecycle->initialized_ = false;
+  return {};
+}
+
+core::Result<void> DnsDependencyLifecycle::master_cleanup(void* context) noexcept {
+  auto* lifecycle = static_cast<DnsDependencyLifecycle*>(context);
+  if (lifecycle == nullptr || lifecycle->initialized_ || lifecycle->live_resolvers_ != 0U) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "c-ares master cleanup requires inactive lifecycle")};
+  }
+  return {};
+}
+
+DependencyLiveState DnsDependencyLifecycle::live_state(void* context) noexcept {
+  const auto* lifecycle = static_cast<const DnsDependencyLifecycle*>(context);
+  return lifecycle == nullptr ? DependencyLiveState{}
+                              : DependencyLiveState{lifecycle->live_resolvers_, 0U, 0U, 0U};
+}
+
 DnsResolver::DnsResolver(DnsResolver&& other) noexcept
     : state_(std::exchange(other.state_, nullptr)) {}
 
@@ -346,6 +416,11 @@ DnsResolver::~DnsResolver() { release(); }
 
 core::Result<DnsResolver> DnsResolver::create(
     DnsResolverConfig config, DnsQuerySink sink, DependencyLogSink log_sink) noexcept {
+  if (config.lifecycle == nullptr || !config.lifecycle->initialized_ ||
+      config.lifecycle->process_ != current_process()) {
+    return std::unexpected{core_error(core::ErrorCode::invalid_state,
+                                      "DNS resolver requires initialized worker lifecycle")};
+  }
   if (config.limits.maximum_outstanding_queries == 0U ||
       config.limits.maximum_outstanding_queries > maximum_query_capacity ||
       config.limits.maximum_result_addresses == 0U ||
@@ -363,6 +438,7 @@ core::Result<DnsResolver> DnsResolver::create(
                                       "DNS resolver state allocation failed")};
   }
   state->limits = config.limits;
+  state->lifecycle = config.lifecycle;
   state->sink = sink;
   state->log = log_sink;
   for (auto& query : state->queries) query.owner = state;
@@ -378,6 +454,7 @@ core::Result<DnsResolver> DnsResolver::create(
     }
     state->has_explicit_nameservers = true;
   }
+  ++state->lifecycle->live_resolvers_;
   return DnsResolver{state};
 }
 
@@ -603,7 +680,11 @@ void DnsResolver::release() noexcept {
   for (auto& query : state->queries) {
     if (query.channel != nullptr) ares_destroy(query.channel);
   }
+  DnsDependencyLifecycle* const lifecycle = state->lifecycle;
   delete state;
+  if (lifecycle != nullptr && lifecycle->live_resolvers_ != 0U) {
+    --lifecycle->live_resolvers_;
+  }
   state_ = nullptr;
 }
 

@@ -28,6 +28,7 @@ namespace {
 
 using laghu::adapters::DnsAddress;
 using laghu::adapters::DnsAddressFamily;
+using laghu::adapters::DnsDependencyLifecycle;
 using laghu::adapters::DnsNameserver;
 using laghu::adapters::DnsQueryFamily;
 using laghu::adapters::DnsQueryResult;
@@ -45,6 +46,8 @@ enum class ReplyKind : std::uint8_t {
   malformed,
   truncated_then_tcp,
 };
+
+DnsDependencyLifecycle test_lifecycle;
 
 struct Completion final {
   std::array<DnsAddress, DnsResolver::maximum_address_capacity> addresses{};
@@ -293,7 +296,7 @@ struct Fixture final {
     Completion& completion, std::span<const DnsNameserver> servers,
     std::size_t maximum_queries = 4U, std::uint32_t timeout = 50U) noexcept {
   return DnsResolver::create(
-      DnsResolverConfig{{maximum_queries, 4U, timeout, 1U}, servers},
+      DnsResolverConfig{{maximum_queries, 4U, timeout, 1U}, servers, &test_lifecycle},
       {&completion, completed});
 }
 
@@ -530,6 +533,28 @@ bool system_resolver_lookup() noexcept {
   return false;
 }
 
+bool dependency_lifecycle_contract() noexcept {
+  DnsDependencyLifecycle lifecycle;
+  const auto hooks = lifecycle.hooks();
+  Completion completion{};
+  DnsResolverConfig config{{1U, 1U, 10U, 1U}, {}, &lifecycle};
+  if (DnsResolver::create(config, {&completion, completed}).has_value() ||
+      !hooks.preflight(hooks.context).has_value() ||
+      !hooks.worker_initialize(hooks.context).has_value() ||
+      hooks.live_state(hooks.context).sessions != 0U) {
+    return false;
+  }
+  auto resolver = DnsResolver::create(config, {&completion, completed});
+  if (!resolver.has_value() || hooks.live_state(hooks.context).sessions != 1U ||
+      hooks.worker_cleanup(hooks.context).has_value()) {
+    return false;
+  }
+  *resolver = DnsResolver{};
+  return hooks.live_state(hooks.context).sessions == 0U &&
+         hooks.worker_cleanup(hooks.context).has_value() &&
+         hooks.master_cleanup(hooks.context).has_value();
+}
+
 bool timeout_and_input_validation() noexcept {
   Fixture silent;
   if (!bind_fixture(silent, false)) return false;
@@ -569,7 +594,12 @@ int main() {
       laghu::test::TestCase{"event-callback-destroy", event_callback_may_destroy_resolver},
       laghu::test::TestCase{"timeout-callback-destroy", timeout_callback_may_destroy_resolver},
       laghu::test::TestCase{"system-resolver", system_resolver_lookup},
+      laghu::test::TestCase{"dependency-lifecycle", dependency_lifecycle_contract},
       laghu::test::TestCase{"timeout-input", timeout_and_input_validation},
   };
-  return laghu::test::run_tests(tests);
+  const auto lifecycle = test_lifecycle.hooks();
+  if (!lifecycle.worker_initialize(lifecycle.context).has_value()) return 2;
+  const int result = laghu::test::run_tests(tests);
+  if (!lifecycle.worker_cleanup(lifecycle.context).has_value()) return 2;
+  return result;
 }
