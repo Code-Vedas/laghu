@@ -162,7 +162,8 @@ class JsonWriter final {
       return false;
     }
     const std::string_view value{argv[++argument]};
-    if (option == "--workload" && !workload_seen && value == "core-foundation") {
+    if (option == "--workload" && !workload_seen &&
+        value == laghu::benchmark::internal::workload_name) {
       options.workload = value;
       workload_seen = true;
       continue;
@@ -423,7 +424,7 @@ class JsonWriter final {
       !writer.append("},\"parameters\":{\"intervals\":") ||
       !writer.append_number(options.measured_intervals) ||
       !writer.append(",\"operations_per_interval\":") ||
-      !writer.append_number(laghu::benchmark::internal::core_foundation_operations_per_interval) ||
+      !writer.append_number(laghu::benchmark::internal::operations_per_interval) ||
       !writer.append(",\"warmup\":") || !writer.append_number(options.warmup_intervals) ||
       !writer.append("},\"workload\":") || !writer.append_json_string(options.workload) ||
       !writer.append(",\"workload_checksum\":") || !writer.append_number(checksum) || !writer.append("}\n")) {
@@ -438,7 +439,7 @@ int main(int argc, char** argv) {
   Options options{};
   if (!parse_options(argc, argv, options)) {
     static_cast<void>(write_all(STDERR_FILENO,
-              "usage: laghu_benchmark_core_foundation --workload core-foundation --warmup <0..10000> "
+              "usage: laghu_benchmark --workload <configured-name> --warmup <0..10000> "
               "--intervals <1..1000>\n"));
     return static_cast<int>(ExitCode::invalid_arguments);
   }
@@ -446,7 +447,7 @@ int main(int argc, char** argv) {
   WorkloadCounters warmup_counters{};
   std::uint64_t checksum{};
   for (std::uint64_t interval = 0U; interval < options.warmup_intervals; ++interval) {
-    checksum ^= laghu::benchmark::internal::run_core_foundation(interval + 1U, warmup_counters);
+    checksum ^= laghu::benchmark::internal::run_workload(interval + 1U, warmup_counters);
   }
 
   std::array<std::uint64_t, maximum_intervals> durations{};
@@ -470,7 +471,7 @@ int main(int argc, char** argv) {
     const NumericMetric cpu_begin = process_cpu_time();
     const std::uint64_t allocation_begin = measured_counters.allocation_count();
     const std::uint64_t syscall_begin = measured_counters.laghu_syscall_count();
-    checksum ^= laghu::benchmark::internal::run_core_foundation(
+    checksum ^= laghu::benchmark::internal::run_workload(
         static_cast<std::uint64_t>(interval) + options.warmup_intervals + 1U, measured_counters);
     const NumericMetric cpu_end = process_cpu_time();
     if (!monotonic_now(end) || end < begin) {
@@ -487,7 +488,7 @@ int main(int argc, char** argv) {
       throughput = NumericMetric{false, 0U, "interval_zero_elapsed_time"};
     } else if (throughput.available) {
       const std::uint64_t operations =
-          laghu::benchmark::internal::core_foundation_operations_per_interval;
+          laghu::benchmark::internal::operations_per_interval;
       if (operations > std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
         throughput = NumericMetric{false, 0U, "throughput_overflow"};
       } else {
@@ -536,7 +537,7 @@ int main(int argc, char** argv) {
   } else if (throughput.available) {
     const std::uint64_t operations =
         static_cast<std::uint64_t>(options.measured_intervals) *
-        laghu::benchmark::internal::core_foundation_operations_per_interval;
+        laghu::benchmark::internal::operations_per_interval;
     if (operations > std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
       throughput = NumericMetric{false, 0U, "throughput_overflow"};
     } else {

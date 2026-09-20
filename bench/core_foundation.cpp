@@ -5,10 +5,13 @@
 
 #include <laghu/benchmark/internal/workload.hpp>
 
-std::uint64_t laghu::benchmark::internal::run_core_foundation(
+const std::string_view laghu::benchmark::internal::workload_name{"core-foundation"};
+const std::uint64_t laghu::benchmark::internal::operations_per_interval = 4096U;
+
+std::uint64_t laghu::benchmark::internal::run_workload(
     std::uint64_t seed, WorkloadCounters& counters) noexcept {
   std::uint64_t state = seed;
-  for (std::uint64_t iteration = 0U; iteration < core_foundation_operations_per_interval;
+  for (std::uint64_t iteration = 0U; iteration < operations_per_interval;
        ++iteration) {
     const auto incremented = laghu::core::checked_add(state, std::uint64_t{0x9e3779b9U});
     if (!incremented.has_value()) {

@@ -57,9 +57,38 @@ function(laghu_add_benchmark_targets)
       COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
   endif()
 
+  set(benchmark_registry
+    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\n")
+  foreach(codec_feature codec_suffix IN ZIP_LISTS
+      LAGHU_CODEC_BENCHMARK_FEATURES LAGHU_CODEC_BENCHMARK_SUFFIXES)
+    list(FIND LAGHU_EFFECTIVE_FEATURES "${codec_feature}" codec_feature_index)
+    if(NOT codec_feature_index EQUAL -1)
+      set(benchmark_target "laghu_benchmark_codec_${codec_suffix}")
+      add_executable("${benchmark_target}" EXCLUDE_FROM_ALL
+        bench/codecs.cpp bench/runner.cpp)
+      laghu_apply_first_party_contract("${benchmark_target}")
+      target_include_directories("${benchmark_target}" PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_SOURCE_DIR}/bench/private"
+        "${CMAKE_SOURCE_DIR}/src/adapters/contract"
+        "${CMAKE_SOURCE_DIR}/src/core/contract")
+      target_compile_definitions("${benchmark_target}" PRIVATE
+        "LAGHU_CODEC_FACTORY=laghu::adapters::create_${codec_suffix}_codec"
+        "LAGHU_CODEC_BENCHMARK_NAME=\"codec-${codec_suffix}\"")
+      target_link_libraries("${benchmark_target}" PRIVATE
+        "laghu_codec_${codec_suffix}" laghu_core)
+      if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set_source_files_properties(bench/codecs.cpp PROPERTIES
+          COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+      endif()
+      string(APPEND benchmark_registry
+        "codec-${codec_suffix}\t${benchmark_target}\t$<TARGET_FILE:${benchmark_target}>\n")
+    endif()
+  endforeach()
+
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/config/laghu-benchmarks-v1.tsv"
-    CONTENT "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\n")
+    CONTENT "${benchmark_registry}")
 
   add_executable(laghu_benchmark_metrics_test tests/benchmarks/metrics.cpp)
   laghu_apply_first_party_contract(laghu_benchmark_metrics_test)
@@ -108,4 +137,18 @@ function(laghu_add_benchmark_validation_tests)
       "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
       "-DSOURCE_DIRECTORY=${CMAKE_SOURCE_DIR}"
       -P "${CMAKE_SOURCE_DIR}/cmake/ExpectBenchmarkEvaluator.cmake")
+  foreach(codec_suffix IN LISTS LAGHU_CODEC_BENCHMARK_SUFFIXES)
+    if(TARGET "laghu_benchmark_codec_${codec_suffix}")
+      add_test(NAME "laghu.benchmark.codec.${codec_suffix}"
+        COMMAND "${CMAKE_COMMAND}"
+          "-DSCRIPT=${CMAKE_SOURCE_DIR}/scripts/benchmark"
+          "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+          "-DWORKLOAD=codec-${codec_suffix}"
+          -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCodecBenchmark.cmake")
+    endif()
+  endforeach()
 endfunction()
+
+set(LAGHU_CODEC_BENCHMARK_FEATURES
+  compression_zlib compression_brotli compression_zstd)
+set(LAGHU_CODEC_BENCHMARK_SUFFIXES zlib_ng brotli zstd)
