@@ -116,9 +116,12 @@ constexpr RegexMatchLimits match_limits{4096U, 100000U, 256U, 8U};
   }
   const RegexCompileLimits small_pattern{1U, 64U, 16U};
   const RegexCompileLimits small_capture{1024U, 64U, 1U};
+  const RegexCompileLimits unreportable_capture{1024U, 64U, 65535U};
   return !RegexPattern::compile(bytes("ab"), fixture.memory, small_pattern, failure).has_value() &&
          !RegexPattern::compile(bytes("(a)(b)"), fixture.memory,
-                                small_capture, failure).has_value();
+                                small_capture, failure).has_value() &&
+         !RegexPattern::compile(bytes("a"), fixture.memory,
+                                unreportable_capture, failure).has_value();
 }
 
 [[nodiscard]] bool match_limits_are_enforced() noexcept {

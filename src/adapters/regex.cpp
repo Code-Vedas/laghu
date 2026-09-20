@@ -23,6 +23,10 @@ struct State final {
   std::uint32_t capture_count{};
 };
 
+// PCRE2 limits match-data ovectors to 65,535 pairs. The overall match uses
+// one pair, leaving at most 65,534 reportable capture groups.
+constexpr std::uint32_t maximum_reportable_capture_count = 65534U;
+
 [[nodiscard]] constexpr core::Error core_error(core::ErrorCode code,
                                                 const char* diagnostic) noexcept {
   return {core::ErrorDomain::core, code, 0, diagnostic};
@@ -87,6 +91,11 @@ core::Result<RegexPattern> RegexPattern::compile(
   if (!valid_compile_limits(limits)) {
     return std::unexpected{core_error(core::ErrorCode::invalid_input,
                                       "regex compile limits must be positive")};
+  }
+  if (limits.maximum_capture_count > maximum_reportable_capture_count) {
+    return std::unexpected{core_error(
+        core::ErrorCode::invalid_range,
+        "regex capture limit exceeds PCRE2 reportable capacity")};
   }
   if (pattern.size() > limits.maximum_pattern_bytes) {
     return std::unexpected{core_error(core::ErrorCode::invalid_range,
@@ -220,6 +229,14 @@ core::Result<RegexMatchResult> RegexPattern::match(
     pcre2_match_data_free(match_data);
     pcre2_match_context_free(match_context);
     return RegexMatchResult{};
+  }
+  if (result == 0) {
+    std::fill_n(captures.begin(), limits.maximum_output_captures, RegexCapture{});
+    pcre2_match_data_free(match_data);
+    pcre2_match_context_free(match_context);
+    return std::unexpected{core_error(
+        core::ErrorCode::invalid_range,
+        "regex capture output was insufficient for the match")};
   }
   if (result < 0) {
     const core::Error error = native_error(core::DependencyOperation::regex_match,
