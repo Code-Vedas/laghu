@@ -78,11 +78,16 @@ constexpr RegexMatchLimits match_limits{4096U, 100000U, 256U, 8U};
   if (!pattern.has_value()) return false;
   std::array<RegexCapture, 8> captures{};
   const auto matched = pattern->match(bytes("/users/42"), captures, match_limits);
+  const bool captures_match = matched.has_value() && matched->matched &&
+      matched->capture_count == 2U && captures[0].matched &&
+      captures[0].begin == 0U && captures[0].end == 9U &&
+      captures[1].matched && captures[1].begin == 7U && captures[1].end == 9U;
   const auto missed = pattern->match(bytes("/groups/42"), captures, match_limits);
-  return matched.has_value() && matched->matched && matched->capture_count == 2U &&
-         captures[0].matched && captures[0].begin == 0U && captures[0].end == 9U &&
-         captures[1].matched && captures[1].begin == 7U && captures[1].end == 9U &&
-         missed.has_value() && !missed->matched;
+  for (const RegexCapture& capture : captures) {
+    if (capture.matched || capture.begin != 0U || capture.end != 0U) return false;
+  }
+  return captures_match && missed.has_value() && !missed->matched &&
+         missed->capture_count == 0U;
 }
 
 [[nodiscard]] bool text_views() noexcept {

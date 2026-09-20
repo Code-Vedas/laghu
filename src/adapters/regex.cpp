@@ -216,6 +216,7 @@ core::Result<RegexMatchResult> RegexPattern::match(
   const int result = pcre2_match(static_cast<const pcre2_code*>(code_), subject_data,
                                  subject.size(), 0U, 0U, match_data, match_context);
   if (result == PCRE2_ERROR_NOMATCH) {
+    std::fill_n(captures.begin(), limits.maximum_output_captures, RegexCapture{});
     pcre2_match_data_free(match_data);
     pcre2_match_context_free(match_context);
     return RegexMatchResult{};
