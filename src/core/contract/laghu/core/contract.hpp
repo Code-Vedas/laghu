@@ -129,6 +129,8 @@ enum class DependencyOperation : std::uint8_t {
   http3_submit,
   dns_session,
   dns_query,
+  regex_compile,
+  regex_match,
 };
 
 class Error final {

@@ -62,6 +62,8 @@ namespace {
     case core::DependencyOperation::http3_submit:
     case core::DependencyOperation::dns_session:
     case core::DependencyOperation::dns_query:
+    case core::DependencyOperation::regex_compile:
+    case core::DependencyOperation::regex_match:
       return value;
   }
   return core::DependencyOperation::none;
@@ -176,6 +178,10 @@ namespace {
       return "dns_session";
     case core::DependencyOperation::dns_query:
       return "dns_query";
+    case core::DependencyOperation::regex_compile:
+      return "regex_compile";
+    case core::DependencyOperation::regex_match:
+      return "regex_match";
   }
   return "none";
 }

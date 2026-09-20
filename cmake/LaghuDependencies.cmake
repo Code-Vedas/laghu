@@ -582,6 +582,14 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
       set(CARES_SHARED ON CACHE BOOL "Build c-ares shared library" FORCE)
     endif()
   endif()
+  if(id STREQUAL pcre2_8bit)
+    set(PCRE2_BUILD_PCRE2_8 ON CACHE BOOL "Build PCRE2 8-bit library" FORCE)
+    set(PCRE2_BUILD_PCRE2_16 OFF CACHE BOOL "Build PCRE2 16-bit library" FORCE)
+    set(PCRE2_BUILD_PCRE2_32 OFF CACHE BOOL "Build PCRE2 32-bit library" FORCE)
+    set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "Build pcre2grep" FORCE)
+    set(PCRE2_BUILD_TESTS OFF CACHE BOOL "Build PCRE2 tests" FORCE)
+    set(PCRE2_SUPPORT_JIT OFF CACHE BOOL "Enable PCRE2 JIT" FORCE)
+  endif()
   # Dependency projects must not select Laghu's build configuration through a
   # shared cache entry. nghttp2 defaults an empty build type to RelWithDebInfo;
   # restore the caller-owned value after its subdirectory is configured.
