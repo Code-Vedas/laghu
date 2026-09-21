@@ -66,8 +66,12 @@ void zstd_free(void* context, void* pointer) noexcept {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::exhaustion, "codec output limit is exhausted")};
   }
+  const bool probing_output_limit = output_size == 0U;
+  std::byte overflow_probe{};
   ZSTD_inBuffer source{input.data(), input.size(), 0U};
-  ZSTD_outBuffer destination{output.data(), output_size, 0U};
+  ZSTD_outBuffer destination{
+      probing_output_limit ? static_cast<void*>(&overflow_probe) : output.data(),
+      probing_output_limit ? 1U : output_size, 0U};
   std::size_t result{};
   bool finished{};
   bool needs_input{};
@@ -93,7 +97,7 @@ void zstd_free(void* context, void* pointer) noexcept {
     finished = result == 0U;
     needs_output = !finished && destination.pos == destination.size;
     needs_input = !finished && source.pos == source.size && !needs_output;
-    if (output_size == 0U && needs_output) {
+    if (probing_output_limit && destination.pos != 0U) {
       internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(
           core::ErrorCode::exhaustion, "codec output limit is exhausted")};
@@ -109,8 +113,11 @@ void zstd_free(void* context, void* pointer) noexcept {
           core::ErrorCode::corrupt_data, "compressed stream is truncated")};
     }
   }
-  internal::record(state.accounting, source.pos, destination.pos, finished);
-  return CodecProgress{source.pos, destination.pos, needs_input, needs_output, finished};
+  const std::size_t reported_produced =
+      probing_output_limit ? 0U : destination.pos;
+  internal::record(state.accounting, source.pos, reported_produced, finished);
+  return CodecProgress{source.pos, reported_produced, needs_input, needs_output,
+                       finished};
 }
 
 void zstd_destroy(void* opaque) noexcept {

@@ -374,6 +374,46 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
 }
 #endif
 
+#if defined(LAGHU_CODEC_zstd)
+[[nodiscard]] bool exact_limit_truncation_is_corrupt() noexcept {
+  constexpr std::string_view payload = "exact limit truncated zstd frame";
+  std::array<std::byte, 4096> compressed{};
+  std::size_t compressed_size{};
+  if (!transform(CodecDirection::encode, text_bytes(payload), compressed,
+                 payload.size(), compressed.size(), compressed_size) ||
+      compressed_size < 2U) return false;
+
+  std::array<std::byte, payload.size()> output{};
+  std::size_t exact_limit{};
+  {
+    Fixture fixture;
+    auto stream = LAGHU_CODEC_FACTORY(
+        CodecDirection::decode, fixture.storage(), fixture.memory,
+        CodecLimits{compressed_size, payload.size(), 16U});
+    if (!stream.has_value()) return false;
+    const auto progress = stream->process(
+        bytes(std::span<const std::byte>{compressed}.first(compressed_size - 1U)),
+        mutable_bytes(output));
+    if (!progress.has_value() || progress->output_produced == 0U) return false;
+    exact_limit = progress->output_produced;
+  }
+
+  Fixture fixture;
+  auto stream = LAGHU_CODEC_FACTORY(
+      CodecDirection::decode, fixture.storage(), fixture.memory,
+      CodecLimits{compressed_size, exact_limit, 16U});
+  if (!stream.has_value()) return false;
+  const auto progress = stream->process(
+      bytes(std::span<const std::byte>{compressed}.first(compressed_size - 1U)),
+      mutable_bytes(std::span<std::byte>{output}.first(exact_limit)));
+  if (!progress.has_value() || progress->output_produced != exact_limit) return false;
+  const auto completion = stream->finish(
+      mutable_bytes(std::span<std::byte>{}));
+  return !completion.has_value() &&
+      completion.error().code() == ErrorCode::corrupt_data;
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -394,6 +434,10 @@ int main() {
                             decode_output_exhaustion_is_terminal},
 #if defined(LAGHU_CODEC_zlib_ng)
       laghu::test::TestCase{"codec.reject-zlib-wrapper", zlib_wrapper_is_rejected},
+#endif
+#if defined(LAGHU_CODEC_zstd)
+      laghu::test::TestCase{"codec.exact-limit-truncation",
+                            exact_limit_truncation_is_corrupt},
 #endif
   };
   return laghu::test::run_tests(tests);
