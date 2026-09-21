@@ -100,7 +100,7 @@ elseif(SCENARIO STREQUAL "mode_full_selection")
   laghu_select_active_dependencies(active
     FEATURES ${LAGHU_EFFECTIVE_FEATURES}
     TLS_PROVIDER "${LAGHU_TLS_PROVIDER}")
-  foreach(dependency IN ITEMS nghttp2 ngtcp2 nghttp3 yyjson c_ares pcre2_8bit zlib_ng brotli zstd libmaxminddb libidn2 libxcrypt)
+  foreach(dependency IN ITEMS nghttp2 ngtcp2 nghttp3 yyjson c_ares pcre2_8bit zlib_ng brotli zstd libmaxminddb protobuf_c opentelemetry_proto libidn2 libxcrypt)
     list(FIND active "${dependency}" dependency_index)
     if(dependency_index EQUAL -1)
       message(FATAL_ERROR

@@ -17,6 +17,7 @@ set(LAGHU_FEATURE_IDS
   compression_brotli
   compression_zstd
   geoip
+  otlp
   idna
   password_auth)
 
@@ -66,6 +67,7 @@ function(laghu_feature_registry_initialize)
   laghu_declare_feature(compression_brotli EXTERNAL_DEPENDENCIES brotli)
   laghu_declare_feature(compression_zstd EXTERNAL_DEPENDENCIES zstd)
   laghu_declare_feature(geoip EXTERNAL_DEPENDENCIES libmaxminddb)
+  laghu_declare_feature(otlp EXTERNAL_DEPENDENCIES protobuf_c opentelemetry_proto)
   laghu_declare_feature(idna EXTERNAL_DEPENDENCIES libidn2)
   laghu_declare_feature(password_auth EXTERNAL_DEPENDENCIES libxcrypt)
 endfunction()

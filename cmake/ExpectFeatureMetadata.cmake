@@ -6,7 +6,7 @@ if(NOT EXISTS "${METADATA}")
   message(FATAL_ERROR "Laghu feature metadata expectation failed: missing_output=${METADATA}")
 endif()
 file(READ "${METADATA}" metadata)
-foreach(feature IN ITEMS core tls http2 http3 structured_data async_dns regex compression_zlib compression_brotli compression_zstd geoip idna password_auth)
+foreach(feature IN ITEMS core tls http2 http3 structured_data async_dns regex compression_zlib compression_brotli compression_zstd geoip otlp idna password_auth)
   if(NOT metadata MATCHES "\"${feature}\": ")
     message(FATAL_ERROR "Laghu feature metadata expectation failed: missing_feature=${feature}")
   endif()
@@ -53,6 +53,7 @@ foreach(requirement IN ITEMS
     "\"compression_brotli\": {\"required\": false, \"depends\": [], \"conflicts\": [], \"external_dependencies\": [\"brotli\"]"
     "\"compression_zstd\": {\"required\": false, \"depends\": [], \"conflicts\": [], \"external_dependencies\": [\"zstd\"]"
     "\"geoip\": {\"required\": false, \"depends\": [], \"conflicts\": [], \"external_dependencies\": [\"libmaxminddb\"]"
+    "\"otlp\": {\"required\": false, \"depends\": [], \"conflicts\": [], \"external_dependencies\": [\"protobuf_c\", \"opentelemetry_proto\"]"
     "\"idna\": {\"required\": false, \"depends\": [], \"conflicts\": [], \"external_dependencies\": [\"libidn2\"]"
     "\"password_auth\": {\"required\": false, \"depends\": [], \"conflicts\": [], \"external_dependencies\": [\"libxcrypt\"]")
   string(FIND "${metadata}" "${requirement}" requirement_offset)

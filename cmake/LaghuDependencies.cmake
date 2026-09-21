@@ -19,6 +19,8 @@ set(LAGHU_DEPENDENCY_IDS
   brotli
   zstd
   libmaxminddb
+  protobuf_c
+  opentelemetry_proto
   libidn2
   libxcrypt)
 
@@ -35,7 +37,7 @@ set_property(CACHE LAGHU_TLS_PROVIDER PROPERTY STRINGS ${LAGHU_TLS_PROVIDERS})
 
 function(laghu_declare_dependency id)
   cmake_parse_arguments(PARSE_ARGV 1 dependency
-    ""
+    "SOURCE_ONLY"
     "VENDORED_VERSION;SYSTEM_FLOOR;ARCHIVE_URL;ARCHIVE_SHA256;PROBE_SOURCE"
     "FEATURES;PKG_CONFIG_NAMES;CMAKE_TARGETS;CMAKE_SOURCE_SUBDIR")
   list(FIND LAGHU_DEPENDENCY_IDS "${id}" id_index)
@@ -58,6 +60,7 @@ function(laghu_declare_dependency id)
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_PKG_CONFIG_NAMES_${id}" "${dependency_PKG_CONFIG_NAMES}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_CMAKE_TARGETS_${id}" "${dependency_CMAKE_TARGETS}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_CMAKE_SOURCE_SUBDIR_${id}" "${dependency_CMAKE_SOURCE_SUBDIR}")
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SOURCE_ONLY_${id}" "${dependency_SOURCE_ONLY}")
   # Known-incompatible ranges intentionally remain empty until a primary
   # upstream source establishes one.  This prevents invented exclusions.
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_INCOMPATIBLE_RANGES_${id}" "")
@@ -157,6 +160,18 @@ function(laghu_dependency_registry_initialize)
     ARCHIVE_SHA256 65ff92382c71ef6634b8c13e278651a2efa68f1de28ef3c31fc32369fa0bb3e3
     PROBE_SOURCE tests/dependencies/probes/libmaxminddb.cpp FEATURES geoip PKG_CONFIG_NAMES libmaxminddb
     CMAKE_TARGETS maxminddb)
+  laghu_declare_dependency(protobuf_c
+    VENDORED_VERSION 1.5.2 SYSTEM_FLOOR 1.4.1
+    ARCHIVE_URL https://github.com/protobuf-c/protobuf-c/releases/download/v1.5.2/protobuf-c-1.5.2.tar.gz
+    ARCHIVE_SHA256 e2c86271873a79c92b58fef7ebf8de1aa0df4738347a8bd5d4e65a80a16d0d24
+    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp FEATURES otlp
+    PKG_CONFIG_NAMES libprotobuf-c CMAKE_TARGETS protobuf-c
+    CMAKE_SOURCE_SUBDIR build-cmake)
+  laghu_declare_dependency(opentelemetry_proto SOURCE_ONLY
+    VENDORED_VERSION 1.9.0 SYSTEM_FLOOR 1.9.0
+    ARCHIVE_URL https://github.com/open-telemetry/opentelemetry-proto/archive/refs/tags/v1.9.0.tar.gz
+    ARCHIVE_SHA256 2d2220db196bdfd0aec872b75a5e614458f8396557fc718b28017e1a08db49e4
+    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp FEATURES otlp)
   laghu_declare_dependency(libidn2
     VENDORED_VERSION 2.3.8 SYSTEM_FLOOR 2.3.7
     ARCHIVE_URL https://ftp.gnu.org/gnu/libidn/libidn2-2.3.8.tar.gz
@@ -167,6 +182,25 @@ function(laghu_dependency_registry_initialize)
     ARCHIVE_URL https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz
     ARCHIVE_SHA256 71513a31c01a428bccd5367a32fd95f115d6dac50fb5b60c779d5c7942aec071
     PROBE_SOURCE tests/dependencies/probes/libxcrypt.cpp FEATURES password_auth PKG_CONFIG_NAMES libcrypt libxcrypt)
+endfunction()
+
+function(laghu_acquire_source_dependency id private_target)
+  include(FetchContent)
+  laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
+  laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
+  set(content_name "laghu_vendor_${id}")
+  FetchContent_Declare("${content_name}"
+    URL "${archive_url}" URL_HASH "SHA256=${archive_sha256}"
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE SOURCE_SUBDIR laghu-no-cmake-project)
+  FetchContent_MakeAvailable("${content_name}")
+  add_library("${private_target}" INTERFACE)
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}"
+    "${${content_name}_SOURCE_DIR}")
+  laghu_dependency_property("${id}" VENDORED_VERSION version)
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SELECTED_VERSION_${id}" "${version}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_ID "${id}")
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_SOURCE VENDORED)
+  set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE SOURCE_ONLY)
 endfunction()
 
 function(laghu_validate_dependency_version id version)
@@ -553,7 +587,9 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
         -P "${LAGHU_DEPENDENCY_MODULE_DIRECTORY}/PatchVendoredProject.cmake")
   endif()
   set(source_subdir_arguments)
-  if(NOT cmake_source_subdir STREQUAL "")
+  if(id STREQUAL protobuf_c)
+    list(APPEND source_subdir_arguments SOURCE_SUBDIR "laghu-no-cmake-project")
+  elseif(NOT cmake_source_subdir STREQUAL "")
     list(APPEND source_subdir_arguments SOURCE_SUBDIR "${cmake_source_subdir}")
   endif()
   FetchContent_Declare("${content_name}"
@@ -622,11 +658,23 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
     set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "Build Zstandard contrib" FORCE)
     set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "Build Zstandard threading" FORCE)
   endif()
+  if(id STREQUAL protobuf_c)
+    set(BUILD_PROTOC OFF CACHE BOOL "Build protobuf-c compiler" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "Build protobuf-c tests" FORCE)
+  endif()
   # Dependency projects must not select Laghu's build configuration through a
   # shared cache entry. nghttp2 defaults an empty build type to RelWithDebInfo;
   # restore the caller-owned value after its subdirectory is configured.
   set(laghu_saved_build_type "${CMAKE_BUILD_TYPE}")
-  FetchContent_MakeAvailable("${content_name}")
+  if(id STREQUAL protobuf_c)
+    FetchContent_MakeAvailable("${content_name}")
+    add_library(protobuf-c
+      "${${content_name}_SOURCE_DIR}/protobuf-c/protobuf-c.c")
+    target_include_directories(protobuf-c SYSTEM PUBLIC
+      "${${content_name}_SOURCE_DIR}")
+  else()
+    FetchContent_MakeAvailable("${content_name}")
+  endif()
   if(id STREQUAL libmaxminddb)
     set_property(GLOBAL PROPERTY LAGHU_LIBMAXMINDDB_FIXTURE
       "${${content_name}_SOURCE_DIR}/t/maxmind-db/test-data/GeoIP2-City-Test.mmdb")
@@ -1009,8 +1057,16 @@ function(laghu_write_dependency_selection_metadata output active_dependencies)
     if(selected_version STREQUAL "")
       set(selected_version "${vendored_version}")
     endif()
+    laghu_dependency_property("${id}" SOURCE_ONLY source_only)
+    if(source_only)
+      set(recorded_source VENDORED)
+      set(recorded_link_mode SOURCE_ONLY)
+    else()
+      set(recorded_source "${LAGHU_DEPENDENCY_SOURCE}")
+      set(recorded_link_mode "${LAGHU_DEPENDENCY_LINK_MODE}")
+    endif()
     list(APPEND entries
-      "    {\"id\": \"${id}\", \"source\": \"${LAGHU_DEPENDENCY_SOURCE}\", \"link_mode\": \"${LAGHU_DEPENDENCY_LINK_MODE}\", \"version\": \"${selected_version}\", \"archive_url\": \"${archive_url}\", \"archive_sha256\": \"${archive_sha256}\"}")
+      "    {\"id\": \"${id}\", \"source\": \"${recorded_source}\", \"link_mode\": \"${recorded_link_mode}\", \"version\": \"${selected_version}\", \"archive_url\": \"${archive_url}\", \"archive_sha256\": \"${archive_sha256}\"}")
   endforeach()
   list(JOIN entries ",\n" rendered_entries)
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
@@ -1031,7 +1087,10 @@ function(laghu_configure_dependency_modes)
     TLS_PROVIDER "${LAGHU_TLS_PROVIDER}")
   foreach(id IN LISTS active_dependencies)
     laghu_dependency_private_target_name("${id}" private_target)
-    if(LAGHU_DEPENDENCY_SOURCE STREQUAL SYSTEM)
+    laghu_dependency_property("${id}" SOURCE_ONLY source_only)
+    if(source_only)
+      laghu_acquire_source_dependency("${id}" "${private_target}")
+    elseif(LAGHU_DEPENDENCY_SOURCE STREQUAL SYSTEM)
       laghu_require_system_dependency("${id}"
         TARGET "${private_target}"
         LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")
