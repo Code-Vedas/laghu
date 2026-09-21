@@ -627,6 +627,10 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
   # restore the caller-owned value after its subdirectory is configured.
   set(laghu_saved_build_type "${CMAKE_BUILD_TYPE}")
   FetchContent_MakeAvailable("${content_name}")
+  if(id STREQUAL libmaxminddb)
+    set(LAGHU_LIBMAXMINDDB_SOURCE_DIR "${${content_name}_SOURCE_DIR}"
+      CACHE INTERNAL "Vendored libmaxminddb source directory")
+  endif()
   set(BUILD_TESTING "${laghu_saved_build_testing}" CACHE BOOL
     "Enable Laghu tests" FORCE)
   set(BUILD_TESTING "${laghu_saved_build_testing}")

@@ -66,6 +66,8 @@ namespace {
     case core::DependencyOperation::regex_match:
     case core::DependencyOperation::codec_initialize:
     case core::DependencyOperation::codec_process:
+    case core::DependencyOperation::geoip_open:
+    case core::DependencyOperation::geoip_lookup:
       return value;
   }
   return core::DependencyOperation::none;
@@ -188,6 +190,10 @@ namespace {
       return "codec_initialize";
     case core::DependencyOperation::codec_process:
       return "codec_process";
+    case core::DependencyOperation::geoip_open:
+      return "geoip_open";
+    case core::DependencyOperation::geoip_lookup:
+      return "geoip_lookup";
   }
   return "none";
 }
