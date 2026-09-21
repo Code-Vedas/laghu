@@ -302,6 +302,31 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
   return finished;
 }
 
+[[nodiscard]] bool invalid_direction_is_rejected() noexcept {
+  Fixture fixture;
+  const auto stream = LAGHU_CODEC_FACTORY(
+      static_cast<CodecDirection>(0xffU), fixture.storage(), fixture.memory,
+      generous_limits);
+  return !stream.has_value() &&
+      stream.error().code() == ErrorCode::invalid_input;
+}
+
+[[nodiscard]] bool terminal_failure_is_latched() noexcept {
+  Fixture fixture;
+  auto stream = LAGHU_CODEC_FACTORY(
+      CodecDirection::decode, fixture.storage(), fixture.memory,
+      generous_limits);
+  if (!stream.has_value()) return false;
+  std::array<std::byte, 32> corrupt{};
+  corrupt.fill(std::byte{0xff});
+  std::array<std::byte, 256> output{};
+  const auto failure = stream->process(bytes(corrupt), mutable_bytes(output));
+  if (failure.has_value()) return false;
+  const auto retried = stream->process(bytes(corrupt), mutable_bytes(output));
+  return !retried.has_value() &&
+      retried.error().code() == ErrorCode::invalid_state;
+}
+
 }  // namespace
 
 int main() {
@@ -316,6 +341,8 @@ int main() {
       laghu::test::TestCase{"codec.failures-cancel", failures_and_cancel},
       laghu::test::TestCase{"codec.allocation-failure", allocation_failure},
       laghu::test::TestCase{"codec.finalization-latched", finalization_is_latched},
+      laghu::test::TestCase{"codec.invalid-direction", invalid_direction_is_rejected},
+      laghu::test::TestCase{"codec.terminal-failure-latched", terminal_failure_is_latched},
   };
   return laghu::test::run_tests(tests);
 }

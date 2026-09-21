@@ -79,6 +79,7 @@ void brotli_free(void* context, void* pointer) noexcept {
     if (BrotliEncoderCompressStream(state.encoder, operation, &available_input,
                                     &next_input, &available_output,
                                     &next_output, nullptr) == BROTLI_FALSE) {
+      internal::record_failure(state.accounting);
       return std::unexpected{brotli_error(
           core::DependencyStatus::exhaustion,
           core::DependencyOperation::codec_process, 0, state.log)};
@@ -94,6 +95,7 @@ void brotli_free(void* context, void* pointer) noexcept {
     if (result == BROTLI_DECODER_RESULT_ERROR) {
       const BrotliDecoderErrorCode code =
           BrotliDecoderGetErrorCode(state.decoder);
+      internal::record_failure(state.accounting);
       return std::unexpected{brotli_error(
           brotli_allocation_error(code)
               ? core::DependencyStatus::exhaustion
@@ -105,10 +107,12 @@ void brotli_free(void* context, void* pointer) noexcept {
     needs_input = result == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT;
     needs_output = result == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT;
     if (finished && available_input != 0U) {
+      internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(
           core::ErrorCode::corrupt_data, "compressed stream has trailing data")};
     }
     if (finishing && needs_input) {
+      internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(
           core::ErrorCode::corrupt_data, "compressed stream is truncated")};
     }
@@ -139,6 +143,10 @@ core::Result<CodecStream> create_brotli_codec(
     CodecDirection direction, CodecStateStorage state_storage,
     NativeMemoryPool& memory, CodecLimits limits,
     DependencyLogSink log_sink) noexcept {
+  if (!internal::valid_direction(direction)) {
+    return std::unexpected{internal::codec_error(
+        core::ErrorCode::invalid_input, "codec direction is invalid")};
+  }
   if (!internal::valid_limits(limits)) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::invalid_input, "codec limits must be positive")};
@@ -151,7 +159,7 @@ core::Result<CodecStream> create_brotli_codec(
   auto created = internal::construct_state<BrotliState>(state_storage);
   if (!created.has_value()) return std::unexpected{created.error()};
   BrotliState& state = **created;
-  state.accounting = {limits, 0U, 0U, 0U, direction, false, false};
+  state.accounting = {limits, 0U, 0U, 0U, direction, false, false, false};
   state.memory.pool = &memory;
   state.log = log_sink;
   if (direction == CodecDirection::encode) {

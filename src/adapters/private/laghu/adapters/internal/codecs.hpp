@@ -25,6 +25,7 @@ struct CodecAccounting final {
   CodecDirection direction{};
   bool finished{};
   bool cancelled{};
+  bool failed{};
 };
 
 [[nodiscard]] inline core::Error codec_error(core::ErrorCode code,
@@ -37,9 +38,14 @@ struct CodecAccounting final {
          limits.maximum_work_calls != 0U;
 }
 
+[[nodiscard]] inline bool valid_direction(CodecDirection direction) noexcept {
+  return direction == CodecDirection::encode ||
+         direction == CodecDirection::decode;
+}
+
 [[nodiscard]] inline core::Result<void> preflight(
     const CodecAccounting& accounting, std::size_t input_size) noexcept {
-  if (accounting.cancelled || accounting.finished) {
+  if (accounting.cancelled || accounting.finished || accounting.failed) {
     return std::unexpected{codec_error(core::ErrorCode::invalid_state,
                                       "codec stream is no longer active")};
   }
@@ -52,6 +58,11 @@ struct CodecAccounting final {
                                       "codec input exceeds the caller limit")};
   }
   return {};
+}
+
+inline void record_failure(CodecAccounting& accounting) noexcept {
+  ++accounting.work_calls;
+  accounting.failed = true;
 }
 
 [[nodiscard]] inline std::size_t bounded_output_size(

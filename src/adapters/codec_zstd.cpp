@@ -76,6 +76,7 @@ void zstd_free(void* context, void* pointer) noexcept {
     result = ZSTD_compressStream2(state.encoder, &destination, &source,
         finishing ? ZSTD_e_end : ZSTD_e_continue);
     if (ZSTD_isError(result) != 0U) {
+      internal::record_failure(state.accounting);
       return std::unexpected{zstd_error(
           core::DependencyOperation::codec_process, result, state.log)};
     }
@@ -85,6 +86,7 @@ void zstd_free(void* context, void* pointer) noexcept {
   } else {
     result = ZSTD_decompressStream(state.decoder, &destination, &source);
     if (ZSTD_isError(result) != 0U) {
+      internal::record_failure(state.accounting);
       return std::unexpected{zstd_error(
           core::DependencyOperation::codec_process, result, state.log)};
     }
@@ -92,10 +94,12 @@ void zstd_free(void* context, void* pointer) noexcept {
     needs_output = !finished && destination.pos == destination.size;
     needs_input = !finished && source.pos == source.size && !needs_output;
     if (finished && source.pos != source.size) {
+      internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(
           core::ErrorCode::corrupt_data, "compressed stream has trailing data")};
     }
     if (finishing && !finished && needs_input) {
+      internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(
           core::ErrorCode::corrupt_data, "compressed stream is truncated")};
     }
@@ -124,6 +128,10 @@ core::Result<CodecStream> create_zstd_codec(
     CodecDirection direction, CodecStateStorage state_storage,
     NativeMemoryPool& memory, CodecLimits limits,
     DependencyLogSink log_sink) noexcept {
+  if (!internal::valid_direction(direction)) {
+    return std::unexpected{internal::codec_error(
+        core::ErrorCode::invalid_input, "codec direction is invalid")};
+  }
   if (!internal::valid_limits(limits)) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::invalid_input, "codec limits must be positive")};
@@ -136,7 +144,7 @@ core::Result<CodecStream> create_zstd_codec(
   auto created = internal::construct_state<ZstdState>(state_storage);
   if (!created.has_value()) return std::unexpected{created.error()};
   ZstdState& state = **created;
-  state.accounting = {limits, 0U, 0U, 0U, direction, false, false};
+  state.accounting = {limits, 0U, 0U, 0U, direction, false, false, false};
   state.memory.pool = &memory;
   state.log = log_sink;
   const ZSTD_customMem custom_memory{zstd_allocate, zstd_free, &state.memory};

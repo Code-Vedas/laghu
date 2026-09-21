@@ -71,15 +71,18 @@ void zlib_free(void* context, void* pointer) noexcept {
   const std::size_t produced = offered_output - state.stream.avail_out;
   const bool finished = result == Z_STREAM_END;
   if (finished && consumed != input.size()) {
+    internal::record_failure(state.accounting);
     return std::unexpected{internal::codec_error(
         core::ErrorCode::corrupt_data, "compressed stream has trailing data")};
   }
   if (result != Z_OK && result != Z_BUF_ERROR && !finished) {
+    internal::record_failure(state.accounting);
     return std::unexpected{zlib_error(
         core::DependencyOperation::codec_process, result, state.log)};
   }
   if (finishing && state.accounting.direction == CodecDirection::decode &&
       !finished && consumed == input.size() && state.stream.avail_out != 0U) {
+    internal::record_failure(state.accounting);
     return std::unexpected{internal::codec_error(
         core::ErrorCode::corrupt_data, "compressed stream is truncated")};
   }
@@ -115,6 +118,10 @@ core::Result<CodecStream> create_zlib_ng_codec(
     CodecDirection direction, CodecStateStorage state_storage,
     NativeMemoryPool& memory, CodecLimits limits,
     DependencyLogSink log_sink) noexcept {
+  if (!internal::valid_direction(direction)) {
+    return std::unexpected{internal::codec_error(
+        core::ErrorCode::invalid_input, "codec direction is invalid")};
+  }
   if (!internal::valid_limits(limits)) {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::invalid_input, "codec limits must be positive")};
@@ -127,7 +134,7 @@ core::Result<CodecStream> create_zlib_ng_codec(
   auto created = internal::construct_state<ZlibState>(state_storage);
   if (!created.has_value()) return std::unexpected{created.error()};
   ZlibState& state = **created;
-  state.accounting = {limits, 0U, 0U, 0U, direction, false, false};
+  state.accounting = {limits, 0U, 0U, 0U, direction, false, false, false};
   state.memory.pool = &memory;
   state.log = log_sink;
   state.stream.zalloc = zlib_allocate;
