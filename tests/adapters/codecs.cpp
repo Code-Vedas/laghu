@@ -34,6 +34,31 @@ struct BlockSource final {
   bool fail{};
 };
 
+struct LogCapture final {
+  std::array<laghu::adapters::DependencyLogRecord, 2> records{};
+  std::size_t count{};
+};
+
+void capture_log(
+    void* context,
+    const laghu::adapters::DependencyLogRecord& record) noexcept {
+  auto& capture = *static_cast<LogCapture*>(context);
+  if (capture.count < capture.records.size()) {
+    capture.records[capture.count] = record;
+  }
+  ++capture.count;
+}
+
+[[nodiscard]] constexpr laghu::core::DependencyId codec_dependency() noexcept {
+#if defined(LAGHU_CODEC_zlib_ng)
+  return laghu::core::DependencyId::zlib_ng;
+#elif defined(LAGHU_CODEC_brotli)
+  return laghu::core::DependencyId::brotli;
+#elif defined(LAGHU_CODEC_zstd)
+  return laghu::core::DependencyId::zstd;
+#endif
+}
+
 [[nodiscard]] Result<MutableByteView> acquire(void* context,
                                                std::size_t minimum) noexcept {
   auto& source = *static_cast<BlockSource*>(context);
@@ -301,6 +326,42 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
            stream.error().dependency_status() == laghu::core::DependencyStatus::exhaustion));
 }
 
+[[nodiscard]] bool dependency_failures_are_logged() noexcept {
+  {
+    Fixture fixture;
+    fixture.source.fail = true;
+    LogCapture capture{};
+    const auto stream = LAGHU_CODEC_FACTORY(
+        CodecDirection::encode, fixture.storage(), fixture.memory,
+        generous_limits, {&capture, capture_log});
+    if (stream.has_value() || capture.count != 1U) return false;
+    const auto& record = capture.records.front();
+    if (stream.error().domain() != laghu::core::ErrorDomain::dependency ||
+        record.dependency != codec_dependency() ||
+        record.operation != laghu::core::DependencyOperation::codec_initialize ||
+        record.status != laghu::core::DependencyStatus::exhaustion ||
+        record.native_code != stream.error().native_code()) return false;
+  }
+
+  Fixture fixture;
+  LogCapture capture{};
+  auto stream = LAGHU_CODEC_FACTORY(
+      CodecDirection::decode, fixture.storage(), fixture.memory,
+      generous_limits, {&capture, capture_log});
+  if (!stream.has_value()) return false;
+  std::array<std::byte, 32> corrupt{};
+  corrupt.fill(std::byte{0xff});
+  std::array<std::byte, 256> output{};
+  const auto result = stream->process(bytes(corrupt), mutable_bytes(output));
+  if (result.has_value() || capture.count != 1U) return false;
+  const auto& record = capture.records.front();
+  return result.error().domain() == laghu::core::ErrorDomain::dependency &&
+      record.dependency == codec_dependency() &&
+      record.operation == laghu::core::DependencyOperation::codec_process &&
+      record.status == laghu::core::DependencyStatus::corrupt_data &&
+      record.native_code == result.error().native_code();
+}
+
 [[nodiscard]] bool finalization_is_latched() noexcept {
   constexpr std::string_view payload = "finalization state payload";
   Fixture fixture;
@@ -457,6 +518,8 @@ int main() {
 #endif
       laghu::test::TestCase{"codec.failures-cancel", failures_and_cancel},
       laghu::test::TestCase{"codec.allocation-failure", allocation_failure},
+      laghu::test::TestCase{"codec.dependency-failures-logged",
+                            dependency_failures_are_logged},
       laghu::test::TestCase{"codec.finalization-latched", finalization_is_latched},
       laghu::test::TestCase{"codec.invalid-direction", invalid_direction_is_rejected},
       laghu::test::TestCase{"codec.terminal-failure-latched", terminal_failure_is_latched},

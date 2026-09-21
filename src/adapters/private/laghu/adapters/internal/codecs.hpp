@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <new>
 
 #include <laghu/adapters/codecs.hpp>
 
