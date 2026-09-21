@@ -93,6 +93,11 @@ void zstd_free(void* context, void* pointer) noexcept {
     finished = result == 0U;
     needs_output = !finished && destination.pos == destination.size;
     needs_input = !finished && source.pos == source.size && !needs_output;
+    if (output_size == 0U && needs_output) {
+      internal::record_failure(state.accounting);
+      return std::unexpected{internal::codec_error(
+          core::ErrorCode::exhaustion, "codec output limit is exhausted")};
+    }
     if (finished && source.pos != source.size) {
       internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(

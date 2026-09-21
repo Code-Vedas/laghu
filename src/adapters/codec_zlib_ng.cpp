@@ -58,11 +58,17 @@ void zlib_free(void* context, void* pointer) noexcept {
   }
   const std::size_t offered_input = std::min<std::size_t>(
       input.size(), std::numeric_limits<std::uint32_t>::max());
-  const std::size_t offered_output = std::min<std::size_t>(
-      output_size, std::numeric_limits<std::uint32_t>::max());
+  const bool probing_output_limit = output_size == 0U;
+  std::byte overflow_probe{};
+  const std::size_t offered_output = probing_output_limit
+      ? 1U
+      : std::min<std::size_t>(output_size,
+                              std::numeric_limits<std::uint32_t>::max());
   state.stream.next_in = reinterpret_cast<const unsigned char*>(input.data());
   state.stream.avail_in = static_cast<std::uint32_t>(offered_input);
-  state.stream.next_out = reinterpret_cast<unsigned char*>(output.data());
+  state.stream.next_out = probing_output_limit
+      ? reinterpret_cast<unsigned char*>(&overflow_probe)
+      : reinterpret_cast<unsigned char*>(output.data());
   state.stream.avail_out = static_cast<std::uint32_t>(offered_output);
   const int result = state.accounting.direction == CodecDirection::encode
       ? zng_deflate(&state.stream, finishing ? Z_FINISH : Z_NO_FLUSH)
@@ -70,6 +76,11 @@ void zlib_free(void* context, void* pointer) noexcept {
   const std::size_t consumed = offered_input - state.stream.avail_in;
   const std::size_t produced = offered_output - state.stream.avail_out;
   const bool finished = result == Z_STREAM_END;
+  if (probing_output_limit && produced != 0U) {
+    internal::record_failure(state.accounting);
+    return std::unexpected{internal::codec_error(
+        core::ErrorCode::exhaustion, "codec output limit is exhausted")};
+  }
   if (finished && consumed != input.size()) {
     internal::record_failure(state.accounting);
     return std::unexpected{internal::codec_error(
@@ -86,8 +97,9 @@ void zlib_free(void* context, void* pointer) noexcept {
     return std::unexpected{internal::codec_error(
         core::ErrorCode::corrupt_data, "compressed stream is truncated")};
   }
-  internal::record(state.accounting, consumed, produced, finished);
-  return CodecProgress{consumed, produced,
+  const std::size_t reported_produced = probing_output_limit ? 0U : produced;
+  internal::record(state.accounting, consumed, reported_produced, finished);
+  return CodecProgress{consumed, reported_produced,
                        !finished && consumed == input.size(),
                        !finished && state.stream.avail_out == 0U,
                        finished};
@@ -143,7 +155,7 @@ core::Result<CodecStream> create_zlib_ng_codec(
   const int result = direction == CodecDirection::encode
       ? zng_deflateInit2(&state.stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
                          MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY)
-      : zng_inflateInit2(&state.stream, MAX_WBITS + 32);
+      : zng_inflateInit2(&state.stream, MAX_WBITS + 16);
   if (result != Z_OK) {
     state.~ZlibState();
     return std::unexpected{zlib_error(

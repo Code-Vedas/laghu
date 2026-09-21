@@ -327,6 +327,53 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
       retried.error().code() == ErrorCode::invalid_state;
 }
 
+[[nodiscard]] bool decode_output_exhaustion_is_terminal() noexcept {
+  constexpr std::string_view payload = "decoder output must exceed this limit";
+  std::array<std::byte, 4096> compressed{};
+  std::size_t compressed_size{};
+  if (!transform(CodecDirection::encode, text_bytes(payload), compressed,
+                 payload.size(), compressed.size(), compressed_size)) return false;
+
+  Fixture fixture;
+  constexpr std::size_t output_limit = payload.size() - 1U;
+  auto stream = LAGHU_CODEC_FACTORY(
+      CodecDirection::decode, fixture.storage(), fixture.memory,
+      CodecLimits{compressed_size, output_limit, 16U});
+  if (!stream.has_value()) return false;
+  std::array<std::byte, output_limit> output{};
+  std::size_t input_offset{};
+  std::size_t output_offset{};
+  for (std::size_t call = 0U; call < 16U; ++call) {
+    const auto progress = stream->process(
+        bytes(std::span<const std::byte>{compressed}.first(compressed_size)
+                  .subspan(input_offset)),
+        mutable_bytes(std::span<std::byte>{output}.subspan(output_offset)));
+    if (!progress.has_value()) {
+      if (progress.error().code() != ErrorCode::exhaustion) return false;
+      const auto retried = stream->finish(mutable_bytes({}));
+      return !retried.has_value() &&
+          retried.error().code() == ErrorCode::invalid_state;
+    }
+    input_offset += progress->input_consumed;
+    output_offset += progress->output_produced;
+  }
+  return false;
+}
+
+#if defined(LAGHU_CODEC_zlib_ng)
+[[nodiscard]] bool zlib_wrapper_is_rejected() noexcept {
+  constexpr std::array zlib_hello{
+      std::byte{0x78}, std::byte{0x9c}, std::byte{0xcb}, std::byte{0x48},
+      std::byte{0xcd}, std::byte{0xc9}, std::byte{0xc9}, std::byte{0x07},
+      std::byte{0x00}, std::byte{0x06}, std::byte{0x2c}, std::byte{0x02},
+      std::byte{0x15}};
+  std::array<std::byte, 16> output{};
+  std::size_t produced{};
+  return !transform(CodecDirection::decode, zlib_hello, output,
+                    zlib_hello.size(), output.size(), produced);
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -343,6 +390,11 @@ int main() {
       laghu::test::TestCase{"codec.finalization-latched", finalization_is_latched},
       laghu::test::TestCase{"codec.invalid-direction", invalid_direction_is_rejected},
       laghu::test::TestCase{"codec.terminal-failure-latched", terminal_failure_is_latched},
+      laghu::test::TestCase{"codec.decode-output-exhaustion",
+                            decode_output_exhaustion_is_terminal},
+#if defined(LAGHU_CODEC_zlib_ng)
+      laghu::test::TestCase{"codec.reject-zlib-wrapper", zlib_wrapper_is_rejected},
+#endif
   };
   return laghu::test::run_tests(tests);
 }

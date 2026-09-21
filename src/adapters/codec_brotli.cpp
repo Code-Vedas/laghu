@@ -106,6 +106,11 @@ void brotli_free(void* context, void* pointer) noexcept {
     finished = result == BROTLI_DECODER_RESULT_SUCCESS;
     needs_input = result == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT;
     needs_output = result == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT;
+    if (output_size == 0U && needs_output) {
+      internal::record_failure(state.accounting);
+      return std::unexpected{internal::codec_error(
+          core::ErrorCode::exhaustion, "codec output limit is exhausted")};
+    }
     if (finished && available_input != 0U) {
       internal::record_failure(state.accounting);
       return std::unexpected{internal::codec_error(
