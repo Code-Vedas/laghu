@@ -114,6 +114,12 @@ bool encode_attribute(Output& output, const OtlpAttribute& attribute) noexcept {
       });
 }
 
+template <class Output, std::size_t Size>
+bool encode_optional_bytes(Output& output, std::uint32_t field,
+                           const std::array<std::byte, Size>& value) noexcept {
+  return !nonzero(value) || output.bytes(field, value);
+}
+
 template <class Output, class Record>
 bool encode_attributes(Output& output, const Record& record, std::uint32_t field) noexcept {
   if (record.attribute_count > record.attributes.size()) return false;
@@ -252,8 +258,8 @@ core::Result<OtlpEncodeResult> encode_otlp_logs(
             writer.message(5U, [&](auto& body) {
               return body.text(1U, record.body.value());
             }) && encode_attributes(writer, record, 6U) &&
-            writer.bytes(9U, record.trace_id) &&
-            writer.bytes(10U, record.span_id);
+            encode_optional_bytes(writer, 9U, record.trace_id) &&
+            encode_optional_bytes(writer, 10U, record.span_id);
       });
 }
 

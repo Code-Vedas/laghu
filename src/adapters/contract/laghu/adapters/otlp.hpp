@@ -23,6 +23,10 @@ struct OtlpText final {
       return std::unexpected{core::Error{core::ErrorDomain::core,
           core::ErrorCode::exhaustion, 0, "OTLP text capacity is exhausted"}};
     }
+    if (!valid_utf8(text.string_view())) {
+      return std::unexpected{core::Error{core::ErrorDomain::core,
+          core::ErrorCode::invalid_input, 0, "OTLP text is not valid UTF-8"}};
+    }
     OtlpText result;
     for (std::size_t index = 0; index < text.size(); ++index) {
       result.bytes[index] = text.string_view()[index];
@@ -33,6 +37,45 @@ struct OtlpText final {
 
   [[nodiscard]] constexpr std::string_view value() const noexcept {
     return {bytes.data(), size};
+  }
+
+ private:
+  [[nodiscard]] static constexpr bool continuation(unsigned char byte) noexcept {
+    return (byte & 0xc0U) == 0x80U;
+  }
+
+  [[nodiscard]] static constexpr bool valid_utf8(std::string_view text) noexcept {
+    std::size_t index{};
+    while (index < text.size()) {
+      const auto first = static_cast<unsigned char>(text[index]);
+      if (first <= 0x7fU) {
+        ++index;
+      } else if (first >= 0xc2U && first <= 0xdfU) {
+        if (index + 1U >= text.size() ||
+            !continuation(static_cast<unsigned char>(text[index + 1U]))) return false;
+        index += 2U;
+      } else if (first >= 0xe0U && first <= 0xefU) {
+        if (index + 2U >= text.size()) return false;
+        const auto second = static_cast<unsigned char>(text[index + 1U]);
+        const auto third = static_cast<unsigned char>(text[index + 2U]);
+        if (!continuation(second) || !continuation(third) ||
+            (first == 0xe0U && second < 0xa0U) ||
+            (first == 0xedU && second >= 0xa0U)) return false;
+        index += 3U;
+      } else if (first >= 0xf0U && first <= 0xf4U) {
+        if (index + 3U >= text.size()) return false;
+        const auto second = static_cast<unsigned char>(text[index + 1U]);
+        if (!continuation(second) ||
+            !continuation(static_cast<unsigned char>(text[index + 2U])) ||
+            !continuation(static_cast<unsigned char>(text[index + 3U])) ||
+            (first == 0xf0U && second < 0x90U) ||
+            (first == 0xf4U && second >= 0x90U)) return false;
+        index += 4U;
+      } else {
+        return false;
+      }
+    }
+    return true;
   }
 };
 
