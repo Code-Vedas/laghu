@@ -5,6 +5,7 @@
 
 static_assert(std::is_trivially_copyable_v<laghu::adapters::GeoIpAddress>);
 static_assert(std::is_trivially_copyable_v<laghu::adapters::GeoIpCountry>);
+static_assert(std::is_trivially_copyable_v<laghu::adapters::GeoIpReloadSource>);
 static_assert(!std::is_copy_constructible_v<laghu::adapters::GeoIpDatabase>);
 
 int main() { return 0; }

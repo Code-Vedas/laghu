@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <type_traits>
 
@@ -51,8 +52,21 @@ struct GeoIpResult final {
   bool known{};
 };
 
-// Opens only a preselected configuration/reload path. Lookups accept no path,
-// so request-time callers cannot choose database files.
+class GeoIpReloadSource final {
+ public:
+  [[nodiscard]] static core::Result<GeoIpReloadSource> from_configuration(
+      core::TextView configured_path,
+      std::span<const core::TextView> allowed_paths) noexcept;
+
+ private:
+  friend class GeoIpDatabase;
+  explicit GeoIpReloadSource(core::StaticCString<4096> path) noexcept
+      : path_(path) {}
+  core::StaticCString<4096> path_{};
+};
+
+// Opens only an owned source already matched against the configuration's exact
+// path allowlist. Lookups accept neither paths nor reload authority.
 class GeoIpDatabase final {
  public:
   GeoIpDatabase() noexcept = default;
@@ -63,7 +77,7 @@ class GeoIpDatabase final {
   ~GeoIpDatabase();
 
   [[nodiscard]] static core::Result<GeoIpDatabase> open_for_reload(
-      core::TextView configured_path, core::GenerationId generation,
+      const GeoIpReloadSource& source, core::GenerationId generation,
       DependencyLogSink log_sink = {}) noexcept;
   [[nodiscard]] core::Result<GeoIpResult> lookup(
       const GeoIpAddress& address) const noexcept;
@@ -80,6 +94,7 @@ static_assert(std::is_trivially_copyable_v<GeoIpCountry>);
 static_assert(std::is_trivially_copyable_v<GeoIpSubdivision>);
 static_assert(std::is_trivially_copyable_v<GeoIpCity>);
 static_assert(std::is_trivially_copyable_v<GeoIpAsn>);
+static_assert(std::is_trivially_copyable_v<GeoIpReloadSource>);
 static_assert(!std::is_copy_constructible_v<GeoIpDatabase>);
 
 }  // namespace laghu::adapters

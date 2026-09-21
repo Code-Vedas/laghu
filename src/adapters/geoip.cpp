@@ -42,7 +42,9 @@ struct GeoIpState final {
     case MMDB_INVALID_METADATA_ERROR:
     case MMDB_CORRUPT_SEARCH_TREE_ERROR:
     case MMDB_UNKNOWN_DATABASE_FORMAT_ERROR:
+#ifdef MMDB_DECODER_LIMIT_ERROR
     case MMDB_DECODER_LIMIT_ERROR:
+#endif
       return core::DependencyStatus::corrupt_data;
     case MMDB_INVALID_LOOKUP_PATH_ERROR:
     case MMDB_LOOKUP_PATH_DOES_NOT_MATCH_DATA_ERROR:
@@ -136,9 +138,9 @@ GeoIpDatabase& GeoIpDatabase::operator=(GeoIpDatabase&& other) noexcept {
 
 GeoIpDatabase::~GeoIpDatabase() { release(); }
 
-core::Result<GeoIpDatabase> GeoIpDatabase::open_for_reload(
-    core::TextView configured_path, core::GenerationId generation,
-    DependencyLogSink log_sink) noexcept {
+core::Result<GeoIpReloadSource> GeoIpReloadSource::from_configuration(
+    core::TextView configured_path,
+    std::span<const core::TextView> allowed_paths) noexcept {
   const auto path = configured_path.to_c_string<path_capacity>();
   if (!path.has_value()) return std::unexpected{path.error()};
   if (!valid_configured_path(path->view())) {
@@ -146,12 +148,29 @@ core::Result<GeoIpDatabase> GeoIpDatabase::open_for_reload(
         core::ErrorCode::invalid_input,
         "GeoIP reload path must be an absolute normalized .mmdb path")};
   }
+  const bool allowed = std::any_of(
+      allowed_paths.begin(), allowed_paths.end(),
+      [&](core::TextView candidate) {
+        return candidate.string_view() == path->view();
+      });
+  if (!allowed) {
+    return std::unexpected{core_error(
+        core::ErrorCode::invalid_input,
+        "GeoIP reload path is not in the configured allowlist")};
+  }
+  return GeoIpReloadSource{*path};
+}
+
+core::Result<GeoIpDatabase> GeoIpDatabase::open_for_reload(
+    const GeoIpReloadSource& source, core::GenerationId generation,
+    DependencyLogSink log_sink) noexcept {
   auto* state = new (std::nothrow) GeoIpState{{}, generation, log_sink};
   if (state == nullptr) {
     return std::unexpected{core_error(
         core::ErrorCode::exhaustion, "GeoIP handle allocation is exhausted")};
   }
-  const int status = MMDB_open(path->c_str(), MMDB_MODE_MMAP, &state->database);
+  const int status = MMDB_open(
+      source.path_.c_str(), MMDB_MODE_MMAP, &state->database);
   if (status != MMDB_SUCCESS) {
     const core::Error error = native_error(
         core::DependencyOperation::geoip_open, status, log_sink);

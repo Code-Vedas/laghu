@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <span>
 #include <string_view>
@@ -20,7 +21,9 @@ namespace {
 using laghu::adapters::GeoIpAddress;
 using laghu::adapters::GeoIpAddressFamily;
 using laghu::adapters::GeoIpDatabase;
+using laghu::adapters::GeoIpReloadSource;
 using laghu::core::GenerationId;
+using laghu::core::Result;
 using laghu::core::TextView;
 
 [[nodiscard]] constexpr GenerationId generation(std::uint64_t value) noexcept {
@@ -36,6 +39,12 @@ using laghu::core::TextView;
   address.bytes[2] = static_cast<std::byte>(third);
   address.bytes[3] = static_cast<std::byte>(fourth);
   return address;
+}
+
+[[nodiscard]] Result<GeoIpReloadSource> reload_source(
+    TextView path) noexcept {
+  const std::array allowed_paths{path};
+  return GeoIpReloadSource::from_configuration(path, allowed_paths);
 }
 
 [[nodiscard]] bool write_all(int descriptor, const std::byte* data,
@@ -81,8 +90,9 @@ using laghu::core::TextView;
 }
 
 [[nodiscard]] bool known_unknown_and_ipv6() noexcept {
-  auto database = GeoIpDatabase::open_for_reload(
-      TextView::from(LAGHU_GEOIP_FIXTURE), generation(1));
+  const auto source = reload_source(TextView::from(LAGHU_GEOIP_FIXTURE));
+  if (!source.has_value()) return false;
+  auto database = GeoIpDatabase::open_for_reload(*source, generation(1));
   if (!database.has_value()) return false;
   const auto london = database->lookup(ipv4(81, 2, 69, 160));
   if (!london.has_value() || !london->known ||
@@ -101,16 +111,18 @@ using laghu::core::TextView;
   ipv6.bytes[1] = std::byte{0x01};
   ipv6.bytes[2] = std::byte{0x02};
   ipv6.bytes[3] = std::byte{0x18};
-  return database->lookup(ipv6).has_value();
+  const auto japan = database->lookup(ipv6);
+  return japan.has_value() && japan->known &&
+      japan->country.code.value() == "JP";
 }
 
 [[nodiscard]] bool replacement_preserves_copied_results() noexcept {
-  auto current = GeoIpDatabase::open_for_reload(
-      TextView::from(LAGHU_GEOIP_FIXTURE), generation(7));
+  const auto source = reload_source(TextView::from(LAGHU_GEOIP_FIXTURE));
+  if (!source.has_value()) return false;
+  auto current = GeoIpDatabase::open_for_reload(*source, generation(7));
   if (!current.has_value()) return false;
   const auto old_result = current->lookup(ipv4(81, 2, 69, 160));
-  auto replacement = GeoIpDatabase::open_for_reload(
-      TextView::from(LAGHU_GEOIP_FIXTURE), generation(8));
+  auto replacement = GeoIpDatabase::open_for_reload(*source, generation(8));
   if (!old_result.has_value() || !replacement.has_value()) return false;
   *current = std::move(*replacement);
   const auto new_result = current->lookup(ipv4(81, 2, 69, 160));
@@ -122,14 +134,20 @@ using laghu::core::TextView;
 [[nodiscard]] bool malformed_and_truncated_are_rejected() noexcept {
   auto directory = laghu::test::TemporaryDirectory::create("geoip");
   if (!directory.has_value()) return false;
+  std::array<char, laghu::test::fixture_path_capacity> resolved_directory{};
+  if (::realpath(directory->path().data(), resolved_directory.data()) == nullptr) {
+    return false;
+  }
   std::array<char, laghu::test::fixture_path_capacity> malformed_path{};
   std::array<char, laghu::test::fixture_path_capacity> truncated_path{};
   const int malformed_size = std::snprintf(
       malformed_path.data(), malformed_path.size(), "%.*s/malformed.mmdb",
-      static_cast<int>(directory->path().size()), directory->path().data());
+      static_cast<int>(std::char_traits<char>::length(resolved_directory.data())),
+      resolved_directory.data());
   const int truncated_size = std::snprintf(
       truncated_path.data(), truncated_path.size(), "%.*s/truncated.mmdb",
-      static_cast<int>(directory->path().size()), directory->path().data());
+      static_cast<int>(std::char_traits<char>::length(resolved_directory.data())),
+      resolved_directory.data());
   if (malformed_size <= 0 || truncated_size <= 0 ||
       static_cast<std::size_t>(malformed_size) >= malformed_path.size() ||
       static_cast<std::size_t>(truncated_size) >= truncated_path.size()) return false;
@@ -138,22 +156,32 @@ using laghu::core::TextView;
   if (malformed < 0 || !write_all(malformed, zeros.data(), zeros.size()) ||
       ::close(malformed) != 0 ||
       !copy_prefix(LAGHU_GEOIP_FIXTURE, truncated_path.data(), 128U)) return false;
-  const auto bad = GeoIpDatabase::open_for_reload(
-      TextView::from(malformed_path.data()), generation(2));
+  const auto malformed_source = reload_source(
+      TextView::from(malformed_path.data()));
+  const auto truncated_source = reload_source(
+      TextView::from(truncated_path.data()));
+  if (!malformed_source.has_value() || !truncated_source.has_value()) return false;
+  const auto bad = GeoIpDatabase::open_for_reload(*malformed_source, generation(2));
   const auto short_file = GeoIpDatabase::open_for_reload(
-      TextView::from(truncated_path.data()), generation(3));
+      *truncated_source, generation(3));
   return !bad.has_value() && !short_file.has_value();
 }
 
 [[nodiscard]] bool path_boundary_is_enforced() noexcept {
-  const auto relative = GeoIpDatabase::open_for_reload(
-      TextView::from("database.mmdb"), generation(1));
-  const auto traversal = GeoIpDatabase::open_for_reload(
-      TextView::from("/tmp/../database.mmdb"), generation(1));
-  const auto wrong_extension = GeoIpDatabase::open_for_reload(
-      TextView::from("/tmp/database.dat"), generation(1));
+  const std::array allowed_paths{TextView::from(LAGHU_GEOIP_FIXTURE)};
+  const auto relative = GeoIpReloadSource::from_configuration(
+      TextView::from("database.mmdb"), allowed_paths);
+  const auto traversal = GeoIpReloadSource::from_configuration(
+      TextView::from("/tmp/../database.mmdb"), allowed_paths);
+  const auto wrong_extension = GeoIpReloadSource::from_configuration(
+      TextView::from("/tmp/database.dat"), allowed_paths);
+  const auto unlisted = GeoIpReloadSource::from_configuration(
+      TextView::from("/tmp/database.mmdb"), allowed_paths);
+  const auto configured = GeoIpReloadSource::from_configuration(
+      TextView::from(LAGHU_GEOIP_FIXTURE), allowed_paths);
   return !relative.has_value() && !traversal.has_value() &&
-      !wrong_extension.has_value();
+      !wrong_extension.has_value() && !unlisted.has_value() &&
+      configured.has_value();
 }
 
 }  // namespace

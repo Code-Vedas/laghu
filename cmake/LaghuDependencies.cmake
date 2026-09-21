@@ -628,8 +628,8 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
   set(laghu_saved_build_type "${CMAKE_BUILD_TYPE}")
   FetchContent_MakeAvailable("${content_name}")
   if(id STREQUAL libmaxminddb)
-    set(LAGHU_LIBMAXMINDDB_SOURCE_DIR "${${content_name}_SOURCE_DIR}"
-      CACHE INTERNAL "Vendored libmaxminddb source directory")
+    set_property(GLOBAL PROPERTY LAGHU_LIBMAXMINDDB_FIXTURE
+      "${${content_name}_SOURCE_DIR}/t/maxmind-db/test-data/GeoIP2-City-Test.mmdb")
   endif()
   set(BUILD_TESTING "${laghu_saved_build_testing}" CACHE BOOL
     "Enable Laghu tests" FORCE)
