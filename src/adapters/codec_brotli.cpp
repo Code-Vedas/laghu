@@ -59,6 +59,10 @@ void brotli_free(void* context, void* pointer) noexcept {
   auto& state = *static_cast<BrotliState*>(opaque);
   if (const auto valid = internal::preflight(state.accounting, input.size());
       !valid.has_value()) return std::unexpected{valid.error()};
+  if (output.empty() && internal::output_capacity_remains(state.accounting)) {
+    internal::record(state.accounting, 0U, 0U, false);
+    return CodecProgress{0U, 0U, false, true, false};
+  }
   const std::size_t output_size = internal::bounded_output_size(
       state.accounting, output.size());
   if (output_size == 0U &&

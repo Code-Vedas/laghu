@@ -197,6 +197,34 @@ constexpr CodecLimits generous_limits{65536U, 65536U, 65536U};
                    decoded, 1U, 1U, decoded_size) && decoded_size == 0U;
 }
 
+[[nodiscard]] bool empty_output_preserves_stream() noexcept {
+  constexpr std::string_view payload = "empty output must not consume input";
+  std::array<std::byte, 4096> compressed{};
+  std::size_t compressed_size{};
+  if (!transform(CodecDirection::encode, text_bytes(payload), compressed,
+                 payload.size(), compressed.size(), compressed_size)) return false;
+  std::array<std::byte, 4096> output{};
+  for (const CodecDirection direction :
+       {CodecDirection::encode, CodecDirection::decode}) {
+    const auto input = direction == CodecDirection::encode
+        ? text_bytes(payload)
+        : std::span<const std::byte>{compressed}.first(compressed_size);
+    Fixture fixture;
+    auto stream = LAGHU_CODEC_FACTORY(
+        direction, fixture.storage(), fixture.memory, generous_limits);
+    if (!stream.has_value()) return false;
+    const auto stalled = stream->process(
+        bytes(input), mutable_bytes({}));
+    if (!stalled.has_value() || stalled->input_consumed != 0U ||
+        stalled->output_produced != 0U || !stalled->needs_output ||
+        stalled->finished) return false;
+    const auto resumed = stream->process(
+        bytes(input), mutable_bytes(output));
+    if (!resumed.has_value()) return false;
+  }
+  return true;
+}
+
 [[nodiscard]] bool failures_and_cancel() noexcept {
   constexpr std::string_view payload = "bounded codec failure payload";
   std::array<std::byte, 4096> compressed{};
@@ -421,6 +449,8 @@ int main() {
       laghu::test::TestCase{"codec.round-trip", []() noexcept { return round_trip(4096U, 4096U); }},
       laghu::test::TestCase{"codec.byte-at-a-time", []() noexcept { return round_trip(1U, 1U); }},
       laghu::test::TestCase{"codec.empty", empty_round_trip},
+      laghu::test::TestCase{"codec.empty-output-preserves-stream",
+                            empty_output_preserves_stream},
       laghu::test::TestCase{"codec.exact-output-limit", exact_output_limit},
 #if defined(LAGHU_CODEC_zlib_ng)
       laghu::test::TestCase{"codec.gzip-interoperability", gzip_interoperability},

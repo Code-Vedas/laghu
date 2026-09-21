@@ -71,6 +71,11 @@ inline void record_failure(CodecAccounting& accounting) noexcept {
                   accounting.limits.maximum_output_bytes - accounting.output_bytes);
 }
 
+[[nodiscard]] inline bool output_capacity_remains(
+    const CodecAccounting& accounting) noexcept {
+  return accounting.output_bytes < accounting.limits.maximum_output_bytes;
+}
+
 inline void record(CodecAccounting& accounting, std::size_t consumed,
                    std::size_t produced, bool finished) noexcept {
   accounting.input_bytes += consumed;

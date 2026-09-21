@@ -52,40 +52,44 @@ core::Result<std::uint64_t> run_workload(
   core::BoundedArena arena{worker, budget,
       core::ArenaBlockSource{&source, acquire, reset}, 4096U, arena_capacity};
   adapters::NativeMemoryPool memory{worker, arena};
-  std::uint64_t checksum = seed;
-  for (std::uint64_t iteration = 0U; iteration < operations_per_interval; ++iteration) {
-    std::array<std::max_align_t, adapters::codec_state_storage_words> state{};
-    std::array<std::byte, 8192> output{};
-    auto stream = LAGHU_CODEC_FACTORY(
-        adapters::CodecDirection::encode, state, memory,
-        adapters::CodecLimits{input.size(), output.size(), 8U});
-    if (!stream.has_value()) return std::unexpected{stream.error()};
-    const auto progress = stream->process(
-        *core::ByteView::from(input), *core::MutableByteView::from(output));
-    if (!progress.has_value()) return std::unexpected{progress.error()};
-    std::size_t produced = progress->output_produced;
-    bool finished = progress->finished;
-    while (!finished && produced < output.size()) {
-      const auto remaining = *core::MutableByteView::from(
-          std::span<std::byte>{output}.subspan(produced));
-      const auto completion = stream->finish(remaining);
-      if (!completion.has_value()) return std::unexpected{completion.error()};
-      produced += completion->output_produced;
-      finished = completion->finished;
-      if (!finished && completion->output_produced == 0U) {
-        return std::unexpected{core::Error{core::ErrorDomain::core,
-                                           core::ErrorCode::invalid_state, 0,
-                                           "codec benchmark made no progress"}};
+  const auto workload = [&]() noexcept -> core::Result<std::uint64_t> {
+    std::uint64_t checksum = seed;
+    for (std::uint64_t iteration = 0U; iteration < operations_per_interval;
+         ++iteration) {
+      std::array<std::max_align_t, adapters::codec_state_storage_words> state{};
+      std::array<std::byte, 8192> output{};
+      auto stream = LAGHU_CODEC_FACTORY(
+          adapters::CodecDirection::encode, state, memory,
+          adapters::CodecLimits{input.size(), output.size(), 8U});
+      if (!stream.has_value()) return std::unexpected{stream.error()};
+      const auto progress = stream->process(
+          *core::ByteView::from(input), *core::MutableByteView::from(output));
+      if (!progress.has_value()) return std::unexpected{progress.error()};
+      std::size_t produced = progress->output_produced;
+      bool finished = progress->finished;
+      while (!finished && produced < output.size()) {
+        const auto remaining = *core::MutableByteView::from(
+            std::span<std::byte>{output}.subspan(produced));
+        const auto completion = stream->finish(remaining);
+        if (!completion.has_value()) return std::unexpected{completion.error()};
+        produced += completion->output_produced;
+        finished = completion->finished;
+        if (!finished && completion->output_produced == 0U) {
+          return std::unexpected{core::Error{core::ErrorDomain::core,
+                                             core::ErrorCode::invalid_state, 0,
+                                             "codec benchmark made no progress"}};
+        }
       }
+      checksum ^= static_cast<std::uint64_t>(produced) + iteration;
     }
-    checksum ^= static_cast<std::uint64_t>(produced) + iteration;
-  }
+    return checksum;
+  }();
   const auto boundary = arena.quiescent_boundary(worker);
   if (!boundary.has_value()) return std::unexpected{boundary.error()};
   const auto reset_result = arena.reset(worker, *boundary);
   if (!reset_result.has_value()) return std::unexpected{reset_result.error()};
   static_cast<void>(counters);
-  return checksum;
+  return workload;
 }
 
 }  // namespace laghu::benchmark::internal
