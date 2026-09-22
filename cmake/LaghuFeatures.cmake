@@ -16,7 +16,9 @@ set(LAGHU_FEATURE_IDS
   compression_zlib
   compression_brotli
   compression_zstd
-  geoip)
+  geoip
+  idna
+  password_auth)
 
 function(laghu_declare_feature id)
   cmake_parse_arguments(PARSE_ARGV 1 feature
@@ -64,6 +66,8 @@ function(laghu_feature_registry_initialize)
   laghu_declare_feature(compression_brotli EXTERNAL_DEPENDENCIES brotli)
   laghu_declare_feature(compression_zstd EXTERNAL_DEPENDENCIES zstd)
   laghu_declare_feature(geoip EXTERNAL_DEPENDENCIES libmaxminddb)
+  laghu_declare_feature(idna EXTERNAL_DEPENDENCIES libidn2)
+  laghu_declare_feature(password_auth EXTERNAL_DEPENDENCIES libxcrypt)
 endfunction()
 
 function(laghu_feature_validate_registry)
