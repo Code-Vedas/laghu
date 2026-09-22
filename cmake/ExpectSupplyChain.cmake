@@ -56,6 +56,19 @@ endfunction()
 
 laghu_expect_invalid(schema "${cyclonedx_name}" "\"specVersion\":\"1.7\""
   "\"specVersion\":\"1.6\"" "rule=cyclonedx_schema_version")
+laghu_expect_invalid(manifest-schema "${manifest_name}"
+  "\"schema_version\":\"laghu-build-manifest-v1\""
+  "\"schema_version\":\"laghu-build-manifest-v2\""
+  "rule=manifest_schema_version")
+string(JSON build_id GET "${manifest}" build_id)
+laghu_expect_invalid(spdx-build-id "${spdx_name}"
+  "\"spdxId\":\"https://codevedas.com/laghu/spdx/${build_id}\",\"type\":\"SpdxDocument\""
+  "\"spdxId\":\"https://codevedas.com/laghu/spdx/invalid-${build_id}\",\"type\":\"SpdxDocument\""
+  "rule=spdx_build_id_mismatch")
+laghu_expect_invalid(cyclonedx-build-id "${cyclonedx_name}"
+  "\"name\":\"laghu:build-id\",\"value\":\"${build_id}\""
+  "\"name\":\"laghu:build-id\",\"value\":\"invalid-${build_id}\""
+  "rule=cyclonedx_build_id_mismatch")
 laghu_expect_invalid(missing-dependency "${cyclonedx_name}"
   "\"bom-ref\":\"toolchain:compiler\"" "\"bom-ref\":\"toolchain:missing\""
   "rule=missing_dependency_entry")
