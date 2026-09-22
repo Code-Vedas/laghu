@@ -1,0 +1,110 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+
+usage() {
+  printf '%s\n' 'usage: scripts/fuzz --build <directory> --target <name> --corpus <directory> [--runs <count>]' >&2
+}
+
+build_directory=''
+target=''
+corpus=''
+runs=''
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --build)
+      if [ "$#" -lt 2 ] || [ -n "$build_directory" ] || [ -z "$2" ]; then
+        usage
+        exit 64
+      fi
+      build_directory=$2
+      shift 2
+      ;;
+    --target)
+      if [ "$#" -lt 2 ] || [ -n "$target" ] || [ -z "$2" ]; then
+        usage
+        exit 64
+      fi
+      target=$2
+      shift 2
+      ;;
+    --corpus)
+      if [ "$#" -lt 2 ] || [ -n "$corpus" ] || [ -z "$2" ]; then
+        usage
+        exit 64
+      fi
+      corpus=$2
+      shift 2
+      ;;
+    --runs)
+      if [ "$#" -lt 2 ] || [ -n "$runs" ]; then
+        usage
+        exit 64
+      fi
+      case "$2" in
+        ''|*[!0-9]*)
+          usage
+          exit 64
+          ;;
+        *[1-9]*)
+          ;;
+        *)
+          usage
+          exit 64
+          ;;
+      esac
+      runs=$2
+      shift 2
+      ;;
+    *)
+      usage
+      exit 64
+      ;;
+  esac
+done
+
+if [ -z "$build_directory" ] || [ -z "$target" ] || [ -z "$corpus" ]; then
+  usage
+  exit 64
+fi
+case "$target" in
+  *[!a-z0-9-]*|'')
+    usage
+    exit 64
+    ;;
+esac
+if [ ! -d "$build_directory" ] || [ ! -d "$corpus" ]; then
+  printf '%s\n' "scripts/fuzz: build and corpus directories must exist" >&2
+  exit 66
+fi
+if ! command -v cmake >/dev/null 2>&1; then
+  printf '%s\n' 'scripts/fuzz: cmake is unavailable' >&2
+  exit 69
+fi
+
+registry="$build_directory/config/laghu-fuzz-targets-v1.tsv"
+if [ ! -r "$registry" ]; then
+  printf '%s\n' "scripts/fuzz: fuzzer registry is unavailable: $registry" >&2
+  exit 66
+fi
+record=$(awk -F '\t' -v requested="$target" '$1 == requested && NF == 3 { print $2 "\t" $3; exit }' "$registry")
+if [ -z "$record" ]; then
+  printf '%s\n' "scripts/fuzz: target is not configured: $target" >&2
+  exit 64
+fi
+cmake_target=$(printf '%s\n' "$record" | awk -F '\t' '{ print $1 }')
+executable=$(printf '%s\n' "$record" | awk -F '\t' '{ print $2 }')
+
+if ! cmake --build "$build_directory" --target "$cmake_target"; then
+  printf '%s\n' "scripts/fuzz: target build failed: $target" >&2
+  exit 70
+fi
+if [ ! -x "$executable" ]; then
+  printf '%s\n' "scripts/fuzz: configured executable is unavailable: $target" >&2
+  exit 70
+fi
+
+if [ -n "$runs" ]; then
+  exec "$executable" -runs="$runs" "$corpus"
+fi
+exec "$executable" "$corpus"
