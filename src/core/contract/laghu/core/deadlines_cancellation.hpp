@@ -9,11 +9,9 @@
 #include <limits>
 #include <type_traits>
 
-#include <laghu/core/contract.hpp>
+#include <laghu/core/clocks.hpp>
 
 namespace laghu::core {
-
-using MonotonicInstant = std::uint64_t;
 
 // Clocks are supplied by the owner.  Production code can inject its POSIX
 // monotonic clock and tests can inject a deterministic clock without a timer
@@ -40,6 +38,19 @@ class Deadline final {
     return Deadline{now + duration};
   }
 
+  [[nodiscard]] static Result<Deadline> after(const ClockOperations& operations,
+                                               MonotonicInstant duration) noexcept {
+    const auto now = read_monotonic_clock(operations);
+    if (!now.has_value()) {
+      return std::unexpected{now.error()};
+    }
+    if (duration > std::numeric_limits<MonotonicInstant>::max() - *now) {
+      return std::unexpected{Error{ErrorDomain::core, ErrorCode::overflow, 0,
+                                   "monotonic deadline overflows"}};
+    }
+    return Deadline{*now + duration};
+  }
+
   [[nodiscard]] static constexpr Deadline child(Deadline parent, Deadline requested) noexcept {
     return Deadline{parent.instant_ < requested.instant_ ? parent.instant_ : requested.instant_};
   }
@@ -51,9 +62,28 @@ class Deadline final {
     return clock.now() >= instant_;
   }
 
+  [[nodiscard]] Result<bool> expired(const ClockOperations& operations) const noexcept {
+    const auto now = read_monotonic_clock(operations);
+    if (!now.has_value()) {
+      return std::unexpected{now.error()};
+    }
+    return *now >= instant_;
+  }
+
   template <MonotonicClock Clock>
   [[nodiscard]] constexpr Result<void> require_not_expired(const Clock& clock) const noexcept {
     if (expired(clock)) {
+      return std::unexpected{deadline_error()};
+    }
+    return {};
+  }
+
+  [[nodiscard]] Result<void> require_not_expired(const ClockOperations& operations) const noexcept {
+    const auto is_expired = expired(operations);
+    if (!is_expired.has_value()) {
+      return std::unexpected{is_expired.error()};
+    }
+    if (*is_expired) {
       return std::unexpected{deadline_error()};
     }
     return {};
@@ -193,6 +223,14 @@ class CancellationToken final {
     return deadline.require_not_expired(clock);
   }
 
+  [[nodiscard]] Result<void> require_active(const Deadline& deadline,
+                                             const ClockOperations& operations) const noexcept {
+    if (const Result<void> active = require_active(); !active.has_value()) {
+      return std::unexpected{active.error()};
+    }
+    return deadline.require_not_expired(operations);
+  }
+
   [[nodiscard]] Result<CancellationToken> child(CancellationState& child_state) const noexcept {
     for (std::uint8_t index = 0; index < state_count_; ++index) {
       if (states_[index] == &child_state) {
@@ -247,6 +285,22 @@ class CancellationSource final {
   [[nodiscard]] CancellationOutcome cancel_if_expired(const Deadline& deadline,
                                                        const Clock& clock) noexcept {
     if (!deadline.expired(clock)) {
+      return state_->outcome();
+    }
+    return state_->finish(CancellationState::StoredTerminal::cancelled_deadline);
+  }
+
+  [[nodiscard]] Result<CancellationOutcome> cancel_if_expired(
+      const Deadline& deadline, const ClockOperations& operations) noexcept {
+    const CancellationOutcome existing = state_->outcome();
+    if (existing.is_terminal()) {
+      return existing;
+    }
+    const auto expired = deadline.expired(operations);
+    if (!expired.has_value()) {
+      return std::unexpected{expired.error()};
+    }
+    if (!*expired) {
       return state_->outcome();
     }
     return state_->finish(CancellationState::StoredTerminal::cancelled_deadline);

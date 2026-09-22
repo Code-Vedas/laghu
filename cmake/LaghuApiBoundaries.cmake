@@ -193,6 +193,7 @@ endfunction()
 
 function(laghu_add_visibility_probe)
   add_library(laghu_visibility_probe SHARED
+    src/core/clocks.cpp
     src/core/contract.cpp
     src/core/digest.cpp
     src/core/fingerprints.cpp
