@@ -581,7 +581,13 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
       set(CARES_SHARED ON CACHE BOOL "Build c-ares shared library" FORCE)
     endif()
   endif()
+  # Dependency projects must not select Laghu's build configuration through a
+  # shared cache entry. nghttp2 defaults an empty build type to RelWithDebInfo;
+  # restore the caller-owned value after its subdirectory is configured.
+  set(laghu_saved_build_type "${CMAKE_BUILD_TYPE}")
   FetchContent_MakeAvailable("${content_name}")
+  set(CMAKE_BUILD_TYPE "${laghu_saved_build_type}" CACHE STRING
+    "Choose the type of build" FORCE)
   laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SELECTED_VERSION_${id}" "${vendored_version}")
   laghu_find_vendored_cmake_target("${id}" vendored_target)
