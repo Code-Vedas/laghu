@@ -16,6 +16,19 @@ namespace {
     case core::DependencyId::none:
     case core::DependencyId::openssl:
     case core::DependencyId::libressl:
+    case core::DependencyId::yyjson:
+    case core::DependencyId::nghttp2:
+    case core::DependencyId::ngtcp2:
+    case core::DependencyId::nghttp3:
+    case core::DependencyId::c_ares:
+    case core::DependencyId::pcre2_8bit:
+    case core::DependencyId::zlib_ng:
+    case core::DependencyId::brotli:
+    case core::DependencyId::zstd:
+    case core::DependencyId::libmaxminddb:
+    case core::DependencyId::libidn2:
+    case core::DependencyId::libxcrypt:
+    case core::DependencyId::protobuf_c:
       return value;
   }
   return core::DependencyId::none;
@@ -59,6 +72,32 @@ namespace {
       return "openssl";
     case core::DependencyId::libressl:
       return "libressl";
+    case core::DependencyId::yyjson:
+      return "yyjson";
+    case core::DependencyId::nghttp2:
+      return "nghttp2";
+    case core::DependencyId::ngtcp2:
+      return "ngtcp2";
+    case core::DependencyId::nghttp3:
+      return "nghttp3";
+    case core::DependencyId::c_ares:
+      return "c_ares";
+    case core::DependencyId::pcre2_8bit:
+      return "pcre2_8bit";
+    case core::DependencyId::zlib_ng:
+      return "zlib_ng";
+    case core::DependencyId::brotli:
+      return "brotli";
+    case core::DependencyId::zstd:
+      return "zstd";
+    case core::DependencyId::libmaxminddb:
+      return "libmaxminddb";
+    case core::DependencyId::libidn2:
+      return "libidn2";
+    case core::DependencyId::libxcrypt:
+      return "libxcrypt";
+    case core::DependencyId::protobuf_c:
+      return "protobuf_c";
   }
   return "none";
 }

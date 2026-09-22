@@ -49,6 +49,11 @@ function(laghu_build_identity_input_hashes output)
     tests/benchmarks/workload_counters.cpp
     src/cli/main.cpp
     src/cli/private/laghu/cli/internal/build_manifest.hpp
+    src/adapters/contract/laghu/adapters/dependency.hpp
+    src/adapters/contract/laghu/adapters/dependency_lifecycle.hpp
+    src/adapters/dependency.cpp
+    src/adapters/dependency_lifecycle.cpp
+    src/adapters/private/laghu/adapters/internal/dependency.hpp
     src/core/clocks.cpp
     src/core/contract.cpp
     src/core/digest.cpp
@@ -81,11 +86,8 @@ function(laghu_build_identity_input_hashes output)
   if(NOT tls_feature_index EQUAL -1)
     list(APPEND inputs
       src/adapters/contract/laghu/adapters/crypto_provider.hpp
-      src/adapters/contract/laghu/adapters/dependency.hpp
       src/adapters/crypto_provider.cpp
-      src/adapters/dependency.cpp
       src/adapters/entropy.cpp
-      src/adapters/private/laghu/adapters/internal/dependency.hpp
       src/adapters/private/laghu/adapters/internal/entropy.hpp)
   endif()
   set(entries)
