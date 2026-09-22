@@ -45,9 +45,10 @@ jobs:
             -DLAGHU_BUILD_PROFILE=FULL
           cmake --build "$RUNNER_TEMP/laghu-full" --target \
             laghu_crypto_provider_test laghu_idna_test laghu_password_auth_test \
-            laghu_password_auth_failure_token_test laghu_http2_test laghu_http2_contract_test
+            laghu_password_auth_failure_token_test laghu_http2_test laghu_http2_contract_test \
+            laghu_http3_test laghu_http3_contract_test
           ctest --test-dir "$RUNNER_TEMP/laghu-full" --output-on-failure \
-            -R '^laghu\.(crypto\.provider|adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract))$'
+            -R '^laghu\.(crypto\.provider|adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|http3|http3\.contract))$'
       - name: Verify system dynamic IDNA and password adapters
         if: matrix.name == 'gcc-14-libstdc++'
         run: |
@@ -81,12 +82,12 @@ jobs:
             -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
             -DCMAKE_CXX_FLAGS="${{ matrix.cxxflags }}" \
             -DLAGHU_BUILD_PROFILE=CUSTOM \
-            '-DLAGHU_FEATURES=idna;password_auth;http2'
+            '-DLAGHU_FEATURES=idna;password_auth;http2;http3'
           cmake --build "$RUNNER_TEMP/laghu-clang-adapters" --target \
             laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test \
-            laghu_http2_test laghu_http2_contract_test
+            laghu_http2_test laghu_http2_contract_test laghu_http3_test laghu_http3_contract_test
           ctest --test-dir "$RUNNER_TEMP/laghu-clang-adapters" --output-on-failure \
-            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract)$'
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|http3|http3\.contract)$'
       - name: Verify LibreSSL crypto adapter
         if: matrix.name == 'gcc-14-libstdc++'
         run: |
@@ -141,12 +142,12 @@ jobs:
           cmake -S . -B "$RUNNER_TEMP/laghu-adapters" -G Ninja \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DLAGHU_BUILD_PROFILE=CUSTOM \
-            '-DLAGHU_FEATURES=idna;password_auth;http2'
+            '-DLAGHU_FEATURES=idna;password_auth;http2;http3'
           cmake --build "$RUNNER_TEMP/laghu-adapters" --target \
             laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test \
-            laghu_http2_test laghu_http2_contract_test
+            laghu_http2_test laghu_http2_contract_test laghu_http3_test laghu_http3_contract_test
           ctest --test-dir "$RUNNER_TEMP/laghu-adapters" --output-on-failure \
-            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract)$'
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|http3|http3\.contract)$'
       - uses: actions/upload-artifact@v7
         with:
           name: toolchain-capabilities-macos-appleclang
@@ -176,12 +177,12 @@ jobs:
             cmake -S . -B /tmp/laghu-adapters -G Ninja \
               -DCMAKE_CXX_COMPILER=clang++ \
               -DLAGHU_BUILD_PROFILE=CUSTOM \
-              '-DLAGHU_FEATURES=idna;password_auth;http2'
+              '-DLAGHU_FEATURES=idna;password_auth;http2;http3'
             cmake --build /tmp/laghu-adapters --target \
               laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test \
-              laghu_http2_test laghu_http2_contract_test
+              laghu_http2_test laghu_http2_contract_test laghu_http3_test laghu_http3_contract_test
             ctest --test-dir /tmp/laghu-adapters --output-on-failure \
-              -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract)$'
+              -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|http3|http3\.contract)$'
   linux-aarch64-cross:
     runs-on: ubuntu-24.04
     steps:
@@ -197,7 +198,7 @@ jobs:
         run: |
           cmake --preset linux-aarch64-gcc \
             -DLAGHU_BUILD_PROFILE=CUSTOM \
-            '-DLAGHU_FEATURES=tls;http2'
+            '-DLAGHU_FEATURES=tls;http2;http3'
           cmake --build build/linux-aarch64-gcc --target laghu_verify_toolchain
       - name: Verify ARM64 archive
         run: |
@@ -207,6 +208,10 @@ jobs:
           aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_crypto.a
           test -f build/linux-aarch64-gcc/liblaghu_http2.a
           aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_http2.a
+          test -f build/linux-aarch64-gcc/liblaghu_quic.a
+          aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_quic.a
+          test -f build/linux-aarch64-gcc/liblaghu_http3.a
+          aarch64-linux-gnu-ar t build/linux-aarch64-gcc/liblaghu_http3.a
   linux-clang-asan-ubsan:
     runs-on: ubuntu-24.04
     steps:
@@ -242,12 +247,12 @@ jobs:
             -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
             -DLAGHU_SANITIZER_PROFILE=ASAN_UBSAN \
             -DLAGHU_BUILD_PROFILE=CUSTOM \
-            '-DLAGHU_FEATURES=idna;password_auth;http2'
+            '-DLAGHU_FEATURES=idna;password_auth;http2;http3'
           cmake --build "$RUNNER_TEMP/laghu-asan-adapters" --target \
             laghu_idna_test laghu_password_auth_test laghu_password_auth_failure_token_test \
-            laghu_http2_test laghu_http2_contract_test
+            laghu_http2_test laghu_http2_contract_test laghu_http3_test laghu_http3_contract_test
           ctest --test-dir "$RUNNER_TEMP/laghu-asan-adapters" --output-on-failure \
-            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract)$'
+            -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|http3|http3\.contract)$'
       - name: Replay binary-envelope fuzz corpus under ASan and UBSan
         run: |
           cmake -S . -B "$RUNNER_TEMP/laghu-fuzz" -G Ninja \

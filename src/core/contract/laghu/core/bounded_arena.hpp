@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory_resource>
 #include <type_traits>
+#include <utility>
 
 #include <laghu/core/memory_budget.hpp>
 #include <laghu/core/views.hpp>
@@ -15,6 +16,22 @@ namespace laghu::core {
 
 class BoundedArena;
 
+class ArenaPin final {
+ public:
+  constexpr ArenaPin() noexcept = default;
+  ArenaPin(const ArenaPin&) = delete;
+  ArenaPin& operator=(const ArenaPin&) = delete;
+  ArenaPin(ArenaPin&& other) noexcept;
+  ArenaPin& operator=(ArenaPin&& other) noexcept;
+  ~ArenaPin();
+
+ private:
+  friend class BoundedArena;
+  constexpr explicit ArenaPin(BoundedArena& arena) noexcept : arena_(&arena) {}
+  void release() noexcept;
+  BoundedArena* arena_{};
+};
+
 class ArenaView final {
  public:
   constexpr ArenaView() noexcept = default;
@@ -22,6 +39,7 @@ class ArenaView final {
   [[nodiscard]] constexpr std::size_t size() const noexcept { return bytes_.size(); }
   [[nodiscard]] constexpr bool empty() const noexcept { return bytes_.empty(); }
   [[nodiscard]] constexpr std::uint64_t generation() const noexcept { return generation_; }
+
   [[nodiscard]] Result<MutableByteView> bytes() const noexcept;
 
  private:
@@ -77,7 +95,7 @@ class BoundedArena final {
   BoundedArena& operator=(BoundedArena&&) = delete;
 
   ~BoundedArena() {
-    if (reservation_.is_active()) {
+    if (reservation_.is_active() || live_pins_ != 0U) {
       std::terminate();
     }
   }
@@ -87,6 +105,18 @@ class BoundedArena final {
   [[nodiscard]] constexpr std::size_t capacity() const noexcept { return capacity_; }
   [[nodiscard]] constexpr std::size_t used() const noexcept { return offset_; }
   [[nodiscard]] constexpr std::uint64_t generation() const noexcept { return generation_; }
+
+  [[nodiscard]] Result<ArenaPin> pin(WorkerId worker) noexcept {
+    if (const auto owner = require_worker(worker); !owner.has_value()) {
+      return std::unexpected{owner.error()};
+    }
+    if (live_pins_ == std::numeric_limits<std::size_t>::max()) {
+      return std::unexpected{Error{ErrorDomain::core, ErrorCode::exhaustion, 0,
+                                   "bounded arena pin capacity is exhausted"}};
+    }
+    ++live_pins_;
+    return ArenaPin{*this};
+  }
 
   [[nodiscard]] Result<ArenaView> try_allocate(WorkerId worker, std::size_t bytes,
                                                  std::size_t alignment) noexcept {
@@ -142,6 +172,10 @@ class BoundedArena final {
       return std::unexpected{Error{ErrorDomain::core, ErrorCode::invalid_state, 0,
                                    "bounded arena reset requires its current quiescent boundary"}};
     }
+    if (live_pins_ != 0U) {
+      return std::unexpected{Error{ErrorDomain::core, ErrorCode::invalid_state, 0,
+                                   "bounded arena reset requires all live pins to be released"}};
+    }
     if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
       return std::unexpected{Error{ErrorDomain::core, ErrorCode::overflow, 0,
                                    "bounded arena generation is exhausted"}};
@@ -165,6 +199,12 @@ class BoundedArena final {
  private:
   friend class ArenaView;
   friend class ArenaPmrResource;
+  friend class ArenaPin;
+
+  constexpr void release_pin() noexcept {
+    if (live_pins_ == 0U) std::terminate();
+    --live_pins_;
+  }
 
   [[nodiscard]] static constexpr bool is_valid_alignment(std::size_t alignment) noexcept {
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
@@ -248,8 +288,24 @@ class BoundedArena final {
   std::size_t maximum_capacity_{};
   std::size_t capacity_{};
   std::size_t offset_{};
+  std::size_t live_pins_{};
   std::uint64_t generation_{1};
 };
+
+inline ArenaPin::ArenaPin(ArenaPin&& other) noexcept
+    : arena_(std::exchange(other.arena_, nullptr)) {}
+inline ArenaPin& ArenaPin::operator=(ArenaPin&& other) noexcept {
+  if (this != &other) {
+    release();
+    arena_ = std::exchange(other.arena_, nullptr);
+  }
+  return *this;
+}
+inline ArenaPin::~ArenaPin() { release(); }
+inline void ArenaPin::release() noexcept {
+  if (arena_ != nullptr) arena_->release_pin();
+  arena_ = nullptr;
+}
 
 class ArenaPmrResource final : public std::pmr::memory_resource {
  public:

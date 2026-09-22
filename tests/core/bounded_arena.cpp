@@ -195,6 +195,21 @@ std::size_t DestructionProbe::destructions{};
   return check(arena.reset(worker, *boundary).has_value() && *budget.charged(worker) == 0);
 }
 
+[[nodiscard]] bool check_pin_blocks_reset_without_storage(WorkerId worker) noexcept {
+  FixedBlockSource source{};
+  MemoryBudget budget{worker, 8};
+  BoundedArena arena{worker, budget, fixed_source(source), 8, 8};
+  const auto boundary = arena.quiescent_boundary(worker);
+  {
+    auto pin = arena.pin(worker);
+    if (!check(boundary.has_value() && pin.has_value())) return false;
+    const auto reset = arena.reset(worker, *boundary);
+    if (!check(!reset.has_value() && reset.error().code() == ErrorCode::invalid_state &&
+               source.reset_calls == 0)) return false;
+  }
+  return check(arena.reset(worker, *boundary).has_value() && source.reset_calls == 1);
+}
+
 [[nodiscard]] bool check_pmr_success(WorkerId worker) noexcept {
   FixedBlockSource source{};
   MemoryBudget budget{worker, 32};
@@ -274,12 +289,15 @@ int main() {
   if (!check(check_reset_failures_preserve_state(*worker))) {
     return 5;
   }
-  if (!check(check_pmr_success(*worker))) {
+  if (!check(check_pin_blocks_reset_without_storage(*worker))) {
     return 6;
+  }
+  if (!check(check_pmr_success(*worker))) {
+    return 7;
   }
   if (!check(child_terminates_for_pmr_exhaustion(*worker) &&
              child_terminates_for_pmr_misuse(*worker))) {
-    return 7;
+    return 8;
   }
-  return allocation_attempts == allocation_attempts_before ? 0 : 8;
+  return allocation_attempts == allocation_attempts_before ? 0 : 9;
 }
