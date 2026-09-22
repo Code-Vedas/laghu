@@ -133,6 +133,15 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/contract/laghu/adapters/dns.hpp
       src/adapters/dns.cpp)
   endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES regex regex_feature_index)
+  if(NOT regex_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/native_memory.hpp
+      src/adapters/contract/laghu/adapters/regex.hpp
+      src/adapters/private/laghu/adapters/internal/arena_memory.hpp
+      src/adapters/regex.cpp)
+  endif()
+  list(REMOVE_DUPLICATES inputs)
   set(entries)
   foreach(input IN LISTS inputs)
     set(path "${CMAKE_SOURCE_DIR}/${input}")

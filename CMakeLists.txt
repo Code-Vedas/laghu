@@ -290,6 +290,23 @@ if(NOT laghu_async_dns_feature_index EQUAL -1)
   endif()
 endif()
 
+list(FIND LAGHU_EFFECTIVE_FEATURES regex laghu_regex_feature_index)
+if(NOT laghu_regex_feature_index EQUAL -1)
+  add_library(laghu_regex STATIC
+    src/adapters/regex.cpp
+    $<TARGET_OBJECTS:laghu_dependency_logging_impl>)
+  laghu_apply_first_party_contract(laghu_regex)
+  laghu_configure_api_consumer(laghu_regex adapters)
+  target_include_directories(laghu_regex PRIVATE "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  laghu_register_subsystem_target(laghu_regex adapters)
+  laghu_link_subsystems(laghu_regex laghu_core)
+  target_link_libraries(laghu_regex PRIVATE laghu_feature_regex)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(src/adapters/regex.cpp PROPERTIES
+      COMPILE_OPTIONS "-Wno-old-style-cast;-Wno-unsafe-buffer-usage;-Wno-zero-as-null-pointer-constant")
+  endif()
+endif()
+
 add_executable(laghu_core_smoke src/core/smoke.cpp)
 laghu_apply_first_party_contract(laghu_core_smoke)
 laghu_configure_api_consumer(laghu_core_smoke core)
@@ -462,6 +479,35 @@ if(TARGET laghu_dns)
   laghu_apply_first_party_contract(laghu_dns_contract_test)
   laghu_configure_api_consumer(laghu_dns_contract_test adapters)
   laghu_add_native_test(laghu.adapters.dns.contract laghu_dns_contract_test)
+endif()
+if(TARGET laghu_regex)
+  add_executable(laghu_regex_test tests/adapters/regex.cpp)
+  laghu_apply_first_party_contract(laghu_regex_test)
+  laghu_configure_api_consumer(laghu_regex_test adapters)
+  target_link_libraries(laghu_regex_test PRIVATE
+    laghu_regex laghu_test_support laghu_feature_regex)
+  laghu_add_native_test(laghu.adapters.regex laghu_regex_test)
+
+  add_executable(laghu_regex_contract_test tests/adapters/regex_contract.cpp)
+  laghu_apply_first_party_contract(laghu_regex_contract_test)
+  laghu_configure_api_consumer(laghu_regex_contract_test adapters)
+  laghu_add_native_test(laghu.adapters.regex.contract laghu_regex_contract_test)
+
+  laghu_add_fuzz_target(pcre2 fuzz/pcre2.cpp
+    SUBSYSTEM adapters
+    LIBRARIES laghu_regex laghu_core laghu_feature_regex)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(fuzz/pcre2.cpp PROPERTIES
+      COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+  endif()
+  if(LAGHU_FUZZING_ENABLED)
+    add_test(NAME laghu.fuzz.pcre2.corpus
+      COMMAND "${CMAKE_SOURCE_DIR}/scripts/fuzz"
+        --build "${CMAKE_BINARY_DIR}"
+        --target pcre2
+        --corpus "${CMAKE_SOURCE_DIR}/fuzz/corpus/pcre2"
+        --runs 1)
+  endif()
 endif()
 laghu_write_fuzz_target_registry()
 laghu_add_fuzz_validation_tests()
@@ -654,6 +700,9 @@ if(TARGET laghu_http3_test)
 endif()
 if(TARGET laghu_dns_test)
   list(APPEND laghu_verify_targets laghu_dns laghu_dns_test laghu_dns_contract_test)
+endif()
+if(TARGET laghu_regex_test)
+  list(APPEND laghu_verify_targets laghu_regex laghu_regex_test laghu_regex_contract_test)
 endif()
 laghu_collect_fuzz_targets(laghu_fuzz_verify_targets)
 list(APPEND laghu_verify_targets ${laghu_fuzz_verify_targets})
