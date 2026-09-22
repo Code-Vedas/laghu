@@ -5,7 +5,14 @@ endif()
 file(READ "${WORKFLOW}" workflow)
 foreach(required IN ITEMS
     "if: github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
     "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
+    "id: attest"
+    "gh attestation verify"
+    "--bundle \"\${{ steps.attest.outputs.bundle-path }}\""
+    "--repo \"$GITHUB_REPOSITORY\""
+    "--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/toolchain.yml\""
+    "--source-ref \"$GITHUB_REF\""
     "contents: read"
     "id-token: write"
     "attestations: write")

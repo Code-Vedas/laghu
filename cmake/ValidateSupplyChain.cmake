@@ -157,10 +157,20 @@ string(JSON subject_count LENGTH "${provenance}" subject)
 if(NOT subject_count EQUAL 3)
   message(FATAL_ERROR "Laghu supply-chain validation failed: rule=subject_count")
 endif()
+set(expected_subjects
+  laghu-build-manifest-v1.json
+  laghu-cyclonedx-1.7.cdx.json
+  laghu-spdx-3.0.1.spdx.json)
 math(EXPR subject_last "${subject_count} - 1")
 foreach(index RANGE 0 ${subject_last})
   string(JSON subject_name GET "${provenance}" subject ${index} name)
   string(JSON subject_sha256 GET "${provenance}" subject ${index} digest sha256)
+  list(FIND expected_subjects "${subject_name}" expected_subject_index)
+  if(expected_subject_index EQUAL -1)
+    message(FATAL_ERROR
+      "Laghu supply-chain validation failed: rule=subject_name subject=${subject_name}")
+  endif()
+  list(REMOVE_AT expected_subjects ${expected_subject_index})
   set(subject_path "${config_directory}/${subject_name}")
   if(NOT EXISTS "${subject_path}")
     message(FATAL_ERROR "Laghu supply-chain validation failed: rule=subject_missing subject=${subject_name}")
@@ -171,3 +181,7 @@ foreach(index RANGE 0 ${subject_last})
       "Laghu supply-chain validation failed: rule=subject_hash_mismatch subject=${subject_name} expected=${subject_sha256} actual=${actual_sha256}")
   endif()
 endforeach()
+if(expected_subjects)
+  message(FATAL_ERROR
+    "Laghu supply-chain validation failed: rule=subject_missing subjects=${expected_subjects}")
+endif()

@@ -64,3 +64,9 @@ laghu_expect_invalid(time-leak "${provenance_name}" "{\"_type\""
   "{\"timestamp\":\"2026-01-01T00:00:00Z\",\"_type\"" "rule=time_leak")
 laghu_expect_invalid(tampered-subject "${cyclonedx_name}" "{\"bomFormat\""
   "{ \"bomFormat\"" "rule=subject_hash_mismatch")
+laghu_expect_invalid(duplicate-subject "${provenance_name}"
+  "\"name\":\"laghu-spdx-3.0.1.spdx.json\""
+  "\"name\":\"laghu-build-manifest-v1.json\"" "rule=subject_name")
+laghu_expect_invalid(traversing-subject "${provenance_name}"
+  "\"name\":\"laghu-spdx-3.0.1.spdx.json\""
+  "\"name\":\"../laghu-spdx-3.0.1.spdx.json\"" "rule=subject_name")

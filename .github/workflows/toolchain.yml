@@ -412,19 +412,13 @@ jobs:
       attestations: write
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install GCC 14 and Ninja
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-            /etc/apt/sources.list.d/google-chrome.sources
-          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install --yes g++-14 ninja-build
-      - name: Generate trusted-main supply-chain artifacts
-        run: |
-          cmake -S . -B "$RUNNER_TEMP/laghu-supply-chain" -G Ninja \
-            -DCMAKE_CXX_COMPILER=g++-14
+      - name: Download validated supply-chain artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: laghu-supply-chain
+          path: ${{ runner.temp }}/laghu-supply-chain/config
       - name: Attest supply-chain artifacts
+        id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: |
@@ -432,3 +426,19 @@ jobs:
             ${{ runner.temp }}/laghu-supply-chain/config/laghu-spdx-3.0.1.spdx.json
             ${{ runner.temp }}/laghu-supply-chain/config/laghu-cyclonedx-1.7.cdx.json
             ${{ runner.temp }}/laghu-supply-chain/config/laghu-provenance-v1.json
+      - name: Verify supply-chain attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for subject in \
+            laghu-build-manifest-v1.json \
+            laghu-spdx-3.0.1.spdx.json \
+            laghu-cyclonedx-1.7.cdx.json \
+            laghu-provenance-v1.json; do
+            gh attestation verify \
+              "$RUNNER_TEMP/laghu-supply-chain/config/$subject" \
+              --bundle "${{ steps.attest.outputs.bundle-path }}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/toolchain.yml" \
+              --source-ref "$GITHUB_REF"
+          done
