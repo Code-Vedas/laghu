@@ -127,6 +127,8 @@ enum class DependencyOperation : std::uint8_t {
   http3_receive,
   http3_send,
   http3_submit,
+  dns_session,
+  dns_query,
 };
 
 class Error final {
