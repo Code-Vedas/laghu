@@ -226,6 +226,39 @@ function(laghu_acquire_source_dependency id private_target)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE SOURCE_ONLY)
 endfunction()
 
+# Some adapters need an immutable dependency source tree to build a host tool
+# even when the target runtime library is selected from the system. Keep that
+# host-only acquisition separate from the runtime dependency target.
+function(laghu_acquire_host_source_dependency id)
+  get_property(source_is_set GLOBAL PROPERTY
+    "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}" SET)
+  if(source_is_set)
+    get_property(existing_source GLOBAL PROPERTY
+      "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}")
+    if(NOT IS_DIRECTORY "${existing_source}")
+      message(FATAL_ERROR
+        "Laghu dependency gate failed: dependency=${id} rule=host_source_missing")
+    endif()
+    return()
+  endif()
+  include(FetchContent)
+  laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
+  laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
+  set(content_name "laghu_host_source_${id}")
+  FetchContent_Declare("${content_name}"
+    URL "${archive_url}" URL_HASH "SHA256=${archive_sha256}"
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE SOURCE_SUBDIR laghu-no-cmake-project)
+  FetchContent_MakeAvailable("${content_name}")
+  FetchContent_GetProperties("${content_name}" SOURCE_DIR resolved_source)
+  if("${resolved_source}" STREQUAL "" OR "${resolved_source}" MATCHES "-NOTFOUND$"
+      OR NOT IS_DIRECTORY "${resolved_source}")
+    message(FATAL_ERROR
+      "Laghu dependency gate failed: dependency=${id} rule=host_source_missing")
+  endif()
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}"
+    "${resolved_source}")
+endfunction()
+
 function(laghu_validate_dependency_version id version)
   laghu_dependency_require_known("${id}" unknown_dependency)
   laghu_dependency_property("${id}" SYSTEM_FLOOR floor)
@@ -1116,6 +1149,9 @@ function(laghu_configure_dependency_modes)
     if(source_only)
       laghu_acquire_source_dependency("${id}" "${private_target}")
     elseif(LAGHU_DEPENDENCY_SOURCE STREQUAL SYSTEM)
+      if(id STREQUAL protobuf_c)
+        laghu_acquire_host_source_dependency("${id}")
+      endif()
       laghu_require_system_dependency("${id}"
         TARGET "${private_target}"
         LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")

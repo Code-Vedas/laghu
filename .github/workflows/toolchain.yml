@@ -340,14 +340,17 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install schema validator
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install --yes ninja-build python3-jsonschema
+          sudo apt-get install --yes g++-14 ninja-build python3-jsonschema
       - name: Generate and verify unsigned supply-chain artifacts
         run: |
           cmake -S . -B "$RUNNER_TEMP/laghu-supply-chain" -G Ninja \
             -DCMAKE_CXX_COMPILER=g++-14
           ctest --test-dir "$RUNNER_TEMP/laghu-supply-chain" \
-            --output-on-failure -R '^laghu.supply_chain.validation$'
+            --output-on-failure -R '^laghu\.supply_chain\.(validation|workflow)$'
       - name: Validate pinned official SPDX and CycloneDX schemas
         run: |
           schema_dir="$RUNNER_TEMP/laghu-schemas"
@@ -410,6 +413,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install GCC 14 and Ninja
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install --yes g++-14 ninja-build
       - name: Generate trusted-main supply-chain artifacts
         run: |
           cmake -S . -B "$RUNNER_TEMP/laghu-supply-chain" -G Ninja \

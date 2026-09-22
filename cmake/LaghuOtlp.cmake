@@ -10,7 +10,9 @@ function(laghu_configure_otlp_schema output_target output_directory)
     LAGHU_DEPENDENCY_SOURCE_DIRECTORY_protobuf)
   get_property(protobuf_c_root GLOBAL PROPERTY
     LAGHU_DEPENDENCY_SOURCE_DIRECTORY_protobuf_c)
-  if(protobuf_root STREQUAL "" OR protobuf_c_root STREQUAL "")
+  if("${protobuf_root}" STREQUAL "" OR "${protobuf_root}" MATCHES "-NOTFOUND$"
+      OR "${protobuf_c_root}" STREQUAL ""
+      OR "${protobuf_c_root}" MATCHES "-NOTFOUND$")
     message(FATAL_ERROR "Laghu OTLP compiler sources were not acquired")
   endif()
   ExternalProject_Add(laghu_host_protobuf
@@ -30,7 +32,7 @@ function(laghu_configure_otlp_schema output_target output_directory)
     BUILD_BYPRODUCTS "${host_install}/bin/protoc-gen-c")
   get_property(proto_root GLOBAL PROPERTY
     LAGHU_DEPENDENCY_SOURCE_DIRECTORY_opentelemetry_proto)
-  if(proto_root STREQUAL "")
+  if("${proto_root}" STREQUAL "" OR "${proto_root}" MATCHES "-NOTFOUND$")
     message(FATAL_ERROR "Laghu OTLP schema source was not acquired")
   endif()
   set(generated "${CMAKE_BINARY_DIR}/generated/otlp")
