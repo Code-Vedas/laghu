@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 cmake_minimum_required(VERSION 3.28)
 
-project(laghu LANGUAGES C CXX)
+project(laghu LANGUAGES CXX)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR
@@ -42,6 +42,10 @@ laghu_write_metadata()
 laghu_configure_static_analysis()
 laghu_configure_fuzzing()
 laghu_configure_build_variant()
+list(FIND LAGHU_EFFECTIVE_FEATURES otlp laghu_otlp_feature_index)
+if(NOT laghu_otlp_feature_index EQUAL -1)
+  enable_language(C)
+endif()
 laghu_configure_dependency_registry()
 laghu_configure_dependency_modes()
 laghu_configure_capability_header()
@@ -324,7 +328,6 @@ if(NOT laghu_geoip_feature_index EQUAL -1)
   endif()
 endif()
 
-list(FIND LAGHU_EFFECTIVE_FEATURES otlp laghu_otlp_feature_index)
 if(NOT laghu_otlp_feature_index EQUAL -1)
   laghu_configure_otlp_schema(laghu_otlp_schema_target laghu_otlp_generated)
   add_library(laghu_otlp STATIC src/adapters/otlp.cpp)

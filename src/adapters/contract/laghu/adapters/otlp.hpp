@@ -15,8 +15,6 @@ namespace laghu::adapters {
 template <std::size_t Capacity>
 struct OtlpText final {
   static_assert(Capacity <= UINT16_MAX);
-  std::array<char, Capacity> bytes{};
-  std::uint16_t size{};
 
   [[nodiscard]] static core::Result<OtlpText> from(core::TextView text) noexcept {
     if (text.size() > Capacity) {
@@ -29,14 +27,17 @@ struct OtlpText final {
     }
     OtlpText result;
     for (std::size_t index = 0; index < text.size(); ++index) {
-      result.bytes[index] = text.string_view()[index];
+      result.bytes_[index] = text.string_view()[index];
     }
-    result.size = static_cast<std::uint16_t>(text.size());
+    result.size_ = static_cast<std::uint16_t>(text.size());
     return result;
   }
 
+  [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0U; }
+  [[nodiscard]] constexpr std::size_t size() const noexcept { return size_; }
+
   [[nodiscard]] constexpr std::string_view value() const noexcept {
-    return {bytes.data(), size};
+    return {bytes_.data(), size_};
   }
 
  private:
@@ -77,6 +78,9 @@ struct OtlpText final {
     }
     return true;
   }
+
+  std::array<char, Capacity> bytes_{};
+  std::uint16_t size_{};
 };
 
 struct OtlpAttribute final {

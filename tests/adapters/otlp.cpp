@@ -125,11 +125,19 @@ template <class Record, class Encode, class Unpack, class Validate, class Free>
   const auto exhausted = encode_otlp_logs(metadata(), {&log, 1U},
       *laghu::core::MutableByteView::from(output),
       *laghu::core::MutableByteView::from(scratch));
+  std::array<std::byte, 512> valid_output{};
+  log.attribute_count = static_cast<std::uint8_t>(log.attributes.size() + 1U);
+  const auto invalid_count = encode_otlp_logs(metadata(), {&log, 1U},
+      *laghu::core::MutableByteView::from(valid_output),
+      *laghu::core::MutableByteView::from(scratch));
   constexpr std::array invalid_utf8{static_cast<char>(0xc0), static_cast<char>(0x80)};
   const auto malformed_view = laghu::core::TextView::from(
       invalid_utf8.data(), invalid_utf8.size());
   const auto malformed = OtlpText<8>::from(*malformed_view);
-  return !identifier.has_value() && !exhausted.has_value() && !malformed.has_value();
+  return !identifier.has_value() && !exhausted.has_value() &&
+      !invalid_count.has_value() &&
+      invalid_count.error().code() == laghu::core::ErrorCode::invalid_input &&
+      !malformed.has_value();
 }
 
 [[nodiscard]] bool empty_batches_decode() noexcept {

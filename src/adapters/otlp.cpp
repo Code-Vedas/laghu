@@ -146,6 +146,15 @@ bool encode_resource(Output& output, const OtlpMetadata& metadata) noexcept {
   return true;
 }
 
+template <class Record>
+[[nodiscard]] bool valid_attribute_count(const Record& record) noexcept {
+  return record.attribute_count <= record.attributes.size();
+}
+
+[[nodiscard]] bool valid_metadata(const OtlpMetadata& metadata) noexcept {
+  return metadata.resource_attribute_count <= metadata.resource_attributes.size();
+}
+
 template <class Record, class EncodeRecord>
 core::Result<OtlpEncodeResult> encode_request(
     const OtlpMetadata& metadata, std::span<const Record> records,
@@ -184,16 +193,20 @@ core::Result<OtlpEncodeResult> encode_request(
 core::Result<OtlpEncodeResult> encode_otlp_traces(
     const OtlpMetadata& metadata, std::span<const OtlpTraceRecord> records,
     core::MutableByteView output, core::MutableByteView scratch) noexcept {
+  if (!valid_metadata(metadata)) {
+    return std::unexpected{invalid("OTLP resource attribute count is invalid")};
+  }
   for (const auto& record : records) {
     if (!nonzero(record.trace_id) || !nonzero(record.span_id) ||
-        record.name.size == 0U || record.start_time_unix_nano == 0U ||
+        record.name.empty() || record.start_time_unix_nano == 0U ||
         record.end_time_unix_nano < record.start_time_unix_nano ||
-        record.event_count > record.events.size()) {
+        record.event_count > record.events.size() || !valid_attribute_count(record)) {
       return std::unexpected{invalid("OTLP trace identifier or time range is invalid")};
     }
     for (std::size_t index = 0; index < record.event_count; ++index) {
-      if (record.events[index].name.size == 0U ||
-          record.events[index].time_unix_nano == 0U) {
+      if (record.events[index].name.empty() ||
+          record.events[index].time_unix_nano == 0U ||
+          !valid_attribute_count(record.events[index])) {
         return std::unexpected{invalid("OTLP trace event is invalid")};
       }
     }
@@ -222,8 +235,12 @@ core::Result<OtlpEncodeResult> encode_otlp_traces(
 core::Result<OtlpEncodeResult> encode_otlp_metrics(
     const OtlpMetadata& metadata, std::span<const OtlpMetricRecord> records,
     core::MutableByteView output, core::MutableByteView scratch) noexcept {
+  if (!valid_metadata(metadata)) {
+    return std::unexpected{invalid("OTLP resource attribute count is invalid")};
+  }
   for (const auto& record : records) {
-    if (record.name.size == 0U || record.time_unix_nano == 0U) {
+    if (record.name.empty() || record.time_unix_nano == 0U ||
+        !valid_attribute_count(record)) {
       return std::unexpected{invalid("OTLP metric name or timestamp is invalid")};
     }
   }
@@ -244,9 +261,13 @@ core::Result<OtlpEncodeResult> encode_otlp_metrics(
 core::Result<OtlpEncodeResult> encode_otlp_logs(
     const OtlpMetadata& metadata, std::span<const OtlpLogRecord> records,
     core::MutableByteView output, core::MutableByteView scratch) noexcept {
+  if (!valid_metadata(metadata)) {
+    return std::unexpected{invalid("OTLP resource attribute count is invalid")};
+  }
   for (const auto& record : records) {
-    if (record.body.size == 0U || record.time_unix_nano == 0U ||
-        (nonzero(record.span_id) && !nonzero(record.trace_id))) {
+    if (record.body.empty() || record.time_unix_nano == 0U ||
+        (nonzero(record.span_id) && !nonzero(record.trace_id)) ||
+        !valid_attribute_count(record)) {
       return std::unexpected{invalid("OTLP log body, timestamp, or correlation identifier is invalid")};
     }
   }
