@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+
+usage() {
+  printf '%s\n' 'usage: scripts/benchmark-evaluate --build <directory> --baseline <artifact> --candidate <artifact> --manifest <tsv>' >&2
+  printf '%s\n' '       scripts/benchmark-evaluate --build <directory> --environment <artifact>' >&2
+}
+
+build_directory=''
+baseline=''
+candidate=''
+manifest=''
+environment=''
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --build)
+      if [ "$#" -lt 2 ] || [ -n "$build_directory" ] || [ -z "$2" ]; then usage; exit 64; fi
+      build_directory=$2; shift 2 ;;
+    --baseline)
+      if [ "$#" -lt 2 ] || [ -n "$baseline" ] || [ -z "$2" ]; then usage; exit 64; fi
+      baseline=$2; shift 2 ;;
+    --candidate)
+      if [ "$#" -lt 2 ] || [ -n "$candidate" ] || [ -z "$2" ]; then usage; exit 64; fi
+      candidate=$2; shift 2 ;;
+    --manifest)
+      if [ "$#" -lt 2 ] || [ -n "$manifest" ] || [ -z "$2" ]; then usage; exit 64; fi
+      manifest=$2; shift 2 ;;
+    --environment)
+      if [ "$#" -lt 2 ] || [ -n "$environment" ] || [ -z "$2" ]; then usage; exit 64; fi
+      environment=$2; shift 2 ;;
+    *) usage; exit 64 ;;
+  esac
+done
+
+if [ -z "$build_directory" ] ||
+   { [ -n "$environment" ] && { [ -n "$baseline" ] || [ -n "$candidate" ] || [ -n "$manifest" ]; }; } ||
+   { [ -z "$environment" ] && { [ -z "$baseline" ] || [ -z "$candidate" ] || [ -z "$manifest" ]; }; }; then
+  usage
+  exit 64
+fi
+if [ ! -d "$build_directory" ]; then
+  printf '%s\n' "scripts/benchmark-evaluate: build directory does not exist: $build_directory" >&2
+  exit 66
+fi
+if ! command -v cmake >/dev/null 2>&1; then
+  printf '%s\n' 'scripts/benchmark-evaluate: cmake is unavailable' >&2
+  exit 69
+fi
+if ! cmake --build "$build_directory" --target laghu_benchmark_evaluate >&2; then
+  printf '%s\n' 'scripts/benchmark-evaluate: evaluator build failed' >&2
+  exit 70
+fi
+evaluator="$build_directory/laghu_benchmark_evaluate"
+if [ ! -x "$evaluator" ]; then
+  printf '%s\n' "scripts/benchmark-evaluate: evaluator is unavailable: $evaluator" >&2
+  exit 70
+fi
+if [ -n "$environment" ]; then
+  exec "$evaluator" --environment "$environment"
+fi
+exec "$evaluator" --baseline "$baseline" --candidate "$candidate" --manifest "$manifest"

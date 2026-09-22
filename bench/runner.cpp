@@ -29,7 +29,11 @@ using laghu::benchmark::internal::WorkloadCounters;
 constexpr std::size_t maximum_intervals = 1000U;
 constexpr std::uint64_t maximum_warmup_intervals = 10000U;
 constexpr std::size_t diagnostic_capacity = 256U;
-constexpr std::size_t json_capacity = 8192U;
+constexpr std::uint64_t nanoseconds_per_second = 1000000000U;
+// A report can retain all 1,000 measured interval values without truncating
+// their observed order for every supported regression metric. It remains a
+// bounded, build-local benchmark artifact.
+constexpr std::size_t json_capacity = 262144U;
 
 enum class ExitCode : int {
   success = 0,
@@ -181,7 +185,6 @@ class JsonWriter final {
 }
 
 [[nodiscard]] bool timespec_nanoseconds(const timespec& value, std::uint64_t& output) noexcept {
-  constexpr std::uint64_t nanoseconds_per_second = 1000000000U;
   if (value.tv_sec < 0 || value.tv_nsec < 0 || value.tv_nsec >= static_cast<long>(nanoseconds_per_second)) {
     return false;
   }
@@ -296,21 +299,65 @@ class JsonWriter final {
   return metric;
 }
 
-[[nodiscard]] bool append_numeric_metric(JsonWriter& writer, const NumericMetric& metric) noexcept {
+[[nodiscard]] bool append_samples(JsonWriter& writer,
+                                  const std::array<std::uint64_t, maximum_intervals>& samples,
+                                  std::size_t count) noexcept {
+  if (!writer.append("[")) {
+    return false;
+  }
+  for (std::size_t index = 0U; index < count; ++index) {
+    if ((index != 0U && !writer.append(",")) || !writer.append_number(samples[index])) {
+      return false;
+    }
+  }
+  return writer.append("]");
+}
+
+[[nodiscard]] bool append_interval_metric(
+    JsonWriter& writer, const NumericMetric& metric,
+    const std::array<std::uint64_t, maximum_intervals>& samples, std::size_t count,
+    std::string_view samples_key) noexcept {
   if (!writer.append("{\"status\":\"")) {
     return false;
   }
-  if (metric.available) {
-    return writer.append("available\",\"value\":") && writer.append_number(metric.value) && writer.append("}");
+  if (!metric.available) {
+    return writer.append("unavailable\",\"reason\":") && writer.append_json_string(metric.reason) &&
+        writer.append("}");
   }
-  return writer.append("unavailable\",\"reason\":") && writer.append_json_string(metric.reason) &&
-      writer.append("}");
+  return writer.append("available\",\"value\":") && writer.append_number(metric.value) &&
+      writer.append(",\"") && writer.append(samples_key) && writer.append("\":") &&
+      append_samples(writer, samples, count) && writer.append("}");
+}
+
+[[nodiscard]] bool append_counter_metric(
+    JsonWriter& writer, bool instrumented, std::uint64_t value,
+    const std::array<std::uint64_t, maximum_intervals>& samples, std::size_t count,
+    std::string_view unavailable_reason) noexcept {
+  if (!writer.append("{\"instrumented\":") ||
+      !writer.append(instrumented ? "true" : "false") ||
+      !writer.append(",\"value\":") || !writer.append_number(value) ||
+      !writer.append(",\"status\":\"")) {
+    return false;
+  }
+  if (!instrumented) {
+    return writer.append("unavailable\",\"reason\":") &&
+        writer.append_json_string(unavailable_reason) && writer.append("}");
+  }
+  return writer.append("available\",\"samples_count\":") &&
+      append_samples(writer, samples, count) && writer.append("}");
 }
 
 [[nodiscard]] bool write_report(const Options& options, const Percentiles& percentiles,
-                                std::uint64_t throughput, bool throughput_available,
-                                const NumericMetric& cpu_time, const NumericMetric& peak_rss,
+                                const std::array<std::uint64_t, maximum_intervals>& durations,
+                                const NumericMetric& throughput,
+                                const std::array<std::uint64_t, maximum_intervals>& throughput_samples,
+                                const NumericMetric& cpu_time,
+                                const std::array<std::uint64_t, maximum_intervals>& cpu_samples,
+                                const NumericMetric& peak_rss,
+                                const std::array<std::uint64_t, maximum_intervals>& rss_samples,
                                 const TextMetric& cpu, const WorkloadCounters& counters,
+                                const std::array<std::uint64_t, maximum_intervals>& allocation_samples,
+                                const std::array<std::uint64_t, maximum_intervals>& syscall_samples,
                                 std::uint64_t checksum) noexcept {
   JsonWriter writer;
   const std::string_view cpu_text{cpu.text.data(), cpu.size};
@@ -327,7 +374,17 @@ class JsonWriter final {
       writer.append(laghu::benchmark::internal::dependencies_json) &&
       writer.append(",\"features\":") &&
       writer.append(laghu::benchmark::internal::features_json) &&
-      writer.append(",\"target\":{\"architecture\":") &&
+      writer.append(",\"profile\":") &&
+      writer.append_json_string(laghu::benchmark::internal::build_profile) &&
+      writer.append(",\"hardening\":") &&
+      writer.append(laghu::benchmark::internal::hardening_json) &&
+      writer.append(",\"sanitizer_profile\":") &&
+      writer.append_json_string(laghu::benchmark::internal::sanitizer_profile) &&
+      writer.append(",\"standard_library\":{\"id\":") &&
+      writer.append_json_string(laghu::benchmark::internal::standard_library_id) &&
+      writer.append(",\"version\":") &&
+      writer.append_json_string(laghu::benchmark::internal::standard_library_version) &&
+      writer.append("},\"target\":{\"architecture\":") &&
       writer.append_json_string(laghu::benchmark::internal::target_architecture) &&
       writer.append(",\"os\":") &&
       writer.append_json_string(laghu::benchmark::internal::target_os) &&
@@ -335,28 +392,35 @@ class JsonWriter final {
       writer.append(cpu.available ? "\"status\":\"available\",\"value\":"
                                   : "\"status\":\"unavailable\",\"reason\":") &&
       writer.append_json_string(cpu.available ? cpu_text : std::string_view{"cpu_description_unavailable"}) &&
-      writer.append("}},\"metrics\":{\"allocation_count\":{\"instrumented\":") &&
-      writer.append(counters.allocation_instrumented() ? "true" : "false") &&
-      writer.append(",\"value\":") && writer.append_number(counters.allocation_count()) &&
-      writer.append("},\"cpu_time_ns\":") &&
-      append_numeric_metric(writer, cpu_time) &&
-      writer.append(",\"laghu_syscall_count\":{\"instrumented\":") &&
-      writer.append(counters.laghu_syscall_instrumented() ? "true" : "false") &&
-      writer.append(",\"value\":") && writer.append_number(counters.laghu_syscall_count()) &&
-      writer.append("},\"latency_ns_per_interval\":{\"p50\":") &&
-      writer.append_number(percentiles.p50) &&
-      writer.append(",\"p95\":") && writer.append_number(percentiles.p95) &&
-      writer.append(",\"p99\":") && writer.append_number(percentiles.p99) &&
-      writer.append(",\"p99_9\":") && writer.append_number(percentiles.p999) &&
-      writer.append("},\"peak_rss_bytes\":") && append_numeric_metric(writer, peak_rss) &&
-      writer.append(",\"throughput_operations_per_second\":");
-  if (!complete) {
+      writer.append("}},\"metrics\":{\"allocation_count\":");
+  if (!complete || !append_counter_metric(writer, counters.allocation_instrumented(),
+      counters.allocation_count(), allocation_samples, options.measured_intervals,
+      "allocation_counter_not_instrumented") ||
+      !writer.append(",\"cpu_time_ns\":") ||
+      !append_interval_metric(writer, cpu_time, cpu_samples, options.measured_intervals, "samples_ns") ||
+      !writer.append(",\"laghu_syscall_count\":") ||
+      !append_counter_metric(writer, counters.laghu_syscall_instrumented(),
+      counters.laghu_syscall_count(), syscall_samples, options.measured_intervals,
+      "laghu_syscall_counter_not_instrumented") ||
+      !writer.append(",\"latency_ns_per_interval\":{\"p50\":") ||
+      !writer.append_number(percentiles.p50) ||
+      !writer.append(",\"p95\":") || !writer.append_number(percentiles.p95) ||
+      !writer.append(",\"p99\":") || !writer.append_number(percentiles.p99) ||
+      !writer.append(",\"p99_9\":") || !writer.append_number(percentiles.p999) ||
+      !writer.append(",\"samples_ns\":")) {
     return false;
   }
-  const bool throughput_written = throughput_available
-      ? writer.append("{\"status\":\"available\",\"value\":") && writer.append_number(throughput) && writer.append("}")
-      : writer.append("{\"status\":\"unavailable\",\"reason\":\"zero_elapsed_time\"}");
-  if (!throughput_written || !writer.append("},\"parameters\":{\"intervals\":") ||
+  if (!append_samples(writer, durations, options.measured_intervals) ||
+      !writer.append("}")) {
+    return false;
+  }
+  if (!writer.append(",\"peak_rss_bytes\":") ||
+      !append_interval_metric(writer, peak_rss, rss_samples, options.measured_intervals,
+        "samples_bytes") ||
+      !writer.append(",\"throughput_operations_per_second\":") ||
+      !append_interval_metric(writer, throughput, throughput_samples, options.measured_intervals,
+        "samples_operations_per_second") ||
+      !writer.append("},\"parameters\":{\"intervals\":") ||
       !writer.append_number(options.measured_intervals) ||
       !writer.append(",\"operations_per_interval\":") ||
       !writer.append_number(laghu::benchmark::internal::core_foundation_operations_per_interval) ||
@@ -386,9 +450,16 @@ int main(int argc, char** argv) {
   }
 
   std::array<std::uint64_t, maximum_intervals> durations{};
+  std::array<std::uint64_t, maximum_intervals> throughput_samples{};
+  std::array<std::uint64_t, maximum_intervals> cpu_samples{};
+  std::array<std::uint64_t, maximum_intervals> rss_samples{};
+  std::array<std::uint64_t, maximum_intervals> allocation_samples{};
+  std::array<std::uint64_t, maximum_intervals> syscall_samples{};
   WorkloadCounters measured_counters{};
-  NumericMetric cpu_start = process_cpu_time();
   std::uint64_t total_duration{};
+  NumericMetric throughput{true, 0U, {}};
+  NumericMetric cpu_time{true, 0U, {}};
+  NumericMetric peak_rss{true, 0U, {}};
   for (std::size_t interval = 0U; interval < options.measured_intervals; ++interval) {
     std::uint64_t begin{};
     std::uint64_t end{};
@@ -396,8 +467,12 @@ int main(int argc, char** argv) {
       static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: monotonic clock is unavailable\n"));
       return static_cast<int>(ExitCode::metric_unavailable);
     }
+    const NumericMetric cpu_begin = process_cpu_time();
+    const std::uint64_t allocation_begin = measured_counters.allocation_count();
+    const std::uint64_t syscall_begin = measured_counters.laghu_syscall_count();
     checksum ^= laghu::benchmark::internal::run_core_foundation(
         static_cast<std::uint64_t>(interval) + options.warmup_intervals + 1U, measured_counters);
+    const NumericMetric cpu_end = process_cpu_time();
     if (!monotonic_now(end) || end < begin) {
       static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: monotonic clock is invalid\n"));
       return static_cast<int>(ExitCode::metric_unavailable);
@@ -408,34 +483,69 @@ int main(int argc, char** argv) {
       return static_cast<int>(ExitCode::metric_unavailable);
     }
     total_duration += durations[interval];
-  }
-  NumericMetric cpu_end = process_cpu_time();
-  NumericMetric cpu_time{false, 0U, "clock_gettime_process_cpu_time_unavailable"};
-  if (cpu_start.available && cpu_end.available && cpu_end.value >= cpu_start.value) {
-    cpu_time = NumericMetric{true, cpu_end.value - cpu_start.value, {}};
+    if (durations[interval] == 0U) {
+      throughput = NumericMetric{false, 0U, "interval_zero_elapsed_time"};
+    } else if (throughput.available) {
+      const std::uint64_t operations =
+          laghu::benchmark::internal::core_foundation_operations_per_interval;
+      if (operations > std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
+        throughput = NumericMetric{false, 0U, "throughput_overflow"};
+      } else {
+        throughput_samples[interval] = operations * nanoseconds_per_second / durations[interval];
+      }
+    }
+    if (!cpu_begin.available || !cpu_end.available || cpu_end.value < cpu_begin.value) {
+      cpu_time = NumericMetric{false, 0U, "interval_cpu_time_unavailable"};
+    } else if (cpu_time.available) {
+      const std::uint64_t cpu_delta = cpu_end.value - cpu_begin.value;
+      if (cpu_delta > std::numeric_limits<std::uint64_t>::max() - cpu_time.value) {
+        cpu_time = NumericMetric{false, 0U, "cpu_time_overflow"};
+      } else {
+        cpu_samples[interval] = cpu_delta;
+        cpu_time.value += cpu_delta;
+      }
+    }
+    const NumericMetric rss = peak_rss_bytes();
+    if (!rss.available) {
+      peak_rss = rss;
+    } else if (peak_rss.available) {
+      rss_samples[interval] = rss.value;
+      if (rss.value > peak_rss.value) {
+        peak_rss.value = rss.value;
+      }
+    }
+    const std::uint64_t allocation_end = measured_counters.allocation_count();
+    const std::uint64_t syscall_end = measured_counters.laghu_syscall_count();
+    if (allocation_end < allocation_begin || syscall_end < syscall_begin) {
+      static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: counter is invalid\n"));
+      return static_cast<int>(ExitCode::metric_unavailable);
+    }
+    allocation_samples[interval] = allocation_end - allocation_begin;
+    syscall_samples[interval] = syscall_end - syscall_begin;
   }
 
   Percentiles percentiles{};
+  std::array<std::uint64_t, maximum_intervals> percentile_samples = durations;
   if (!laghu::benchmark::internal::summarize_percentiles(
-          durations, options.measured_intervals, percentiles)) {
+          percentile_samples, options.measured_intervals, percentiles)) {
     static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: percentile calculation failed\n"));
     return static_cast<int>(ExitCode::metric_unavailable);
   }
-  bool throughput_available = total_duration != 0U;
-  std::uint64_t throughput{};
-  const std::uint64_t operations =
-      static_cast<std::uint64_t>(options.measured_intervals) *
-      laghu::benchmark::internal::core_foundation_operations_per_interval;
-  if (throughput_available) {
-    constexpr std::uint64_t nanoseconds_per_second = 1000000000U;
-    if (operations <= std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
-      throughput = operations * nanoseconds_per_second / total_duration;
+  if (total_duration == 0U) {
+    throughput = NumericMetric{false, 0U, "zero_elapsed_time"};
+  } else if (throughput.available) {
+    const std::uint64_t operations =
+        static_cast<std::uint64_t>(options.measured_intervals) *
+        laghu::benchmark::internal::core_foundation_operations_per_interval;
+    if (operations > std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second) {
+      throughput = NumericMetric{false, 0U, "throughput_overflow"};
     } else {
-      throughput_available = false;
+      throughput.value = operations * nanoseconds_per_second / total_duration;
     }
   }
-  if (!write_report(options, percentiles, throughput, throughput_available, cpu_time, peak_rss_bytes(),
-                    cpu_description(), measured_counters, checksum)) {
+  if (!write_report(options, percentiles, durations, throughput, throughput_samples, cpu_time, cpu_samples,
+                    peak_rss, rss_samples, cpu_description(), measured_counters, allocation_samples,
+                    syscall_samples, checksum)) {
     static_cast<void>(write_all(STDERR_FILENO, "laghu-benchmark: report exceeds bounded output capacity\n"));
     return static_cast<int>(ExitCode::output_failure);
   }
