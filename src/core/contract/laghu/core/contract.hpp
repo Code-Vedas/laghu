@@ -133,6 +133,8 @@ enum class DependencyOperation : std::uint8_t {
   regex_match,
   codec_initialize,
   codec_process,
+  geoip_open,
+  geoip_lookup,
 };
 
 class Error final {

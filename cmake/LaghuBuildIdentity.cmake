@@ -168,6 +168,14 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/private/laghu/adapters/internal/arena_memory.hpp
       src/adapters/regex.cpp)
   endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES geoip geoip_feature_index)
+  if(NOT geoip_feature_index EQUAL -1)
+    list(APPEND inputs
+      src/adapters/contract/laghu/adapters/geoip.hpp
+      src/adapters/geoip.cpp
+      tests/adapters/geoip.cpp
+      tests/adapters/geoip_contract.cpp)
+  endif()
   list(REMOVE_DUPLICATES inputs)
   set(entries)
   foreach(input IN LISTS inputs)
