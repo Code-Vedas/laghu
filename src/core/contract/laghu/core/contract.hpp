@@ -131,6 +131,8 @@ enum class DependencyOperation : std::uint8_t {
   dns_query,
   regex_compile,
   regex_match,
+  codec_initialize,
+  codec_process,
 };
 
 class Error final {

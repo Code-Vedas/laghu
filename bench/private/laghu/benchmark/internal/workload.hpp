@@ -3,6 +3,9 @@
 
 #include <cstdint>
 #include <limits>
+#include <string_view>
+
+#include <laghu/core/contract.hpp>
 
 namespace laghu::benchmark::internal {
 
@@ -43,9 +46,10 @@ class WorkloadCounters final {
   bool laghu_syscall_instrumented_{};
 };
 
-inline constexpr std::uint64_t core_foundation_operations_per_interval = 4096U;
+extern const std::string_view workload_name;
+extern const std::uint64_t operations_per_interval;
 
-[[nodiscard]] std::uint64_t run_core_foundation(std::uint64_t seed,
-                                                WorkloadCounters& counters) noexcept;
+[[nodiscard]] core::Result<std::uint64_t> run_workload(
+    std::uint64_t seed, WorkloadCounters& counters) noexcept;
 
 }  // namespace laghu::benchmark::internal

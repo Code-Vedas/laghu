@@ -307,6 +307,48 @@ if(NOT laghu_regex_feature_index EQUAL -1)
   endif()
 endif()
 
+set(laghu_codec_targets)
+foreach(laghu_codec_feature IN ITEMS
+    compression_zlib compression_brotli compression_zstd)
+  list(FIND LAGHU_EFFECTIVE_FEATURES "${laghu_codec_feature}" laghu_codec_feature_index)
+  if(NOT laghu_codec_feature_index EQUAL -1)
+    list(APPEND laghu_codec_targets "${laghu_codec_feature}")
+  endif()
+endforeach()
+if(laghu_codec_targets)
+  add_library(laghu_codecs STATIC src/adapters/codecs.cpp)
+  laghu_apply_first_party_contract(laghu_codecs)
+  laghu_configure_api_consumer(laghu_codecs adapters)
+  target_include_directories(laghu_codecs PRIVATE "${CMAKE_SOURCE_DIR}/src/adapters/private")
+  laghu_register_subsystem_target(laghu_codecs adapters)
+  laghu_link_subsystems(laghu_codecs laghu_core)
+
+  foreach(laghu_codec_feature IN LISTS laghu_codec_targets)
+    if(laghu_codec_feature STREQUAL compression_zlib)
+      set(laghu_codec_suffix zlib_ng)
+    elseif(laghu_codec_feature STREQUAL compression_brotli)
+      set(laghu_codec_suffix brotli)
+    else()
+      set(laghu_codec_suffix zstd)
+    endif()
+    add_library("laghu_codec_${laghu_codec_suffix}" STATIC
+      "src/adapters/codec_${laghu_codec_suffix}.cpp"
+      $<TARGET_OBJECTS:laghu_dependency_logging_impl>)
+    laghu_apply_first_party_contract("laghu_codec_${laghu_codec_suffix}")
+    laghu_configure_api_consumer("laghu_codec_${laghu_codec_suffix}" adapters)
+    target_include_directories("laghu_codec_${laghu_codec_suffix}" PRIVATE
+      "${CMAKE_SOURCE_DIR}/src/adapters/private")
+    laghu_register_subsystem_target("laghu_codec_${laghu_codec_suffix}" adapters)
+    laghu_link_subsystems("laghu_codec_${laghu_codec_suffix}" laghu_core)
+    target_link_libraries("laghu_codec_${laghu_codec_suffix}" PRIVATE
+      laghu_codecs "laghu_feature_${laghu_codec_feature}")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      set_source_files_properties("src/adapters/codec_${laghu_codec_suffix}.cpp" PROPERTIES
+        COMPILE_OPTIONS "-Wno-old-style-cast;-Wno-unsafe-buffer-usage;-Wno-zero-as-null-pointer-constant")
+    endif()
+  endforeach()
+endif()
+
 add_executable(laghu_core_smoke src/core/smoke.cpp)
 laghu_apply_first_party_contract(laghu_core_smoke)
 laghu_configure_api_consumer(laghu_core_smoke core)
@@ -509,6 +551,36 @@ if(TARGET laghu_regex)
         --runs 1)
   endif()
 endif()
+if(TARGET laghu_codecs)
+  add_executable(laghu_codecs_contract_test tests/adapters/codecs_contract.cpp)
+  laghu_apply_first_party_contract(laghu_codecs_contract_test)
+  laghu_configure_api_consumer(laghu_codecs_contract_test adapters)
+  laghu_add_native_test(laghu.adapters.codecs.contract laghu_codecs_contract_test)
+
+  foreach(laghu_codec_suffix IN ITEMS zlib_ng brotli zstd)
+    if(TARGET "laghu_codec_${laghu_codec_suffix}")
+      add_executable("laghu_codec_${laghu_codec_suffix}_test" tests/adapters/codecs.cpp)
+      laghu_apply_first_party_contract("laghu_codec_${laghu_codec_suffix}_test")
+      laghu_configure_api_consumer("laghu_codec_${laghu_codec_suffix}_test" adapters)
+      target_compile_definitions("laghu_codec_${laghu_codec_suffix}_test" PRIVATE
+        "LAGHU_CODEC_FACTORY=laghu::adapters::create_${laghu_codec_suffix}_codec"
+        "LAGHU_CODEC_${laghu_codec_suffix}=1")
+      target_link_libraries("laghu_codec_${laghu_codec_suffix}_test" PRIVATE
+        "laghu_codec_${laghu_codec_suffix}" laghu_test_support)
+      laghu_add_native_test("laghu.adapters.codec.${laghu_codec_suffix}"
+        "laghu_codec_${laghu_codec_suffix}_test")
+    endif()
+  endforeach()
+  if(TARGET laghu_codec_zlib_ng AND TARGET laghu_codec_brotli AND TARGET laghu_codec_zstd)
+    add_test(NAME laghu.adapters.codecs.isolation
+      COMMAND "${CMAKE_COMMAND}"
+        "-DNM=${CMAKE_NM}"
+        "-DZLIB_ARCHIVE=$<TARGET_FILE:laghu_codec_zlib_ng>"
+        "-DBROTLI_ARCHIVE=$<TARGET_FILE:laghu_codec_brotli>"
+        "-DZSTD_ARCHIVE=$<TARGET_FILE:laghu_codec_zstd>"
+        -P "${CMAKE_SOURCE_DIR}/cmake/ExpectCodecIsolation.cmake")
+  endif()
+endif()
 laghu_write_fuzz_target_registry()
 laghu_add_fuzz_validation_tests()
 
@@ -703,6 +775,16 @@ if(TARGET laghu_dns_test)
 endif()
 if(TARGET laghu_regex_test)
   list(APPEND laghu_verify_targets laghu_regex laghu_regex_test laghu_regex_contract_test)
+endif()
+if(TARGET laghu_codecs_contract_test)
+  list(APPEND laghu_verify_targets laghu_codecs laghu_codecs_contract_test)
+  foreach(laghu_codec_suffix IN ITEMS zlib_ng brotli zstd)
+    if(TARGET "laghu_codec_${laghu_codec_suffix}_test")
+      list(APPEND laghu_verify_targets
+        "laghu_codec_${laghu_codec_suffix}"
+        "laghu_codec_${laghu_codec_suffix}_test")
+    endif()
+  endforeach()
 endif()
 laghu_collect_fuzz_targets(laghu_fuzz_verify_targets)
 list(APPEND laghu_verify_targets ${laghu_fuzz_verify_targets})

@@ -64,6 +64,8 @@ namespace {
     case core::DependencyOperation::dns_query:
     case core::DependencyOperation::regex_compile:
     case core::DependencyOperation::regex_match:
+    case core::DependencyOperation::codec_initialize:
+    case core::DependencyOperation::codec_process:
       return value;
   }
   return core::DependencyOperation::none;
@@ -182,6 +184,10 @@ namespace {
       return "regex_compile";
     case core::DependencyOperation::regex_match:
       return "regex_match";
+    case core::DependencyOperation::codec_initialize:
+      return "codec_initialize";
+    case core::DependencyOperation::codec_process:
+      return "codec_process";
   }
   return "none";
 }

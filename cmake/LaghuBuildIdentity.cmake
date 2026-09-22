@@ -127,6 +127,33 @@ function(laghu_build_identity_input_hashes output)
       src/adapters/quic.cpp
       src/adapters/private/laghu/adapters/internal/arena_memory.hpp)
   endif()
+  set(codec_common_added OFF)
+  foreach(codec_feature IN ITEMS compression_zlib compression_brotli compression_zstd)
+    list(FIND LAGHU_EFFECTIVE_FEATURES "${codec_feature}" codec_feature_index)
+    if(NOT codec_feature_index EQUAL -1)
+      if(NOT codec_common_added)
+        list(APPEND inputs
+          src/adapters/contract/laghu/adapters/codecs.hpp
+          src/adapters/contract/laghu/adapters/native_memory.hpp
+          src/adapters/private/laghu/adapters/internal/arena_memory.hpp
+          src/adapters/private/laghu/adapters/internal/codecs.hpp
+          src/adapters/codecs.cpp
+          bench/codecs.cpp
+          cmake/ExpectCodecBenchmark.cmake
+          cmake/ExpectCodecIsolation.cmake
+          tests/adapters/codecs.cpp
+          tests/adapters/codecs_contract.cpp)
+        set(codec_common_added ON)
+      endif()
+      if(codec_feature STREQUAL compression_zlib)
+        list(APPEND inputs src/adapters/codec_zlib_ng.cpp)
+      elseif(codec_feature STREQUAL compression_brotli)
+        list(APPEND inputs src/adapters/codec_brotli.cpp)
+      else()
+        list(APPEND inputs src/adapters/codec_zstd.cpp)
+      endif()
+    endif()
+  endforeach()
   list(FIND LAGHU_EFFECTIVE_FEATURES async_dns async_dns_feature_index)
   if(NOT async_dns_feature_index EQUAL -1)
     list(APPEND inputs
