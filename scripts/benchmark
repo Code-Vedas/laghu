@@ -1,0 +1,71 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+
+usage() {
+  printf '%s\n' 'usage: scripts/benchmark --build <directory> --workload <name> --warmup <count> --intervals <count>' >&2
+}
+
+build_directory=''
+workload=''
+warmup=''
+intervals=''
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --build)
+      if [ "$#" -lt 2 ] || [ -n "$build_directory" ] || [ -z "$2" ]; then usage; exit 64; fi
+      build_directory=$2; shift 2 ;;
+    --workload)
+      if [ "$#" -lt 2 ] || [ -n "$workload" ] || [ -z "$2" ]; then usage; exit 64; fi
+      workload=$2; shift 2 ;;
+    --warmup)
+      if [ "$#" -lt 2 ] || [ -n "$warmup" ]; then usage; exit 64; fi
+      case "$2" in ''|*[!0-9]*) usage; exit 64 ;; esac
+      warmup=$2; shift 2 ;;
+    --intervals)
+      if [ "$#" -lt 2 ] || [ -n "$intervals" ]; then usage; exit 64; fi
+      case "$2" in
+        ''|*[!0-9]*) usage; exit 64 ;;
+        *[1-9]*) ;;
+        *) usage; exit 64 ;;
+      esac
+      intervals=$2; shift 2 ;;
+    *) usage; exit 64 ;;
+  esac
+done
+
+if [ -z "$build_directory" ] || [ -z "$workload" ] || [ -z "$warmup" ] || [ -z "$intervals" ]; then
+  usage
+  exit 64
+fi
+if [ ! -d "$build_directory" ]; then
+  printf '%s\n' "scripts/benchmark: build directory does not exist: $build_directory" >&2
+  exit 66
+fi
+if ! command -v cmake >/dev/null 2>&1; then
+  printf '%s\n' 'scripts/benchmark: cmake is unavailable' >&2
+  exit 69
+fi
+
+registry="$build_directory/config/laghu-benchmarks-v1.tsv"
+if [ ! -r "$registry" ]; then
+  printf '%s\n' "scripts/benchmark: benchmark registry is unavailable: $registry" >&2
+  exit 66
+fi
+record=$(awk -F '\t' -v requested="$workload" '$1 == requested && NF == 3 { print $2 "\t" $3; exit }' "$registry")
+if [ -z "$record" ]; then
+  printf '%s\n' "scripts/benchmark: workload is not configured: $workload" >&2
+  exit 64
+fi
+cmake_target=$(printf '%s\n' "$record" | awk -F '\t' '{ print $1 }')
+executable=$(printf '%s\n' "$record" | awk -F '\t' '{ print $2 }')
+
+if ! cmake --build "$build_directory" --target "$cmake_target" >&2; then
+  printf '%s\n' "scripts/benchmark: workload build failed: $workload" >&2
+  exit 70
+fi
+if [ ! -x "$executable" ]; then
+  printf '%s\n' "scripts/benchmark: configured executable is unavailable: $workload" >&2
+  exit 70
+fi
+exec "$executable" --workload "$workload" --warmup "$warmup" --intervals "$intervals"
