@@ -32,6 +32,7 @@ include(cmake/LaghuSanitizers.cmake)
 include(cmake/LaghuStaticAnalysis.cmake)
 include(cmake/LaghuBuildVariants.cmake)
 include(cmake/LaghuBuildIdentity.cmake)
+include(cmake/LaghuSupplyChain.cmake)
 include(cmake/LaghuTestRegistration.cmake)
 include(cmake/LaghuToolchain.cmake)
 
@@ -50,6 +51,7 @@ laghu_configure_dependency_registry()
 laghu_configure_dependency_modes()
 laghu_configure_capability_header()
 laghu_configure_build_identity()
+laghu_configure_supply_chain()
 laghu_configure_benchmarks()
 
 add_library(laghu_core STATIC

@@ -6,17 +6,24 @@ function(laghu_configure_otlp_schema output_target output_directory)
   include(FetchContent)
   set(host_prefix "${CMAKE_BINARY_DIR}/_host/otlp")
   set(host_install "${host_prefix}/install")
+  get_property(protobuf_root GLOBAL PROPERTY
+    LAGHU_DEPENDENCY_SOURCE_DIRECTORY_protobuf)
+  get_property(protobuf_c_root GLOBAL PROPERTY
+    LAGHU_DEPENDENCY_SOURCE_DIRECTORY_protobuf_c)
+  if("${protobuf_root}" STREQUAL "" OR "${protobuf_root}" MATCHES "-NOTFOUND$"
+      OR "${protobuf_c_root}" STREQUAL ""
+      OR "${protobuf_c_root}" MATCHES "-NOTFOUND$")
+    message(FATAL_ERROR "Laghu OTLP compiler sources were not acquired")
+  endif()
   ExternalProject_Add(laghu_host_protobuf
-    URL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protobuf-cpp-3.21.12.tar.gz
-    URL_HASH SHA256=4eab9b524aa5913c6fffb20b2a8abf5ef7f95a80bc0701f3a6dbb4c607f73460
+    SOURCE_DIR "${protobuf_root}"
     SOURCE_SUBDIR cmake PREFIX "${host_prefix}/protobuf"
     CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${host_install}
       -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF
       -Dprotobuf_BUILD_PROTOC_BINARIES=ON -DCMAKE_BUILD_TYPE=Release
     BUILD_BYPRODUCTS "${host_install}/bin/protoc")
   ExternalProject_Add(laghu_host_protobuf_c
-    URL https://github.com/protobuf-c/protobuf-c/releases/download/v1.5.2/protobuf-c-1.5.2.tar.gz
-    URL_HASH SHA256=e2c86271873a79c92b58fef7ebf8de1aa0df4738347a8bd5d4e65a80a16d0d24
+    SOURCE_DIR "${protobuf_c_root}"
     SOURCE_SUBDIR build-cmake PREFIX "${host_prefix}/protobuf-c"
     CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${host_install}
       -DCMAKE_PREFIX_PATH=${host_install} -DBUILD_TESTS=OFF -DBUILD_PROTOC=ON
@@ -25,7 +32,7 @@ function(laghu_configure_otlp_schema output_target output_directory)
     BUILD_BYPRODUCTS "${host_install}/bin/protoc-gen-c")
   get_property(proto_root GLOBAL PROPERTY
     LAGHU_DEPENDENCY_SOURCE_DIRECTORY_opentelemetry_proto)
-  if(proto_root STREQUAL "")
+  if("${proto_root}" STREQUAL "" OR "${proto_root}" MATCHES "-NOTFOUND$")
     message(FATAL_ERROR "Laghu OTLP schema source was not acquired")
   endif()
   set(generated "${CMAKE_BINARY_DIR}/generated/otlp")

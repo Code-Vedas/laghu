@@ -19,6 +19,7 @@ set(LAGHU_DEPENDENCY_IDS
   brotli
   zstd
   libmaxminddb
+  protobuf
   protobuf_c
   opentelemetry_proto
   libidn2
@@ -38,13 +39,13 @@ set_property(CACHE LAGHU_TLS_PROVIDER PROPERTY STRINGS ${LAGHU_TLS_PROVIDERS})
 function(laghu_declare_dependency id)
   cmake_parse_arguments(PARSE_ARGV 1 dependency
     "SOURCE_ONLY"
-    "VENDORED_VERSION;SYSTEM_FLOOR;ARCHIVE_URL;ARCHIVE_SHA256;PROBE_SOURCE"
+    "VENDORED_VERSION;SYSTEM_FLOOR;ARCHIVE_URL;ARCHIVE_SHA256;PROBE_SOURCE;LICENSE_EXPRESSION"
     "FEATURES;PKG_CONFIG_NAMES;CMAKE_TARGETS;CMAKE_SOURCE_SUBDIR")
   list(FIND LAGHU_DEPENDENCY_IDS "${id}" id_index)
   if(id_index EQUAL -1 OR dependency_UNPARSED_ARGUMENTS OR
       dependency_VENDORED_VERSION STREQUAL "" OR dependency_SYSTEM_FLOOR STREQUAL "" OR
       dependency_ARCHIVE_URL STREQUAL "" OR dependency_ARCHIVE_SHA256 STREQUAL "" OR
-      dependency_PROBE_SOURCE STREQUAL "")
+      dependency_PROBE_SOURCE STREQUAL "" OR dependency_LICENSE_EXPRESSION STREQUAL "")
     message(FATAL_ERROR "Laghu dependency registry failed: dependency=${id} rule=invalid_declaration")
   endif()
   string(LENGTH "${dependency_ARCHIVE_SHA256}" archive_sha256_length)
@@ -56,6 +57,7 @@ function(laghu_declare_dependency id)
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_ARCHIVE_URL_${id}" "${dependency_ARCHIVE_URL}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_ARCHIVE_SHA256_${id}" "${dependency_ARCHIVE_SHA256}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_PROBE_SOURCE_${id}" "${dependency_PROBE_SOURCE}")
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_LICENSE_EXPRESSION_${id}" "${dependency_LICENSE_EXPRESSION}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_FEATURES_${id}" "${dependency_FEATURES}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_PKG_CONFIG_NAMES_${id}" "${dependency_PKG_CONFIG_NAMES}")
   set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_CMAKE_TARGETS_${id}" "${dependency_CMAKE_TARGETS}")
@@ -93,95 +95,116 @@ function(laghu_dependency_registry_initialize)
     VENDORED_VERSION 3.5.8 SYSTEM_FLOOR 3.5.0
     ARCHIVE_URL https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz
     ARCHIVE_SHA256 a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
-    PROBE_SOURCE tests/dependencies/probes/openssl.cpp FEATURES tls http3 PKG_CONFIG_NAMES openssl)
+    PROBE_SOURCE tests/dependencies/probes/openssl.cpp LICENSE_EXPRESSION Apache-2.0
+    FEATURES tls http3 PKG_CONFIG_NAMES openssl)
   laghu_declare_dependency(libressl
     VENDORED_VERSION 4.3.2 SYSTEM_FLOOR 3.9.2
     ARCHIVE_URL https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-4.3.2.tar.gz
     ARCHIVE_SHA256 edf01aee24c65d69e6a9efcb9d44bcda682ff9d4f3bbbd95e794e1dfa90847b5
-    PROBE_SOURCE tests/dependencies/probes/libressl.cpp FEATURES tls http3 PKG_CONFIG_NAMES libressl)
+    PROBE_SOURCE tests/dependencies/probes/libressl.cpp
+    LICENSE_EXPRESSION "ISC AND OpenSSL AND SSLeay-standalone"
+    FEATURES tls http3 PKG_CONFIG_NAMES libressl)
   laghu_declare_dependency(yyjson
     VENDORED_VERSION 0.13.0 SYSTEM_FLOOR 0.8.0
     ARCHIVE_URL https://github.com/ibireme/yyjson/archive/refs/tags/0.13.0.tar.gz
     ARCHIVE_SHA256 34e0f62a2bc11ab20d601e8ca1cc2b2079503aa45119a19133d89d19b94a0fae
-    PROBE_SOURCE tests/dependencies/probes/yyjson.cpp FEATURES structured_data PKG_CONFIG_NAMES yyjson
+    PROBE_SOURCE tests/dependencies/probes/yyjson.cpp LICENSE_EXPRESSION MIT
+    FEATURES structured_data PKG_CONFIG_NAMES yyjson
     CMAKE_TARGETS yyjson)
   laghu_declare_dependency(nghttp2
     VENDORED_VERSION 1.70.0 SYSTEM_FLOOR 1.50.0
     ARCHIVE_URL https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.xz
     ARCHIVE_SHA256 e05cb1388eaca3830aded4ccf20044b6e1ac1a61411dcca11b0437c4285c8bc2
-    PROBE_SOURCE tests/dependencies/probes/nghttp2.cpp FEATURES http2 PKG_CONFIG_NAMES libnghttp2
+    PROBE_SOURCE tests/dependencies/probes/nghttp2.cpp LICENSE_EXPRESSION MIT
+    FEATURES http2 PKG_CONFIG_NAMES libnghttp2
     CMAKE_TARGETS nghttp2_static nghttp2_shared nghttp2)
   laghu_declare_dependency(ngtcp2
     VENDORED_VERSION 1.25.0 SYSTEM_FLOOR 1.25.0
     ARCHIVE_URL https://github.com/ngtcp2/ngtcp2/releases/download/v1.25.0/ngtcp2-1.25.0.tar.xz
     ARCHIVE_SHA256 2a34d2484ba17847a5d11965704e9dd0fac4c6d8efc75ffe1ec7de66d8c6b6fb
-    PROBE_SOURCE tests/dependencies/probes/ngtcp2.cpp FEATURES http3 PKG_CONFIG_NAMES libngtcp2
+    PROBE_SOURCE tests/dependencies/probes/ngtcp2.cpp LICENSE_EXPRESSION MIT
+    FEATURES http3 PKG_CONFIG_NAMES libngtcp2
     CMAKE_TARGETS ngtcp2 ngtcp2_static ngtcp2_shared)
   laghu_declare_dependency(nghttp3
     VENDORED_VERSION 1.18.0 SYSTEM_FLOOR 1.18.0
     ARCHIVE_URL https://github.com/ngtcp2/nghttp3/releases/download/v1.18.0/nghttp3-1.18.0.tar.xz
     ARCHIVE_SHA256 aad782c23d3f01bd4bb52c8bac7a553b631ef8115fd1612703df6183449fef19
-    PROBE_SOURCE tests/dependencies/probes/nghttp3.cpp FEATURES http3 PKG_CONFIG_NAMES libnghttp3
+    PROBE_SOURCE tests/dependencies/probes/nghttp3.cpp LICENSE_EXPRESSION MIT
+    FEATURES http3 PKG_CONFIG_NAMES libnghttp3
     CMAKE_TARGETS nghttp3 nghttp3_static nghttp3_shared)
   laghu_declare_dependency(c_ares
     VENDORED_VERSION 1.34.8 SYSTEM_FLOOR 1.20.0
     ARCHIVE_URL https://github.com/c-ares/c-ares/releases/download/v1.34.8/c-ares-1.34.8.tar.gz
     ARCHIVE_SHA256 c222b6d681096f9444d2c4863d2c1174019e27cacca0a4a5c114d36dd7d7bf78
-    PROBE_SOURCE tests/dependencies/probes/c_ares.cpp FEATURES async_dns PKG_CONFIG_NAMES libcares cares
+    PROBE_SOURCE tests/dependencies/probes/c_ares.cpp LICENSE_EXPRESSION MIT
+    FEATURES async_dns PKG_CONFIG_NAMES libcares cares
     CMAKE_TARGETS c-ares::cares_static c-ares::cares cares_static cares)
   laghu_declare_dependency(pcre2_8bit
     VENDORED_VERSION 10.48 SYSTEM_FLOOR 10.40
     ARCHIVE_URL https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.48/pcre2-10.48.tar.bz2
     ARCHIVE_SHA256 b6c68fdf6f3ac31388b50aa89ff0fc49c00c987c16e7b5146491d12003f2c8ed
-    PROBE_SOURCE tests/dependencies/probes/pcre2_8bit.cpp FEATURES regex PKG_CONFIG_NAMES libpcre2-8
+    PROBE_SOURCE tests/dependencies/probes/pcre2_8bit.cpp LICENSE_EXPRESSION BSD-3-Clause
+    FEATURES regex PKG_CONFIG_NAMES libpcre2-8
     CMAKE_TARGETS pcre2-8 pcre2-8-static)
   laghu_declare_dependency(zlib_ng
     VENDORED_VERSION 2.3.3 SYSTEM_FLOOR 2.1.2
     ARCHIVE_URL https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.3.3.tar.gz
     ARCHIVE_SHA256 f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1
-    PROBE_SOURCE tests/dependencies/probes/zlib_ng.cpp FEATURES compression_zlib PKG_CONFIG_NAMES zlib-ng
+    PROBE_SOURCE tests/dependencies/probes/zlib_ng.cpp LICENSE_EXPRESSION Zlib
+    FEATURES compression_zlib PKG_CONFIG_NAMES zlib-ng
     CMAKE_TARGETS zlibstatic zlib)
   laghu_declare_dependency(brotli
     VENDORED_VERSION 1.2.0 SYSTEM_FLOOR 1.0.9
     ARCHIVE_URL https://github.com/google/brotli/archive/refs/tags/v1.2.0.tar.gz
     ARCHIVE_SHA256 816c96e8e8f193b40151dad7e8ff37b1221d019dbcb9c35cd3fadbfe6477dfec
-    PROBE_SOURCE tests/dependencies/probes/brotli.cpp FEATURES compression_brotli PKG_CONFIG_NAMES libbrotlienc
+    PROBE_SOURCE tests/dependencies/probes/brotli.cpp LICENSE_EXPRESSION MIT
+    FEATURES compression_brotli PKG_CONFIG_NAMES libbrotlienc
     CMAKE_TARGETS brotlienc brotlienc-static)
   laghu_declare_dependency(zstd
     VENDORED_VERSION 1.5.7 SYSTEM_FLOOR 1.5.0
     ARCHIVE_URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
     ARCHIVE_SHA256 eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
-    PROBE_SOURCE tests/dependencies/probes/zstd.cpp FEATURES compression_zstd PKG_CONFIG_NAMES libzstd
+    PROBE_SOURCE tests/dependencies/probes/zstd.cpp LICENSE_EXPRESSION "BSD-3-Clause OR GPL-2.0-only"
+    FEATURES compression_zstd PKG_CONFIG_NAMES libzstd
     CMAKE_TARGETS libzstd_static libzstd_shared
     CMAKE_SOURCE_SUBDIR build/cmake)
   laghu_declare_dependency(libmaxminddb
     VENDORED_VERSION 1.14.0 SYSTEM_FLOOR 1.8.0
     ARCHIVE_URL https://github.com/maxmind/libmaxminddb/releases/download/1.14.0/libmaxminddb-1.14.0.tar.gz
     ARCHIVE_SHA256 65ff92382c71ef6634b8c13e278651a2efa68f1de28ef3c31fc32369fa0bb3e3
-    PROBE_SOURCE tests/dependencies/probes/libmaxminddb.cpp FEATURES geoip PKG_CONFIG_NAMES libmaxminddb
+    PROBE_SOURCE tests/dependencies/probes/libmaxminddb.cpp LICENSE_EXPRESSION Apache-2.0
+    FEATURES geoip PKG_CONFIG_NAMES libmaxminddb
     CMAKE_TARGETS maxminddb)
+  laghu_declare_dependency(protobuf SOURCE_ONLY
+    VENDORED_VERSION 3.21.12 SYSTEM_FLOOR 3.21.12
+    ARCHIVE_URL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protobuf-cpp-3.21.12.tar.gz
+    ARCHIVE_SHA256 4eab9b524aa5913c6fffb20b2a8abf5ef7f95a80bc0701f3a6dbb4c607f73460
+    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp LICENSE_EXPRESSION BSD-3-Clause FEATURES otlp)
   laghu_declare_dependency(protobuf_c
     VENDORED_VERSION 1.5.2 SYSTEM_FLOOR 1.4.1
     ARCHIVE_URL https://github.com/protobuf-c/protobuf-c/releases/download/v1.5.2/protobuf-c-1.5.2.tar.gz
     ARCHIVE_SHA256 e2c86271873a79c92b58fef7ebf8de1aa0df4738347a8bd5d4e65a80a16d0d24
-    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp FEATURES otlp
+    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp LICENSE_EXPRESSION BSD-2-Clause FEATURES otlp
     PKG_CONFIG_NAMES libprotobuf-c CMAKE_TARGETS protobuf-c
     CMAKE_SOURCE_SUBDIR build-cmake)
   laghu_declare_dependency(opentelemetry_proto SOURCE_ONLY
     VENDORED_VERSION 1.9.0 SYSTEM_FLOOR 1.9.0
     ARCHIVE_URL https://github.com/open-telemetry/opentelemetry-proto/archive/refs/tags/v1.9.0.tar.gz
     ARCHIVE_SHA256 2d2220db196bdfd0aec872b75a5e614458f8396557fc718b28017e1a08db49e4
-    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp FEATURES otlp)
+    PROBE_SOURCE tests/dependencies/probes/protobuf_c.cpp LICENSE_EXPRESSION Apache-2.0 FEATURES otlp)
   laghu_declare_dependency(libidn2
     VENDORED_VERSION 2.3.8 SYSTEM_FLOOR 2.3.7
     ARCHIVE_URL https://ftp.gnu.org/gnu/libidn/libidn2-2.3.8.tar.gz
     ARCHIVE_SHA256 f557911bf6171621e1f72ff35f5b1825bb35b52ed45325dcdee931e5d3c0787a
-    PROBE_SOURCE tests/dependencies/probes/libidn2.cpp FEATURES idna PKG_CONFIG_NAMES libidn2)
+    PROBE_SOURCE tests/dependencies/probes/libidn2.cpp
+    LICENSE_EXPRESSION "GPL-2.0-or-later OR LGPL-3.0-or-later"
+    FEATURES idna PKG_CONFIG_NAMES libidn2)
   laghu_declare_dependency(libxcrypt
     VENDORED_VERSION 4.5.2 SYSTEM_FLOOR 4.4.36
     ARCHIVE_URL https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-4.5.2.tar.xz
     ARCHIVE_SHA256 71513a31c01a428bccd5367a32fd95f115d6dac50fb5b60c779d5c7942aec071
-    PROBE_SOURCE tests/dependencies/probes/libxcrypt.cpp FEATURES password_auth PKG_CONFIG_NAMES libcrypt libxcrypt)
+    PROBE_SOURCE tests/dependencies/probes/libxcrypt.cpp LICENSE_EXPRESSION "LGPL-2.1-or-later"
+    FEATURES password_auth PKG_CONFIG_NAMES libcrypt libxcrypt)
 endfunction()
 
 function(laghu_acquire_source_dependency id private_target)
@@ -201,6 +224,39 @@ function(laghu_acquire_source_dependency id private_target)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_ID "${id}")
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_SOURCE VENDORED)
   set_property(TARGET "${private_target}" PROPERTY LAGHU_DEPENDENCY_LINK_MODE SOURCE_ONLY)
+endfunction()
+
+# Some adapters need an immutable dependency source tree to build a host tool
+# even when the target runtime library is selected from the system. Keep that
+# host-only acquisition separate from the runtime dependency target.
+function(laghu_acquire_host_source_dependency id)
+  get_property(source_is_set GLOBAL PROPERTY
+    "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}" SET)
+  if(source_is_set)
+    get_property(existing_source GLOBAL PROPERTY
+      "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}")
+    if(NOT IS_DIRECTORY "${existing_source}")
+      message(FATAL_ERROR
+        "Laghu dependency gate failed: dependency=${id} rule=host_source_missing")
+    endif()
+    return()
+  endif()
+  include(FetchContent)
+  laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
+  laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
+  set(content_name "laghu_host_source_${id}")
+  FetchContent_Declare("${content_name}"
+    URL "${archive_url}" URL_HASH "SHA256=${archive_sha256}"
+    DOWNLOAD_EXTRACT_TIMESTAMP FALSE SOURCE_SUBDIR laghu-no-cmake-project)
+  FetchContent_MakeAvailable("${content_name}")
+  FetchContent_GetProperties("${content_name}" SOURCE_DIR resolved_source)
+  if("${resolved_source}" STREQUAL "" OR "${resolved_source}" MATCHES "-NOTFOUND$"
+      OR NOT IS_DIRECTORY "${resolved_source}")
+    message(FATAL_ERROR
+      "Laghu dependency gate failed: dependency=${id} rule=host_source_missing")
+  endif()
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}"
+    "${resolved_source}")
 endfunction()
 
 function(laghu_validate_dependency_version id version)
@@ -442,13 +498,13 @@ endfunction()
 function(laghu_write_dependency_registry_metadata output)
   set(members)
   foreach(id IN LISTS LAGHU_DEPENDENCY_IDS)
-    foreach(property IN ITEMS VENDORED_VERSION SYSTEM_FLOOR ARCHIVE_URL ARCHIVE_SHA256 FEATURES INCOMPATIBLE_RANGES)
+    foreach(property IN ITEMS VENDORED_VERSION SYSTEM_FLOOR ARCHIVE_URL ARCHIVE_SHA256 LICENSE_EXPRESSION FEATURES INCOMPATIBLE_RANGES)
       laghu_dependency_property("${id}" "${property}" "${property}")
     endforeach()
     laghu_dependency_json_array(features_json ${FEATURES})
     laghu_dependency_json_array(incompatible_json ${INCOMPATIBLE_RANGES})
     list(APPEND members
-      "    \"${id}\": {\"vendored_version\": \"${VENDORED_VERSION}\", \"system_floor\": \"${SYSTEM_FLOOR}\", \"archive_url\": \"${ARCHIVE_URL}\", \"archive_sha256\": \"${ARCHIVE_SHA256}\", \"features\": ${features_json}, \"incompatible_versions\": ${incompatible_json}}")
+      "    \"${id}\": {\"vendored_version\": \"${VENDORED_VERSION}\", \"system_floor\": \"${SYSTEM_FLOOR}\", \"archive_url\": \"${ARCHIVE_URL}\", \"archive_sha256\": \"${ARCHIVE_SHA256}\", \"license_expression\": \"${LICENSE_EXPRESSION}\", \"features\": ${features_json}, \"incompatible_versions\": ${incompatible_json}}")
   endforeach()
   list(JOIN members ",\n" rendered_members)
   file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
@@ -675,6 +731,8 @@ function(laghu_acquire_vendored_cmake_dependency id private_target)
   else()
     FetchContent_MakeAvailable("${content_name}")
   endif()
+  set_property(GLOBAL PROPERTY "LAGHU_DEPENDENCY_SOURCE_DIRECTORY_${id}"
+    "${${content_name}_SOURCE_DIR}")
   if(id STREQUAL libmaxminddb)
     set_property(GLOBAL PROPERTY LAGHU_LIBMAXMINDDB_FIXTURE
       "${${content_name}_SOURCE_DIR}/t/maxmind-db/test-data/GeoIP2-City-Test.mmdb")
@@ -1091,6 +1149,9 @@ function(laghu_configure_dependency_modes)
     if(source_only)
       laghu_acquire_source_dependency("${id}" "${private_target}")
     elseif(LAGHU_DEPENDENCY_SOURCE STREQUAL SYSTEM)
+      if(id STREQUAL protobuf_c)
+        laghu_acquire_host_source_dependency("${id}")
+      endif()
       laghu_require_system_dependency("${id}"
         TARGET "${private_target}"
         LINK_MODE "${LAGHU_DEPENDENCY_LINK_MODE}")

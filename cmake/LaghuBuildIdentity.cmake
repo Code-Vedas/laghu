@@ -22,6 +22,7 @@ endfunction()
 
 function(laghu_build_identity_input_hashes output)
   set(inputs
+    .github/workflows/toolchain.yml
     CMakeLists.txt
     CMakePresets.json
     VERSION
@@ -43,7 +44,11 @@ function(laghu_build_identity_input_hashes output)
     cmake/LaghuFeatures.cmake
     cmake/LaghuHardening.cmake
     cmake/LaghuSanitizers.cmake
+    cmake/LaghuSupplyChain.cmake
     cmake/LaghuToolchain.cmake
+    cmake/ExpectSupplyChain.cmake
+    cmake/ExpectSupplyChainWorkflow.cmake
+    cmake/ValidateSupplyChain.cmake
     tests/hardening/probes/clean.cpp
     tests/hardening/probes/fortification.cpp
     tests/benchmarks/workload_counters.cpp
@@ -201,33 +206,66 @@ endfunction()
 
 function(laghu_build_identity_dependencies output output_names)
   set(dependencies ${LAGHU_ACTIVE_DEPENDENCIES})
+  list(FIND dependencies protobuf_c protobuf_c_index)
+  if(LAGHU_DEPENDENCY_SOURCE STREQUAL SYSTEM AND NOT protobuf_c_index EQUAL -1)
+    list(APPEND dependencies protobuf_c_host)
+  endif()
   list(SORT dependencies)
   set(entries)
   foreach(id IN LISTS dependencies)
-    laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
-    laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
-    laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
-    get_property(selected_version GLOBAL PROPERTY "LAGHU_DEPENDENCY_SELECTED_VERSION_${id}")
-    if(selected_version STREQUAL "")
-      set(selected_version "${vendored_version}")
+    if(id STREQUAL protobuf_c_host)
+      set(registry_id protobuf_c)
+    else()
+      set(registry_id "${id}")
     endif()
-    laghu_dependency_property("${id}" SOURCE_ONLY source_only)
-    if(source_only)
+    laghu_dependency_property("${registry_id}" ARCHIVE_URL archive_url)
+    laghu_dependency_property("${registry_id}" ARCHIVE_SHA256 archive_sha256)
+    laghu_dependency_property("${registry_id}" LICENSE_EXPRESSION license_expression)
+    laghu_dependency_property("${registry_id}" VENDORED_VERSION vendored_version)
+    if(id STREQUAL protobuf_c_host)
+      set(selected_version "${vendored_version}")
+    else()
+      get_property(selected_version GLOBAL PROPERTY
+        "LAGHU_DEPENDENCY_SELECTED_VERSION_${registry_id}")
+      if("${selected_version}" STREQUAL "" OR "${selected_version}" MATCHES "-NOTFOUND$")
+        set(selected_version "${vendored_version}")
+      endif()
+    endif()
+    laghu_dependency_property("${registry_id}" SOURCE_ONLY source_only)
+    if(id STREQUAL protobuf_c_host)
+      set(identity_source VENDORED)
+      set(identity_linkage HOST_TOOL)
+      set(identity_url "${archive_url}")
+      set(identity_sha256 "${archive_sha256}")
+      set(identity_verification verified-archive)
+    elseif(source_only)
       set(identity_source VENDORED)
       set(identity_linkage SOURCE_ONLY)
+      set(identity_url "${archive_url}")
+      set(identity_sha256 "${archive_sha256}")
+      set(identity_verification verified-archive)
     else()
       set(identity_source "${LAGHU_DEPENDENCY_SOURCE}")
       set(identity_linkage "${LAGHU_DEPENDENCY_LINK_MODE}")
+      if(identity_source STREQUAL SYSTEM)
+        set(identity_url "")
+        set(identity_sha256 "")
+        set(identity_verification system-package-unverified)
+      else()
+        set(identity_url "${archive_url}")
+        set(identity_sha256 "${archive_sha256}")
+        set(identity_verification verified-archive)
+      endif()
     endif()
     list(APPEND entries
-      "{\"provider\":\"${id}\",\"source\":\"${identity_source}\",\"version\":\"${selected_version}\",\"linkage\":\"${identity_linkage}\",\"url\":\"${archive_url}\",\"sha256\":\"${archive_sha256}\"}")
+      "{\"provider\":\"${id}\",\"source\":\"${identity_source}\",\"version\":\"${selected_version}\",\"linkage\":\"${identity_linkage}\",\"url\":\"${identity_url}\",\"sha256\":\"${identity_sha256}\",\"license\":\"${license_expression}\",\"verification\":\"${identity_verification}\"}")
   endforeach()
   list(JOIN entries "," rendered_entries)
   set(${output} "[${rendered_entries}]" PARENT_SCOPE)
   set(${output_names} "${dependencies}" PARENT_SCOPE)
 endfunction()
 
-function(laghu_build_identity_verbose output build_id compiler requested effective dependencies)
+function(laghu_build_identity_verbose output build_id compiler requested effective dependencies dependencies_json)
   set(lines
     "build_id=${build_id}"
     "compiler.executable=${compiler}"
@@ -250,29 +288,20 @@ function(laghu_build_identity_verbose output build_id compiler requested effecti
     "dependencies=${dependencies_text}"
     "features.effective=${effective_text}"
     "features.requested=${requested_text}")
+  set(dependency_index 0)
   foreach(id IN LISTS dependencies)
-    laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
-    laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
-    laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
-    get_property(selected_version GLOBAL PROPERTY "LAGHU_DEPENDENCY_SELECTED_VERSION_${id}")
-    if(selected_version STREQUAL "")
-      set(selected_version "${vendored_version}")
-    endif()
-    laghu_dependency_property("${id}" SOURCE_ONLY source_only)
-    if(source_only)
-      set(identity_source VENDORED)
-      set(identity_linkage SOURCE_ONLY)
-    else()
-      set(identity_source "${LAGHU_DEPENDENCY_SOURCE}")
-      set(identity_linkage "${LAGHU_DEPENDENCY_LINK_MODE}")
-    endif()
+    foreach(field IN ITEMS linkage provider sha256 source url verification version)
+      string(JSON identity_${field} GET "${dependencies_json}" ${dependency_index} ${field})
+    endforeach()
     list(APPEND lines
       "dependency.${id}.linkage=${identity_linkage}"
-      "dependency.${id}.provider=${id}"
-      "dependency.${id}.sha256=${archive_sha256}"
+      "dependency.${id}.provider=${identity_provider}"
+      "dependency.${id}.sha256=${identity_sha256}"
       "dependency.${id}.source=${identity_source}"
-      "dependency.${id}.url=${archive_url}"
-      "dependency.${id}.version=${selected_version}")
+      "dependency.${id}.url=${identity_url}"
+      "dependency.${id}.verification=${identity_verification}"
+      "dependency.${id}.version=${identity_version}")
+    math(EXPR dependency_index "${dependency_index} + 1")
   endforeach()
   list(SORT lines)
   list(JOIN lines "\n" rendered_lines)
@@ -312,7 +341,8 @@ function(laghu_configure_build_identity)
   set(manifest_path "${CMAKE_BINARY_DIR}/config/laghu-build-manifest-v1.json")
   file(WRITE "${preimage_path}" "${preimage}\n")
   file(WRITE "${manifest_path}" "${manifest}\n")
-  laghu_build_identity_verbose(verbose "${build_id}" "${compiler}" "${requested}" "${effective}" "${dependency_names}")
+  laghu_build_identity_verbose(verbose "${build_id}" "${compiler}" "${requested}"
+    "${effective}" "${dependency_names}" "${dependencies_json}")
   set(generated_source "${CMAKE_BINARY_DIR}/generated/laghu/build_manifest.cpp")
   file(WRITE "${generated_source}"
 "// SPDX-License-Identifier: AGPL-3.0-only\n#include <laghu/cli/internal/build_manifest.hpp>\n\nnamespace laghu::cli::internal {\nconst char* build_manifest() noexcept { return R\"laghu(${manifest})laghu\"; }\nconst char* build_manifest_verbose() noexcept { return R\"laghu(${verbose})laghu\"; }\n}  // namespace laghu::cli::internal\n")

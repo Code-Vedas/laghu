@@ -301,6 +301,23 @@ endfunction()
 
 function(laghu_add_validation_tests)
   set(expect_compile "${CMAKE_SOURCE_DIR}/cmake/ExpectCompile.cmake")
+  add_test(NAME laghu.supply_chain.validation
+    COMMAND "${CMAKE_COMMAND}"
+      "-DMANIFEST=${LAGHU_BUILD_MANIFEST}"
+      "-DSPDX=${LAGHU_SPDX_SBOM}"
+      "-DCYCLONEDX=${LAGHU_CYCLONEDX_SBOM}"
+      "-DPROVENANCE=${LAGHU_PROVENANCE}"
+      "-DVALIDATOR=${CMAKE_SOURCE_DIR}/cmake/ValidateSupplyChain.cmake"
+      "-DSOURCE=${CMAKE_SOURCE_DIR}"
+      "-DBINARY=${CMAKE_BINARY_DIR}"
+      "-DEXPECTED_CREATED=${LAGHU_SUPPLY_CHAIN_CREATED}"
+      "-DCOMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+      "-DSTANDARD_LIBRARY_ID=${LAGHU_STANDARD_LIBRARY_ID}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSupplyChain.cmake")
+  add_test(NAME laghu.supply_chain.workflow
+    COMMAND "${CMAKE_COMMAND}"
+      "-DWORKFLOW=${CMAKE_SOURCE_DIR}/.github/workflows/toolchain.yml"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ExpectSupplyChainWorkflow.cmake")
   add_test(NAME laghu.test.wrapper.usage
     COMMAND "${CMAKE_COMMAND}"
       "-DSCRIPT=${CMAKE_SOURCE_DIR}/scripts/test"

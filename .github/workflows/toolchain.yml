@@ -65,6 +65,8 @@ jobs:
             laghu_otlp_test laghu_otlp_contract_test
           ctest --test-dir "$RUNNER_TEMP/laghu-system-adapters" --output-on-failure \
             -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|dns|dns\.contract|otlp|otlp\.contract)$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-system-adapters" --output-on-failure \
+            -R '^laghu\.supply_chain\.validation$'
       - name: Verify Clang 19 crypto adapter
         if: matrix.name == 'clang-19-libc++'
         run: |
@@ -332,3 +334,113 @@ jobs:
             echo "Laghu Release executable contains text relocations" >&2
             exit 1
           fi
+  supply-chain:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install schema validator
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install --yes g++-14 ninja-build python3-jsonschema
+      - name: Generate and verify unsigned supply-chain artifacts
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/laghu-supply-chain" -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++-14
+          ctest --test-dir "$RUNNER_TEMP/laghu-supply-chain" \
+            --output-on-failure -R '^laghu\.supply_chain\.(validation|workflow)$'
+      - name: Validate pinned official SPDX and CycloneDX schemas
+        run: |
+          schema_dir="$RUNNER_TEMP/laghu-schemas"
+          mkdir -p "$schema_dir"
+          curl --fail --location --silent --show-error \
+            https://spdx.org/schema/3.0.1/spdx-json-schema.json \
+            --output "$schema_dir/spdx-3.0.1.schema.json"
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/CycloneDX/specification/4b3f59453366e27c8073fd24e98bf21ef8892c8e/schema/bom-1.7.schema.json \
+            --output "$schema_dir/bom-1.7.schema.json"
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/CycloneDX/specification/4b3f59453366e27c8073fd24e98bf21ef8892c8e/schema/spdx.schema.json \
+            --output "$schema_dir/spdx.schema.json"
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/CycloneDX/specification/4b3f59453366e27c8073fd24e98bf21ef8892c8e/schema/jsf-0.82.schema.json \
+            --output "$schema_dir/jsf-0.82.schema.json"
+          cd "$schema_dir"
+          printf '%s  %s\n' \
+            582c64e809d5b3ef9bd0c4de13a32391b47b0284a3e8d199569fb96f649234b1 spdx-3.0.1.schema.json \
+            df472ef4aaf593904c479293723a1a5c191d6672715c93b3c0b5c318f3914221 bom-1.7.schema.json \
+            54a6288292bc6c90b0d3952f5f939f17436fa76704ffe68a46e5b78539c7cc1b spdx.schema.json \
+            8bae002c25e723db7ee1f26afde680ae1a2b1a8f6b4b4b0fd65dc3becb090aae jsf-0.82.schema.json \
+            | sha256sum --check --strict
+          python3 -m jsonschema \
+            --instance "$RUNNER_TEMP/laghu-supply-chain/config/laghu-spdx-3.0.1.spdx.json" \
+            spdx-3.0.1.schema.json
+          python3 -m jsonschema \
+            --instance "$RUNNER_TEMP/laghu-supply-chain/config/laghu-cyclonedx-1.7.cdx.json" \
+            bom-1.7.schema.json
+          jq 'del(."@context")' \
+            "$RUNNER_TEMP/laghu-supply-chain/config/laghu-spdx-3.0.1.spdx.json" \
+            > invalid-spdx.json
+          if python3 -m jsonschema --instance invalid-spdx.json spdx-3.0.1.schema.json; then
+            echo "Invalid SPDX fixture unexpectedly passed its official schema" >&2
+            exit 1
+          fi
+          jq 'del(.bomFormat)' \
+            "$RUNNER_TEMP/laghu-supply-chain/config/laghu-cyclonedx-1.7.cdx.json" \
+            > invalid-cyclonedx.json
+          if python3 -m jsonschema --instance invalid-cyclonedx.json bom-1.7.schema.json; then
+            echo "Invalid CycloneDX fixture unexpectedly passed its official schema" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: laghu-supply-chain
+          path: |
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-build-manifest-v1.json
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-spdx-3.0.1.spdx.json
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-cyclonedx-1.7.cdx.json
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-provenance-v1.json
+          if-no-files-found: error
+  attest-supply-chain:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: supply-chain
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download validated supply-chain artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: laghu-supply-chain
+          path: ${{ runner.temp }}/laghu-supply-chain/config
+      - name: Attest supply-chain artifacts
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-build-manifest-v1.json
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-spdx-3.0.1.spdx.json
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-cyclonedx-1.7.cdx.json
+            ${{ runner.temp }}/laghu-supply-chain/config/laghu-provenance-v1.json
+      - name: Verify supply-chain attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for subject in \
+            laghu-build-manifest-v1.json \
+            laghu-spdx-3.0.1.spdx.json \
+            laghu-cyclonedx-1.7.cdx.json \
+            laghu-provenance-v1.json; do
+            gh attestation verify \
+              "$RUNNER_TEMP/laghu-supply-chain/config/$subject" \
+              --bundle "${{ steps.attest.outputs.bundle-path }}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/toolchain.yml" \
+              --source-ref "$GITHUB_REF"
+          done

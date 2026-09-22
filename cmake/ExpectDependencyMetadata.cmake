@@ -20,6 +20,7 @@ foreach(requirement IN ITEMS
     "\"brotli\": {\"vendored_version\": \"1.2.0\", \"system_floor\": \"1.0.9\""
     "\"zstd\": {\"vendored_version\": \"1.5.7\", \"system_floor\": \"1.5.0\""
     "\"libmaxminddb\": {\"vendored_version\": \"1.14.0\", \"system_floor\": \"1.8.0\""
+    "\"protobuf\": {\"vendored_version\": \"3.21.12\", \"system_floor\": \"3.21.12\""
     "\"protobuf_c\": {\"vendored_version\": \"1.5.2\", \"system_floor\": \"1.4.1\""
     "\"opentelemetry_proto\": {\"vendored_version\": \"1.9.0\", \"system_floor\": \"1.9.0\""
     "\"libidn2\": {\"vendored_version\": \"2.3.8\", \"system_floor\": \"2.3.7\""
@@ -28,6 +29,15 @@ foreach(requirement IN ITEMS
   string(FIND "${metadata}" "${requirement}" requirement_offset)
   if(requirement_offset EQUAL -1)
     message(FATAL_ERROR "Laghu dependency metadata expectation failed: missing_requirement=${requirement}")
+  endif()
+endforeach()
+foreach(dependency IN ITEMS openssl libressl yyjson nghttp2 ngtcp2 nghttp3 c_ares
+    pcre2_8bit zlib_ng brotli zstd libmaxminddb protobuf protobuf_c
+    opentelemetry_proto libidn2 libxcrypt)
+  string(JSON license_expression GET "${metadata}" dependencies ${dependency} license_expression)
+  if(license_expression STREQUAL "")
+    message(FATAL_ERROR
+      "Laghu dependency metadata expectation failed: license_expression_missing=${dependency}")
   endif()
 endforeach()
 if(metadata MATCHES "${LAGHU_SOURCE}" OR metadata MATCHES "${LAGHU_BINARY}")
