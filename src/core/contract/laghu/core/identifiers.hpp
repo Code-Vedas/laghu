@@ -60,7 +60,7 @@ class StrongIdentifier final {
   }
 
  private:
-  StrongIdentifier() = default;
+  StrongIdentifier() = delete;
   explicit constexpr StrongIdentifier(std::uint64_t value) noexcept : value_(value) {}
 
   std::uint64_t value_;
