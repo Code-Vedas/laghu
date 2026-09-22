@@ -113,6 +113,7 @@ enum class DependencyOperation : std::uint8_t {
   spki_decode,
   idna_lookup,
   password_verify,
+  json_parse,
 };
 
 class Error final {
