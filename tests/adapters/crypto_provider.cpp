@@ -7,6 +7,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include <unistd.h>
+
 #include "laghu_test_support.hpp"
 
 #include <laghu/adapters/crypto_provider.hpp>
@@ -61,6 +63,92 @@ struct EntropyFixture final {
   std::size_t fail_on_call{};
   std::size_t largest_request{};
   std::uint8_t next_byte{};
+};
+
+struct LogCapture final {
+  std::array<laghu::adapters::DependencyLogRecord, 1> records{};
+  std::size_t count{};
+};
+
+void capture_log(void* context, const laghu::adapters::DependencyLogRecord& record) noexcept {
+  if (context == nullptr) {
+    return;
+  }
+  auto& capture = *static_cast<LogCapture*>(context);
+  if (capture.count < capture.records.size()) {
+    capture.records[capture.count] = record;
+  }
+  ++capture.count;
+}
+
+class StderrCapture final {
+ public:
+  StderrCapture() = default;
+  StderrCapture(const StderrCapture&) = delete;
+  StderrCapture& operator=(const StderrCapture&) = delete;
+
+  ~StderrCapture() {
+    if (saved_stderr_ >= 0) {
+      static_cast<void>(::dup2(saved_stderr_, STDERR_FILENO));
+      static_cast<void>(::close(saved_stderr_));
+    }
+    if (read_end_ >= 0) {
+      static_cast<void>(::close(read_end_));
+    }
+  }
+
+  [[nodiscard]] bool begin() noexcept {
+    std::array<int, 2> descriptors{-1, -1};
+    if (::pipe(descriptors.data()) != 0) {
+      return false;
+    }
+    saved_stderr_ = ::dup(STDERR_FILENO);
+    if (saved_stderr_ < 0 || ::dup2(descriptors[1], STDERR_FILENO) < 0) {
+      static_cast<void>(::close(descriptors[0]));
+      static_cast<void>(::close(descriptors[1]));
+      if (saved_stderr_ >= 0) {
+        static_cast<void>(::close(saved_stderr_));
+        saved_stderr_ = -1;
+      }
+      return false;
+    }
+    static_cast<void>(::close(descriptors[1]));
+    read_end_ = descriptors[0];
+    return true;
+  }
+
+  [[nodiscard]] bool finish_empty() noexcept {
+    if (saved_stderr_ < 0 || read_end_ < 0) {
+      return false;
+    }
+    const bool restored = ::dup2(saved_stderr_, STDERR_FILENO) >= 0;
+    static_cast<void>(::close(saved_stderr_));
+    saved_stderr_ = -1;
+
+    std::array<char, 128> buffer{};
+    for (;;) {
+      const ssize_t count = ::read(read_end_, buffer.data(), buffer.size());
+      if (count > 0) {
+        static_cast<void>(::close(read_end_));
+        read_end_ = -1;
+        return false;
+      }
+      if (count == 0) {
+        static_cast<void>(::close(read_end_));
+        read_end_ = -1;
+        return restored;
+      }
+      if (errno != EINTR) {
+        static_cast<void>(::close(read_end_));
+        read_end_ = -1;
+        return false;
+      }
+    }
+  }
+
+ private:
+  int saved_stderr_{-1};
+  int read_end_{-1};
 };
 
 [[nodiscard]] int injected_entropy(laghu::core::MutableByteView output,
@@ -180,8 +268,47 @@ struct EntropyFixture final {
   const auto trailing_result = provider.spki_sha256(view_of(trailing));
   const auto malformed_result = provider.spki_sha256(view_of(malformed));
   return !trailing_result.has_value() && !malformed_result.has_value() &&
+         trailing_result.error().domain() == laghu::core::ErrorDomain::dependency &&
+         malformed_result.error().domain() == laghu::core::ErrorDomain::dependency &&
          trailing_result.error().code() == laghu::core::ErrorCode::crypto &&
-         malformed_result.error().code() == laghu::core::ErrorCode::crypto;
+         malformed_result.error().code() == laghu::core::ErrorCode::crypto &&
+         trailing_result.error().dependency_operation() ==
+             laghu::core::DependencyOperation::spki_decode &&
+         malformed_result.error().dependency_operation() ==
+             laghu::core::DependencyOperation::spki_decode;
+}
+
+[[nodiscard]] bool check_dependency_error_logging() noexcept {
+  constexpr std::array<std::byte, 3> malformed{
+      std::byte{0x30}, std::byte{0x01}, std::byte{0x00}};
+  LogCapture capture{};
+  const auto provider = laghu::adapters::crypto_provider_with_log({&capture, capture_log});
+  StderrCapture stderr_capture{};
+  if (!stderr_capture.begin()) {
+    return false;
+  }
+  const auto result = provider.spki_sha256(view_of(malformed));
+  const bool stderr_is_empty = stderr_capture.finish_empty();
+  if (result.has_value() || !stderr_is_empty || capture.count != 1 ||
+      result.error().domain() != laghu::core::ErrorDomain::dependency ||
+      result.error().code() != laghu::core::ErrorCode::crypto ||
+      result.error().dependency_operation() !=
+          laghu::core::DependencyOperation::spki_decode ||
+      result.error().dependency_status() != laghu::core::DependencyStatus::crypto) {
+    return false;
+  }
+  const auto provider_id = result.error().dependency_id();
+  if (provider_id != laghu::core::DependencyId::openssl &&
+      provider_id != laghu::core::DependencyId::libressl) {
+    return false;
+  }
+  const auto& record = capture.records.front();
+  return record.level == laghu::adapters::DependencyLogLevel::error &&
+         record.dependency == provider_id &&
+         record.operation == laghu::core::DependencyOperation::spki_decode &&
+         record.status == laghu::core::DependencyStatus::crypto &&
+         record.message() == "operation=spki_decode status=crypto" &&
+         result.error().diagnostic_context().find("30") == std::string_view::npos;
 }
 
 [[nodiscard]] bool check_constant_time_equality(
@@ -280,6 +407,9 @@ static_assert(std::is_trivially_copyable_v<laghu::core::CryptoProvider>);
     return false;
   }
   if (!check_spki_pin(provider)) {
+    return false;
+  }
+  if (!check_dependency_error_logging()) {
     return false;
   }
   if (!check_constant_time_equality(provider)) {
