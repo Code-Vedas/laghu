@@ -65,6 +65,8 @@ jobs:
             laghu_otlp_test laghu_otlp_contract_test
           ctest --test-dir "$RUNNER_TEMP/laghu-system-adapters" --output-on-failure \
             -R '^laghu\.adapters\.(idna|password_auth|password_auth\.failure_token|http2|http2\.contract|dns|dns\.contract|otlp|otlp\.contract)$'
+          ctest --test-dir "$RUNNER_TEMP/laghu-system-adapters" --output-on-failure \
+            -R '^laghu\.supply_chain\.validation$'
       - name: Verify Clang 19 crypto adapter
         if: matrix.name == 'clang-19-libc++'
         run: |

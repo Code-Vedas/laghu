@@ -4,6 +4,7 @@ foreach(required IN ITEMS MANIFEST SPDX CYCLONEDX PROVENANCE VALIDATOR SOURCE BI
     message(FATAL_ERROR "Laghu supply-chain expectation requires ${required}")
   endif()
 endforeach()
+file(READ "${MANIFEST}" manifest)
 
 execute_process(COMMAND "${CMAKE_COMMAND}"
   "-DMANIFEST=${MANIFEST}" "-DSPDX=${SPDX}" "-DCYCLONEDX=${CYCLONEDX}"
@@ -70,3 +71,46 @@ laghu_expect_invalid(duplicate-subject "${provenance_name}"
 laghu_expect_invalid(traversing-subject "${provenance_name}"
   "\"name\":\"laghu-spdx-3.0.1.spdx.json\""
   "\"name\":\"../laghu-spdx-3.0.1.spdx.json\"" "rule=subject_name")
+
+string(JSON build_input_count LENGTH "${manifest}" build_inputs)
+if(build_input_count GREATER 1)
+  string(JSON input_path GET "${manifest}" build_inputs 0 path)
+  string(JSON input_sha256 GET "${manifest}" build_inputs 0 sha256)
+  string(JSON other_input_sha256 GET "${manifest}" build_inputs 1 sha256)
+  laghu_expect_invalid(mispaired-input-digest "${provenance_name}"
+    "\"digest\":{\"sha256\":\"${input_sha256}\"},\"uri\":\"file:${input_path}\""
+    "\"digest\":{\"sha256\":\"${other_input_sha256}\"},\"unrelated\":{\"sha256\":\"${input_sha256}\"},\"uri\":\"file:${input_path}\""
+    "rule=declared_input_digest_mismatch")
+endif()
+
+string(JSON dependency_count LENGTH "${manifest}" dependencies)
+if(dependency_count GREATER 0)
+  string(JSON provider GET "${manifest}" dependencies 0 provider)
+  string(JSON version GET "${manifest}" dependencies 0 version)
+  laghu_expect_invalid(misbound-cyclonedx-component "${cyclonedx_name}"
+    "\"version\":\"${version}\"" "\"version\":\"invalid-${version}\""
+    "rule=dependency_cyclonedx_mismatch")
+endif()
+
+if(dependency_count GREATER 1)
+  set(verified_indices)
+  math(EXPR dependency_last "${dependency_count} - 1")
+  foreach(index RANGE 0 ${dependency_last})
+    string(JSON verification GET "${manifest}" dependencies ${index} verification)
+    if(verification STREQUAL verified-archive)
+      list(APPEND verified_indices ${index})
+    endif()
+  endforeach()
+  list(LENGTH verified_indices verified_count)
+  if(verified_count GREATER 1)
+    list(GET verified_indices 0 dependency_index)
+    list(GET verified_indices 1 other_dependency_index)
+    string(JSON url GET "${manifest}" dependencies ${dependency_index} url)
+    string(JSON sha256 GET "${manifest}" dependencies ${dependency_index} sha256)
+    string(JSON other_sha256 GET "${manifest}" dependencies ${other_dependency_index} sha256)
+    laghu_expect_invalid(mispaired-dependency-digest "${provenance_name}"
+      "\"digest\":{\"sha256\":\"${sha256}\"},\"uri\":\"${url}\""
+      "\"digest\":{\"sha256\":\"${other_sha256}\"},\"unrelated\":{\"sha256\":\"${sha256}\"},\"uri\":\"${url}\""
+      "rule=dependency_provenance_digest_mismatch")
+  endif()
+endif()

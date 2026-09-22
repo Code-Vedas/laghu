@@ -30,3 +30,34 @@ if(NOT dependency_count EQUAL 1 OR NOT provider STREQUAL "yyjson" OR NOT source 
     NOT dependency_names STREQUAL "yyjson")
   message(FATAL_ERROR "Laghu build identity dependency expectation failed: inventory_invalid")
 endif()
+
+set(LAGHU_DEPENDENCY_SOURCE SYSTEM)
+set(LAGHU_DEPENDENCY_LINK_MODE DYNAMIC)
+set(LAGHU_ACTIVE_DEPENDENCIES protobuf_c)
+set_property(GLOBAL PROPERTY LAGHU_DEPENDENCY_SELECTED_VERSION_protobuf_c 1.4.1)
+laghu_build_identity_dependencies(dependencies dependency_names)
+string(JSON dependency_count LENGTH "${dependencies}")
+foreach(index RANGE 0 1)
+  string(JSON provider GET "${dependencies}" ${index} provider)
+  foreach(field IN ITEMS source version linkage url sha256 verification)
+    string(JSON ${provider}_${field} GET "${dependencies}" ${index} ${field})
+  endforeach()
+endforeach()
+if(NOT dependency_count EQUAL 2 OR
+    NOT dependency_names STREQUAL "protobuf_c;protobuf_c_host" OR
+    NOT protobuf_c_source STREQUAL SYSTEM OR
+    NOT protobuf_c_version STREQUAL 1.4.1 OR
+    NOT protobuf_c_linkage STREQUAL DYNAMIC OR
+    NOT protobuf_c_url STREQUAL "" OR NOT protobuf_c_sha256 STREQUAL "" OR
+    NOT protobuf_c_verification STREQUAL system-package-unverified OR
+    NOT protobuf_c_host_source STREQUAL VENDORED OR
+    NOT protobuf_c_host_version STREQUAL 1.5.2 OR
+    NOT protobuf_c_host_linkage STREQUAL HOST_TOOL OR
+    NOT protobuf_c_host_url STREQUAL
+      "https://github.com/protobuf-c/protobuf-c/releases/download/v1.5.2/protobuf-c-1.5.2.tar.gz" OR
+    NOT protobuf_c_host_sha256 STREQUAL
+      "e2c86271873a79c92b58fef7ebf8de1aa0df4738347a8bd5d4e65a80a16d0d24" OR
+    NOT protobuf_c_host_verification STREQUAL verified-archive)
+  message(FATAL_ERROR
+    "Laghu build identity dependency expectation failed: host_inventory_invalid")
+endif()
