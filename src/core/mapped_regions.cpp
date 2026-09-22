@@ -28,29 +28,29 @@ namespace {
   return mode == MappingFlush::synchronous || mode == MappingFlush::asynchronous;
 }
 
-[[nodiscard]] void* map_region(int descriptor, std::size_t size, std::uint64_t offset,
+[[nodiscard]] void* map_region(void*, int descriptor, std::size_t size, std::uint64_t offset,
                                 MappingAccess access) noexcept {
   const int protection = access == MappingAccess::read_write ? PROT_READ | PROT_WRITE : PROT_READ;
   return ::mmap(nullptr, size, protection, MAP_SHARED, descriptor, static_cast<off_t>(offset));
 }
 
-[[nodiscard]] int unmap_region(void* address, std::size_t size) noexcept {
+[[nodiscard]] int unmap_region(void*, void* address, std::size_t size) noexcept {
   return ::munmap(address, size);
 }
 
-[[nodiscard]] int flush_region(void* address, std::size_t size, MappingFlush mode) noexcept {
+[[nodiscard]] int flush_region(void*, void* address, std::size_t size, MappingFlush mode) noexcept {
   const int flags = mode == MappingFlush::synchronous ? MS_SYNC : MS_ASYNC;
   return ::msync(address, size, flags);
 }
 
-[[nodiscard]] int protect_region(void* address, std::size_t size, MappingAccess access) noexcept {
+[[nodiscard]] int protect_region(void*, void* address, std::size_t size, MappingAccess access) noexcept {
   const int protection = access == MappingAccess::read_write ? PROT_READ | PROT_WRITE : PROT_READ;
   return ::mprotect(address, size, protection);
 }
 
-[[nodiscard]] long mapping_page_size() noexcept { return ::sysconf(_SC_PAGESIZE); }
+[[nodiscard]] long mapping_page_size(void*) noexcept { return ::sysconf(_SC_PAGESIZE); }
 
-[[nodiscard]] int mapping_file_size(int descriptor, std::uint64_t* output) noexcept {
+[[nodiscard]] int mapping_file_size(void*, int descriptor, std::uint64_t* output) noexcept {
   struct stat information {};
   if (::fstat(descriptor, &information) != 0) {
     return -1;
@@ -63,13 +63,13 @@ namespace {
   return 0;
 }
 
-[[nodiscard]] int open_shared_memory(const char* name, MappingAccess access) noexcept {
+[[nodiscard]] int open_shared_memory(void*, const char* name, MappingAccess access) noexcept {
   const int flags = access == MappingAccess::read_write ? O_RDWR : O_RDONLY;
   return ::shm_open(name, flags, 0);
 }
 
 const internal::MappingOperations default_operations{
-    map_region,          unmap_region,        flush_region,       protect_region,
+    nullptr,             map_region,          unmap_region,        flush_region,       protect_region,
     mapping_page_size,   mapping_file_size,   open_shared_memory, MAP_FAILED,
 };
 
@@ -94,7 +94,7 @@ const internal::MappingOperations default_operations{
     return std::unexpected{mapping_error(ErrorCode::invalid_state,
                                          "mapping operations are incomplete")};
   }
-  const long page_size = operations.page_size();
+  const long page_size = operations.page_size(operations.context);
   if (page_size <= 0) {
     return std::unexpected{Error::from_errno(errno, "mapping page size query failed")};
   }
@@ -111,7 +111,7 @@ const internal::MappingOperations default_operations{
                                          "mapping offset exceeds POSIX offset range")};
   }
   std::uint64_t source_size{};
-  if (operations.file_size(file.native_handle(), &source_size) != 0) {
+  if (operations.file_size(operations.context, file.native_handle(), &source_size) != 0) {
     return std::unexpected{Error::from_errno(errno, "mapping source size query failed")};
   }
   const auto size_u64 = checked_narrow<std::uint64_t>(size);
@@ -144,7 +144,7 @@ const internal::MappingOperations default_operations{
     return std::unexpected{range.error()};
   }
 
-  const long page_size = operations->page_size();
+  const long page_size = operations->page_size(operations->context);
   if (page_size <= 0) {
     return std::unexpected{Error::from_errno(errno, "mapping page size query failed")};
   }
@@ -275,7 +275,7 @@ Result<MappedRegion> MappedRegion::map_shared_memory_name(const char* name, std:
                                          "mapping access is invalid")};
   }
   const internal::MappingOperations& operations = internal::default_mapping_operations();
-  const int descriptor = operations.open_shared_memory(name, access);
+  const int descriptor = operations.open_shared_memory(operations.context, name, access);
   if (descriptor < 0) {
     return std::unexpected{Error::from_errno(errno, "shared memory open failed")};
   }
@@ -294,7 +294,7 @@ Result<MappedRegion> MappedRegion::map_with_operations(
       !validation.has_value()) {
     return std::unexpected{validation.error()};
   }
-  void* const address = operations.map(file.native_handle(), size, offset, access);
+  void* const address = operations.map(operations.context, file.native_handle(), size, offset, access);
   if (address == nullptr || address == operations.failed_mapping) {
     return std::unexpected{Error::from_errno(errno, "mapping creation failed")};
   }
@@ -322,7 +322,7 @@ Result<void> MappedRegion::flush(std::size_t offset, std::size_t length,
   if (!range.has_value()) {
     return std::unexpected{range.error()};
   }
-  if (operations_->flush(range->first, range->second, mode) != 0) {
+  if (operations_->flush(operations_->context, range->first, range->second, mode) != 0) {
     return std::unexpected{Error::from_errno(errno, "mapping flush failed")};
   }
   return {};
@@ -340,7 +340,7 @@ Result<void> MappedRegion::protect(MappingAccess access) noexcept {
     return std::unexpected{mapping_error(ErrorCode::invalid_state,
                                          "mapping has no protection operation")};
   }
-  if (operations_->protect(address_, size_, access) != 0) {
+  if (operations_->protect(operations_->context, address_, size_, access) != 0) {
     return std::unexpected{Error::from_errno(errno, "mapping protection change failed")};
   }
   access_ = access;
@@ -355,7 +355,7 @@ Result<FileHandle> MappedRegion::release() noexcept {
     return std::unexpected{mapping_error(ErrorCode::invalid_state,
                                          "mapping has no unmap operation")};
   }
-  if (operations_->unmap(address_, size_) != 0) {
+  if (operations_->unmap(operations_->context, address_, size_) != 0) {
     return std::unexpected{Error::from_errno(errno, "mapping release failed")};
   }
   address_ = nullptr;

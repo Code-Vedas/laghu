@@ -214,56 +214,61 @@ struct FakeState final {
   std::array<std::byte, mapping_size * 2> storage{};
 };
 
-FakeState* fake_state{};
-
-[[nodiscard]] void* fake_map(int, std::size_t, std::uint64_t, MappingAccess) noexcept {
-  ++fake_state->map_calls;
-  if (fake_state->map_result != 0) {
-    errno = fake_state->error;
+[[nodiscard]] void* fake_map(void* context, int, std::size_t, std::uint64_t, MappingAccess) noexcept {
+  auto& state = *static_cast<FakeState*>(context);
+  ++state.map_calls;
+  if (state.map_result != 0) {
+    errno = state.error;
     return reinterpret_cast<void*>(static_cast<std::uintptr_t>(1));
   }
-  return fake_state->storage.data();
+  return state.storage.data();
 }
 
-[[nodiscard]] int fake_unmap(void* address, std::size_t size) noexcept {
-  ++fake_state->unmap_calls;
-  fake_state->last_address = address;
-  fake_state->last_size = size;
-  errno = fake_state->error;
-  return fake_state->unmap_result;
+[[nodiscard]] int fake_unmap(void* context, void* address, std::size_t size) noexcept {
+  auto& state = *static_cast<FakeState*>(context);
+  ++state.unmap_calls;
+  state.last_address = address;
+  state.last_size = size;
+  errno = state.error;
+  return state.unmap_result;
 }
 
-[[nodiscard]] int fake_flush(void* address, std::size_t size, MappingFlush mode) noexcept {
-  ++fake_state->flush_calls;
-  fake_state->last_address = address;
-  fake_state->last_size = size;
-  fake_state->last_flush = mode;
-  errno = fake_state->error;
-  return fake_state->flush_result;
+[[nodiscard]] int fake_flush(void* context, void* address, std::size_t size,
+                             MappingFlush mode) noexcept {
+  auto& state = *static_cast<FakeState*>(context);
+  ++state.flush_calls;
+  state.last_address = address;
+  state.last_size = size;
+  state.last_flush = mode;
+  errno = state.error;
+  return state.flush_result;
 }
 
-[[nodiscard]] int fake_protect(void* address, std::size_t size, MappingAccess) noexcept {
-  ++fake_state->protect_calls;
-  fake_state->last_address = address;
-  fake_state->last_size = size;
-  errno = fake_state->error;
-  return fake_state->protect_result;
+[[nodiscard]] int fake_protect(void* context, void* address, std::size_t size,
+                               MappingAccess) noexcept {
+  auto& state = *static_cast<FakeState*>(context);
+  ++state.protect_calls;
+  state.last_address = address;
+  state.last_size = size;
+  errno = state.error;
+  return state.protect_result;
 }
 
-[[nodiscard]] long fake_page_size() noexcept { return 4096; }
+[[nodiscard]] long fake_page_size(void*) noexcept { return 4096; }
 
-[[nodiscard]] int fake_file_size(int, std::uint64_t* output) noexcept {
-  *output = fake_state->file_size;
+[[nodiscard]] int fake_file_size(void* context, int, std::uint64_t* output) noexcept {
+  *output = static_cast<FakeState*>(context)->file_size;
   return 0;
 }
 
-[[nodiscard]] int fake_open_shared_memory(const char*, MappingAccess) noexcept {
+[[nodiscard]] int fake_open_shared_memory(void*, const char*, MappingAccess) noexcept {
   errno = ENOENT;
   return -1;
 }
 
-[[nodiscard]] MappingOperations fake_operations() noexcept {
-  return MappingOperations{fake_map,
+[[nodiscard]] MappingOperations fake_operations(FakeState& state) noexcept {
+  return MappingOperations{&state,
+                           fake_map,
                            fake_unmap,
                            fake_flush,
                            fake_protect,
@@ -283,11 +288,9 @@ FakeState* fake_state{};
 
 [[nodiscard]] bool check_injected_failures_and_metadata() noexcept {
   FakeState state{};
-  fake_state = &state;
-  const MappingOperations operations = fake_operations();
+  const MappingOperations operations = fake_operations(state);
   auto first_file = disposable_file();
   if (!first_file.has_value()) {
-    fake_state = nullptr;
     return false;
   }
   state.map_result = -1;
@@ -295,45 +298,38 @@ FakeState* fake_state{};
                                                         MappingAccess::read_write, 0, operations);
   if (map_failure.has_value() || !first_file->is_valid() || state.map_calls != 1 ||
       !first_file->close().has_value()) {
-    fake_state = nullptr;
     return false;
   }
   auto unaligned_file = disposable_file();
   if (!unaligned_file.has_value()) {
-    fake_state = nullptr;
     return false;
   }
   const auto unaligned = MappedRegionTestAccess::map(std::move(*unaligned_file), mapping_size,
                                                       MappingAccess::read_write, 1, operations);
   if (unaligned.has_value() || !unaligned_file->is_valid() || state.map_calls != 1 ||
       !unaligned_file->close().has_value()) {
-    fake_state = nullptr;
     return false;
   }
 
   auto second_file = disposable_file();
   if (!second_file.has_value()) {
-    fake_state = nullptr;
     return false;
   }
   state.map_result = 0;
   auto mapped = MappedRegionTestAccess::map(std::move(*second_file), mapping_size,
                                             MappingAccess::read_write, 0, operations);
   if (!mapped.has_value() || second_file->is_valid()) {
-    fake_state = nullptr;
     return false;
   }
   auto region = std::move(*mapped);
   if (!region.flush(1, 2, MappingFlush::asynchronous).has_value() || state.flush_calls != 1 ||
       state.last_address != state.storage.data() || state.last_size != 4096 ||
       state.last_flush != MappingFlush::asynchronous) {
-    fake_state = nullptr;
     return false;
   }
   state.flush_result = -1;
   if (region.flush(1, 2, MappingFlush::synchronous).has_value() || !region.is_mapped() ||
       state.flush_calls != 2) {
-    fake_state = nullptr;
     return false;
   }
   state.flush_result = 0;
@@ -341,26 +337,22 @@ FakeState* fake_state{};
   const auto protection_failure = region.protect(MappingAccess::read_only);
   if (protection_failure.has_value() || region.access() != MappingAccess::read_write ||
       state.protect_calls != 1) {
-    fake_state = nullptr;
     return false;
   }
   state.protect_result = 0;
   if (!region.protect(MappingAccess::read_only).has_value() ||
       region.access() != MappingAccess::read_only || state.protect_calls != 2) {
-    fake_state = nullptr;
     return false;
   }
   state.unmap_result = -1;
   const auto release_failure = region.release();
   if (release_failure.has_value() || !region.is_mapped() || state.unmap_calls != 1) {
-    fake_state = nullptr;
     return false;
   }
   state.unmap_result = 0;
   auto released = region.release();
   const bool success = released.has_value() && !region.is_mapped() && state.unmap_calls == 2 &&
                        released->close().has_value();
-  fake_state = nullptr;
   return success;
 }
 

@@ -59,6 +59,17 @@ add_library(laghu_test_support STATIC tests/support/laghu_test_support.cpp)
 laghu_apply_first_party_contract(laghu_test_support)
 target_include_directories(laghu_test_support PUBLIC "${CMAKE_SOURCE_DIR}/tests/support")
 
+# Fault controls are build-local test support. Its complete interface is
+# deliberately private to Laghu's test targets because the wrapper contracts
+# name internal core and OS seams.
+add_library(laghu_test_faults STATIC tests/support/laghu_test_faults.cpp)
+laghu_apply_first_party_contract(laghu_test_faults)
+target_include_directories(laghu_test_faults PUBLIC
+  "${CMAKE_SOURCE_DIR}/tests/support"
+  "${CMAKE_SOURCE_DIR}/src/core/contract"
+  "${CMAKE_SOURCE_DIR}/src/core/private"
+  "${CMAKE_SOURCE_DIR}/src/os/private")
+
 add_executable(laghu_test_support_fixtures_test tests/support/fixtures.cpp)
 laghu_apply_first_party_contract(laghu_test_support_fixtures_test)
 target_link_libraries(laghu_test_support_fixtures_test PRIVATE laghu_test_support Threads::Threads)
@@ -68,12 +79,20 @@ add_executable(laghu_test_support_runner_contract_test tests/support/runner_cont
 laghu_apply_first_party_contract(laghu_test_support_runner_contract_test)
 target_link_libraries(laghu_test_support_runner_contract_test PRIVATE laghu_test_support)
 laghu_add_native_test(laghu.test_support.runner_contract laghu_test_support_runner_contract_test)
+
+add_executable(laghu_test_fault_injection_test tests/support/fault_injection.cpp)
+laghu_apply_first_party_contract(laghu_test_fault_injection_test)
+laghu_configure_api_consumer(laghu_test_fault_injection_test os)
+target_link_libraries(laghu_test_fault_injection_test PRIVATE
+  laghu_test_support laghu_test_faults laghu_core laghu_os)
+laghu_add_native_test(laghu.test_support.fault_injection laghu_test_fault_injection_test)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # POSIX requires fixed C buffers for sockaddr, mkdtemp, and directory APIs.
   # Keep the narrow diagnostic waiver confined to this non-installed test support.
   set_source_files_properties(
     tests/support/laghu_test_support.cpp
     tests/support/fixtures.cpp
+    tests/support/fault_injection.cpp
     PROPERTIES COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
 endif()
 
@@ -270,8 +289,8 @@ set(laghu_verify_targets
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
-  laghu_os_iovec_translation_test laghu_test_support laghu_test_support_fixtures_test
-  laghu_test_support_runner_contract_test laghu
+  laghu_os_iovec_translation_test laghu_test_support laghu_test_faults laghu_test_support_fixtures_test
+  laghu_test_support_runner_contract_test laghu_test_fault_injection_test laghu
   laghu_capability_header_parity laghu_visibility_probe visibility_negative_fixture)
 if(TARGET laghu_crypto_provider_test)
   list(APPEND laghu_verify_targets laghu_crypto laghu_crypto_provider_test)
