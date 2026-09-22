@@ -63,11 +63,11 @@ elseif(SCENARIO STREQUAL "full")
   set(LAGHU_FEATURES "")
   laghu_configure_build_variant()
   laghu_fixture_expect_features(
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth"
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth")
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;otlp;idna;password_auth"
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;otlp;idna;password_auth")
   laghu_fixture_expect_metadata(FULL
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth"
-    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;idna;password_auth")
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;otlp;idna;password_auth"
+    "core;tls;http2;http3;structured_data;async_dns;regex;compression_zlib;compression_brotli;compression_zstd;geoip;otlp;idna;password_auth")
   foreach(feature IN LISTS LAGHU_FEATURE_IDS)
     laghu_fixture_expect_target("${feature}" ON)
   endforeach()

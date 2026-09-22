@@ -176,6 +176,15 @@ function(laghu_build_identity_input_hashes output)
       tests/adapters/geoip.cpp
       tests/adapters/geoip_contract.cpp)
   endif()
+  list(FIND LAGHU_EFFECTIVE_FEATURES otlp otlp_feature_index)
+  if(NOT otlp_feature_index EQUAL -1)
+    list(APPEND inputs
+      cmake/LaghuOtlp.cmake
+      src/adapters/contract/laghu/adapters/otlp.hpp
+      src/adapters/otlp.cpp
+      tests/adapters/otlp.cpp
+      tests/adapters/otlp_contract.cpp)
+  endif()
   list(REMOVE_DUPLICATES inputs)
   set(entries)
   foreach(input IN LISTS inputs)
@@ -202,8 +211,16 @@ function(laghu_build_identity_dependencies output output_names)
     if(selected_version STREQUAL "")
       set(selected_version "${vendored_version}")
     endif()
+    laghu_dependency_property("${id}" SOURCE_ONLY source_only)
+    if(source_only)
+      set(identity_source VENDORED)
+      set(identity_linkage SOURCE_ONLY)
+    else()
+      set(identity_source "${LAGHU_DEPENDENCY_SOURCE}")
+      set(identity_linkage "${LAGHU_DEPENDENCY_LINK_MODE}")
+    endif()
     list(APPEND entries
-      "{\"provider\":\"${id}\",\"source\":\"${LAGHU_DEPENDENCY_SOURCE}\",\"version\":\"${selected_version}\",\"linkage\":\"${LAGHU_DEPENDENCY_LINK_MODE}\",\"url\":\"${archive_url}\",\"sha256\":\"${archive_sha256}\"}")
+      "{\"provider\":\"${id}\",\"source\":\"${identity_source}\",\"version\":\"${selected_version}\",\"linkage\":\"${identity_linkage}\",\"url\":\"${archive_url}\",\"sha256\":\"${archive_sha256}\"}")
   endforeach()
   list(JOIN entries "," rendered_entries)
   set(${output} "[${rendered_entries}]" PARENT_SCOPE)
@@ -241,11 +258,19 @@ function(laghu_build_identity_verbose output build_id compiler requested effecti
     if(selected_version STREQUAL "")
       set(selected_version "${vendored_version}")
     endif()
+    laghu_dependency_property("${id}" SOURCE_ONLY source_only)
+    if(source_only)
+      set(identity_source VENDORED)
+      set(identity_linkage SOURCE_ONLY)
+    else()
+      set(identity_source "${LAGHU_DEPENDENCY_SOURCE}")
+      set(identity_linkage "${LAGHU_DEPENDENCY_LINK_MODE}")
+    endif()
     list(APPEND lines
-      "dependency.${id}.linkage=${LAGHU_DEPENDENCY_LINK_MODE}"
+      "dependency.${id}.linkage=${identity_linkage}"
       "dependency.${id}.provider=${id}"
       "dependency.${id}.sha256=${archive_sha256}"
-      "dependency.${id}.source=${LAGHU_DEPENDENCY_SOURCE}"
+      "dependency.${id}.source=${identity_source}"
       "dependency.${id}.url=${archive_url}"
       "dependency.${id}.version=${selected_version}")
   endforeach()
