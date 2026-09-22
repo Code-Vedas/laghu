@@ -1,0 +1,69 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+
+usage() {
+  printf '%s\n' 'usage: scripts/test --build <directory> [--filter <regex>] [--verbose]' >&2
+}
+
+build_directory=''
+filter=''
+filter_set=false
+verbose=false
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --build)
+      if [ "$#" -lt 2 ] || [ -n "$build_directory" ]; then
+        usage
+        exit 64
+      fi
+      build_directory=$2
+      shift 2
+      ;;
+    --filter)
+      if [ "$#" -lt 2 ] || [ "$filter_set" = true ] || [ -z "$2" ]; then
+        usage
+        exit 64
+      fi
+      filter=$2
+      filter_set=true
+      shift 2
+      ;;
+    --verbose)
+      if [ "$verbose" = true ]; then
+        usage
+        exit 64
+      fi
+      verbose=true
+      shift
+      ;;
+    *)
+      usage
+      exit 64
+      ;;
+  esac
+done
+
+if [ -z "$build_directory" ]; then
+  usage
+  exit 64
+fi
+
+if [ ! -d "$build_directory" ]; then
+  printf '%s\n' "scripts/test: build directory does not exist: $build_directory" >&2
+  exit 66
+fi
+
+if ! command -v ctest >/dev/null 2>&1; then
+  printf '%s\n' 'scripts/test: ctest is unavailable' >&2
+  exit 69
+fi
+
+set -- ctest --test-dir "$build_directory" --output-on-failure --no-tests=error
+if [ -n "$filter" ]; then
+  set -- "$@" --tests-regex "$filter"
+fi
+if [ "$verbose" = true ]; then
+  set -- "$@" --verbose
+fi
+exec "$@"

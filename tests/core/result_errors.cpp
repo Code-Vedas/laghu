@@ -8,6 +8,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include "laghu_test_support.hpp"
+
 #include <laghu/core/contract.hpp>
 
 std::size_t allocation_attempts{};
@@ -69,11 +71,11 @@ static_assert(noexcept(laghu::core::Error::from_dependency(
 
 }  // namespace
 
-int main() {
+[[nodiscard]] bool check_result_errors() noexcept {
   const std::size_t allocation_attempts_before = allocation_attempts;
   const auto success = move_only_success();
   if (!check(success.has_value() && success->value() == 47)) {
-    return 1;
+    return false;
   }
 
   const auto invalid_input = laghu::core::Error::from_errno(EINVAL, "invalid input");
@@ -82,13 +84,13 @@ int main() {
              invalid_input.native_code() == EINVAL &&
              invalid_input.retryability() == laghu::core::Retryability::never &&
              invalid_input.security_relevance() == laghu::core::SecurityRelevance::ordinary)) {
-    return 2;
+    return false;
   }
 
   const auto deadline = laghu::core::Error::from_errno(ETIMEDOUT);
   if (!check(deadline.code() == laghu::core::ErrorCode::deadline &&
              deadline.retryability() == laghu::core::Retryability::may_retry)) {
-    return 3;
+    return false;
   }
 
   const auto dependency = laghu::core::Error::from_dependency(
@@ -97,7 +99,7 @@ int main() {
              dependency.code() == laghu::core::ErrorCode::checksum &&
              dependency.native_code() == -9 &&
              dependency.security_relevance() == laghu::core::SecurityRelevance::security_relevant)) {
-    return 4;
+    return false;
   }
 
   const std::array<char, 3> embedded_nul{'a', '\0', 'b'};
@@ -107,7 +109,7 @@ int main() {
   if (!check(embedded.diagnostic_context().size() == embedded_nul.size() &&
              embedded.diagnostic_context()[1] == '\0' &&
              embedded.diagnostic_bytes()[3] == '\0' && !embedded.diagnostic_truncated())) {
-    return 5;
+    return false;
   }
 
   std::array<char, laghu::core::Error::diagnostic_context_capacity + 1> oversized{};
@@ -122,7 +124,7 @@ int main() {
              truncated.diagnostic_truncated() &&
              truncated.diagnostic_bytes().front() == oversized.front() &&
              truncated.diagnostic_bytes().back() == oversized[95])) {
-    return 6;
+    return false;
   }
 
   const auto short_context = laghu::core::Error{laghu::core::ErrorDomain::core,
@@ -130,15 +132,22 @@ int main() {
   if (!check(short_context.diagnostic_context() == std::string_view{"ok"} &&
              short_context.diagnostic_bytes()[2] == '\0' &&
              !short_context.diagnostic_truncated())) {
-    return 7;
+    return false;
   }
 
   laghu::core::Result<int> failure = std::unexpected{invalid_input};
   if (!check(!failure.has_value() && failure.error().code() == laghu::core::ErrorCode::invalid_input)) {
-    return 8;
+    return false;
   }
   if (!check(allocation_attempts == allocation_attempts_before)) {
-    return 9;
+    return false;
   }
-  return 0;
+  return true;
+}
+
+int main() {
+  constexpr std::array tests{
+      laghu::test::TestCase{"core.result_errors.contract", check_result_errors},
+  };
+  return laghu::test::run_tests(tests);
 }

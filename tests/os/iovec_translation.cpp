@@ -5,6 +5,8 @@
 
 #include <sys/uio.h>
 
+#include "laghu_test_support.hpp"
+
 #include <laghu/core/bounded_buffer.hpp>
 #include <laghu/os/internal/io_slices.hpp>
 
@@ -90,9 +92,14 @@ using laghu::core::IoSliceList;
 
 }  // namespace
 
+[[nodiscard]] bool check_iovec_translation() noexcept {
+  return check(check_translation_and_partial_consumption()) &&
+         check(check_capacity_and_zero_slices());
+}
+
 int main() {
-  if (!check(check_translation_and_partial_consumption())) {
-    return 1;
-  }
-  return check(check_capacity_and_zero_slices()) ? 0 : 2;
+  constexpr std::array tests{
+      laghu::test::TestCase{"os.iovec_translation.contract", check_iovec_translation},
+  };
+  return laghu::test::run_tests(tests);
 }
