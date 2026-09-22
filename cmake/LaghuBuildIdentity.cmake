@@ -22,6 +22,7 @@ endfunction()
 
 function(laghu_build_identity_input_hashes output)
   set(inputs
+    .github/workflows/toolchain.yml
     CMakeLists.txt
     CMakePresets.json
     VERSION
@@ -43,7 +44,11 @@ function(laghu_build_identity_input_hashes output)
     cmake/LaghuFeatures.cmake
     cmake/LaghuHardening.cmake
     cmake/LaghuSanitizers.cmake
+    cmake/LaghuSupplyChain.cmake
     cmake/LaghuToolchain.cmake
+    cmake/ExpectSupplyChain.cmake
+    cmake/ExpectSupplyChainWorkflow.cmake
+    cmake/ValidateSupplyChain.cmake
     tests/hardening/probes/clean.cpp
     tests/hardening/probes/fortification.cpp
     tests/benchmarks/workload_counters.cpp
@@ -206,6 +211,7 @@ function(laghu_build_identity_dependencies output output_names)
   foreach(id IN LISTS dependencies)
     laghu_dependency_property("${id}" ARCHIVE_URL archive_url)
     laghu_dependency_property("${id}" ARCHIVE_SHA256 archive_sha256)
+    laghu_dependency_property("${id}" LICENSE_EXPRESSION license_expression)
     laghu_dependency_property("${id}" VENDORED_VERSION vendored_version)
     get_property(selected_version GLOBAL PROPERTY "LAGHU_DEPENDENCY_SELECTED_VERSION_${id}")
     if(selected_version STREQUAL "")
@@ -215,12 +221,24 @@ function(laghu_build_identity_dependencies output output_names)
     if(source_only)
       set(identity_source VENDORED)
       set(identity_linkage SOURCE_ONLY)
+      set(identity_url "${archive_url}")
+      set(identity_sha256 "${archive_sha256}")
+      set(identity_verification verified-archive)
     else()
       set(identity_source "${LAGHU_DEPENDENCY_SOURCE}")
       set(identity_linkage "${LAGHU_DEPENDENCY_LINK_MODE}")
+      if(identity_source STREQUAL SYSTEM)
+        set(identity_url "")
+        set(identity_sha256 "")
+        set(identity_verification system-package-unverified)
+      else()
+        set(identity_url "${archive_url}")
+        set(identity_sha256 "${archive_sha256}")
+        set(identity_verification verified-archive)
+      endif()
     endif()
     list(APPEND entries
-      "{\"provider\":\"${id}\",\"source\":\"${identity_source}\",\"version\":\"${selected_version}\",\"linkage\":\"${identity_linkage}\",\"url\":\"${archive_url}\",\"sha256\":\"${archive_sha256}\"}")
+      "{\"provider\":\"${id}\",\"source\":\"${identity_source}\",\"version\":\"${selected_version}\",\"linkage\":\"${identity_linkage}\",\"url\":\"${identity_url}\",\"sha256\":\"${identity_sha256}\",\"license\":\"${license_expression}\",\"verification\":\"${identity_verification}\"}")
   endforeach()
   list(JOIN entries "," rendered_entries)
   set(${output} "[${rendered_entries}]" PARENT_SCOPE)
@@ -262,16 +280,29 @@ function(laghu_build_identity_verbose output build_id compiler requested effecti
     if(source_only)
       set(identity_source VENDORED)
       set(identity_linkage SOURCE_ONLY)
+      set(identity_url "${archive_url}")
+      set(identity_sha256 "${archive_sha256}")
+      set(identity_verification verified-archive)
     else()
       set(identity_source "${LAGHU_DEPENDENCY_SOURCE}")
       set(identity_linkage "${LAGHU_DEPENDENCY_LINK_MODE}")
+      if(identity_source STREQUAL SYSTEM)
+        set(identity_url "")
+        set(identity_sha256 "")
+        set(identity_verification system-package-unverified)
+      else()
+        set(identity_url "${archive_url}")
+        set(identity_sha256 "${archive_sha256}")
+        set(identity_verification verified-archive)
+      endif()
     endif()
     list(APPEND lines
       "dependency.${id}.linkage=${identity_linkage}"
       "dependency.${id}.provider=${id}"
-      "dependency.${id}.sha256=${archive_sha256}"
+      "dependency.${id}.sha256=${identity_sha256}"
       "dependency.${id}.source=${identity_source}"
-      "dependency.${id}.url=${archive_url}"
+      "dependency.${id}.url=${identity_url}"
+      "dependency.${id}.verification=${identity_verification}"
       "dependency.${id}.version=${selected_version}")
   endforeach()
   list(SORT lines)

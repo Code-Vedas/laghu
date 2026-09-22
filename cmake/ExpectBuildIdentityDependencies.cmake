@@ -19,10 +19,14 @@ string(JSON version GET "${dependencies}" 0 version)
 string(JSON linkage GET "${dependencies}" 0 linkage)
 string(JSON url GET "${dependencies}" 0 url)
 string(JSON sha256 GET "${dependencies}" 0 sha256)
+string(JSON license GET "${dependencies}" 0 license)
+string(JSON verification GET "${dependencies}" 0 verification)
 string(LENGTH "${sha256}" sha256_length)
 if(NOT dependency_count EQUAL 1 OR NOT provider STREQUAL "yyjson" OR NOT source STREQUAL "VENDORED" OR
     NOT version STREQUAL "0.13.0" OR NOT linkage STREQUAL "STATIC" OR
     NOT url STREQUAL "https://github.com/ibireme/yyjson/archive/refs/tags/0.13.0.tar.gz" OR
-    NOT sha256_length EQUAL 64 OR NOT sha256 MATCHES "^[0-9a-f]+$" OR NOT dependency_names STREQUAL "yyjson")
+    NOT sha256_length EQUAL 64 OR NOT sha256 MATCHES "^[0-9a-f]+$" OR
+    NOT license STREQUAL "MIT" OR NOT verification STREQUAL "verified-archive" OR
+    NOT dependency_names STREQUAL "yyjson")
   message(FATAL_ERROR "Laghu build identity dependency expectation failed: inventory_invalid")
 endif()

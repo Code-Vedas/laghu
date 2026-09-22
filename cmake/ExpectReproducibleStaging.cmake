@@ -10,7 +10,7 @@ file(REMOVE_RECURSE "${work}")
 file(MAKE_DIRECTORY "${work}")
 
 function(laghu_copy_source destination)
-  foreach(entry IN ITEMS CMakeLists.txt CMakePresets.json VERSION bench cmake docs src tests)
+  foreach(entry IN ITEMS .github CMakeLists.txt CMakePresets.json VERSION bench cmake docs src tests)
     set(source_entry "${LAGHU_SOURCE}/${entry}")
     if(NOT EXISTS "${source_entry}")
       message(FATAL_ERROR "Laghu reproducibility expectation failed: source_entry_missing=${entry}")
@@ -106,7 +106,10 @@ set(artifacts
   "cli|${LAGHU_REPRO_STAGE_a}/bin/laghu|${LAGHU_REPRO_STAGE_b}/bin/laghu"
   "archive|${LAGHU_REPRO_STAGE_a}/lib/laghu/liblaghu_core.a|${LAGHU_REPRO_STAGE_b}/lib/laghu/liblaghu_core.a"
   "manifest|${LAGHU_REPRO_STAGE_a}/share/laghu/laghu-build-manifest-v1.json|${LAGHU_REPRO_STAGE_b}/share/laghu/laghu-build-manifest-v1.json"
-  "capabilities_header|${LAGHU_REPRO_BINARY_a}/generated/laghu/capabilities.hpp|${LAGHU_REPRO_BINARY_b}/generated/laghu/capabilities.hpp")
+  "capabilities_header|${LAGHU_REPRO_BINARY_a}/generated/laghu/capabilities.hpp|${LAGHU_REPRO_BINARY_b}/generated/laghu/capabilities.hpp"
+  "spdx|${LAGHU_REPRO_BINARY_a}/config/laghu-spdx-3.0.1.spdx.json|${LAGHU_REPRO_BINARY_b}/config/laghu-spdx-3.0.1.spdx.json"
+  "cyclonedx|${LAGHU_REPRO_BINARY_a}/config/laghu-cyclonedx-1.7.cdx.json|${LAGHU_REPRO_BINARY_b}/config/laghu-cyclonedx-1.7.cdx.json"
+  "provenance|${LAGHU_REPRO_BINARY_a}/config/laghu-provenance-v1.json|${LAGHU_REPRO_BINARY_b}/config/laghu-provenance-v1.json")
 foreach(entry IN LISTS artifacts)
   string(REPLACE "|" ";" fields "${entry}")
   list(GET fields 0 artifact)
