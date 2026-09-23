@@ -188,13 +188,16 @@ constexpr EventBackendOperations operations{
   EventBackendOperations incomplete = operations;
   incomplete.wait = nullptr;
   const auto invalid_backend = EventBackend::create(&state, incomplete);
+  EventBackendOperations default_operations;
+  const auto default_backend = EventBackend::create(&state, default_operations);
 
   return !EventSource::from_native_handle(-1) && !EventToken::from_uint64(0) &&
          !empty_interests && empty_interests.error().code() == ErrorCode::invalid_input &&
          !empty_wait && empty_wait.error().code() == ErrorCode::invalid_range &&
          !negative_wait && negative_wait.error().code() == ErrorCode::invalid_input &&
          !overflow && overflow.error().code() == ErrorCode::overflow &&
-         !invalid_backend && invalid_backend.error().code() == ErrorCode::invalid_input;
+         !invalid_backend && invalid_backend.error().code() == ErrorCode::invalid_input &&
+         !default_backend && default_backend.error().code() == ErrorCode::invalid_input;
 }
 
 }  // namespace

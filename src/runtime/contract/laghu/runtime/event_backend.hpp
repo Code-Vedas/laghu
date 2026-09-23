@@ -138,11 +138,11 @@ using QueryEventBackendCapabilities = core::Result<EventBackendCapabilities> (*)
     void* context) noexcept;
 
 struct EventBackendOperations final {
-  RegisterEventSource register_source;
-  ModifyEventSource modify_source;
-  RemoveEventSource remove_source;
-  WaitForEvents wait;
-  QueryEventBackendCapabilities capabilities;
+  RegisterEventSource register_source{};
+  ModifyEventSource modify_source{};
+  RemoveEventSource remove_source{};
+  WaitForEvents wait{};
+  QueryEventBackendCapabilities capabilities{};
 };
 
 class EventBackend final {
