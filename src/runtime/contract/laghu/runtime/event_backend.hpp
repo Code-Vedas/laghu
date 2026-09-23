@@ -123,6 +123,11 @@ struct EventBackendCapabilities final {
   bool completions;
 };
 
+struct EventWaitResult final {
+  std::size_t event_count;
+  bool saturated;
+};
+
 using RegisterEventSource = core::Result<void> (*)(
     void* context, EventSource source, EventToken token,
     EventInterests interests) noexcept;
@@ -131,7 +136,7 @@ using ModifyEventSource = core::Result<void> (*)(
     EventInterests interests) noexcept;
 using RemoveEventSource = core::Result<void> (*)(
     void* context, EventSource source, EventToken token) noexcept;
-using WaitForEvents = core::Result<std::size_t> (*)(
+using WaitForEvents = core::Result<EventWaitResult> (*)(
     void* context, std::span<Event> output,
     std::chrono::nanoseconds maximum_wait) noexcept;
 using QueryEventBackendCapabilities = core::Result<EventBackendCapabilities> (*)(
@@ -162,7 +167,7 @@ class EventBackend final {
       EventSource source, EventToken token, EventInterests interests) const noexcept;
   [[nodiscard]] core::Result<void> remove_source(
       EventSource source, EventToken token) const noexcept;
-  [[nodiscard]] core::Result<std::size_t> wait(
+  [[nodiscard]] core::Result<EventWaitResult> wait(
       std::span<Event> output, std::chrono::nanoseconds maximum_wait) const noexcept;
   [[nodiscard]] core::Result<EventBackendCapabilities> capabilities() const noexcept;
 

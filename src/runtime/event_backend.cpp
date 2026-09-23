@@ -54,7 +54,7 @@ core::Result<void> EventBackend::remove_source(
   return operations_.remove_source(context_, source, token);
 }
 
-core::Result<std::size_t> EventBackend::wait(
+core::Result<EventWaitResult> EventBackend::wait(
     std::span<Event> output, std::chrono::nanoseconds maximum_wait) const noexcept {
   if (output.empty()) {
     return std::unexpected{core::Error{core::ErrorDomain::core,
@@ -65,7 +65,7 @@ core::Result<std::size_t> EventBackend::wait(
     return std::unexpected{invalid_backend("event wait duration must be nonnegative")};
   }
   auto result = operations_.wait(context_, output, maximum_wait);
-  if (result && *result > output.size()) {
+  if (result && result->event_count > output.size()) {
     return std::unexpected{core::Error{core::ErrorDomain::core,
                                        core::ErrorCode::overflow, 0,
                                        "event backend exceeded output capacity"}};

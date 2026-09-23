@@ -782,6 +782,13 @@ target_link_libraries(laghu_runtime_event_backend_test PRIVATE
   laghu_runtime laghu_test_support)
 laghu_add_native_test(laghu.runtime.event_backend laghu_runtime_event_backend_test)
 
+add_executable(laghu_runtime_event_batch_test tests/runtime/event_batch.cpp)
+laghu_apply_first_party_contract(laghu_runtime_event_batch_test)
+laghu_configure_api_consumer(laghu_runtime_event_batch_test runtime)
+target_link_libraries(laghu_runtime_event_batch_test PRIVATE
+  laghu_runtime laghu_test_support)
+laghu_add_native_test(laghu.runtime.event_batch laghu_runtime_event_batch_test)
+
 add_executable(laghu
   src/cli/main.cpp
   "${LAGHU_BUILD_MANIFEST_SOURCE}")
@@ -824,6 +831,7 @@ set(laghu_verify_targets
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
   laghu_os_iovec_translation_test laghu_runtime_event_backend_test
+  laghu_runtime_event_batch_test
   laghu_test_support laghu_test_faults laghu_test_time_entropy
   laghu_benchmark_metrics_test laghu_benchmark_workload_counters_test laghu_benchmark_evaluate
   laghu_test_time_entropy_test laghu_test_support_fixtures_test

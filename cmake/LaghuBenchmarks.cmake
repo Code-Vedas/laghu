@@ -57,8 +57,18 @@ function(laghu_add_benchmark_targets)
       COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
   endif()
 
+  add_executable(laghu_benchmark_event_batch EXCLUDE_FROM_ALL
+    bench/event_batch.cpp
+    bench/runner.cpp)
+  laghu_apply_first_party_contract(laghu_benchmark_event_batch)
+  laghu_configure_api_consumer(laghu_benchmark_event_batch runtime)
+  target_include_directories(laghu_benchmark_event_batch PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
+    "${CMAKE_SOURCE_DIR}/bench/private")
+  target_link_libraries(laghu_benchmark_event_batch PRIVATE laghu_core)
+
   set(benchmark_registry
-    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\n")
+    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\nevent-batch\tlaghu_benchmark_event_batch\t$<TARGET_FILE:laghu_benchmark_event_batch>\n")
   foreach(codec_feature codec_suffix IN ZIP_LISTS
       LAGHU_CODEC_BENCHMARK_FEATURES LAGHU_CODEC_BENCHMARK_SUFFIXES)
     list(FIND LAGHU_EFFECTIVE_FEATURES "${codec_feature}" codec_feature_index)
