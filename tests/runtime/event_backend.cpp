@@ -25,6 +25,7 @@ using laghu::runtime::EventNotification;
 using laghu::runtime::EventNotifications;
 using laghu::runtime::EventSource;
 using laghu::runtime::EventToken;
+using laghu::runtime::EventWaitResult;
 
 struct Registration final {
   int source;
@@ -95,14 +96,14 @@ struct FakeBackend final {
   return {};
 }
 
-[[nodiscard]] Result<std::size_t> wait(void* context, std::span<Event> output,
-                                       std::chrono::nanoseconds) noexcept {
+[[nodiscard]] Result<EventWaitResult> wait(void* context, std::span<Event> output,
+                                           std::chrono::nanoseconds) noexcept {
   auto& backend = *static_cast<FakeBackend*>(context);
   if (backend.overproduce) {
-    return output.size() + 1;
+    return EventWaitResult{output.size() + 1, true};
   }
   if (backend.size == 0 || output.empty()) {
-    return 0;
+    return EventWaitResult{0, false};
   }
   const auto token = EventToken::from_uint64(backend.registrations[0].token);
   if (!token) {
@@ -115,7 +116,7 @@ struct FakeBackend final {
       .add(EventNotification::wakeup)
       .add(EventNotification::completion);
   output[0] = Event{*token, notifications};
-  return 1;
+  return EventWaitResult{1, false};
 }
 
 [[nodiscard]] Result<EventBackendCapabilities> capabilities(void*) noexcept {
@@ -150,7 +151,8 @@ constexpr EventBackendOperations operations{
   std::array<Event, 1> events{Event{*token, EventNotifications{EventNotification::error}}};
   const auto count = backend->wait(events, std::chrono::milliseconds{1});
   const auto caps = backend->capabilities();
-  if (!count || *count != 1 || events[0].token().value() != token->value() || !caps ||
+  if (!count || count->event_count != 1 || count->saturated ||
+      events[0].token().value() != token->value() || !caps ||
       !caps->readiness || !caps->wakeups || !caps->completions) {
     return false;
   }

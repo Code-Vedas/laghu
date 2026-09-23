@@ -27,6 +27,7 @@ function(laghu_build_identity_input_hashes output)
     CMakePresets.json
     VERSION
     bench/core_foundation.cpp
+    bench/event_batch.cpp
     bench/evaluator.cpp
     bench/regression-gates.tsv
     bench/private/laghu/benchmark/internal/metrics.hpp
@@ -85,6 +86,7 @@ function(laghu_build_identity_input_hashes output)
     src/os/io_operations.cpp
     src/os/private/laghu/os/internal/io_operations.hpp
     src/runtime/contract/laghu/runtime/event_backend.hpp
+    src/runtime/contract/laghu/runtime/event_batch.hpp
     src/runtime/event_backend.cpp
     scripts/benchmark
     scripts/benchmark-evaluate
