@@ -120,6 +120,8 @@ laghu_configure_api_boundaries()
 laghu_apply_first_party_contract(laghu_os)
 laghu_configure_api_consumer(laghu_os os)
 target_include_directories(laghu_os PRIVATE "${CMAKE_SOURCE_DIR}/src/os/private")
+laghu_apply_first_party_contract(laghu_runtime)
+laghu_configure_api_consumer(laghu_runtime runtime)
 
 # Deterministic time and entropy are test-only controls. They are kept in a
 # separate non-installed target so production entropy remains OS-provided.
@@ -773,6 +775,13 @@ target_link_libraries(laghu_os_iovec_translation_test PRIVATE laghu_os)
 target_link_libraries(laghu_os_iovec_translation_test PRIVATE laghu_test_support)
 laghu_add_native_test(laghu.os.iovec_translation laghu_os_iovec_translation_test)
 
+add_executable(laghu_runtime_event_backend_test tests/runtime/event_backend.cpp)
+laghu_apply_first_party_contract(laghu_runtime_event_backend_test)
+laghu_configure_api_consumer(laghu_runtime_event_backend_test runtime)
+target_link_libraries(laghu_runtime_event_backend_test PRIVATE
+  laghu_runtime laghu_test_support)
+laghu_add_native_test(laghu.runtime.event_backend laghu_runtime_event_backend_test)
+
 add_executable(laghu
   src/cli/main.cpp
   "${LAGHU_BUILD_MANIFEST_SOURCE}")
@@ -806,7 +815,7 @@ install(FILES "${LAGHU_BUILD_MANIFEST}"
   DESTINATION share/laghu)
 
 set(laghu_verify_targets
-  laghu_core laghu_os laghu_core_smoke laghu_core_result_errors_test
+  laghu_core laghu_os laghu_runtime laghu_core_smoke laghu_core_result_errors_test
   laghu_core_strong_identifiers_test laghu_core_checked_arithmetic_test
   laghu_core_byte_text_views_test laghu_core_fd_handles_test
   laghu_core_memory_budgets_test laghu_core_bounded_arena_test
@@ -814,7 +823,8 @@ set(laghu_verify_targets
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
-  laghu_os_iovec_translation_test laghu_test_support laghu_test_faults laghu_test_time_entropy
+  laghu_os_iovec_translation_test laghu_runtime_event_backend_test
+  laghu_test_support laghu_test_faults laghu_test_time_entropy
   laghu_benchmark_metrics_test laghu_benchmark_workload_counters_test laghu_benchmark_evaluate
   laghu_test_time_entropy_test laghu_test_support_fixtures_test
   laghu_test_support_runner_contract_test laghu_test_fault_injection_test laghu
