@@ -84,6 +84,8 @@ function(laghu_build_identity_input_hashes output)
     src/core/private/laghu/core/internal/mapping_operations.hpp
     src/os/io_operations.cpp
     src/os/private/laghu/os/internal/io_operations.hpp
+    src/runtime/contract/laghu/runtime/event_backend.hpp
+    src/runtime/event_backend.cpp
     scripts/benchmark
     scripts/benchmark-evaluate
     tests/warnings/suppressions.tsv

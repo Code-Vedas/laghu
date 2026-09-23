@@ -951,7 +951,7 @@ function(laghu_add_validation_tests)
       "-DINCLUDE_DIRECTORIES=${CMAKE_SOURCE_DIR}/src/core/contract"
       -DEXPECT_FAIL=ON
       -P "${expect_compile}")
-  foreach(fixture IN ITEMS external-c-type external-c-type-token private-namespace private-include cross-private-source direct-private-path legacy-global-symbol)
+  foreach(fixture IN ITEMS external-c-type external-c-type-token native-event-type-token private-namespace private-include cross-private-source direct-private-path legacy-global-symbol)
     add_test(NAME "laghu.api.policy_negative.${fixture}"
       COMMAND "${CMAKE_COMMAND}"
         "-DMODULE=${CMAKE_SOURCE_DIR}/cmake/LaghuApiBoundaries.cmake"
