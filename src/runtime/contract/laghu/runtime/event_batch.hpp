@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 
 #include <laghu/core/contract.hpp>
@@ -58,31 +60,40 @@ enum class EventBatchYieldReason : std::uint8_t {
 class ReadyRotation final {
  public:
   [[nodiscard]] constexpr std::size_t index_for(
-      std::size_t ordinal, std::size_t ready_count) const noexcept {
-    if (ready_count == 0) {
+      std::span<const Event> ready, std::size_t ordinal) const noexcept {
+    if (ready.empty()) {
       return 0;
     }
-    const std::size_t normalized_start = next_start_ % ready_count;
-    const std::size_t normalized_ordinal = ordinal % ready_count;
-    const std::size_t remaining = ready_count - normalized_start;
+    const std::size_t normalized_start = start_index(ready);
+    const std::size_t normalized_ordinal = ordinal % ready.size();
+    const std::size_t remaining = ready.size() - normalized_start;
     return normalized_ordinal < remaining ? normalized_start + normalized_ordinal
                                           : normalized_ordinal - remaining;
   }
 
-  constexpr void advance(std::size_t processed, std::size_t ready_count) noexcept {
-    if (ready_count == 0) {
-      next_start_ = 0;
+  constexpr void advance(std::span<const Event> ready,
+                         std::size_t processed) noexcept {
+    if (ready.empty()) {
       return;
     }
-    const std::size_t normalized_start = next_start_ % ready_count;
-    const std::size_t normalized_processed = processed % ready_count;
-    next_start_ = normalized_processed < ready_count - normalized_start
-                      ? normalized_start + normalized_processed
-                      : normalized_processed - (ready_count - normalized_start);
+    continuation_token_ = ready[index_for(ready, processed)].token().value();
   }
 
  private:
-  std::size_t next_start_{0};
+  [[nodiscard]] constexpr std::size_t start_index(
+      std::span<const Event> ready) const noexcept {
+    if (continuation_token_ == 0) {
+      return 0;
+    }
+    for (std::size_t index = 0; index < ready.size(); ++index) {
+      if (ready[index].token().value() == continuation_token_) {
+        return index;
+      }
+    }
+    return 0;
+  }
+
+  std::uint64_t continuation_token_{0};
 };
 
 class EventBatch final {
@@ -114,6 +125,8 @@ class EventBatch final {
                                          core::ErrorCode::overflow, 0,
                                          "event backend exceeded batch capacity"}};
     }
+    std::ranges::sort(storage_.first(result.event_count), {},
+                      [](const Event& event) { return event.token().value(); });
     event_count_ = result.event_count;
     processed_events_ = 0;
     consumed_work_units_ = 0;
@@ -146,14 +159,15 @@ class EventBatch final {
                                          core::ErrorCode::exhaustion, 0,
                                          "event batch processing ceiling reached"}};
     }
-    const std::size_t index = rotation.index_for(processed_events_, event_count_);
+    const std::span<const Event> ready = storage_.first(event_count_);
+    const std::size_t index = rotation.index_for(ready, processed_events_);
     ++processed_events_;
     consumed_work_units_ += work_units;
     return storage_[index];
   }
 
   constexpr void finish_rotation(ReadyRotation& rotation) const noexcept {
-    rotation.advance(processed_events_, event_count_);
+    rotation.advance(storage_.first(event_count_), processed_events_);
   }
 
   [[nodiscard]] constexpr std::size_t event_count() const noexcept {

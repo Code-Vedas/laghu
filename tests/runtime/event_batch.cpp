@@ -76,12 +76,70 @@ using laghu::runtime::ReadyRotation;
     return false;
   }
 
+  storage = std::array<Event, 4>{
+      Event{*token4, EventNotifications{EventNotification::readable}},
+      Event{*token3, EventNotifications{EventNotification::readable}},
+      Event{*token2, EventNotifications{EventNotification::readable}},
+      Event{*token1, EventNotifications{EventNotification::readable}},
+  };
   if (!batch->commit_backend_result(EventWaitResult{4, false})) {
     return false;
   }
   const auto third = batch->take_next(rotation, 1, std::chrono::nanoseconds{0});
   const auto fourth = batch->take_next(rotation, 1, std::chrono::nanoseconds{0});
   return third && fourth && third->token().value() == 3 && fourth->token().value() == 4;
+}
+
+[[nodiscard]] bool check_ready_rotation_fallbacks() noexcept {
+  const auto token1 = EventToken::from_uint64(1);
+  const auto token2 = EventToken::from_uint64(2);
+  const auto token3 = EventToken::from_uint64(3);
+  const auto token4 = EventToken::from_uint64(4);
+  const auto limits = EventBatchLimits::create(3, 1, std::chrono::seconds{1});
+  if (!token1 || !token2 || !token3 || !token4 || !limits) {
+    return false;
+  }
+  std::array<Event, 3> storage{
+      Event{*token1, EventNotifications{EventNotification::readable}},
+      Event{*token2, EventNotifications{EventNotification::readable}},
+      Event{*token3, EventNotifications{EventNotification::readable}},
+  };
+  auto batch = EventBatch::create(storage, *limits);
+  ReadyRotation rotation;
+  if (!batch || !batch->commit_backend_result(EventWaitResult{3, false}) ||
+      !batch->take_next(rotation, 1, std::chrono::nanoseconds{0})) {
+    return false;
+  }
+  batch->finish_rotation(rotation);
+
+  if (!batch->commit_backend_result(EventWaitResult{0, false})) {
+    return false;
+  }
+  batch->finish_rotation(rotation);
+  storage = std::array<Event, 3>{
+      Event{*token4, EventNotifications{EventNotification::readable}},
+      Event{*token2, EventNotifications{EventNotification::readable}},
+      Event{*token1, EventNotifications{EventNotification::readable}},
+  };
+  if (!batch->commit_backend_result(EventWaitResult{3, false})) {
+    return false;
+  }
+  const auto preserved = batch->take_next(rotation, 1, std::chrono::nanoseconds{0});
+  if (!preserved || preserved->token().value() != 2) {
+    return false;
+  }
+  batch->finish_rotation(rotation);
+
+  storage = std::array<Event, 3>{
+      Event{*token3, EventNotifications{EventNotification::readable}},
+      Event{*token2, EventNotifications{EventNotification::readable}},
+      Event{*token1, EventNotifications{EventNotification::readable}},
+  };
+  if (!batch->commit_backend_result(EventWaitResult{3, false})) {
+    return false;
+  }
+  const auto fallback = batch->take_next(rotation, 1, std::chrono::nanoseconds{0});
+  return fallback && fallback->token().value() == 1;
 }
 
 [[nodiscard]] bool check_invalid_limits_and_capacity() noexcept {
@@ -109,6 +167,8 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"runtime.event_batch.limits", check_limits_and_saturation},
       laghu::test::TestCase{"runtime.event_batch.rotation", check_ready_rotation_fairness},
+      laghu::test::TestCase{"runtime.event_batch.rotation_fallbacks",
+                            check_ready_rotation_fallbacks},
       laghu::test::TestCase{"runtime.event_batch.invalid", check_invalid_limits_and_capacity},
   };
   return laghu::test::run_tests(tests);
