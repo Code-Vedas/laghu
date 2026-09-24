@@ -785,6 +785,19 @@ target_link_libraries(laghu_os_wakeup_test PRIVATE
   laghu_os laghu_test_support Threads::Threads)
 laghu_add_native_test(laghu.os.wakeup laghu_os_wakeup_test)
 
+add_executable(laghu_os_listener_test tests/os/listener.cpp)
+laghu_apply_first_party_contract(laghu_os_listener_test)
+laghu_configure_api_consumer(laghu_os_listener_test os)
+target_include_directories(laghu_os_listener_test PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/os/private")
+target_link_libraries(laghu_os_listener_test PRIVATE
+  laghu_os laghu_test_support)
+laghu_add_native_test(laghu.os.listener laghu_os_listener_test)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(tests/os/listener.cpp PROPERTIES
+    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+endif()
+
 add_executable(laghu_runtime_event_backend_test tests/runtime/event_backend.cpp)
 laghu_apply_first_party_contract(laghu_runtime_event_backend_test)
 laghu_configure_api_consumer(laghu_runtime_event_backend_test runtime)
@@ -848,7 +861,7 @@ set(laghu_verify_targets
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
-  laghu_os_iovec_translation_test laghu_os_wakeup_test
+  laghu_os_iovec_translation_test laghu_os_wakeup_test laghu_os_listener_test
   laghu_runtime_event_backend_test laghu_runtime_event_batch_test
   laghu_runtime_worker_wakeup_test
   laghu_test_support laghu_test_faults laghu_test_time_entropy
