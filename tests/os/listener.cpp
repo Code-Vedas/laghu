@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -37,6 +38,8 @@ enum class InjectedFailure : std::uint8_t {
   bind,
   listen,
   path_status,
+  set_path_mode,
+  unlink,
 };
 
 struct FaultContext final {
@@ -115,25 +118,34 @@ struct FaultContext final {
 }
 
 [[nodiscard]] int fault_path_status(void* context, const char* path, bool* exists,
-                                    bool* is_socket) noexcept {
+                                    bool* is_socket, std::uint64_t* device,
+                                    std::uint64_t* inode) noexcept {
   auto& state = fault(context);
   if (state.failure == InjectedFailure::path_status) {
     errno = EACCES;
     return -1;
   }
   return state.underlying->path_status(state.underlying->context, path, exists,
-                                       is_socket);
+                                       is_socket, device, inode);
 }
 
 [[nodiscard]] int forward_chmod(void* context, const char* path,
                                 std::uint16_t permissions) noexcept {
   auto& state = fault(context);
+  if (state.failure == InjectedFailure::set_path_mode) {
+    errno = EACCES;
+    return -1;
+  }
   return state.underlying->set_path_mode(state.underlying->context, path,
                                          permissions);
 }
 
 [[nodiscard]] int forward_unlink(void* context, const char* path) noexcept {
   auto& state = fault(context);
+  if (state.failure == InjectedFailure::unlink) {
+    errno = EBUSY;
+    return -1;
+  }
   return state.underlying->unlink(state.underlying->context, path);
 }
 
@@ -313,7 +325,8 @@ struct FaultContext final {
     static_cast<void>(::close(descriptor));
     return false;
   }
-  auto listener = Listener::adopt(std::move(*socket), ListenerKind::ipv4_tcp);
+  auto listener = Listener::adopt_trusted(std::move(*socket),
+                                          ListenerKind::ipv4_tcp);
   return listener && descriptor_is_configured(listener->borrow().native_handle());
 }
 
@@ -337,11 +350,61 @@ struct FaultContext final {
   if (!directory || !build_path(*directory, "listener.sock", path, size)) {
     return false;
   }
-  FaultContext context{&underlying, InjectedFailure::path_status};
+  for (const auto failure : {InjectedFailure::path_status,
+                             InjectedFailure::set_path_mode}) {
+    FaultContext context{&underlying, failure};
+    const ListenerOperations operations = injected_operations(context);
+    if (ListenerTestAccess::create_unix(
+            UnixListenerConfig{TextView::from({path.data(), size}), 8, 0600,
+                               false},
+            operations)) {
+      return false;
+    }
+    struct stat status {};
+    if (::lstat(path.data(), &status) == 0 || errno != ENOENT) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool check_cleanup_retry() noexcept {
+  const auto directory = laghu::test::TemporaryDirectory::create("listener-retry");
+  std::array<char, UnixListenerConfig::path_capacity> path{};
+  std::size_t size{};
+  if (!directory || !build_path(*directory, "listener.sock", path, size)) {
+    return false;
+  }
+  const auto& underlying = laghu::os::internal::default_listener_operations();
+  FaultContext context{&underlying, InjectedFailure::unlink};
   const ListenerOperations operations = injected_operations(context);
-  return !ListenerTestAccess::create_unix(
+  auto listener = ListenerTestAccess::create_unix(
       UnixListenerConfig{TextView::from({path.data(), size}), 8, 0600, false},
       operations);
+  if (!listener || listener->close()) {
+    return false;
+  }
+  struct stat status {};
+  if (::lstat(path.data(), &status) != 0 || !S_ISSOCK(status.st_mode)) {
+    return false;
+  }
+  context.failure = InjectedFailure::none;
+  return listener->close() && ::lstat(path.data(), &status) != 0 &&
+         errno == ENOENT;
+}
+
+[[nodiscard]] bool check_insecure_parent_rejected() noexcept {
+  const auto directory = laghu::test::TemporaryDirectory::create("listener-parent");
+  std::array<char, UnixListenerConfig::path_capacity> path{};
+  std::size_t size{};
+  if (!directory || !build_path(*directory, "listener.sock", path, size) ||
+      ::chmod(directory->path().data(), 0777) != 0) {
+    return false;
+  }
+  const auto listener = Listener::create_unix(
+      UnixListenerConfig{TextView::from({path.data(), size}), 8, 0600, false});
+  const bool restored = ::chmod(directory->path().data(), 0700) == 0;
+  return !listener && restored;
 }
 
 }  // namespace
@@ -358,6 +421,9 @@ int main() {
                             check_stale_unix_listener_is_replaced},
       laghu::test::TestCase{"os.listener.adoption", check_adoption},
       laghu::test::TestCase{"os.listener.faults", check_faults},
+      laghu::test::TestCase{"os.listener.cleanup_retry", check_cleanup_retry},
+      laghu::test::TestCase{"os.listener.insecure_parent",
+                            check_insecure_parent_rejected},
   };
   return laghu::test::run_tests(tests);
 }

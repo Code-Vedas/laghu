@@ -19,7 +19,8 @@ using BindFunction = int (*)(void*, int, const sockaddr*, socklen_t) noexcept;
 using ConnectFunction = int (*)(void*, int, const sockaddr*, socklen_t) noexcept;
 using ListenFunction = int (*)(void*, int, int) noexcept;
 using GetSocketNameFunction = int (*)(void*, int, sockaddr*, socklen_t*) noexcept;
-using PathStatusFunction = int (*)(void*, const char*, bool*, bool*) noexcept;
+using PathStatusFunction = int (*)(void*, const char*, bool*, bool*, std::uint64_t*,
+                                   std::uint64_t*) noexcept;
 using PathModeFunction = int (*)(void*, const char*, std::uint16_t) noexcept;
 using UnlinkFunction = int (*)(void*, const char*) noexcept;
 

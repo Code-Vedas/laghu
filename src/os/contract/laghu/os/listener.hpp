@@ -45,6 +45,9 @@ struct Ipv6ListenerConfig final {
 struct UnixListenerConfig final {
   static constexpr std::size_t path_capacity = 104;
 
+  // The parent directory must be owned by the effective user and must not be
+  // writable by its group or by other users. Laghu serializes listener path
+  // creation and cleanup within that trusted directory.
   core::TextView path;
   std::uint32_t backlog;
   std::uint16_t permissions;
@@ -66,7 +69,10 @@ class Listener final {
       const Ipv6ListenerConfig& config) noexcept;
   [[nodiscard]] static core::Result<Listener> create_unix(
       const UnixListenerConfig& config) noexcept;
-  [[nodiscard]] static core::Result<Listener> adopt(
+  // The caller guarantees the descriptor is already listening. Linux and
+  // FreeBSD additionally verify that state; Darwin has no equivalent
+  // side-effect-free SO_ACCEPTCONN query.
+  [[nodiscard]] static core::Result<Listener> adopt_trusted(
       core::SocketHandle&& socket, ListenerKind expected_kind) noexcept;
 
   [[nodiscard]] core::BorrowedSocketHandle borrow() const noexcept {
@@ -88,7 +94,7 @@ class Listener final {
   [[nodiscard]] static core::Result<Listener> create_unix(
       const UnixListenerConfig& config,
       const internal::ListenerOperations& operations) noexcept;
-  [[nodiscard]] static core::Result<Listener> adopt(
+  [[nodiscard]] static core::Result<Listener> adopt_trusted(
       core::SocketHandle&& socket, ListenerKind expected_kind,
       const internal::ListenerOperations& operations) noexcept;
 
@@ -97,6 +103,9 @@ class Listener final {
   core::SocketHandle socket_{};
   ListenerKind kind_{ListenerKind::ipv4_tcp};
   std::array<char, UnixListenerConfig::path_capacity> unix_path_{};
+  std::size_t unix_path_size_{};
+  std::uint64_t unix_device_{};
+  std::uint64_t unix_inode_{};
   bool owns_unix_path_{};
   const internal::ListenerOperations* operations_{};
 };

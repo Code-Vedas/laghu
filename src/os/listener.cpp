@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string_view>
 #include <utility>
 
 #include <arpa/inet.h>
@@ -16,6 +17,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -63,16 +65,21 @@ namespace {
 }
 
 [[nodiscard]] int system_path_status(void*, const char* path, bool* exists,
-                                     bool* is_socket) noexcept {
+                                     bool* is_socket, std::uint64_t* device,
+                                     std::uint64_t* inode) noexcept {
   struct stat status {};
   if (::lstat(path, &status) == 0) {
     *exists = true;
     *is_socket = S_ISSOCK(status.st_mode);
+    *device = static_cast<std::uint64_t>(status.st_dev);
+    *inode = static_cast<std::uint64_t>(status.st_ino);
     return 0;
   }
   if (errno == ENOENT) {
     *exists = false;
     *is_socket = false;
+    *device = 0;
+    *inode = 0;
     return 0;
   }
   return -1;
@@ -109,6 +116,91 @@ namespace {
                                            const char* diagnostic) noexcept {
   return core::Error::from_errno(native_error, diagnostic);
 }
+
+class UnixDirectoryLock final {
+ public:
+  UnixDirectoryLock(const UnixDirectoryLock&) = delete;
+  UnixDirectoryLock& operator=(const UnixDirectoryLock&) = delete;
+  UnixDirectoryLock(UnixDirectoryLock&&) noexcept = default;
+  UnixDirectoryLock& operator=(UnixDirectoryLock&&) noexcept = default;
+
+  [[nodiscard]] static core::Result<UnixDirectoryLock> acquire(
+      core::TextView socket_path) noexcept {
+    const std::string_view path = socket_path.string_view();
+    const std::size_t separator = path.find_last_of('/');
+    if (separator == std::string_view::npos || separator + 1U >= path.size()) {
+      return std::unexpected{core::Error{core::ErrorDomain::core,
+                                         core::ErrorCode::invalid_input, 0,
+                                         "Unix listener path has no filename"}};
+    }
+    const std::string_view parent_text = separator == 0 ? std::string_view{"/"}
+                                                        : path.substr(0, separator);
+    const auto parent_view = core::TextView::from(parent_text);
+    const auto parent =
+        parent_view.to_c_string<UnixListenerConfig::path_capacity>();
+    if (!parent) {
+      return std::unexpected{parent.error()};
+    }
+    const int directory_descriptor =
+        ::open(parent->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (directory_descriptor < 0) {
+      return std::unexpected{operation_error(
+          errno, "Unix listener parent directory open failed")};
+    }
+    auto directory = core::FileHandle::adopt(directory_descriptor);
+    if (!directory) {
+      static_cast<void>(::close(directory_descriptor));
+      return std::unexpected{directory.error()};
+    }
+    struct stat directory_status {};
+    if (::fstat(directory_descriptor, &directory_status) != 0) {
+      return std::unexpected{operation_error(
+          errno, "Unix listener parent directory inspection failed")};
+    }
+    if (!S_ISDIR(directory_status.st_mode) ||
+        directory_status.st_uid != ::geteuid() ||
+        (directory_status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+      return std::unexpected{core::Error{
+          core::ErrorDomain::core, core::ErrorCode::invalid_input, 0,
+          "Unix listener parent must be caller-owned and not externally writable"}};
+    }
+    constexpr char lock_name[] = ".laghu-listener.lock";
+    const int lock_descriptor = ::openat(
+        directory_descriptor, lock_name,
+        O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (lock_descriptor < 0) {
+      return std::unexpected{operation_error(errno,
+                                              "Unix listener lock open failed")};
+    }
+    auto lock = core::FileHandle::adopt(lock_descriptor);
+    if (!lock) {
+      static_cast<void>(::close(lock_descriptor));
+      return std::unexpected{lock.error()};
+    }
+    struct stat lock_status {};
+    if (::fstat(lock_descriptor, &lock_status) != 0 ||
+        !S_ISREG(lock_status.st_mode) || lock_status.st_uid != ::geteuid()) {
+      return std::unexpected{operation_error(
+          errno == 0 ? EACCES : errno, "Unix listener lock is not trusted")};
+    }
+    int lock_result{};
+    do {
+      lock_result = ::flock(lock_descriptor, LOCK_EX);
+    } while (lock_result != 0 && errno == EINTR);
+    if (lock_result != 0) {
+      return std::unexpected{operation_error(errno,
+                                              "Unix listener lock acquisition failed")};
+    }
+    return UnixDirectoryLock{std::move(*directory), std::move(*lock)};
+  }
+
+ private:
+  UnixDirectoryLock(core::FileHandle&& directory, core::FileHandle&& lock) noexcept
+      : directory_(std::move(directory)), lock_(std::move(lock)) {}
+
+  core::FileHandle directory_{};
+  core::FileHandle lock_{};
+};
 
 [[nodiscard]] core::Result<void> validate_operations(
     const internal::ListenerOperations& operations) noexcept {
@@ -337,6 +429,10 @@ core::Result<Listener> Listener::create_unix(
   if (const auto valid = validate_operations(operations); !valid) {
     return std::unexpected{valid.error()};
   }
+  auto directory_lock = UnixDirectoryLock::acquire(config.path);
+  if (!directory_lock) {
+    return std::unexpected{directory_lock.error()};
+  }
   sockaddr_un address{};
   address.sun_family = AF_UNIX;
   std::ranges::copy(path->view(), address.sun_path);
@@ -347,8 +443,10 @@ core::Result<Listener> Listener::create_unix(
 #endif
   bool exists{};
   bool is_socket{};
+  std::uint64_t existing_device{};
+  std::uint64_t existing_inode{};
   if (operations.path_status(operations.context, path->c_str(), &exists,
-                             &is_socket) != 0) {
+                             &is_socket, &existing_device, &existing_inode) != 0) {
     return std::unexpected{operation_error(errno, "Unix listener path inspection failed")};
   }
   if (exists && (!is_socket || !config.remove_stale_socket)) {
@@ -377,7 +475,24 @@ core::Result<Listener> Listener::create_unix(
       return std::unexpected{operation_error(
           probe_error, "Unix listener path could not be proven stale")};
     }
-    if (operations.unlink(operations.context, path->c_str()) != 0 &&
+    bool still_exists{};
+    bool still_socket{};
+    std::uint64_t current_device{};
+    std::uint64_t current_inode{};
+    if (operations.path_status(operations.context, path->c_str(), &still_exists,
+                               &still_socket, &current_device,
+                               &current_inode) != 0) {
+      return std::unexpected{operation_error(
+          errno, "Unix listener stale-path revalidation failed")};
+    }
+    if (still_exists &&
+        (!still_socket || current_device != existing_device ||
+         current_inode != existing_inode)) {
+      return std::unexpected{operation_error(
+          EBUSY, "Unix listener path changed during stale cleanup")};
+    }
+    if (still_exists &&
+        operations.unlink(operations.context, path->c_str()) != 0 &&
         errno != ENOENT) {
       return std::unexpected{operation_error(errno,
                                              "stale Unix listener removal failed")};
@@ -399,28 +514,63 @@ core::Result<Listener> Listener::create_unix(
                       reinterpret_cast<const sockaddr*>(&address), address_size) != 0) {
     return std::unexpected{operation_error(errno, "Unix listener bind failed")};
   }
+  bool bound_exists{};
+  bool bound_is_socket{};
+  std::uint64_t bound_device{};
+  std::uint64_t bound_inode{};
+  if (operations.path_status(operations.context, path->c_str(), &bound_exists,
+                             &bound_is_socket, &bound_device,
+                             &bound_inode) != 0 ||
+      !bound_exists || !bound_is_socket) {
+    const int native_error = errno == 0 ? EIO : errno;
+    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+    return std::unexpected{operation_error(
+        native_error, "Unix listener bound path verification failed")};
+  }
   if (operations.set_path_mode(operations.context, path->c_str(),
-                               config.permissions) != 0 ||
-      operations.listen(operations.context, descriptor, *backlog) != 0) {
+                               config.permissions) != 0) {
     const int native_error = errno;
     static_cast<void>(operations.unlink(operations.context, path->c_str()));
     return std::unexpected{operation_error(native_error,
                                            "Unix listener finalization failed")};
   }
+  bool verified_exists{};
+  bool verified_is_socket{};
+  std::uint64_t verified_device{};
+  std::uint64_t verified_inode{};
+  if (operations.path_status(operations.context, path->c_str(), &verified_exists,
+                             &verified_is_socket, &verified_device,
+                             &verified_inode) != 0 ||
+      !verified_exists || !verified_is_socket ||
+      verified_device != bound_device || verified_inode != bound_inode) {
+    const int native_error = errno == 0 ? EBUSY : errno;
+    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+    return std::unexpected{operation_error(
+        native_error, "Unix listener path changed during permission setup")};
+  }
+  if (operations.listen(operations.context, descriptor, *backlog) != 0) {
+    const int native_error = errno;
+    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+    return std::unexpected{operation_error(native_error,
+                                           "Unix listener listen failed")};
+  }
   Listener listener{std::move(*socket), ListenerKind::unix_stream};
   std::ranges::copy(path->view(), listener.unix_path_.begin());
+  listener.unix_path_size_ = path->size();
+  listener.unix_device_ = bound_device;
+  listener.unix_inode_ = bound_inode;
   listener.owns_unix_path_ = true;
   listener.operations_ = &operations;
   return listener;
 }
 
-core::Result<Listener> Listener::adopt(core::SocketHandle&& socket,
-                                       ListenerKind expected_kind) noexcept {
-  return adopt(std::move(socket), expected_kind,
-               internal::default_listener_operations());
+core::Result<Listener> Listener::adopt_trusted(
+    core::SocketHandle&& socket, ListenerKind expected_kind) noexcept {
+  return adopt_trusted(std::move(socket), expected_kind,
+                       internal::default_listener_operations());
 }
 
-core::Result<Listener> Listener::adopt(
+core::Result<Listener> Listener::adopt_trusted(
     core::SocketHandle&& socket, ListenerKind expected_kind,
     const internal::ListenerOperations& operations) noexcept {
   if (!socket.is_valid()) {
@@ -485,11 +635,40 @@ core::Result<void> Listener::close() noexcept {
   const auto socket_closed = socket_.close();
   core::Result<void> path_removed{};
   if (owns_unix_path_) {
-    owns_unix_path_ = false;
-    if (operations_ == nullptr ||
-        operations_->unlink(operations_->context, unix_path_.data()) != 0) {
-      path_removed = std::unexpected{operation_error(
-          operations_ == nullptr ? EINVAL : errno, "Unix listener cleanup failed")};
+    const auto path_view = core::TextView::from(unix_path_.data(), unix_path_size_);
+    auto directory_lock = path_view
+                              ? UnixDirectoryLock::acquire(*path_view)
+                              : core::Result<UnixDirectoryLock>{
+                                    std::unexpected{path_view.error()}};
+    if (!directory_lock || operations_ == nullptr) {
+      path_removed = std::unexpected{
+          !directory_lock
+              ? directory_lock.error()
+              : core::Error{core::ErrorDomain::core,
+                            core::ErrorCode::invalid_state, 0,
+                            "Unix listener has no cleanup operations"}};
+    } else {
+      bool exists{};
+      bool is_socket{};
+      std::uint64_t device{};
+      std::uint64_t inode{};
+      if (operations_->path_status(operations_->context, unix_path_.data(),
+                                   &exists, &is_socket, &device, &inode) != 0) {
+        path_removed = std::unexpected{operation_error(
+            errno, "Unix listener cleanup inspection failed")};
+      } else if (!exists) {
+        owns_unix_path_ = false;
+      } else if (!is_socket || device != unix_device_ || inode != unix_inode_) {
+        path_removed = std::unexpected{operation_error(
+            EBUSY, "Unix listener path ownership changed before cleanup")};
+      } else if (operations_->unlink(operations_->context,
+                                     unix_path_.data()) == 0 ||
+                 errno == ENOENT) {
+        owns_unix_path_ = false;
+      } else {
+        path_removed = std::unexpected{operation_error(
+            errno, "Unix listener cleanup failed")};
+      }
     }
   }
   if (!socket_closed) {
@@ -502,6 +681,9 @@ void Listener::move_from(Listener&& other) noexcept {
   socket_ = std::move(other.socket_);
   kind_ = other.kind_;
   unix_path_ = other.unix_path_;
+  unix_path_size_ = std::exchange(other.unix_path_size_, 0);
+  unix_device_ = std::exchange(other.unix_device_, 0);
+  unix_inode_ = std::exchange(other.unix_inode_, 0);
   owns_unix_path_ = std::exchange(other.owns_unix_path_, false);
   operations_ = std::exchange(other.operations_, nullptr);
 }
