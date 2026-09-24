@@ -32,13 +32,12 @@ using laghu::os::WakeupObservation;
                "worker wakeup is closing or closed"};
 }
 
-[[nodiscard]] bool configure_descriptor(int descriptor) noexcept {
-  const int status = ::fcntl(descriptor, F_GETFL, 0);
-  if (status < 0 || ::fcntl(descriptor, F_SETFL, status | O_NONBLOCK) != 0) {
-    return false;
-  }
-  const int flags = ::fcntl(descriptor, F_GETFD, 0);
-  return flags >= 0 && ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0;
+[[nodiscard]] bool would_block(int native_error) noexcept {
+#if EAGAIN == EWOULDBLOCK
+  return native_error == EAGAIN;
+#else
+  return native_error == EAGAIN || native_error == EWOULDBLOCK;
+#endif
 }
 
 }  // namespace
@@ -76,16 +75,8 @@ Result<WakeupChannel> laghu::os::WakeupChannel::create() noexcept {
   }
 #endif
   std::array<int, 2> descriptors{-1, -1};
-  if (::pipe(descriptors.data()) != 0) {
+  if (::pipe2(descriptors.data(), O_NONBLOCK | O_CLOEXEC) != 0) {
     return std::unexpected{Error::from_errno(errno, "pipe wakeup creation failed")};
-  }
-  if (!configure_descriptor(descriptors[0]) ||
-      !configure_descriptor(descriptors[1])) {
-    const int native_error = errno;
-    static_cast<void>(::close(descriptors[0]));
-    static_cast<void>(::close(descriptors[1]));
-    return std::unexpected{
-        Error::from_errno(native_error, "pipe wakeup configuration failed")};
   }
   auto read_handle = FileHandle::adopt(descriptors[0]);
   auto write_handle = FileHandle::adopt(descriptors[1]);
@@ -154,7 +145,7 @@ Result<WakeupNotifyResult> laghu::os::WakeupChannel::notify() noexcept {
     if (written < 0 && errno == EINTR) {
       continue;
     }
-    if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if (written < 0 && would_block(errno)) {
       return WakeupNotifyResult::coalesced;
     }
     return std::unexpected{Error::from_errno(
@@ -184,7 +175,7 @@ Result<WakeupObservation> laghu::os::WakeupChannel::consume() noexcept {
     if (received < 0 && errno == EINTR) {
       continue;
     }
-    if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if (received < 0 && would_block(errno)) {
       break;
     }
     return std::unexpected{Error::from_errno(

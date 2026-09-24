@@ -20,6 +20,14 @@ using laghu::os::WakeupMechanism;
 using laghu::os::WakeupNotifyResult;
 using laghu::os::internal::WakeupTestAccess;
 
+[[nodiscard]] bool would_block(int native_error) noexcept {
+#if EAGAIN == EWOULDBLOCK
+  return native_error == EAGAIN;
+#else
+  return native_error == EAGAIN || native_error == EWOULDBLOCK;
+#endif
+}
+
 [[nodiscard]] bool descriptor_is_nonblocking_and_close_on_exec(int descriptor) noexcept {
   const int status = ::fcntl(descriptor, F_GETFL, 0);
   const int flags = ::fcntl(descriptor, F_GETFD, 0);
@@ -44,7 +52,7 @@ using laghu::os::internal::WakeupTestAccess;
     if (written < 0 && errno == EINTR) {
       continue;
     }
-    return written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
+    return written < 0 && would_block(errno);
   }
 }
 
@@ -61,7 +69,8 @@ using laghu::os::internal::WakeupTestAccess;
     return false;
   }
 #if defined(__linux__)
-  if (channel->mechanism() != WakeupMechanism::event_counter) {
+  if (channel->mechanism() != WakeupMechanism::event_counter &&
+      channel->mechanism() != WakeupMechanism::pipe) {
     return false;
   }
 #else

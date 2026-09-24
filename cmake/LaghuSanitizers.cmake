@@ -149,7 +149,9 @@ function(laghu_add_sanitizer_test_target)
     endif()
     add_custom_target(laghu_sanitizer_tsan_tests
       COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-        -R "laghu.core.deadlines_cancellation.tsan|laghu.runtime.worker_wakeup"
+        -R "^laghu.core.deadlines_cancellation.tsan$"
+      COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
+        -R "^laghu.runtime.worker_wakeup$"
       COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
         -R "laghu.sanitizer.fixture.data_race"
       DEPENDS ${tsan_targets}

@@ -56,17 +56,17 @@ using laghu::runtime::WorkerWakeupNotifyResult;
 
 struct StressContext final {
   WorkerWakeup* wakeup;
-  std::atomic<std::size_t>* produced;
+  std::atomic<std::size_t>* notifications_completed;
   std::atomic<bool>* failed;
 };
 
 void produce_wakeups(StressContext context) noexcept {
   for (std::size_t index = 0; index < 2000U; ++index) {
-    context.produced->fetch_add(1);
     if (!context.wakeup->notify()) {
       context.failed->store(true);
       return;
     }
+    context.notifications_completed->fetch_add(1);
   }
 }
 
@@ -75,9 +75,9 @@ void produce_wakeups(StressContext context) noexcept {
   if (!wakeup) {
     return false;
   }
-  std::atomic<std::size_t> produced{0};
+  std::atomic<std::size_t> notifications_completed{0};
   std::atomic<bool> failed{false};
-  StressContext context{&*wakeup, &produced, &failed};
+  StressContext context{&*wakeup, &notifications_completed, &failed};
   std::array<std::thread, 4> producers{
       std::thread{produce_wakeups, context}, std::thread{produce_wakeups, context},
       std::thread{produce_wakeups, context}, std::thread{produce_wakeups, context}};
@@ -93,28 +93,23 @@ void produce_wakeups(StressContext context) noexcept {
       failed.store(true);
       break;
     }
-    observed = produced.load();
+    observed = notifications_completed.load();
     while (consumed->pending) {
       consumed = wakeup->consume();
       if (!consumed) {
         failed.store(true);
         break;
       }
-      observed = produced.load();
+      observed = notifications_completed.load();
     }
   }
   for (auto& producer : producers) {
     producer.join();
   }
-  if (observed < produced.load() && wakeup->notify()) {
-    if (wait_until_readable(*wakeup, 1000)) {
-      const auto consumed = wakeup->consume();
-      if (consumed && consumed->observed) {
-        observed = produced.load();
-      }
-    }
-  }
-  return !failed.load() && produced.load() == 8000U && observed == 8000U;
+  const auto final = wakeup->consume();
+  return !failed.load() && notifications_completed.load() == 8000U &&
+         observed == 8000U && final && !final->pending &&
+         !wait_until_readable(*wakeup, 0);
 }
 
 void notify_until_closed(WorkerWakeup* wakeup,
