@@ -142,12 +142,17 @@ endfunction()
 
 function(laghu_add_sanitizer_test_target)
   if(LAGHU_SANITIZER_PROFILE STREQUAL "TSAN" AND NOT CMAKE_CROSSCOMPILING)
+    set(tsan_targets laghu_core_deadlines_cancellation_tsan_test
+      laghu_sanitizer_data_race_fixture)
+    if(TARGET laghu_runtime_worker_wakeup_test)
+      list(APPEND tsan_targets laghu_runtime_worker_wakeup_test)
+    endif()
     add_custom_target(laghu_sanitizer_tsan_tests
       COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-        -R "laghu.core.deadlines_cancellation.tsan"
+        -R "laghu.core.deadlines_cancellation.tsan|laghu.runtime.worker_wakeup"
       COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
         -R "laghu.sanitizer.fixture.data_race"
-      DEPENDS laghu_core_deadlines_cancellation_tsan_test laghu_sanitizer_data_race_fixture
+      DEPENDS ${tsan_targets}
       USES_TERMINAL
       COMMENT "Running Laghu concurrency tests under ThreadSanitizer")
   endif()

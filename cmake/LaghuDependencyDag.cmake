@@ -157,9 +157,14 @@ function(laghu_declare_subsystem_graph)
   laghu_register_subsystem_target(laghu_core core)
   foreach(node IN ITEMS config os runtime protocol tls cache observability proxy control cli adapters)
     if(node STREQUAL "os")
-      add_library(laghu_os STATIC src/os/io_slices.cpp src/os/io_operations.cpp)
+      add_library(laghu_os STATIC
+        src/os/io_slices.cpp
+        src/os/io_operations.cpp
+        src/os/wakeup.cpp)
     elseif(node STREQUAL "runtime")
-      add_library(laghu_runtime STATIC src/runtime/event_backend.cpp)
+      add_library(laghu_runtime STATIC
+        src/runtime/event_backend.cpp
+        src/runtime/worker_wakeup.cpp)
     else()
       add_library("laghu_${node}" INTERFACE)
     endif()

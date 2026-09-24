@@ -120,6 +120,7 @@ laghu_configure_api_boundaries()
 laghu_apply_first_party_contract(laghu_os)
 laghu_configure_api_consumer(laghu_os os)
 target_include_directories(laghu_os PRIVATE "${CMAKE_SOURCE_DIR}/src/os/private")
+target_link_libraries(laghu_os PRIVATE Threads::Threads)
 laghu_apply_first_party_contract(laghu_runtime)
 laghu_configure_api_consumer(laghu_runtime runtime)
 
@@ -775,6 +776,15 @@ target_link_libraries(laghu_os_iovec_translation_test PRIVATE laghu_os)
 target_link_libraries(laghu_os_iovec_translation_test PRIVATE laghu_test_support)
 laghu_add_native_test(laghu.os.iovec_translation laghu_os_iovec_translation_test)
 
+add_executable(laghu_os_wakeup_test tests/os/wakeup.cpp)
+laghu_apply_first_party_contract(laghu_os_wakeup_test)
+laghu_configure_api_consumer(laghu_os_wakeup_test os)
+target_include_directories(laghu_os_wakeup_test PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/os/private")
+target_link_libraries(laghu_os_wakeup_test PRIVATE
+  laghu_os laghu_test_support Threads::Threads)
+laghu_add_native_test(laghu.os.wakeup laghu_os_wakeup_test)
+
 add_executable(laghu_runtime_event_backend_test tests/runtime/event_backend.cpp)
 laghu_apply_first_party_contract(laghu_runtime_event_backend_test)
 laghu_configure_api_consumer(laghu_runtime_event_backend_test runtime)
@@ -788,6 +798,14 @@ laghu_configure_api_consumer(laghu_runtime_event_batch_test runtime)
 target_link_libraries(laghu_runtime_event_batch_test PRIVATE
   laghu_runtime laghu_test_support)
 laghu_add_native_test(laghu.runtime.event_batch laghu_runtime_event_batch_test)
+
+add_executable(laghu_runtime_worker_wakeup_test tests/runtime/worker_wakeup.cpp)
+laghu_apply_first_party_contract(laghu_runtime_worker_wakeup_test)
+laghu_configure_api_consumer(laghu_runtime_worker_wakeup_test runtime)
+target_link_libraries(laghu_runtime_worker_wakeup_test PRIVATE
+  laghu_runtime laghu_test_support Threads::Threads)
+laghu_add_native_test(laghu.runtime.worker_wakeup
+  laghu_runtime_worker_wakeup_test)
 
 add_executable(laghu
   src/cli/main.cpp
@@ -830,8 +848,9 @@ set(laghu_verify_targets
   laghu_core_state_transitions_test laghu_core_deadlines_cancellation_test
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
-  laghu_os_iovec_translation_test laghu_runtime_event_backend_test
-  laghu_runtime_event_batch_test
+  laghu_os_iovec_translation_test laghu_os_wakeup_test
+  laghu_runtime_event_backend_test laghu_runtime_event_batch_test
+  laghu_runtime_worker_wakeup_test
   laghu_test_support laghu_test_faults laghu_test_time_entropy
   laghu_benchmark_metrics_test laghu_benchmark_workload_counters_test laghu_benchmark_evaluate
   laghu_test_time_entropy_test laghu_test_support_fixtures_test
