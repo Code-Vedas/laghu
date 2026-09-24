@@ -40,6 +40,8 @@ class WakeupChannel final {
 
   [[nodiscard]] core::Result<WakeupNotifyResult> notify() noexcept;
   [[nodiscard]] core::Result<WakeupObservation> consume() noexcept;
+  // The returned descriptor is borrowed and remains valid until close() begins.
+  // Callers must unregister it from their event backend before closing the channel.
   [[nodiscard]] core::Result<int> notification_descriptor() const noexcept;
   [[nodiscard]] WakeupMechanism mechanism() const noexcept { return mechanism_; }
   [[nodiscard]] core::Result<void> close() noexcept;
@@ -49,20 +51,20 @@ class WakeupChannel final {
 
   class OperationGuard final {
    public:
-    explicit OperationGuard(WakeupChannel& channel) noexcept : channel_(&channel) {}
+    explicit OperationGuard(const WakeupChannel& channel) noexcept : channel_(&channel) {}
     OperationGuard(const OperationGuard&) = delete;
     OperationGuard& operator=(const OperationGuard&) = delete;
     ~OperationGuard() { channel_->end_operation(); }
 
    private:
-    WakeupChannel* channel_;
+    const WakeupChannel* channel_;
   };
 
   WakeupChannel(core::FileHandle&& read_handle, core::FileHandle&& write_handle,
                 WakeupMechanism mechanism) noexcept;
 
-  [[nodiscard]] bool begin_operation() noexcept;
-  void end_operation() noexcept;
+  [[nodiscard]] bool begin_operation() const noexcept;
+  void end_operation() const noexcept;
   [[nodiscard]] int write_descriptor() const noexcept;
 
   core::FileHandle read_handle_;
@@ -70,7 +72,7 @@ class WakeupChannel final {
   WakeupMechanism mechanism_;
   std::atomic<bool> pending_{false};
   std::atomic<bool> closing_{false};
-  std::atomic<std::uint32_t> active_operations_{0};
+  mutable std::atomic<std::uint32_t> active_operations_{0};
 };
 
 }  // namespace laghu::os

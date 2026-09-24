@@ -31,6 +31,8 @@ class WorkerWakeup final {
 
   [[nodiscard]] core::Result<WorkerWakeupNotifyResult> notify() noexcept;
   [[nodiscard]] core::Result<WorkerWakeupObservation> consume() noexcept;
+  // The event source borrows the wakeup descriptor and remains valid until
+  // close() begins. Unregister it from the event backend before closing.
   [[nodiscard]] core::Result<EventSource> event_source() const noexcept;
   [[nodiscard]] core::Result<void> close() noexcept;
 

@@ -40,6 +40,37 @@ using laghu::os::WakeupObservation;
 #endif
 }
 
+#if !defined(__linux__) && !defined(__FreeBSD__)
+[[nodiscard]] bool configure_pipe_descriptor(int descriptor) noexcept {
+  const int status = ::fcntl(descriptor, F_GETFL, 0);
+  if (status < 0 || ::fcntl(descriptor, F_SETFL, status | O_NONBLOCK) != 0) {
+    return false;
+  }
+  const int flags = ::fcntl(descriptor, F_GETFD, 0);
+  return flags >= 0 && ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+#endif
+
+[[nodiscard]] bool create_pipe(std::array<int, 2>& descriptors) noexcept {
+#if defined(__linux__) || defined(__FreeBSD__)
+  return ::pipe2(descriptors.data(), O_NONBLOCK | O_CLOEXEC) == 0;
+#else
+  if (::pipe(descriptors.data()) != 0) {
+    return false;
+  }
+  if (configure_pipe_descriptor(descriptors[0]) &&
+      configure_pipe_descriptor(descriptors[1])) {
+    return true;
+  }
+  const int native_error = errno;
+  static_cast<void>(::close(descriptors[0]));
+  static_cast<void>(::close(descriptors[1]));
+  descriptors = {-1, -1};
+  errno = native_error;
+  return false;
+#endif
+}
+
 }  // namespace
 
 laghu::os::WakeupChannel::WakeupChannel(FileHandle&& read_handle,
@@ -75,7 +106,7 @@ Result<WakeupChannel> laghu::os::WakeupChannel::create() noexcept {
   }
 #endif
   std::array<int, 2> descriptors{-1, -1};
-  if (::pipe2(descriptors.data(), O_NONBLOCK | O_CLOEXEC) != 0) {
+  if (!create_pipe(descriptors)) {
     return std::unexpected{Error::from_errno(errno, "pipe wakeup creation failed")};
   }
   auto read_handle = FileHandle::adopt(descriptors[0]);
@@ -97,7 +128,7 @@ Result<WakeupChannel> laghu::os::WakeupChannel::create() noexcept {
                        WakeupMechanism::pipe};
 }
 
-bool laghu::os::WakeupChannel::begin_operation() noexcept {
+bool laghu::os::WakeupChannel::begin_operation() const noexcept {
   if (closing_.load()) {
     return false;
   }
@@ -109,7 +140,7 @@ bool laghu::os::WakeupChannel::begin_operation() noexcept {
   return false;
 }
 
-void laghu::os::WakeupChannel::end_operation() noexcept {
+void laghu::os::WakeupChannel::end_operation() const noexcept {
   active_operations_.fetch_sub(1);
 }
 
@@ -185,7 +216,11 @@ Result<WakeupObservation> laghu::os::WakeupChannel::consume() noexcept {
 }
 
 Result<int> laghu::os::WakeupChannel::notification_descriptor() const noexcept {
-  if (closing_.load() || !read_handle_.is_valid()) {
+  if (!begin_operation()) {
+    return std::unexpected{closed_error()};
+  }
+  OperationGuard guard{*this};
+  if (!read_handle_.is_valid()) {
     return std::unexpected{closed_error()};
   }
   return read_handle_.native_handle();
