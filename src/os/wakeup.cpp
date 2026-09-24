@@ -92,7 +92,9 @@ laghu::os::WakeupChannel::WakeupChannel(WakeupChannel&& other) noexcept
       write_handle_(std::move(other.write_handle_)),
       mechanism_(other.mechanism_),
       pending_(other.pending_.load()),
-      closing_(other.closing_.load()) {}
+      closing_(other.closing_.load()),
+      close_completed_(other.close_completed_.load()),
+      close_error_(other.close_error_) {}
 
 laghu::os::WakeupChannel::~WakeupChannel() { static_cast<void>(close()); }
 
@@ -236,6 +238,12 @@ Result<int> laghu::os::WakeupChannel::notification_descriptor() const noexcept {
 Result<void> laghu::os::WakeupChannel::close() noexcept {
   bool expected = false;
   if (!closing_.compare_exchange_strong(expected, true)) {
+    while (!close_completed_.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    if (close_error_) {
+      return std::unexpected{*close_error_};
+    }
     return {};
   }
   while (active_operations_.load() != 0) {
@@ -245,7 +253,13 @@ Result<void> laghu::os::WakeupChannel::close() noexcept {
   const Result<void> write_closed = write_handle_.close();
   const Result<void> read_closed = read_handle_.close();
   if (!write_closed) {
-    return std::unexpected{write_closed.error()};
+    close_error_ = write_closed.error();
+  } else if (!read_closed) {
+    close_error_ = read_closed.error();
   }
-  return read_closed;
+  close_completed_.store(true, std::memory_order_release);
+  if (close_error_) {
+    return std::unexpected{*close_error_};
+  }
+  return {};
 }

@@ -147,6 +147,16 @@ void notify_until_closed(WorkerWakeup* wakeup,
   }
 }
 
+void close_concurrently(WorkerWakeup* wakeup, std::atomic<bool>* start,
+                        std::atomic<std::size_t>* successes) noexcept {
+  while (!start->load()) {
+    std::this_thread::yield();
+  }
+  if (wakeup->close()) {
+    successes->fetch_add(1);
+  }
+}
+
 [[nodiscard]] bool check_teardown_race() noexcept {
   auto wakeup = WorkerWakeup::create();
   if (!wakeup) {
@@ -154,19 +164,29 @@ void notify_until_closed(WorkerWakeup* wakeup,
   }
   std::atomic<bool> closed_seen{false};
   std::atomic<bool> descriptor_closed_seen{false};
+  std::atomic<bool> start_close{false};
+  std::atomic<std::size_t> close_successes{0};
   std::thread borrower{borrow_until_closed, &*wakeup, &descriptor_closed_seen};
   std::array<std::thread, 4> producers{
       std::thread{notify_until_closed, &*wakeup, &closed_seen},
       std::thread{notify_until_closed, &*wakeup, &closed_seen},
       std::thread{notify_until_closed, &*wakeup, &closed_seen},
       std::thread{notify_until_closed, &*wakeup, &closed_seen}};
-  const auto closed = wakeup->close();
+  std::array<std::thread, 4> closers{
+      std::thread{close_concurrently, &*wakeup, &start_close, &close_successes},
+      std::thread{close_concurrently, &*wakeup, &start_close, &close_successes},
+      std::thread{close_concurrently, &*wakeup, &start_close, &close_successes},
+      std::thread{close_concurrently, &*wakeup, &start_close, &close_successes}};
+  start_close.store(true);
   for (auto& producer : producers) {
     producer.join();
   }
+  for (auto& closer : closers) {
+    closer.join();
+  }
   borrower.join();
-  return closed && closed_seen.load() && descriptor_closed_seen.load() &&
-         !wakeup->notify() &&
+  return close_successes.load() == closers.size() && closed_seen.load() &&
+         descriptor_closed_seen.load() && !wakeup->notify() &&
          !wakeup->event_source();
 }
 

@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 
 #include <laghu/core/contract.hpp>
 #include <laghu/core/handles.hpp>
@@ -72,7 +73,9 @@ class WakeupChannel final {
   WakeupMechanism mechanism_;
   std::atomic<bool> pending_{false};
   std::atomic<bool> closing_{false};
+  std::atomic<bool> close_completed_{false};
   mutable std::atomic<std::uint32_t> active_operations_{0};
+  std::optional<core::Error> close_error_{};
 };
 
 }  // namespace laghu::os
