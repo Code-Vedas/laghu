@@ -40,7 +40,6 @@ using laghu::os::WakeupObservation;
 #endif
 }
 
-#if !defined(__linux__) && !defined(__FreeBSD__)
 [[nodiscard]] bool configure_pipe_descriptor(int descriptor) noexcept {
   const int status = ::fcntl(descriptor, F_GETFL, 0);
   if (status < 0 || ::fcntl(descriptor, F_SETFL, status | O_NONBLOCK) != 0) {
@@ -49,12 +48,9 @@ using laghu::os::WakeupObservation;
   const int flags = ::fcntl(descriptor, F_GETFD, 0);
   return flags >= 0 && ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0;
 }
-#endif
 
-[[nodiscard]] bool create_pipe(std::array<int, 2>& descriptors) noexcept {
-#if defined(__linux__) || defined(__FreeBSD__)
-  return ::pipe2(descriptors.data(), O_NONBLOCK | O_CLOEXEC) == 0;
-#else
+[[nodiscard]] bool create_configured_pipe(
+    std::array<int, 2>& descriptors) noexcept {
   if (::pipe(descriptors.data()) != 0) {
     return false;
   }
@@ -68,7 +64,18 @@ using laghu::os::WakeupObservation;
   descriptors = {-1, -1};
   errno = native_error;
   return false;
+}
+
+[[nodiscard]] bool create_pipe(std::array<int, 2>& descriptors) noexcept {
+#if defined(__linux__) || defined(__FreeBSD__)
+  if (::pipe2(descriptors.data(), O_NONBLOCK | O_CLOEXEC) == 0) {
+    return true;
+  }
+  if (errno != ENOSYS && errno != EINVAL) {
+    return false;
+  }
 #endif
+  return create_configured_pipe(descriptors);
 }
 
 }  // namespace
