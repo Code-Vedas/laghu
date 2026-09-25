@@ -50,6 +50,7 @@ struct FaultContext final {
   const ListenerOperations* underlying;
   InjectedFailure failure;
   bool saw_atomic_socket{};
+  bool force_dual_stack{};
 };
 
 [[nodiscard]] FaultContext& fault(void* context) noexcept {
@@ -90,6 +91,13 @@ struct FaultContext final {
                                      int option, void* value,
                                      socklen_t* size) noexcept {
   auto& state = fault(context);
+  if (state.force_dual_stack && level == IPPROTO_IPV6 &&
+      option == IPV6_V6ONLY && value != nullptr && size != nullptr &&
+      *size >= sizeof(int)) {
+    *static_cast<int*>(value) = 0;
+    *size = static_cast<socklen_t>(sizeof(int));
+    return 0;
+  }
   return state.underlying->get_socket_option(state.underlying->context, descriptor,
                                               level, option, value, size);
 }
@@ -350,13 +358,13 @@ struct FaultContext final {
   if (descriptor < 0) {
     return false;
   }
-  const int disabled{};
+  const int enabled{1};
   sockaddr_in6 address{};
   address.sin6_family = AF_INET6;
   address.sin6_addr = in6addr_loopback;
   address.sin6_port = 0;
-  if (::setsockopt(descriptor, IPPROTO_IPV6, IPV6_V6ONLY, &disabled,
-                   sizeof(disabled)) != 0 ||
+  if (::setsockopt(descriptor, IPPROTO_IPV6, IPV6_V6ONLY, &enabled,
+                   sizeof(enabled)) != 0 ||
       ::bind(descriptor, reinterpret_cast<const sockaddr*>(&address),
              sizeof(address)) != 0 ||
       ::listen(descriptor, 8) != 0) {
@@ -368,8 +376,35 @@ struct FaultContext final {
     static_cast<void>(::close(descriptor));
     return false;
   }
-  return !Listener::adopt_trusted(std::move(*socket),
-                                  ListenerKind::ipv6_tcp);
+  const auto& underlying = laghu::os::internal::default_listener_operations();
+  FaultContext context{&underlying, InjectedFailure::none, false, true};
+  const ListenerOperations operations = injected_operations(context);
+  return !ListenerTestAccess::adopt_trusted(
+      std::move(*socket), ListenerKind::ipv6_tcp, operations);
+}
+
+[[nodiscard]] bool check_invalid_kind_adoption_rejected() noexcept {
+  const int descriptor = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor < 0) {
+    return false;
+  }
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = 0;
+  if (::bind(descriptor, reinterpret_cast<const sockaddr*>(&address),
+             sizeof(address)) != 0 ||
+      ::listen(descriptor, 8) != 0) {
+    static_cast<void>(::close(descriptor));
+    return false;
+  }
+  auto socket = SocketHandle::adopt(descriptor);
+  if (!socket) {
+    static_cast<void>(::close(descriptor));
+    return false;
+  }
+  return !Listener::adopt_trusted(
+      std::move(*socket), static_cast<ListenerKind>(0xffU));
 }
 
 [[nodiscard]] bool check_atomic_socket_creation() noexcept {
@@ -515,6 +550,8 @@ int main() {
       laghu::test::TestCase{"os.listener.adoption", check_adoption},
       laghu::test::TestCase{"os.listener.dual_stack_adoption",
                             check_dual_stack_adoption_rejected},
+      laghu::test::TestCase{"os.listener.invalid_kind_adoption",
+                            check_invalid_kind_adoption_rejected},
       laghu::test::TestCase{"os.listener.atomic_socket",
                             check_atomic_socket_creation},
       laghu::test::TestCase{"os.listener.pending_probe",

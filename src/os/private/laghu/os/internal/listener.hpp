@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 
 #include <sys/socket.h>
 
@@ -53,6 +54,12 @@ class ListenerTestAccess final {
       const UnixListenerConfig& config,
       const ListenerOperations& operations) noexcept {
     return Listener::create_unix(config, operations);
+  }
+
+  [[nodiscard]] static core::Result<Listener> adopt_trusted(
+      core::SocketHandle&& socket, ListenerKind expected_kind,
+      const ListenerOperations& operations) noexcept {
+    return Listener::adopt_trusted(std::move(socket), expected_kind, operations);
   }
 };
 

@@ -635,9 +635,22 @@ core::Result<Listener> Listener::adopt_trusted(
                                  &address_size) != 0) {
     return std::unexpected{operation_error(errno, "adopted listener query failed")};
   }
-  const int expected_family = expected_kind == ListenerKind::ipv4_tcp
-                                  ? AF_INET
-                                  : expected_kind == ListenerKind::ipv6_tcp ? AF_INET6 : AF_UNIX;
+  int expected_family{};
+  switch (expected_kind) {
+    case ListenerKind::ipv4_tcp:
+      expected_family = AF_INET;
+      break;
+    case ListenerKind::ipv6_tcp:
+      expected_family = AF_INET6;
+      break;
+    case ListenerKind::unix_stream:
+      expected_family = AF_UNIX;
+      break;
+    default:
+      return std::unexpected{core::Error{
+          core::ErrorDomain::core, core::ErrorCode::invalid_input, 0,
+          "adopted listener kind is invalid"}};
+  }
   if (address.ss_family != expected_family) {
     return std::unexpected{core::Error{core::ErrorDomain::core,
                                        core::ErrorCode::invalid_input, 0,
