@@ -345,6 +345,33 @@ struct FaultContext final {
   return listener && descriptor_is_configured(listener->borrow().native_handle());
 }
 
+[[nodiscard]] bool check_dual_stack_adoption_rejected() noexcept {
+  const int descriptor = ::socket(AF_INET6, SOCK_STREAM, 0);
+  if (descriptor < 0) {
+    return false;
+  }
+  const int disabled{};
+  sockaddr_in6 address{};
+  address.sin6_family = AF_INET6;
+  address.sin6_addr = in6addr_loopback;
+  address.sin6_port = 0;
+  if (::setsockopt(descriptor, IPPROTO_IPV6, IPV6_V6ONLY, &disabled,
+                   sizeof(disabled)) != 0 ||
+      ::bind(descriptor, reinterpret_cast<const sockaddr*>(&address),
+             sizeof(address)) != 0 ||
+      ::listen(descriptor, 8) != 0) {
+    static_cast<void>(::close(descriptor));
+    return false;
+  }
+  auto socket = SocketHandle::adopt(descriptor);
+  if (!socket) {
+    static_cast<void>(::close(descriptor));
+    return false;
+  }
+  return !Listener::adopt_trusted(std::move(*socket),
+                                  ListenerKind::ipv6_tcp);
+}
+
 [[nodiscard]] bool check_atomic_socket_creation() noexcept {
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
   const auto& underlying = laghu::os::internal::default_listener_operations();
@@ -486,6 +513,8 @@ int main() {
       laghu::test::TestCase{"os.listener.stale_replaced",
                             check_stale_unix_listener_is_replaced},
       laghu::test::TestCase{"os.listener.adoption", check_adoption},
+      laghu::test::TestCase{"os.listener.dual_stack_adoption",
+                            check_dual_stack_adoption_rejected},
       laghu::test::TestCase{"os.listener.atomic_socket",
                             check_atomic_socket_creation},
       laghu::test::TestCase{"os.listener.pending_probe",

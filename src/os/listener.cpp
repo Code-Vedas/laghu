@@ -643,6 +643,20 @@ core::Result<Listener> Listener::adopt_trusted(
                                        core::ErrorCode::invalid_input, 0,
                                        "adopted listener family does not match its type"}};
   }
+  if (expected_kind == ListenerKind::ipv6_tcp) {
+    int ipv6_only{};
+    option_size = sizeof(ipv6_only);
+    if (operations.get_socket_option(
+            operations.context, socket.native_handle(), IPPROTO_IPV6,
+            IPV6_V6ONLY, &ipv6_only, &option_size) != 0) {
+      return std::unexpected{operation_error(
+          errno, "adopted IPv6 listener mode query failed")};
+    }
+    if (ipv6_only == 0) {
+      return std::unexpected{operation_error(
+          EINVAL, "adopted IPv6 listener permits IPv4 traffic")};
+    }
+  }
   if (const auto configured = configure_descriptor(socket.native_handle(), operations);
       !configured) {
     return std::unexpected{configured.error()};
