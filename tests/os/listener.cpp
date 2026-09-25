@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 
 #include <arpa/inet.h>
@@ -32,6 +33,8 @@ using laghu::os::UnixListenerConfig;
 using laghu::os::internal::ListenerOperations;
 using laghu::os::internal::ListenerTestAccess;
 
+static_assert(!std::is_move_assignable_v<Listener>);
+
 enum class InjectedFailure : std::uint8_t {
   none,
   set_socket_option,
@@ -40,11 +43,13 @@ enum class InjectedFailure : std::uint8_t {
   path_status,
   set_path_mode,
   unlink,
+  connect_pending,
 };
 
 struct FaultContext final {
   const ListenerOperations* underlying;
   InjectedFailure failure;
+  bool saw_atomic_socket{};
 };
 
 [[nodiscard]] FaultContext& fault(void* context) noexcept {
@@ -54,6 +59,12 @@ struct FaultContext final {
 [[nodiscard]] int forward_socket(void* context, int domain, int type,
                                  int protocol) noexcept {
   auto& state = fault(context);
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+  state.saw_atomic_socket =
+      state.saw_atomic_socket ||
+      ((type & (SOCK_CLOEXEC | SOCK_NONBLOCK)) ==
+       (SOCK_CLOEXEC | SOCK_NONBLOCK));
+#endif
   return state.underlying->socket(state.underlying->context, domain, type, protocol);
 }
 
@@ -97,6 +108,10 @@ struct FaultContext final {
                                   const sockaddr* address,
                                   socklen_t size) noexcept {
   auto& state = fault(context);
+  if (state.failure == InjectedFailure::connect_pending) {
+    errno = EAGAIN;
+    return -1;
+  }
   return state.underlying->connect(state.underlying->context, descriptor, address,
                                     size);
 }
@@ -330,6 +345,57 @@ struct FaultContext final {
   return listener && descriptor_is_configured(listener->borrow().native_handle());
 }
 
+[[nodiscard]] bool check_atomic_socket_creation() noexcept {
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+  const auto& underlying = laghu::os::internal::default_listener_operations();
+  FaultContext context{&underlying, InjectedFailure::none};
+  const ListenerOperations operations = injected_operations(context);
+  auto listener = ListenerTestAccess::create_ipv4(
+      Ipv4ListenerConfig{{127, 0, 0, 1}, 0, options()}, operations);
+  return listener && context.saw_atomic_socket && listener->close();
+#else
+  return true;
+#endif
+}
+
+[[nodiscard]] bool check_pending_probe_retains_path() noexcept {
+  const auto directory = laghu::test::TemporaryDirectory::create("listener-pending");
+  std::array<char, UnixListenerConfig::path_capacity> path{};
+  std::size_t size{};
+  if (!directory || !build_path(*directory, "listener.sock", path, size)) {
+    return false;
+  }
+  int descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+  if (descriptor < 0) {
+    return false;
+  }
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::memcpy(address.sun_path, path.data(), size + 1U);
+  const auto address_size = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) +
+                                                   size + 1U);
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  address.sun_len = static_cast<decltype(address.sun_len)>(address_size);
+#endif
+  const bool bound = ::bind(descriptor, reinterpret_cast<const sockaddr*>(&address),
+                            address_size) == 0;
+  static_cast<void>(::close(descriptor));
+  if (!bound) {
+    return false;
+  }
+  const auto& underlying = laghu::os::internal::default_listener_operations();
+  FaultContext context{&underlying, InjectedFailure::connect_pending};
+  const ListenerOperations operations = injected_operations(context);
+  const auto listener = ListenerTestAccess::create_unix(
+      UnixListenerConfig{TextView::from({path.data(), size}), 8, 0600, true},
+      operations);
+  struct stat status {};
+  const bool retained = ::lstat(path.data(), &status) == 0 &&
+                        S_ISSOCK(status.st_mode);
+  static_cast<void>(::unlink(path.data()));
+  return !listener && retained;
+}
+
 [[nodiscard]] bool check_faults() noexcept {
   const auto& underlying = laghu::os::internal::default_listener_operations();
   constexpr std::array failures{InjectedFailure::set_socket_option,
@@ -420,6 +486,10 @@ int main() {
       laghu::test::TestCase{"os.listener.stale_replaced",
                             check_stale_unix_listener_is_replaced},
       laghu::test::TestCase{"os.listener.adoption", check_adoption},
+      laghu::test::TestCase{"os.listener.atomic_socket",
+                            check_atomic_socket_creation},
+      laghu::test::TestCase{"os.listener.pending_probe",
+                            check_pending_probe_retains_path},
       laghu::test::TestCase{"os.listener.faults", check_faults},
       laghu::test::TestCase{"os.listener.cleanup_retry", check_cleanup_retry},
       laghu::test::TestCase{"os.listener.insecure_parent",

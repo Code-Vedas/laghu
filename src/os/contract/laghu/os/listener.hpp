@@ -60,7 +60,7 @@ class Listener final {
   Listener(const Listener&) = delete;
   Listener& operator=(const Listener&) = delete;
   Listener(Listener&& other) noexcept;
-  Listener& operator=(Listener&& other) noexcept;
+  Listener& operator=(Listener&& other) = delete;
   ~Listener();
 
   [[nodiscard]] static core::Result<Listener> create_ipv4(

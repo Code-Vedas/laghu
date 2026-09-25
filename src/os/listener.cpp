@@ -178,10 +178,13 @@ class UnixDirectoryLock final {
       return std::unexpected{lock.error()};
     }
     struct stat lock_status {};
-    if (::fstat(lock_descriptor, &lock_status) != 0 ||
-        !S_ISREG(lock_status.st_mode) || lock_status.st_uid != ::geteuid()) {
+    if (::fstat(lock_descriptor, &lock_status) != 0) {
       return std::unexpected{operation_error(
-          errno == 0 ? EACCES : errno, "Unix listener lock is not trusted")};
+          errno, "Unix listener lock inspection failed")};
+    }
+    if (!S_ISREG(lock_status.st_mode) || lock_status.st_uid != ::geteuid()) {
+      return std::unexpected{operation_error(
+          EACCES, "Unix listener lock is not trusted")};
     }
     int lock_result{};
     do {
@@ -240,6 +243,46 @@ class UnixDirectoryLock final {
     return std::unexpected{operation_error(errno, "listener close-on-exec setup failed")};
   }
   return {};
+}
+
+[[nodiscard]] core::Result<core::SocketHandle> create_stream_socket(
+    int domain, const internal::ListenerOperations& operations) noexcept {
+  int type = SOCK_STREAM;
+  bool requires_fcntl = true;
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+  type |= SOCK_CLOEXEC | SOCK_NONBLOCK;
+  requires_fcntl = false;
+#endif
+  const int descriptor = operations.socket(operations.context, domain, type, 0);
+  if (descriptor < 0) {
+    return std::unexpected{operation_error(errno, "listener socket creation failed")};
+  }
+  auto socket = core::SocketHandle::adopt(descriptor);
+  if (!socket) {
+    static_cast<void>(::close(descriptor));
+    return std::unexpected{socket.error()};
+  }
+  if (requires_fcntl) {
+    if (const auto configured = configure_descriptor(descriptor, operations);
+        !configured) {
+      return std::unexpected{configured.error()};
+    }
+  }
+  return std::move(*socket);
+}
+
+void remove_path_if_owned(
+    const internal::ListenerOperations& operations, const char* path,
+    std::uint64_t expected_device, std::uint64_t expected_inode) noexcept {
+  bool exists{};
+  bool is_socket{};
+  std::uint64_t device{};
+  std::uint64_t inode{};
+  if (operations.path_status(operations.context, path, &exists, &is_socket,
+                             &device, &inode) == 0 && exists && is_socket &&
+      device == expected_device && inode == expected_inode) {
+    static_cast<void>(operations.unlink(operations.context, path));
+  }
 }
 
 [[nodiscard]] core::Result<void> set_option(
@@ -312,19 +355,11 @@ template <class Address>
   if (const auto valid = validate_operations(operations); !valid) {
     return std::unexpected{valid.error()};
   }
-  const int descriptor = operations.socket(
-      operations.context, ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
-  if (descriptor < 0) {
-    return std::unexpected{operation_error(errno, "listener socket creation failed")};
-  }
-  auto socket = core::SocketHandle::adopt(descriptor);
+  auto socket = create_stream_socket(ipv6 ? AF_INET6 : AF_INET, operations);
   if (!socket) {
-    static_cast<void>(::close(descriptor));
     return std::unexpected{socket.error()};
   }
-  if (const auto configured = configure_descriptor(descriptor, operations); !configured) {
-    return std::unexpected{configured.error()};
-  }
+  const int descriptor = socket->native_handle();
   if (const auto configured = configure_tcp(
           descriptor, ipv6, options, operations);
       !configured) {
@@ -337,7 +372,7 @@ template <class Address>
   if (operations.listen(operations.context, descriptor, *backlog) != 0) {
     return std::unexpected{operation_error(errno, "listener listen failed")};
   }
-  return socket;
+  return std::move(*socket);
 }
 
 }  // namespace
@@ -347,14 +382,6 @@ Listener::Listener(core::SocketHandle&& socket, ListenerKind kind) noexcept
       operations_(&internal::default_listener_operations()) {}
 
 Listener::Listener(Listener&& other) noexcept { move_from(std::move(other)); }
-
-Listener& Listener::operator=(Listener&& other) noexcept {
-  if (this != &other) {
-    static_cast<void>(close());
-    move_from(std::move(other));
-  }
-  return *this;
-}
 
 Listener::~Listener() { static_cast<void>(close()); }
 
@@ -454,23 +481,22 @@ core::Result<Listener> Listener::create_unix(
                                            "Unix listener path is not safely replaceable")};
   }
   if (exists) {
-    const int probe = operations.socket(operations.context, AF_UNIX, SOCK_STREAM, 0);
-    if (probe < 0) {
-      return std::unexpected{operation_error(errno,
-                                             "Unix listener stale-path probe failed")};
-    }
-    auto probe_socket = core::SocketHandle::adopt(probe);
+    auto probe_socket = create_stream_socket(AF_UNIX, operations);
     if (!probe_socket) {
-      static_cast<void>(::close(probe));
       return std::unexpected{probe_socket.error()};
     }
-    if (operations.connect(operations.context, probe,
+    if (operations.connect(operations.context, probe_socket->native_handle(),
                            reinterpret_cast<const sockaddr*>(&address),
                            address_size) == 0) {
       return std::unexpected{operation_error(EADDRINUSE,
                                              "Unix listener path is active")};
     }
     const int probe_error = errno;
+    if (probe_error == EINPROGRESS || probe_error == EALREADY ||
+        probe_error == EAGAIN) {
+      return std::unexpected{operation_error(EADDRINUSE,
+                                             "Unix listener path is active")};
+    }
     if (probe_error != ECONNREFUSED && probe_error != ENOENT) {
       return std::unexpected{operation_error(
           probe_error, "Unix listener path could not be proven stale")};
@@ -498,18 +524,11 @@ core::Result<Listener> Listener::create_unix(
                                              "stale Unix listener removal failed")};
     }
   }
-  const int descriptor = operations.socket(operations.context, AF_UNIX, SOCK_STREAM, 0);
-  if (descriptor < 0) {
-    return std::unexpected{operation_error(errno, "Unix listener socket creation failed")};
-  }
-  auto socket = core::SocketHandle::adopt(descriptor);
+  auto socket = create_stream_socket(AF_UNIX, operations);
   if (!socket) {
-    static_cast<void>(::close(descriptor));
     return std::unexpected{socket.error()};
   }
-  if (const auto configured = configure_descriptor(descriptor, operations); !configured) {
-    return std::unexpected{configured.error()};
-  }
+  const int descriptor = socket->native_handle();
   if (operations.bind(operations.context, descriptor,
                       reinterpret_cast<const sockaddr*>(&address), address_size) != 0) {
     return std::unexpected{operation_error(errno, "Unix listener bind failed")};
@@ -520,17 +539,18 @@ core::Result<Listener> Listener::create_unix(
   std::uint64_t bound_inode{};
   if (operations.path_status(operations.context, path->c_str(), &bound_exists,
                              &bound_is_socket, &bound_device,
-                             &bound_inode) != 0 ||
-      !bound_exists || !bound_is_socket) {
-    const int native_error = errno == 0 ? EIO : errno;
-    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+                             &bound_inode) != 0) {
     return std::unexpected{operation_error(
-        native_error, "Unix listener bound path verification failed")};
+        errno, "Unix listener bound path verification failed")};
+  }
+  if (!bound_exists || !bound_is_socket) {
+    return std::unexpected{operation_error(
+        EIO, "Unix listener bound path verification failed")};
   }
   if (operations.set_path_mode(operations.context, path->c_str(),
                                config.permissions) != 0) {
     const int native_error = errno;
-    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+    remove_path_if_owned(operations, path->c_str(), bound_device, bound_inode);
     return std::unexpected{operation_error(native_error,
                                            "Unix listener finalization failed")};
   }
@@ -540,17 +560,18 @@ core::Result<Listener> Listener::create_unix(
   std::uint64_t verified_inode{};
   if (operations.path_status(operations.context, path->c_str(), &verified_exists,
                              &verified_is_socket, &verified_device,
-                             &verified_inode) != 0 ||
-      !verified_exists || !verified_is_socket ||
-      verified_device != bound_device || verified_inode != bound_inode) {
-    const int native_error = errno == 0 ? EBUSY : errno;
-    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+                             &verified_inode) != 0) {
     return std::unexpected{operation_error(
-        native_error, "Unix listener path changed during permission setup")};
+        errno, "Unix listener path verification failed after permission setup")};
+  }
+  if (!verified_exists || !verified_is_socket ||
+      verified_device != bound_device || verified_inode != bound_inode) {
+    return std::unexpected{operation_error(
+        EBUSY, "Unix listener path changed during permission setup")};
   }
   if (operations.listen(operations.context, descriptor, *backlog) != 0) {
     const int native_error = errno;
-    static_cast<void>(operations.unlink(operations.context, path->c_str()));
+    remove_path_if_owned(operations, path->c_str(), bound_device, bound_inode);
     return std::unexpected{operation_error(native_error,
                                            "Unix listener listen failed")};
   }
