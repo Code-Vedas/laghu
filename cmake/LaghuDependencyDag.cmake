@@ -160,6 +160,7 @@ function(laghu_declare_subsystem_graph)
       add_library(laghu_os STATIC
         src/os/io_slices.cpp
         src/os/io_operations.cpp
+        src/os/listener.cpp
         src/os/wakeup.cpp)
     elseif(node STREQUAL "runtime")
       add_library(laghu_runtime STATIC
