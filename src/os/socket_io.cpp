@@ -124,7 +124,11 @@ constexpr std::size_t maximum_iovecs = 64;
     return SocketIoResult{0, calls, reading ? SocketIoState::peer_closed
                                             : SocketIoState::progress};
   }
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+  if (errno == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+      || errno == EWOULDBLOCK
+#endif
+  ) {
     return SocketIoResult{0, calls, SocketIoState::would_block};
   }
   if (errno == ECONNRESET) {
@@ -139,10 +143,14 @@ constexpr std::size_t maximum_iovecs = 64;
 template <class Operation>
 [[nodiscard]] core::Result<SocketIoResult> invoke_bounded(
     SocketIoBudget budget, bool reading, Operation operation) noexcept {
-  for (std::uint32_t calls = 1; calls <= budget.maximum_syscalls; ++calls) {
+  for (std::uint32_t index = 0; index < budget.maximum_syscalls; ++index) {
+    const std::uint32_t calls = index + 1U;
     const ssize_t result = operation();
-    if (result >= 0 || errno == EAGAIN || errno == EWOULDBLOCK ||
-        errno == ECONNRESET || errno == EPIPE) {
+    if (result >= 0 || errno == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+        || errno == EWOULDBLOCK
+#endif
+        || errno == ECONNRESET || errno == EPIPE) {
       return expected_result(result, calls, reading);
     }
     if (errno != EINTR) {

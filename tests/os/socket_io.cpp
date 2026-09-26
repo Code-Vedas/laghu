@@ -74,6 +74,43 @@ struct SocketPair final {
          blocked && blocked->state == SocketIoState::would_block;
 }
 
+[[nodiscard]] bool check_socketpair_backpressure() noexcept {
+  auto pair = make_pair();
+  if (!pair || !set_nonblocking(pair->first.native_handle()) ||
+      !set_nonblocking(pair->second.native_handle())) {
+    return false;
+  }
+  const int requested_buffer_size = 4096;
+  if (::setsockopt(pair->first.native_handle(), SOL_SOCKET, SO_SNDBUF,
+                   &requested_buffer_size,
+                   static_cast<socklen_t>(sizeof(requested_buffer_size))) != 0) {
+    return false;
+  }
+
+  std::array<std::byte, 4096> storage{};
+  const auto input = ByteView::from(storage);
+  if (!input) {
+    return false;
+  }
+  bool made_progress{};
+  constexpr std::size_t maximum_writes = 4096;
+  for (std::size_t attempt = 0; attempt < maximum_writes; ++attempt) {
+    const auto result = laghu::os::write_socket(
+        pair->first.borrow(), *input, {input->size(), 1});
+    if (!result) {
+      return false;
+    }
+    if (result->state == SocketIoState::would_block) {
+      return made_progress && result->bytes == 0 && result->syscalls == 1;
+    }
+    if (result->state != SocketIoState::progress || result->bytes == 0) {
+      return false;
+    }
+    made_progress = true;
+  }
+  return false;
+}
+
 [[nodiscard]] bool check_half_close_and_broken_pipe() noexcept {
   auto pair = make_pair();
   if (!pair || !set_nonblocking(pair->first.native_handle()) ||
@@ -201,7 +238,8 @@ struct Injected final {
 
 int main() {
   constexpr std::array tests{
-      laghu::test::TestCase{"os.socket_io.partial_and_backpressure", check_socketpair_io},
+      laghu::test::TestCase{"os.socket_io.partial", check_socketpair_io},
+      laghu::test::TestCase{"os.socket_io.backpressure", check_socketpair_backpressure},
       laghu::test::TestCase{"os.socket_io.half_close_and_sigpipe", check_half_close_and_broken_pipe},
       laghu::test::TestCase{"os.socket_io.bounded_eintr_and_reset", check_bounded_eintr_and_reset},
       laghu::test::TestCase{"os.socket_io.vectored_partial", check_vectored_partial_consumption},
