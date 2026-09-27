@@ -196,7 +196,7 @@ struct SocketPair final {
 }
 
 [[nodiscard]] bool check_direct_transfer() noexcept {
-#if defined(__linux__) && defined(O_DIRECT)
+#if defined(O_DIRECT)
   const auto directory =
       laghu::test::TemporaryDirectory::create("file-transfer-direct");
   alignas(4096) std::array<std::byte, 4096> payload{};
@@ -316,7 +316,7 @@ struct Injected final {
 }
 
 [[nodiscard]] bool check_direct_cancellation_and_interrupted_send() noexcept {
-#if defined(__linux__) && defined(O_DIRECT)
+#if defined(O_DIRECT)
   const auto directory = laghu::test::TemporaryDirectory::create(
       "file-transfer-direct-injected");
   alignas(4096) std::array<std::byte, 4096> payload{};

@@ -14,7 +14,8 @@ struct FileTransferOperations;
 class FileTransferTestAccess;
 }  // namespace internal
 
-// Direct mode requires an O_DIRECT source and aligned offsets and lengths.
+// The destination socket must already be nonblocking. Direct mode additionally
+// requires an O_DIRECT source and filesystem-aligned offsets and lengths.
 enum class FileTransferMode : std::uint8_t {
   automatic,
   generic,
