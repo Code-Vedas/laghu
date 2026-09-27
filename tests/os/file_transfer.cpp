@@ -56,6 +56,21 @@ struct SocketPair final {
   return SocketPair{std::move(*writer), std::move(*reader)};
 }
 
+[[nodiscard]] laghu::core::Result<SocketPair> make_blocking_socket_pair() noexcept {
+  int descriptors[2]{};
+  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
+    return std::unexpected{laghu::core::Error::from_errno(errno, "socketpair failed")};
+  }
+  auto writer = SocketHandle::adopt(descriptors[0]);
+  auto reader = SocketHandle::adopt(descriptors[1]);
+  if (!writer || !reader) {
+    static_cast<void>(::close(descriptors[0]));
+    static_cast<void>(::close(descriptors[1]));
+    return std::unexpected{laghu::core::Error::from_errno(EINVAL, "socket adoption failed")};
+  }
+  return SocketPair{std::move(*writer), std::move(*reader)};
+}
+
 [[nodiscard]] laghu::core::Result<FileHandle> make_file(
     const laghu::test::TemporaryDirectory& directory,
     std::span<const std::byte> bytes, std::uint64_t sparse_prefix = 0) noexcept {
@@ -279,6 +294,50 @@ struct Injected final {
          overflow.error().code() == laghu::core::ErrorCode::overflow;
 }
 
+[[nodiscard]] bool check_kernel_destination_requirements() noexcept {
+  const auto directory =
+      laghu::test::TemporaryDirectory::create("file-transfer-destination");
+  constexpr std::array payload{std::byte{'x'}};
+  if (!directory) {
+    return false;
+  }
+  auto file = make_file(*directory, payload);
+  auto sockets = make_blocking_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!file || !sockets) {
+    return false;
+  }
+  const auto result = laghu::os::transfer_file(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, 1, 1, FileTransferMode::kernel}, source.token());
+  return !result && result.error().code() == laghu::core::ErrorCode::invalid_input;
+}
+
+[[nodiscard]] bool check_kernel_closed_peer() noexcept {
+#if defined(__linux__)
+  const auto directory =
+      laghu::test::TemporaryDirectory::create("file-transfer-closed-peer");
+  constexpr std::array payload{std::byte{'x'}};
+  if (!directory) {
+    return false;
+  }
+  auto file = make_file(*directory, payload);
+  auto sockets = make_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!file || !sockets || !sockets->reader.close()) {
+    return false;
+  }
+  const auto result = laghu::os::transfer_file(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, 1, 1, FileTransferMode::kernel}, source.token());
+  return !result && result.error().code() == laghu::core::ErrorCode::io;
+#else
+  return true;
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -287,6 +346,10 @@ int main() {
       laghu::test::TestCase{"os.file_transfer.fallback_cancellation", check_fallback_and_cancellation},
       laghu::test::TestCase{"os.file_transfer.large", check_large_transfer},
       laghu::test::TestCase{"os.file_transfer.bounds_capabilities", check_bounds_and_capabilities},
+      laghu::test::TestCase{"os.file_transfer.kernel_destination_requirements",
+                            check_kernel_destination_requirements},
+      laghu::test::TestCase{"os.file_transfer.kernel_closed_peer",
+                            check_kernel_closed_peer},
   };
   return laghu::test::run_tests(tests);
 }

@@ -9,11 +9,13 @@
 #include <limits>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #if defined(__linux__)
 #include <linux/tls.h>
+#include <pthread.h>
 #include <sys/sendfile.h>
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/types.h>
@@ -36,7 +38,6 @@ namespace {
 }
 
 [[nodiscard]] int system_prepare_destination(void*, int descriptor) noexcept {
-#if !defined(MSG_DONTWAIT)
   const int flags = ::fcntl(descriptor, F_GETFL, 0);
   if (flags < 0 || (flags & O_NONBLOCK) == 0) {
     if (flags >= 0) {
@@ -44,8 +45,7 @@ namespace {
     }
     return -1;
   }
-#endif
-#if defined(SO_NOSIGPIPE) && !defined(MSG_NOSIGNAL)
+#if defined(SO_NOSIGPIPE)
   const int enabled = 1;
   return ::setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled,
                       static_cast<socklen_t>(sizeof(enabled)));
@@ -55,12 +55,59 @@ namespace {
 #endif
 }
 
+#if defined(__linux__)
+[[nodiscard]] ssize_t linux_sendfile_without_sigpipe(int output, int input,
+                                                     off_t* offset,
+                                                     std::size_t size) noexcept {
+  sigset_t blocked{};
+  sigset_t previous{};
+  sigset_t pending{};
+  if (::sigemptyset(&blocked) != 0 || ::sigaddset(&blocked, SIGPIPE) != 0) {
+    return -1;
+  }
+  const int block_error = ::pthread_sigmask(SIG_BLOCK, &blocked, &previous);
+  if (block_error != 0) {
+    errno = block_error;
+    return -1;
+  }
+  if (::sigpending(&pending) != 0) {
+    const int pending_error = errno;
+    static_cast<void>(::pthread_sigmask(SIG_SETMASK, &previous, nullptr));
+    errno = pending_error;
+    return -1;
+  }
+  const int pending_member = ::sigismember(&pending, SIGPIPE);
+  if (pending_member < 0) {
+    const int pending_error = errno;
+    static_cast<void>(::pthread_sigmask(SIG_SETMASK, &previous, nullptr));
+    errno = pending_error;
+    return -1;
+  }
+  const bool already_pending = pending_member == 1;
+  const ssize_t result = ::sendfile(output, input, offset, size);
+  const int sendfile_error = errno;
+  if (result < 0 && sendfile_error == EPIPE && !already_pending) {
+    timespec timeout{};
+    while (::sigtimedwait(&blocked, nullptr, &timeout) < 0 && errno == EINTR) {
+    }
+  }
+  const int restore_error = ::pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+  if (result < 0) {
+    errno = sendfile_error;
+  } else if (restore_error != 0) {
+    errno = restore_error;
+  }
+  return result;
+}
+#endif
+
 [[nodiscard]] int system_kernel_transfer(void*, int output, int input,
                                          std::uint64_t offset, std::size_t size,
                                          std::size_t* transferred) noexcept {
 #if defined(__linux__)
   off_t native_offset = static_cast<off_t>(offset);
-  const ssize_t result = ::sendfile(output, input, &native_offset, size);
+  const ssize_t result =
+      linux_sendfile_without_sigpipe(output, input, &native_offset, size);
   if (result >= 0) {
     *transferred = static_cast<std::size_t>(result);
     return 0;

@@ -25,6 +25,7 @@ enum class FileTransferState : std::uint8_t {
 
 struct FileTransferCapabilities final {
   bool kernel_transfer;
+  // These hooks report usable platform primitives, not additional transfer modes.
   bool mapped_files;
   bool direct_io;
   bool kernel_tls_hook;

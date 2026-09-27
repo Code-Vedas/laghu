@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 #include <fcntl.h>
 #include <sys/socket.h>
