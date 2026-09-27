@@ -7,10 +7,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -23,6 +26,7 @@
 #endif
 
 #include <laghu/os/internal/file_transfer.hpp>
+#include <laghu/core/checked_arithmetic.hpp>
 
 namespace laghu::os::internal {
 namespace {
@@ -153,6 +157,7 @@ namespace laghu::os {
 namespace {
 
 constexpr std::size_t generic_buffer_size = 16384U;
+constexpr std::size_t direct_io_alignment = 4096U;
 
 [[nodiscard]] constexpr int transfer_send_flags() noexcept {
   int flags{};
@@ -168,6 +173,11 @@ constexpr std::size_t generic_buffer_size = 16384U;
 [[nodiscard]] core::Error invalid(const char* diagnostic) noexcept {
   return core::Error{core::ErrorDomain::core, core::ErrorCode::invalid_input, 0,
                      diagnostic};
+}
+
+[[nodiscard]] core::Error unavailable_capability(const char* diagnostic) noexcept {
+  return core::Error{core::ErrorDomain::core,
+                     core::ErrorCode::unavailable_capability, 0, diagnostic};
 }
 
 [[nodiscard]] bool would_block(int native_error) noexcept {
@@ -209,6 +219,8 @@ constexpr std::size_t generic_buffer_size = 16384U;
     case FileTransferMode::automatic:
     case FileTransferMode::generic:
     case FileTransferMode::kernel:
+    case FileTransferMode::mapped:
+    case FileTransferMode::direct:
       return {};
   }
   return std::unexpected{invalid("file transfer mode is invalid")};
@@ -229,8 +241,9 @@ constexpr std::size_t generic_buffer_size = 16384U;
     core::BorrowedFileHandle source, core::BorrowedSocketHandle destination,
     FileTransferRequest request, core::CancellationToken cancellation,
     const internal::FileTransferOperations& operations,
-    std::uint32_t prior_calls = 0) noexcept {
-  std::array<std::byte, generic_buffer_size> buffer{};
+    std::uint32_t prior_calls = 0,
+    FileTransferPath path = FileTransferPath::generic) noexcept {
+  alignas(direct_io_alignment) std::array<std::byte, generic_buffer_size> buffer{};
   std::uint32_t calls = prior_calls;
   while (calls < request.maximum_syscalls) {
     if (const auto active = cancellation.require_active(); !active) {
@@ -243,7 +256,7 @@ constexpr std::size_t generic_buffer_size = 16384U;
     if (read == 0) {
       return FileTransferResult{request.offset, 0, calls,
                                 FileTransferState::end_of_file,
-                                FileTransferPath::generic};
+                                path};
     }
     if (read < 0) {
       if (errno == EINTR) {
@@ -255,7 +268,7 @@ constexpr std::size_t generic_buffer_size = 16384U;
     if (calls == request.maximum_syscalls) {
       return FileTransferResult{request.offset, 0, calls,
                                 FileTransferState::budget_exhausted,
-                                FileTransferPath::generic};
+                                path};
     }
     if (const auto active = cancellation.require_active(); !active) {
       return std::unexpected{active.error()};
@@ -271,7 +284,7 @@ constexpr std::size_t generic_buffer_size = 16384U;
       if (would_block(errno)) {
         return FileTransferResult{request.offset, 0, calls,
                                   FileTransferState::would_block,
-                                  FileTransferPath::generic};
+                                  path};
       }
       return std::unexpected{core::Error::from_errno(errno,
                                                       "file transfer write failed")};
@@ -282,11 +295,154 @@ constexpr std::size_t generic_buffer_size = 16384U;
     }
     return FileTransferResult{*offset, static_cast<std::size_t>(sent), calls,
                               FileTransferState::progress,
-                              FileTransferPath::generic};
+                              path};
   }
   return FileTransferResult{request.offset, 0, calls,
                             FileTransferState::budget_exhausted,
-                            FileTransferPath::generic};
+                            path};
+}
+
+[[nodiscard]] core::Result<FileTransferResult> mapped_transfer(
+    core::BorrowedFileHandle source, core::BorrowedSocketHandle destination,
+    FileTransferRequest request, core::CancellationToken cancellation,
+    const internal::FileTransferOperations& operations) noexcept {
+  if (const auto active = cancellation.require_active(); !active) {
+    return std::unexpected{active.error()};
+  }
+  if (request.maximum_syscalls < 4U) {
+    return FileTransferResult{request.offset, 0, 0,
+                              FileTransferState::budget_exhausted,
+                              FileTransferPath::mapped};
+  }
+  struct stat status {};
+  if (::fstat(source.native_handle(), &status) != 0) {
+    return std::unexpected{core::Error::from_errno(
+        errno, "mapped file transfer status failed")};
+  }
+  if (status.st_size < 0) {
+    return std::unexpected{invalid("mapped file transfer size is invalid")};
+  }
+  if (!S_ISREG(status.st_mode) || status.st_size == 0) {
+    return generic_transfer(source, destination, request, cancellation,
+                            operations, 1U);
+  }
+  const std::uint64_t file_size = static_cast<std::uint64_t>(status.st_size);
+  if (request.offset >= file_size) {
+    return FileTransferResult{request.offset, 0, 1U,
+                              FileTransferState::end_of_file,
+                              FileTransferPath::mapped};
+  }
+  const std::uint64_t available = file_size - request.offset;
+  std::size_t requested = request.maximum_bytes;
+  if (available < request.maximum_bytes) {
+    const auto narrowed = core::checked_narrow<std::size_t>(available);
+    if (!narrowed) {
+      return std::unexpected{narrowed.error()};
+    }
+    requested = *narrowed;
+  }
+  const long native_page_size = ::sysconf(_SC_PAGESIZE);
+  if (native_page_size <= 0) {
+    return generic_transfer(source, destination, request, cancellation,
+                            operations, 1U);
+  }
+  const std::uint64_t page_size = static_cast<std::uint64_t>(native_page_size);
+  const std::uint64_t aligned_offset = request.offset - (request.offset % page_size);
+  const auto checked_prefix =
+      core::checked_narrow<std::size_t>(request.offset - aligned_offset);
+  if (!checked_prefix) {
+    return std::unexpected{checked_prefix.error()};
+  }
+  const std::size_t prefix = *checked_prefix;
+  if (requested > std::numeric_limits<std::size_t>::max() - prefix) {
+    return std::unexpected{core::Error{core::ErrorDomain::core,
+                                       core::ErrorCode::overflow, 0,
+                                       "mapped file transfer range overflows"}};
+  }
+  const std::size_t mapping_size = prefix + requested;
+  void* const mapping = ::mmap(nullptr, mapping_size, PROT_READ, MAP_PRIVATE,
+                               source.native_handle(),
+                               static_cast<off_t>(aligned_offset));
+  if (mapping == MAP_FAILED) {
+    return generic_transfer(source, destination, request, cancellation,
+                            operations, 2U);
+  }
+  const auto mapped_bytes = std::span<const std::byte>{
+      static_cast<const std::byte*>(mapping), mapping_size};
+  const auto* const bytes = mapped_bytes.subspan(prefix).data();
+  std::uint32_t calls = 2U;
+  ssize_t sent{-1};
+  int native_error{};
+  while (calls + 1U < request.maximum_syscalls) {
+    if (const auto active = cancellation.require_active(); !active) {
+      static_cast<void>(::munmap(mapping, mapping_size));
+      return std::unexpected{active.error()};
+    }
+    ++calls;
+    sent = operations.send(operations.context, destination.native_handle(),
+                           bytes, requested, transfer_send_flags());
+    native_error = errno;
+    if (sent >= 0 || native_error != EINTR) {
+      break;
+    }
+  }
+  static_cast<void>(::munmap(mapping, mapping_size));
+  ++calls;
+  if (sent < 0) {
+    if (native_error == EINTR) {
+      return FileTransferResult{request.offset, 0, calls,
+                                FileTransferState::budget_exhausted,
+                                FileTransferPath::mapped};
+    }
+    if (would_block(native_error)) {
+      return FileTransferResult{request.offset, 0, calls,
+                                FileTransferState::would_block,
+                                FileTransferPath::mapped};
+    }
+    return std::unexpected{core::Error::from_errno(
+        native_error, "mapped file transfer write failed")};
+  }
+  const std::size_t transferred = static_cast<std::size_t>(sent);
+  const auto offset = next_offset(request.offset, transferred);
+  if (!offset) {
+    return std::unexpected{offset.error()};
+  }
+  return FileTransferResult{*offset, transferred, calls,
+                            FileTransferState::progress,
+                            FileTransferPath::mapped};
+}
+
+[[nodiscard]] core::Result<FileTransferResult> direct_transfer(
+    core::BorrowedFileHandle source, core::BorrowedSocketHandle destination,
+    FileTransferRequest request, core::CancellationToken cancellation,
+    const internal::FileTransferOperations& operations) noexcept {
+#if defined(O_DIRECT)
+  const int flags = ::fcntl(source.native_handle(), F_GETFL, 0);
+  if (flags < 0) {
+    return std::unexpected{core::Error::from_errno(
+        errno, "direct file transfer descriptor inspection failed")};
+  }
+  if ((flags & O_DIRECT) == 0) {
+    return std::unexpected{unavailable_capability(
+        "direct file transfer requires an O_DIRECT source")};
+  }
+  if (request.offset % direct_io_alignment != 0 ||
+      request.maximum_bytes % direct_io_alignment != 0) {
+    return std::unexpected{core::Error{core::ErrorDomain::core,
+                                       core::ErrorCode::invalid_range, 0,
+                                       "direct file transfer range is unaligned"}};
+  }
+  return generic_transfer(source, destination, request, cancellation,
+                          operations, 0U, FileTransferPath::direct);
+#else
+  static_cast<void>(source);
+  static_cast<void>(destination);
+  static_cast<void>(request);
+  static_cast<void>(cancellation);
+  static_cast<void>(operations);
+  return std::unexpected{unavailable_capability(
+      "direct file transfer is unavailable")};
+#endif
 }
 
 [[nodiscard]] core::Result<FileTransferResult> transfer_with_operations(
@@ -303,6 +459,12 @@ constexpr std::size_t generic_buffer_size = 16384U;
   }
   if (request.mode == FileTransferMode::generic) {
     return generic_transfer(source, destination, request, cancellation, operations);
+  }
+  if (request.mode == FileTransferMode::mapped) {
+    return mapped_transfer(source, destination, request, cancellation, operations);
+  }
+  if (request.mode == FileTransferMode::direct) {
+    return direct_transfer(source, destination, request, cancellation, operations);
   }
   for (std::uint32_t index = 0; index < request.maximum_syscalls; ++index) {
     const std::uint32_t calls = index + 1U;

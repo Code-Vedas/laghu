@@ -35,6 +35,19 @@ struct SocketPair final {
   SocketHandle reader;
 };
 
+[[nodiscard]] bool fixture_file_path(
+    const laghu::test::TemporaryDirectory& directory,
+    std::array<char, laghu::test::fixture_path_capacity>& path) noexcept {
+  const std::string_view root = directory.path();
+  constexpr std::string_view suffix{"/transfer.bin"};
+  if (root.size() + suffix.size() >= path.size()) {
+    return false;
+  }
+  std::memcpy(path.data(), root.data(), root.size());
+  std::memcpy(path.data() + root.size(), suffix.data(), suffix.size());
+  return true;
+}
+
 [[nodiscard]] laghu::core::Result<SocketPair> make_socket_pair() noexcept {
   int descriptors[2]{};
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
@@ -75,13 +88,9 @@ struct SocketPair final {
     const laghu::test::TemporaryDirectory& directory,
     std::span<const std::byte> bytes, std::uint64_t sparse_prefix = 0) noexcept {
   std::array<char, laghu::test::fixture_path_capacity> path{};
-  const std::string_view root = directory.path();
-  constexpr std::string_view suffix{"/transfer.bin"};
-  if (root.size() + suffix.size() >= path.size()) {
+  if (!fixture_file_path(directory, path)) {
     return std::unexpected{laghu::core::Error::from_errno(ENAMETOOLONG, "fixture path too long")};
   }
-  std::memcpy(path.data(), root.data(), root.size());
-  std::memcpy(path.data() + root.size(), suffix.data(), suffix.size());
   const int descriptor = ::open(path.data(), O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0600);
   if (descriptor < 0) {
     return std::unexpected{laghu::core::Error::from_errno(errno, "fixture open failed")};
@@ -116,36 +125,138 @@ struct SocketPair final {
 [[nodiscard]] bool check_real_modes_and_offset() noexcept {
   constexpr std::array payload{std::byte{'a'}, std::byte{'b'}, std::byte{'c'},
                                std::byte{'d'}, std::byte{'e'}, std::byte{'f'}};
-  for (const auto mode : {FileTransferMode::generic, FileTransferMode::kernel}) {
+  for (const auto mode : {FileTransferMode::generic, FileTransferMode::kernel,
+                          FileTransferMode::mapped}) {
     const auto directory = laghu::test::TemporaryDirectory::create(
         mode == FileTransferMode::generic ? "file-transfer-generic"
-                                          : "file-transfer-kernel");
+        : mode == FileTransferMode::kernel ? "file-transfer-kernel"
+                                           : "file-transfer-mapped");
     if (!directory) {
       return false;
     }
-    auto file = make_file(*directory, payload, mode == FileTransferMode::generic ? 0U : 4096U);
+    auto file = make_file(*directory, payload,
+                          mode == FileTransferMode::generic ? 0U : 4096U);
     auto sockets = make_socket_pair();
     CancellationState state;
     CancellationSource source{state};
-    const std::uint64_t offset = mode == FileTransferMode::generic ? 2U : 4098U;
+    const std::uint64_t offset =
+        mode == FileTransferMode::generic ? 2U : 4098U;
     if (!file || !sockets) {
       return false;
     }
     const auto result = laghu::os::transfer_file(
         file->borrow(), sockets->writer.borrow(),
-        FileTransferRequest{offset, 3, 3, mode}, source.token());
+        FileTransferRequest{offset, 3,
+                            mode == FileTransferMode::mapped ? 4U : 3U, mode},
+        source.token());
+    const FileTransferPath expected_path =
+        mode == FileTransferMode::generic ? FileTransferPath::generic
+        : mode == FileTransferMode::kernel ? FileTransferPath::kernel
+                                           : FileTransferPath::mapped;
     std::array<std::byte, 3> received{};
     if (!result || result->bytes != 3 || result->next_offset != offset + 3U ||
         result->state != FileTransferState::progress ||
-        result->path != (mode == FileTransferMode::generic
-                            ? FileTransferPath::generic
-                            : FileTransferPath::kernel) ||
+        result->path != expected_path ||
         !read_exact(sockets->reader.native_handle(), received) ||
         received[0] != std::byte{'c'} || received[2] != std::byte{'e'}) {
       return false;
     }
   }
   return true;
+}
+
+[[nodiscard]] bool check_mapped_fallback() noexcept {
+  const int descriptor = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+  if (descriptor < 0) {
+    return false;
+  }
+  auto file = FileHandle::adopt(descriptor);
+  auto sockets = make_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!file || !sockets) {
+    return false;
+  }
+  const auto result = laghu::os::transfer_file(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, 1, 4, FileTransferMode::mapped}, source.token());
+  return result && result->state == FileTransferState::end_of_file &&
+         result->path == FileTransferPath::generic;
+}
+
+[[nodiscard]] bool check_direct_requirements() noexcept {
+  const auto directory =
+      laghu::test::TemporaryDirectory::create("file-transfer-direct-requirements");
+  alignas(4096) std::array<std::byte, 4096> payload{};
+  if (!directory) {
+    return false;
+  }
+  auto file = make_file(*directory, payload);
+  auto sockets = make_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!file || !sockets) {
+    return false;
+  }
+  const auto unavailable = laghu::os::transfer_file(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, payload.size(), 2, FileTransferMode::direct},
+      source.token());
+  if (unavailable ||
+      unavailable.error().code() != laghu::core::ErrorCode::unavailable_capability) {
+    return false;
+  }
+  return true;
+}
+
+[[nodiscard]] bool check_direct_transfer() noexcept {
+#if defined(__linux__) && defined(O_DIRECT)
+  const auto directory =
+      laghu::test::TemporaryDirectory::create("file-transfer-direct");
+  alignas(4096) std::array<std::byte, 4096> payload{};
+  for (std::size_t index = 0; index < payload.size(); ++index) {
+    payload[index] = static_cast<std::byte>(index & 0xffU);
+  }
+  if (!directory) {
+    return false;
+  }
+  auto ordinary_file = make_file(*directory, payload);
+  std::array<char, laghu::test::fixture_path_capacity> path{};
+  if (!ordinary_file || !ordinary_file->close() ||
+      !fixture_file_path(*directory, path)) {
+    return false;
+  }
+  const int descriptor = ::open(path.data(), O_RDONLY | O_CLOEXEC | O_DIRECT);
+  if (descriptor < 0) {
+    return false;
+  }
+  auto direct_file = FileHandle::adopt(descriptor);
+  auto sockets = make_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!direct_file || !sockets) {
+    return false;
+  }
+  const auto unaligned = laghu::os::transfer_file(
+      direct_file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{1, payload.size(), 2, FileTransferMode::direct},
+      source.token());
+  if (unaligned ||
+      unaligned.error().code() != laghu::core::ErrorCode::invalid_range) {
+    return false;
+  }
+  const auto result = laghu::os::transfer_file(
+      direct_file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, payload.size(), 2, FileTransferMode::direct},
+      source.token());
+  alignas(4096) std::array<std::byte, 4096> received{};
+  return result && result->path == FileTransferPath::direct &&
+         result->bytes == payload.size() &&
+         read_exact(sockets->reader.native_handle(), received) &&
+         received == payload;
+#else
+  return true;
+#endif
 }
 
 struct Injected final {
@@ -343,6 +454,11 @@ struct Injected final {
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"os.file_transfer.real_modes_offset_sparse", check_real_modes_and_offset},
+      laghu::test::TestCase{"os.file_transfer.mapped_fallback",
+                            check_mapped_fallback},
+      laghu::test::TestCase{"os.file_transfer.direct_requirements",
+                            check_direct_requirements},
+      laghu::test::TestCase{"os.file_transfer.direct", check_direct_transfer},
       laghu::test::TestCase{"os.file_transfer.fallback_cancellation", check_fallback_and_cancellation},
       laghu::test::TestCase{"os.file_transfer.large", check_large_transfer},
       laghu::test::TestCase{"os.file_transfer.bounds_capabilities", check_bounds_and_capabilities},

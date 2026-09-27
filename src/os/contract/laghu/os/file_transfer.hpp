@@ -14,8 +14,15 @@ struct FileTransferOperations;
 class FileTransferTestAccess;
 }  // namespace internal
 
-enum class FileTransferMode : std::uint8_t { automatic, generic, kernel };
-enum class FileTransferPath : std::uint8_t { generic, kernel };
+// Direct mode requires an O_DIRECT source and aligned offsets and lengths.
+enum class FileTransferMode : std::uint8_t {
+  automatic,
+  generic,
+  kernel,
+  mapped,
+  direct,
+};
+enum class FileTransferPath : std::uint8_t { generic, kernel, mapped, direct };
 enum class FileTransferState : std::uint8_t {
   progress,
   would_block,
@@ -25,7 +32,6 @@ enum class FileTransferState : std::uint8_t {
 
 struct FileTransferCapabilities final {
   bool kernel_transfer;
-  // These hooks report usable platform primitives, not additional transfer modes.
   bool mapped_files;
   bool direct_io;
   bool kernel_tls_hook;
