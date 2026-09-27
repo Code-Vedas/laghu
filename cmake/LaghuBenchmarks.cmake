@@ -67,8 +67,27 @@ function(laghu_add_benchmark_targets)
     "${CMAKE_SOURCE_DIR}/bench/private")
   target_link_libraries(laghu_benchmark_event_batch PRIVATE laghu_core)
 
+  foreach(file_transfer_mode IN ITEMS generic kernel)
+    set(benchmark_target "laghu_benchmark_file_transfer_${file_transfer_mode}")
+    add_executable("${benchmark_target}" EXCLUDE_FROM_ALL
+      bench/file_transfer.cpp bench/runner.cpp)
+    laghu_apply_first_party_contract("${benchmark_target}")
+    laghu_configure_api_consumer("${benchmark_target}" os)
+    target_include_directories("${benchmark_target}" PRIVATE
+      "${CMAKE_BINARY_DIR}/generated"
+      "${CMAKE_SOURCE_DIR}/bench/private")
+    target_compile_definitions("${benchmark_target}" PRIVATE
+      "LAGHU_FILE_TRANSFER_MODE=laghu::os::FileTransferMode::${file_transfer_mode}"
+      "LAGHU_FILE_TRANSFER_BENCHMARK_NAME=\"file-transfer-${file_transfer_mode}\"")
+    target_link_libraries("${benchmark_target}" PRIVATE laghu_os laghu_core)
+  endforeach()
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(bench/file_transfer.cpp PROPERTIES
+      COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
+  endif()
+
   set(benchmark_registry
-    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\nevent-batch\tlaghu_benchmark_event_batch\t$<TARGET_FILE:laghu_benchmark_event_batch>\n")
+    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\nevent-batch\tlaghu_benchmark_event_batch\t$<TARGET_FILE:laghu_benchmark_event_batch>\nfile-transfer-generic\tlaghu_benchmark_file_transfer_generic\t$<TARGET_FILE:laghu_benchmark_file_transfer_generic>\nfile-transfer-kernel\tlaghu_benchmark_file_transfer_kernel\t$<TARGET_FILE:laghu_benchmark_file_transfer_kernel>\n")
   foreach(codec_feature codec_suffix IN ZIP_LISTS
       LAGHU_CODEC_BENCHMARK_FEATURES LAGHU_CODEC_BENCHMARK_SUFFIXES)
     list(FIND LAGHU_EFFECTIVE_FEATURES "${codec_feature}" codec_feature_index)
