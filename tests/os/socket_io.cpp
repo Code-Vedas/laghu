@@ -140,6 +140,9 @@ struct Injected final {
   int error{};
   std::uint32_t interrupted{};
   ssize_t result{};
+  int option_error{};
+  int pending_error{};
+  socklen_t option_size{static_cast<socklen_t>(sizeof(int))};
 };
 
 [[nodiscard]] ssize_t injected_receive(void* context, int, void*, std::size_t,
@@ -168,7 +171,15 @@ struct Injected final {
   return injected_receive(context, descriptor, nullptr, 0, flags);
 }
 
-[[nodiscard]] int injected_get_option(void*, int, int, int, void*, socklen_t*) noexcept {
+[[nodiscard]] int injected_get_option(void* context, int, int, int, void* value,
+                                      socklen_t* size) noexcept {
+  auto& state = *static_cast<Injected*>(context);
+  if (state.option_error != 0) {
+    errno = state.option_error;
+    return -1;
+  }
+  *static_cast<int*>(value) = state.pending_error;
+  *size = state.option_size;
   return 0;
 }
 
@@ -231,7 +242,54 @@ struct Injected final {
     return false;
   }
   const auto result = laghu::os::write_socket(pair->first.borrow(), *input, {0, 1});
-  return !result && result.error().code() == laghu::core::ErrorCode::invalid_input;
+  const auto empty_write = laghu::os::write_socket(
+      laghu::core::BorrowedSocketHandle{}, ByteView{}, {1, 1});
+  const auto empty_read = laghu::os::read_socket(
+      laghu::core::BorrowedSocketHandle{}, MutableByteView{}, {1, 1});
+  std::array<IoSlice, 0> storage_slices{};
+  IoSliceList slices{storage_slices};
+  const auto empty_vectored = laghu::os::write_socket_vectored(
+      laghu::core::BorrowedSocketHandle{}, slices, {1, 1});
+  return !result && result.error().code() == laghu::core::ErrorCode::invalid_input &&
+         !empty_write && empty_write.error().code() == laghu::core::ErrorCode::invalid_input &&
+         !empty_read && empty_read.error().code() == laghu::core::ErrorCode::invalid_input &&
+         !empty_vectored &&
+         empty_vectored.error().code() == laghu::core::ErrorCode::invalid_input;
+}
+
+[[nodiscard]] bool check_socket_error_contract() noexcept {
+  auto pair = make_pair();
+  if (!pair || !laghu::os::check_socket_error(pair->first.borrow())) {
+    return false;
+  }
+
+  Injected success{};
+  auto success_operations = operations(success);
+  if (!SocketIoTestAccess::check_error(pair->first.borrow(), success_operations)) {
+    return false;
+  }
+
+  Injected syscall_failure{};
+  syscall_failure.option_error = EIO;
+  auto syscall_operations = operations(syscall_failure);
+  const auto failed = SocketIoTestAccess::check_error(
+      pair->first.borrow(), syscall_operations);
+
+  Injected invalid_size{};
+  invalid_size.option_size = 1;
+  auto invalid_size_operations = operations(invalid_size);
+  const auto malformed = SocketIoTestAccess::check_error(
+      pair->first.borrow(), invalid_size_operations);
+
+  Injected pending{};
+  pending.pending_error = ECONNRESET;
+  auto pending_operations = operations(pending);
+  const auto socket_error = SocketIoTestAccess::check_error(
+      pair->first.borrow(), pending_operations);
+
+  return !failed && failed.error().native_code() == EIO && !malformed &&
+         malformed.error().code() == laghu::core::ErrorCode::invalid_input &&
+         !socket_error && socket_error.error().native_code() == ECONNRESET;
 }
 
 }  // namespace
@@ -244,6 +302,7 @@ int main() {
       laghu::test::TestCase{"os.socket_io.bounded_eintr_and_reset", check_bounded_eintr_and_reset},
       laghu::test::TestCase{"os.socket_io.vectored_partial", check_vectored_partial_consumption},
       laghu::test::TestCase{"os.socket_io.invalid_budget", check_invalid_budget},
+      laghu::test::TestCase{"os.socket_io.socket_error", check_socket_error_contract},
   };
   return laghu::test::run_tests(tests);
 }

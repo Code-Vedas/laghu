@@ -44,7 +44,7 @@ struct SocketIoResult final {
     core::BorrowedSocketHandle socket, core::IoSliceList& input,
     SocketIoBudget budget) noexcept;
 
-// Returns zero when no asynchronous socket error is pending. Otherwise the
+// Returns success when no asynchronous socket error is pending. Otherwise the
 // returned Error contains the pending POSIX error and its normalized class.
 [[nodiscard]] core::Result<void> check_socket_error(
     core::BorrowedSocketHandle socket) noexcept;

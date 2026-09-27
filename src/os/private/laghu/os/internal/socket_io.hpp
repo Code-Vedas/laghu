@@ -40,6 +40,9 @@ class SocketIoTestAccess final {
   [[nodiscard]] static core::Result<SocketIoResult> write_vectored(
       core::BorrowedSocketHandle socket, core::IoSliceList& input,
       SocketIoBudget budget, const SocketIoOperations& operations) noexcept;
+  [[nodiscard]] static core::Result<void> check_error(
+      core::BorrowedSocketHandle socket,
+      const SocketIoOperations& operations) noexcept;
 };
 
 }  // namespace laghu::os::internal

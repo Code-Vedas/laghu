@@ -166,11 +166,11 @@ template <class Operation>
     core::BorrowedSocketHandle socket, core::MutableByteView output,
     SocketIoBudget budget,
     const internal::SocketIoOperations& operations) noexcept {
-  if (output.empty()) {
-    return SocketIoResult{0, 0, SocketIoState::progress};
-  }
   if (const auto valid = validate(socket, budget, operations); !valid) {
     return std::unexpected{valid.error()};
+  }
+  if (output.empty()) {
+    return SocketIoResult{0, 0, SocketIoState::progress};
   }
   const std::size_t size = std::min(output.size(), budget.maximum_bytes);
   return invoke_bounded(budget, true, [&]() noexcept {
@@ -183,11 +183,11 @@ template <class Operation>
     core::BorrowedSocketHandle socket, core::ByteView input,
     SocketIoBudget budget,
     const internal::SocketIoOperations& operations) noexcept {
-  if (input.empty()) {
-    return SocketIoResult{0, 0, SocketIoState::progress};
-  }
   if (const auto valid = validate(socket, budget, operations); !valid) {
     return std::unexpected{valid.error()};
+  }
+  if (input.empty()) {
+    return SocketIoResult{0, 0, SocketIoState::progress};
   }
   if (const auto suppressed = suppress_sigpipe(socket.native_handle(), operations);
       !suppressed) {
@@ -204,11 +204,11 @@ template <class Operation>
     core::BorrowedSocketHandle socket, core::IoSliceList& input,
     SocketIoBudget budget,
     const internal::SocketIoOperations& operations) noexcept {
-  if (input.empty()) {
-    return SocketIoResult{0, 0, SocketIoState::progress};
-  }
   if (const auto valid = validate(socket, budget, operations); !valid) {
     return std::unexpected{valid.error()};
+  }
+  if (input.empty()) {
+    return SocketIoResult{0, 0, SocketIoState::progress};
   }
   if (input.size() > maximum_iovecs) {
     return std::unexpected{core::Error{core::ErrorDomain::core,
@@ -247,6 +247,29 @@ template <class Operation>
   return result;
 }
 
+[[nodiscard]] core::Result<void> check_error_with_operations(
+    core::BorrowedSocketHandle socket,
+    const internal::SocketIoOperations& operations) noexcept {
+  if (!socket.is_valid() || operations.get_option == nullptr) {
+    return std::unexpected{invalid("socket error query is invalid")};
+  }
+  int pending{};
+  socklen_t size = sizeof(pending);
+  if (operations.get_option(operations.context, socket.native_handle(), SOL_SOCKET,
+                            SO_ERROR, &pending, &size) != 0) {
+    return std::unexpected{
+        core::Error::from_errno(errno, "socket error query failed")};
+  }
+  if (size != sizeof(pending)) {
+    return std::unexpected{invalid("socket error query returned an invalid size")};
+  }
+  if (pending != 0) {
+    return std::unexpected{
+        core::Error::from_errno(pending, "socket has a pending error")};
+  }
+  return {};
+}
+
 }  // namespace
 
 core::Result<SocketIoResult> read_socket(core::BorrowedSocketHandle socket,
@@ -271,25 +294,8 @@ core::Result<SocketIoResult> write_socket_vectored(
 }
 
 core::Result<void> check_socket_error(core::BorrowedSocketHandle socket) noexcept {
-  if (!socket.is_valid()) {
-    return std::unexpected{invalid("socket error query has an invalid socket")};
-  }
-  int pending{};
-  socklen_t size = sizeof(pending);
-  const auto& operations = internal::default_socket_io_operations();
-  if (operations.get_option(operations.context, socket.native_handle(), SOL_SOCKET,
-                            SO_ERROR, &pending, &size) != 0) {
-    return std::unexpected{
-        core::Error::from_errno(errno, "socket error query failed")};
-  }
-  if (size != sizeof(pending)) {
-    return std::unexpected{invalid("socket error query returned an invalid size")};
-  }
-  if (pending != 0) {
-    return std::unexpected{
-        core::Error::from_errno(pending, "socket has a pending error")};
-  }
-  return {};
+  return check_error_with_operations(socket,
+                                     internal::default_socket_io_operations());
 }
 
 core::Result<void> shutdown_socket_write(core::BorrowedSocketHandle socket) noexcept {
@@ -320,6 +326,12 @@ core::Result<SocketIoResult> internal::SocketIoTestAccess::write_vectored(
     core::BorrowedSocketHandle socket, core::IoSliceList& input,
     SocketIoBudget budget, const SocketIoOperations& operations) noexcept {
   return write_vectored_with_operations(socket, input, budget, operations);
+}
+
+core::Result<void> internal::SocketIoTestAccess::check_error(
+    core::BorrowedSocketHandle socket,
+    const SocketIoOperations& operations) noexcept {
+  return check_error_with_operations(socket, operations);
 }
 
 }  // namespace laghu::os
