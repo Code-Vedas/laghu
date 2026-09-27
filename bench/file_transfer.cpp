@@ -115,7 +115,7 @@ laghu::core::Result<std::uint64_t> laghu::benchmark::internal::run_workload(
       const std::size_t remaining = payload.size() - transferred;
       const auto result = os::transfer_file(
           file->borrow(), output->borrow(),
-          os::FileTransferRequest{offset, remaining, 3,
+          os::FileTransferRequest{offset, remaining, 8,
                                   LAGHU_FILE_TRANSFER_MODE},
           cancellation_source.token());
       if (!result || result->state != os::FileTransferState::progress ||

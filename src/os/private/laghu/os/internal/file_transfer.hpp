@@ -15,8 +15,10 @@ using FilePreadFunction = ssize_t (*)(void*, int, void*, std::size_t,
 using FileSendFunction = ssize_t (*)(void*, int, const void*, std::size_t,
                                      int) noexcept;
 using KernelTransferFunction = int (*)(void*, int, int, std::uint64_t,
-                                       std::size_t, std::size_t*) noexcept;
-using FileTransferPrepareFunction = int (*)(void*, int) noexcept;
+                                       std::size_t, std::uint32_t,
+                                       std::size_t*, std::uint32_t*) noexcept;
+using FileTransferPrepareFunction = int (*)(void*, int, std::uint32_t,
+                                            std::uint32_t*) noexcept;
 
 struct FileTransferOperations final {
   void* context;

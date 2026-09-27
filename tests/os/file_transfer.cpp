@@ -147,16 +147,26 @@ struct SocketPair final {
     const auto result = laghu::os::transfer_file(
         file->borrow(), sockets->writer.borrow(),
         FileTransferRequest{offset, 3,
-                            mode == FileTransferMode::mapped ? 4U : 3U, mode},
+                            8U, mode},
         source.token());
     const FileTransferPath expected_path =
         mode == FileTransferMode::generic ? FileTransferPath::generic
         : mode == FileTransferMode::kernel ? FileTransferPath::kernel
                                            : FileTransferPath::mapped;
+#if defined(__linux__)
+    const std::uint32_t expected_calls =
+        mode == FileTransferMode::generic ? 3U : 5U;
+#else
+    const std::uint32_t expected_calls =
+        mode == FileTransferMode::kernel ? 3U
+        : mode == FileTransferMode::generic ? 4U
+                                            : 6U;
+#endif
     std::array<std::byte, 3> received{};
     if (!result || result->bytes != 3 || result->next_offset != offset + 3U ||
         result->state != FileTransferState::progress ||
         result->path != expected_path ||
+        result->syscalls != expected_calls ||
         !read_exact(sockets->reader.native_handle(), received) ||
         received[0] != std::byte{'c'} || received[2] != std::byte{'e'}) {
       return false;
@@ -179,9 +189,9 @@ struct SocketPair final {
   }
   const auto result = laghu::os::transfer_file(
       file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, 1, 4, FileTransferMode::mapped}, source.token());
+      FileTransferRequest{0, 1, 8, FileTransferMode::mapped}, source.token());
   return result && result->state == FileTransferState::end_of_file &&
-         result->path == FileTransferPath::generic;
+         result->path == FileTransferPath::mapped;
 }
 
 [[nodiscard]] bool check_direct_requirements() noexcept {
@@ -200,7 +210,7 @@ struct SocketPair final {
   }
   const auto unavailable = laghu::os::transfer_file(
       file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, payload.size(), 2, FileTransferMode::direct},
+      FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
       source.token());
   if (unavailable ||
       unavailable.error().code() != laghu::core::ErrorCode::unavailable_capability) {
@@ -239,7 +249,7 @@ struct SocketPair final {
   }
   const auto unaligned = laghu::os::transfer_file(
       direct_file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{1, payload.size(), 2, FileTransferMode::direct},
+      FileTransferRequest{1, payload.size(), 8, FileTransferMode::direct},
       source.token());
   if (unaligned ||
       unaligned.error().code() != laghu::core::ErrorCode::invalid_range) {
@@ -247,7 +257,7 @@ struct SocketPair final {
   }
   const auto result = laghu::os::transfer_file(
       direct_file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, payload.size(), 2, FileTransferMode::direct},
+      FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
       source.token());
   alignas(4096) std::array<std::byte, 4096> received{};
   return result && result->path == FileTransferPath::direct &&
@@ -263,14 +273,22 @@ struct Injected final {
   std::uint32_t pread_calls{};
   std::uint32_t send_calls{};
   std::uint32_t kernel_calls{};
+  std::uint32_t prepare_calls{};
   int kernel_error{};
   std::size_t kernel_bytes{};
+  bool truncate_before_read{};
 };
 
-[[nodiscard]] ssize_t injected_pread(void* context, int, void* output,
+[[nodiscard]] ssize_t injected_pread(void* context, int descriptor, void* output,
                                      std::size_t size, std::uint64_t) noexcept {
   auto& state = *static_cast<Injected*>(context);
   ++state.pread_calls;
+  if (state.truncate_before_read) {
+    if (::ftruncate(descriptor, 0) != 0) {
+      return -1;
+    }
+    return ::pread(descriptor, output, size, 0);
+  }
   std::memset(output, 'x', size);
   return static_cast<ssize_t>(size);
 }
@@ -283,9 +301,16 @@ struct Injected final {
 }
 
 [[nodiscard]] int injected_kernel(void* context, int, int, std::uint64_t,
-                                  std::size_t, std::size_t* transferred) noexcept {
+                                  std::size_t, std::uint32_t maximum_calls,
+                                  std::size_t* transferred,
+                                  std::uint32_t* calls) noexcept {
+  *calls = 0;
+  if (maximum_calls == 0) {
+    return 1;
+  }
   auto& state = *static_cast<Injected*>(context);
   ++state.kernel_calls;
+  *calls = 1U;
   *transferred = state.kernel_bytes;
   if (state.kernel_error != 0) {
     errno = state.kernel_error;
@@ -294,11 +319,60 @@ struct Injected final {
   return 0;
 }
 
-[[nodiscard]] int injected_prepare(void*, int) noexcept { return 0; }
+[[nodiscard]] int injected_prepare(void* context, int,
+                                   std::uint32_t maximum_calls,
+                                   std::uint32_t* calls) noexcept {
+  const auto& state = *static_cast<Injected*>(context);
+  *calls = std::min(maximum_calls, state.prepare_calls);
+  if (maximum_calls < state.prepare_calls) {
+    return 1;
+  }
+  return 0;
+}
 
 [[nodiscard]] laghu::os::internal::FileTransferOperations operations(
     Injected& state) noexcept {
   return {&state, injected_pread, injected_send, injected_kernel, injected_prepare};
+}
+
+[[nodiscard]] bool check_mapped_truncation_and_budget_accounting() noexcept {
+  const auto directory =
+      laghu::test::TemporaryDirectory::create("file-transfer-mapped-truncate");
+  constexpr std::array payload{std::byte{'x'}, std::byte{'y'}};
+  if (!directory) {
+    return false;
+  }
+  auto file = make_file(*directory, payload);
+  auto sockets = make_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!file || !sockets) {
+    return false;
+  }
+  Injected truncated{};
+  truncated.prepare_calls = 1U;
+  truncated.truncate_before_read = true;
+  auto truncated_operations = operations(truncated);
+  const auto result = laghu::os::internal::FileTransferTestAccess::transfer(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, payload.size(), 5, FileTransferMode::mapped},
+      source.token(), truncated_operations);
+  if (!result || result->state != FileTransferState::end_of_file ||
+      result->path != FileTransferPath::mapped || result->syscalls != 4U ||
+      truncated.pread_calls != 1U || truncated.send_calls != 0U) {
+    return false;
+  }
+
+  Injected exhausted{};
+  exhausted.prepare_calls = 2U;
+  auto exhausted_operations = operations(exhausted);
+  const auto budget = laghu::os::internal::FileTransferTestAccess::transfer(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, 1, 1, FileTransferMode::generic}, source.token(),
+      exhausted_operations);
+  return budget && budget->state == FileTransferState::budget_exhausted &&
+         budget->syscalls == 1U && exhausted.pread_calls == 0U &&
+         exhausted.send_calls == 0U;
 }
 
 [[nodiscard]] bool check_fallback_and_cancellation() noexcept {
@@ -322,6 +396,7 @@ struct Injected final {
       FileTransferRequest{0, 1, 3, FileTransferMode::automatic},
       active_source.token(), fallback_operations);
   if (!result || result->path != FileTransferPath::generic || result->bytes != 1 ||
+      result->syscalls != 3U ||
       fallback.kernel_calls != 1 || fallback.pread_calls != 1 ||
       fallback.send_calls != 1) {
     return false;
@@ -363,7 +438,7 @@ struct Injected final {
     const auto result = laghu::os::transfer_file(
         file->borrow(), sockets->writer.borrow(),
         FileTransferRequest{offset, payload.size() - consumed,
-                            2, FileTransferMode::generic},
+                            4, FileTransferMode::generic},
         source.token());
     if (!result || result->state != FileTransferState::progress ||
         result->bytes == 0 || result->bytes > received.size() ||
@@ -421,7 +496,7 @@ struct Injected final {
   }
   const auto result = laghu::os::transfer_file(
       file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, 1, 1, FileTransferMode::kernel}, source.token());
+      FileTransferRequest{0, 1, 4, FileTransferMode::kernel}, source.token());
   return !result && result.error().code() == laghu::core::ErrorCode::invalid_input;
 }
 
@@ -442,7 +517,7 @@ struct Injected final {
   }
   const auto result = laghu::os::transfer_file(
       file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, 1, 1, FileTransferMode::kernel}, source.token());
+      FileTransferRequest{0, 1, 6, FileTransferMode::kernel}, source.token());
   return !result && result.error().code() == laghu::core::ErrorCode::io;
 #else
   return true;
@@ -460,6 +535,8 @@ int main() {
                             check_direct_requirements},
       laghu::test::TestCase{"os.file_transfer.direct", check_direct_transfer},
       laghu::test::TestCase{"os.file_transfer.fallback_cancellation", check_fallback_and_cancellation},
+      laghu::test::TestCase{"os.file_transfer.mapped_truncation_budget",
+                            check_mapped_truncation_and_budget_accounting},
       laghu::test::TestCase{"os.file_transfer.large", check_large_transfer},
       laghu::test::TestCase{"os.file_transfer.bounds_capabilities", check_bounds_and_capabilities},
       laghu::test::TestCase{"os.file_transfer.kernel_destination_requirements",
