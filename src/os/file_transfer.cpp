@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -433,15 +434,16 @@ constexpr std::size_t direct_buffer_size = 65536U;
     return std::unexpected{unavailable_capability(
         "direct file transfer alignment is unavailable")};
   }
-  if (request.offset % offset_alignment != 0 ||
-      request.maximum_bytes % offset_alignment != 0) {
-    return std::unexpected{core::Error{core::ErrorDomain::core,
-                                       core::ErrorCode::invalid_range, 0,
-                                       "direct file transfer range is unaligned"}};
-  }
   alignas(direct_buffer_alignment)
       std::array<std::byte, direct_buffer_size> buffer{};
-  const std::size_t requested = std::min(buffer.size(), request.maximum_bytes);
+  const std::size_t prefix = request.offset % offset_alignment;
+  const std::uint64_t aligned_offset = request.offset - prefix;
+  const std::size_t payload_size =
+      std::min(buffer.size() - prefix, request.maximum_bytes);
+  const std::size_t read_extent = prefix + payload_size;
+  const std::size_t remainder = read_extent % offset_alignment;
+  const std::size_t requested =
+      remainder == 0 ? read_extent : read_extent + offset_alignment - remainder;
   while (calls < request.maximum_syscalls) {
     if (const auto active = cancellation.require_active(); !active) {
       return std::unexpected{active.error()};
@@ -449,8 +451,8 @@ constexpr std::size_t direct_buffer_size = 65536U;
     ++calls;
     const ssize_t read = operations.pread(operations.context,
                                           source.native_handle(), buffer.data(),
-                                          requested, request.offset);
-    if (read == 0) {
+                                          requested, aligned_offset);
+    if (read >= 0 && static_cast<std::size_t>(read) <= prefix) {
       return FileTransferResult{request.offset, 0, calls,
                                 FileTransferState::end_of_file,
                                 FileTransferPath::direct};
@@ -462,6 +464,9 @@ constexpr std::size_t direct_buffer_size = 65536U;
       return std::unexpected{core::Error::from_errno(
           errno, "direct file transfer read failed")};
     }
+    const std::size_t available = static_cast<std::size_t>(read) - prefix;
+    const std::size_t transferable = std::min(available, payload_size);
+    const auto bytes = std::span<const std::byte>{buffer}.subspan(prefix);
     if (const auto active = cancellation.require_active(); !active) {
       return std::unexpected{active.error()};
     }
@@ -477,7 +482,7 @@ constexpr std::size_t direct_buffer_size = 65536U;
       }
       ++calls;
       sent = operations.send(operations.context, destination.native_handle(),
-                             buffer.data(), static_cast<std::size_t>(read),
+                             bytes.data(), transferable,
                              transfer_send_flags());
       if (sent >= 0 || errno != EINTR) {
         break;

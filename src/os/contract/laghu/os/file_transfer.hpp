@@ -15,7 +15,8 @@ class FileTransferTestAccess;
 }  // namespace internal
 
 // The destination socket must already be nonblocking. Direct mode additionally
-// requires an O_DIRECT source and filesystem-aligned offsets and lengths.
+// requires an O_DIRECT source; Laghu performs filesystem-aligned reads around
+// the caller's logical offset and length.
 enum class FileTransferMode : std::uint8_t {
   automatic,
   generic,

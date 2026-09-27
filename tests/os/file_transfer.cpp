@@ -122,6 +122,17 @@ struct SocketPair final {
   return true;
 }
 
+#if defined(O_DIRECT)
+[[nodiscard]] bool direct_io_unavailable(int native_error) noexcept {
+  return native_error == EINVAL || native_error == ENODEV ||
+         native_error == ENOTSUP
+#if EOPNOTSUPP != ENOTSUP
+         || native_error == EOPNOTSUPP
+#endif
+      ;
+}
+#endif
+
 [[nodiscard]] bool check_real_modes_and_offset() noexcept {
   constexpr std::array payload{std::byte{'a'}, std::byte{'b'}, std::byte{'c'},
                                std::byte{'d'}, std::byte{'e'}, std::byte{'f'}};
@@ -132,13 +143,16 @@ struct SocketPair final {
     if (!directory) {
       return false;
     }
+    constexpr std::uint64_t sparse_prefix =
+        static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()) +
+        4097U;
     auto file = make_file(*directory, payload,
-                          mode == FileTransferMode::generic ? 0U : 4096U);
+                          mode == FileTransferMode::generic ? 0U : sparse_prefix);
     auto sockets = make_socket_pair();
     CancellationState state;
     CancellationSource source{state};
     const std::uint64_t offset =
-        mode == FileTransferMode::generic ? 2U : 4098U;
+        mode == FileTransferMode::generic ? 2U : sparse_prefix + 2U;
     if (!file || !sockets) {
       return false;
     }
@@ -214,7 +228,7 @@ struct SocketPair final {
   }
   const int descriptor = ::open(path.data(), O_RDONLY | O_CLOEXEC | O_DIRECT);
   if (descriptor < 0) {
-    return false;
+    return direct_io_unavailable(errno);
   }
   auto direct_file = FileHandle::adopt(descriptor);
   auto sockets = make_socket_pair();
@@ -223,23 +237,19 @@ struct SocketPair final {
   if (!direct_file || !sockets) {
     return false;
   }
-  const auto unaligned = laghu::os::transfer_file(
-      direct_file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{1, payload.size(), 8, FileTransferMode::direct},
-      source.token());
-  if (unaligned ||
-      unaligned.error().code() != laghu::core::ErrorCode::invalid_range) {
-    return false;
-  }
   const auto result = laghu::os::transfer_file(
       direct_file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
+      FileTransferRequest{1, 3, 8, FileTransferMode::direct},
       source.token());
-  alignas(4096) std::array<std::byte, 4096> received{};
+  if (!result &&
+      result.error().code() == laghu::core::ErrorCode::unavailable_capability) {
+    return true;
+  }
+  std::array<std::byte, 3> received{};
   return result && result->path == FileTransferPath::direct &&
-         result->bytes == payload.size() &&
+         result->bytes == received.size() && result->next_offset == 4U &&
          read_exact(sockets->reader.native_handle(), received) &&
-         received == payload;
+         received[0] == payload[1] && received[2] == payload[3];
 #else
   return true;
 #endif
@@ -253,6 +263,7 @@ struct Injected final {
   int kernel_error{};
   std::size_t kernel_bytes{};
   std::uint32_t interrupted_sends{};
+  std::size_t maximum_send_bytes{};
   CancellationSource* cancel_after_read{};
 };
 
@@ -277,7 +288,10 @@ struct Injected final {
     errno = EINTR;
     return -1;
   }
-  return static_cast<ssize_t>(size);
+  const std::size_t transferred = state.maximum_send_bytes == 0
+                                      ? size
+                                      : std::min(size, state.maximum_send_bytes);
+  return static_cast<ssize_t>(transferred);
 }
 
 [[nodiscard]] int injected_kernel(void* context, int, int, std::uint64_t,
@@ -331,7 +345,7 @@ struct Injected final {
   }
   const int descriptor = ::open(path.data(), O_RDONLY | O_CLOEXEC | O_DIRECT);
   if (descriptor < 0) {
-    return false;
+    return direct_io_unavailable(errno);
   }
   auto direct_file = FileHandle::adopt(descriptor);
   auto cancelled_sockets = make_socket_pair();
@@ -357,6 +371,7 @@ struct Injected final {
   CancellationSource retry_source{retry_state};
   Injected interrupted{};
   interrupted.interrupted_sends = 1U;
+  interrupted.maximum_send_bytes = 17U;
   auto interrupted_operations = operations(interrupted);
   if (!retry_sockets) {
     return false;
@@ -365,10 +380,27 @@ struct Injected final {
       direct_file->borrow(), retry_sockets->writer.borrow(),
       FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
       retry_source.token(), interrupted_operations);
-  return retried && retried->state == FileTransferState::progress &&
-         retried->path == FileTransferPath::direct &&
-         retried->bytes == payload.size() && interrupted.pread_calls == 1U &&
-         interrupted.send_calls == 2U && interrupted.interrupted_sends == 0U;
+  if (!retried && retried.error().code() ==
+                      laghu::core::ErrorCode::unavailable_capability) {
+    return true;
+  }
+  if (!retried || retried->state != FileTransferState::progress ||
+      retried->path != FileTransferPath::direct || retried->bytes != 17U ||
+      retried->next_offset != 17U || interrupted.pread_calls != 1U ||
+      interrupted.send_calls != 2U || interrupted.interrupted_sends != 0U) {
+    return false;
+  }
+  interrupted.maximum_send_bytes = 0;
+  const auto resumed = laghu::os::internal::FileTransferTestAccess::transfer(
+      direct_file->borrow(), retry_sockets->writer.borrow(),
+      FileTransferRequest{retried->next_offset,
+                          payload.size() - retried->bytes, 8,
+                          FileTransferMode::direct},
+      retry_source.token(), interrupted_operations);
+  return resumed && resumed->state == FileTransferState::progress &&
+         resumed->bytes == payload.size() - 17U &&
+         resumed->next_offset == payload.size() &&
+         interrupted.pread_calls == 2U && interrupted.send_calls == 3U;
 #else
   return true;
 #endif
