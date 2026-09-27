@@ -19,10 +19,9 @@ enum class FileTransferMode : std::uint8_t {
   automatic,
   generic,
   kernel,
-  mapped,
   direct,
 };
-enum class FileTransferPath : std::uint8_t { generic, kernel, mapped, direct };
+enum class FileTransferPath : std::uint8_t { generic, kernel, direct };
 enum class FileTransferState : std::uint8_t {
   progress,
   would_block,
@@ -32,7 +31,6 @@ enum class FileTransferState : std::uint8_t {
 
 struct FileTransferCapabilities final {
   bool kernel_transfer;
-  bool mapped_files;
   bool direct_io;
   bool kernel_tls_hook;
 };

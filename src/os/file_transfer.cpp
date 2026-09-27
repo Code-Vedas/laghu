@@ -10,7 +10,6 @@
 
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -257,8 +256,6 @@ constexpr std::size_t direct_buffer_size = 65536U;
   switch (mode) {
     case FileTransferMode::generic:
       return FileTransferPath::generic;
-    case FileTransferMode::mapped:
-      return FileTransferPath::mapped;
     case FileTransferMode::direct:
       return FileTransferPath::direct;
     case FileTransferMode::automatic:
@@ -290,7 +287,6 @@ constexpr std::size_t direct_buffer_size = 65536U;
     case FileTransferMode::automatic:
     case FileTransferMode::generic:
     case FileTransferMode::kernel:
-    case FileTransferMode::mapped:
     case FileTransferMode::direct:
       return {};
   }
@@ -371,111 +367,6 @@ constexpr std::size_t direct_buffer_size = 65536U;
   return FileTransferResult{request.offset, 0, calls,
                             FileTransferState::budget_exhausted,
                             path};
-}
-
-[[nodiscard]] core::Result<FileTransferResult> mapped_transfer(
-    core::BorrowedFileHandle source, core::BorrowedSocketHandle destination,
-    FileTransferRequest request, core::CancellationToken cancellation,
-    const internal::FileTransferOperations& operations,
-    std::uint32_t prior_calls) noexcept {
-  if (const auto active = cancellation.require_active(); !active) {
-    return std::unexpected{active.error()};
-  }
-  std::uint32_t calls = prior_calls;
-  if (request.maximum_syscalls - calls < 4U) {
-    return FileTransferResult{request.offset, 0, calls,
-                              FileTransferState::budget_exhausted,
-                              FileTransferPath::mapped};
-  }
-  const std::size_t mapping_size =
-      std::min(generic_buffer_size, request.maximum_bytes);
-#if defined(MAP_ANONYMOUS)
-  constexpr int anonymous_mapping = MAP_ANONYMOUS;
-#else
-  constexpr int anonymous_mapping = MAP_ANON;
-#endif
-  void* const mapping = ::mmap(nullptr, mapping_size, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | anonymous_mapping, -1, 0);
-  ++calls;
-  if (mapping == MAP_FAILED) {
-    return generic_transfer(source, destination, request, cancellation,
-                            operations, calls);
-  }
-  auto* const bytes = static_cast<std::byte*>(mapping);
-  ssize_t read{-1};
-  int native_error{};
-  while (calls + 2U < request.maximum_syscalls) {
-    if (const auto active = cancellation.require_active(); !active) {
-      static_cast<void>(::munmap(mapping, mapping_size));
-      return std::unexpected{active.error()};
-    }
-    ++calls;
-    read = operations.pread(operations.context, source.native_handle(), bytes,
-                            mapping_size, request.offset);
-    native_error = errno;
-    if (read >= 0 || native_error != EINTR) {
-      break;
-    }
-  }
-  if (read <= 0) {
-    static_cast<void>(::munmap(mapping, mapping_size));
-    ++calls;
-    if (read == 0) {
-      return FileTransferResult{request.offset, 0, calls,
-                                FileTransferState::end_of_file,
-                                FileTransferPath::mapped};
-    }
-    if (native_error == EINTR) {
-      return FileTransferResult{request.offset, 0, calls,
-                                FileTransferState::budget_exhausted,
-                                FileTransferPath::mapped};
-    }
-    return std::unexpected{core::Error::from_errno(
-        native_error, "mapped file transfer read failed")};
-  }
-  ssize_t sent{-1};
-  while (calls + 1U < request.maximum_syscalls) {
-    if (const auto active = cancellation.require_active(); !active) {
-      static_cast<void>(::munmap(mapping, mapping_size));
-      return std::unexpected{active.error()};
-    }
-    ++calls;
-    sent = operations.send(operations.context, destination.native_handle(),
-                           bytes, static_cast<std::size_t>(read),
-                           transfer_send_flags());
-    native_error = errno;
-    if (sent >= 0 || native_error != EINTR) {
-      break;
-    }
-  }
-  static_cast<void>(::munmap(mapping, mapping_size));
-  ++calls;
-  if (sent < 0) {
-    if (native_error == EINTR) {
-      return FileTransferResult{request.offset, 0, calls,
-                                FileTransferState::budget_exhausted,
-                                FileTransferPath::mapped};
-    }
-    if (would_block(native_error)) {
-      return FileTransferResult{request.offset, 0, calls,
-                                FileTransferState::would_block,
-                                FileTransferPath::mapped};
-    }
-    return std::unexpected{core::Error::from_errno(
-        native_error, "mapped file transfer write failed")};
-  }
-  if (sent == 0) {
-    return std::unexpected{core::Error::from_errno(
-        EIO, "mapped file transfer made no progress")};
-  }
-  const std::size_t transferred = static_cast<std::size_t>(sent);
-  const auto offset = next_offset(request.offset, transferred);
-  if (!offset) {
-    return std::unexpected{offset.error()};
-  }
-  return FileTransferResult{*offset, transferred, calls,
-                            FileTransferState::progress,
-                            FileTransferPath::mapped};
 }
 
 [[nodiscard]] core::Result<FileTransferResult> direct_transfer(
@@ -571,16 +462,33 @@ constexpr std::size_t direct_buffer_size = 65536U;
       return std::unexpected{core::Error::from_errno(
           errno, "direct file transfer read failed")};
     }
+    if (const auto active = cancellation.require_active(); !active) {
+      return std::unexpected{active.error()};
+    }
     if (calls == request.maximum_syscalls) {
       return FileTransferResult{request.offset, 0, calls,
                                 FileTransferState::budget_exhausted,
                                 FileTransferPath::direct};
     }
-    ++calls;
-    const ssize_t sent = operations.send(
-        operations.context, destination.native_handle(), buffer.data(),
-        static_cast<std::size_t>(read), transfer_send_flags());
+    ssize_t sent{-1};
+    while (calls < request.maximum_syscalls) {
+      if (const auto active = cancellation.require_active(); !active) {
+        return std::unexpected{active.error()};
+      }
+      ++calls;
+      sent = operations.send(operations.context, destination.native_handle(),
+                             buffer.data(), static_cast<std::size_t>(read),
+                             transfer_send_flags());
+      if (sent >= 0 || errno != EINTR) {
+        break;
+      }
+    }
     if (sent < 0) {
+      if (errno == EINTR) {
+        return FileTransferResult{request.offset, 0, calls,
+                                  FileTransferState::budget_exhausted,
+                                  FileTransferPath::direct};
+      }
       if (would_block(errno)) {
         return FileTransferResult{request.offset, 0, calls,
                                   FileTransferState::would_block,
@@ -639,10 +547,6 @@ constexpr std::size_t direct_buffer_size = 65536U;
   if (request.mode == FileTransferMode::generic) {
     return generic_transfer(source, destination, request, cancellation, operations,
                             calls);
-  }
-  if (request.mode == FileTransferMode::mapped) {
-    return mapped_transfer(source, destination, request, cancellation, operations,
-                           calls);
   }
   if (request.mode == FileTransferMode::direct) {
     return direct_transfer(source, destination, request, cancellation, operations,
@@ -714,7 +618,6 @@ FileTransferCapabilities file_transfer_capabilities() noexcept {
 #else
       false,
 #endif
-      true,
 #if defined(O_DIRECT)
       true,
 #else

@@ -121,10 +121,6 @@ laghu_apply_first_party_contract(laghu_os)
 laghu_configure_api_consumer(laghu_os os)
 target_include_directories(laghu_os PRIVATE "${CMAKE_SOURCE_DIR}/src/os/private")
 target_link_libraries(laghu_os PRIVATE Threads::Threads)
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set_source_files_properties(src/os/file_transfer.cpp PROPERTIES
-    COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
-endif()
 laghu_apply_first_party_contract(laghu_runtime)
 laghu_configure_api_consumer(laghu_runtime runtime)
 

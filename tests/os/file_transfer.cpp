@@ -125,12 +125,10 @@ struct SocketPair final {
 [[nodiscard]] bool check_real_modes_and_offset() noexcept {
   constexpr std::array payload{std::byte{'a'}, std::byte{'b'}, std::byte{'c'},
                                std::byte{'d'}, std::byte{'e'}, std::byte{'f'}};
-  for (const auto mode : {FileTransferMode::generic, FileTransferMode::kernel,
-                          FileTransferMode::mapped}) {
+  for (const auto mode : {FileTransferMode::generic, FileTransferMode::kernel}) {
     const auto directory = laghu::test::TemporaryDirectory::create(
         mode == FileTransferMode::generic ? "file-transfer-generic"
-        : mode == FileTransferMode::kernel ? "file-transfer-kernel"
-                                           : "file-transfer-mapped");
+                                          : "file-transfer-kernel");
     if (!directory) {
       return false;
     }
@@ -151,16 +149,13 @@ struct SocketPair final {
         source.token());
     const FileTransferPath expected_path =
         mode == FileTransferMode::generic ? FileTransferPath::generic
-        : mode == FileTransferMode::kernel ? FileTransferPath::kernel
-                                           : FileTransferPath::mapped;
+                                          : FileTransferPath::kernel;
 #if defined(__linux__)
     const std::uint32_t expected_calls =
         mode == FileTransferMode::generic ? 3U : 5U;
 #else
     const std::uint32_t expected_calls =
-        mode == FileTransferMode::kernel ? 3U
-        : mode == FileTransferMode::generic ? 4U
-                                            : 6U;
+        mode == FileTransferMode::kernel ? 3U : 4U;
 #endif
     std::array<std::byte, 3> received{};
     if (!result || result->bytes != 3 || result->next_offset != offset + 3U ||
@@ -173,25 +168,6 @@ struct SocketPair final {
     }
   }
   return true;
-}
-
-[[nodiscard]] bool check_mapped_fallback() noexcept {
-  const int descriptor = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
-  if (descriptor < 0) {
-    return false;
-  }
-  auto file = FileHandle::adopt(descriptor);
-  auto sockets = make_socket_pair();
-  CancellationState state;
-  CancellationSource source{state};
-  if (!file || !sockets) {
-    return false;
-  }
-  const auto result = laghu::os::transfer_file(
-      file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, 1, 8, FileTransferMode::mapped}, source.token());
-  return result && result->state == FileTransferState::end_of_file &&
-         result->path == FileTransferPath::mapped;
 }
 
 [[nodiscard]] bool check_direct_requirements() noexcept {
@@ -276,20 +252,19 @@ struct Injected final {
   std::uint32_t prepare_calls{};
   int kernel_error{};
   std::size_t kernel_bytes{};
-  bool truncate_before_read{};
+  std::uint32_t interrupted_sends{};
+  CancellationSource* cancel_after_read{};
 };
 
 [[nodiscard]] ssize_t injected_pread(void* context, int descriptor, void* output,
                                      std::size_t size, std::uint64_t) noexcept {
   auto& state = *static_cast<Injected*>(context);
   ++state.pread_calls;
-  if (state.truncate_before_read) {
-    if (::ftruncate(descriptor, 0) != 0) {
-      return -1;
-    }
-    return ::pread(descriptor, output, size, 0);
-  }
+  static_cast<void>(descriptor);
   std::memset(output, 'x', size);
+  if (state.cancel_after_read != nullptr) {
+    static_cast<void>(state.cancel_after_read->cancel());
+  }
   return static_cast<ssize_t>(size);
 }
 
@@ -297,6 +272,11 @@ struct Injected final {
                                     std::size_t size, int) noexcept {
   auto& state = *static_cast<Injected*>(context);
   ++state.send_calls;
+  if (state.interrupted_sends != 0U) {
+    --state.interrupted_sends;
+    errno = EINTR;
+    return -1;
+  }
   return static_cast<ssize_t>(size);
 }
 
@@ -335,10 +315,69 @@ struct Injected final {
   return {&state, injected_pread, injected_send, injected_kernel, injected_prepare};
 }
 
-[[nodiscard]] bool check_mapped_truncation_and_budget_accounting() noexcept {
-  const auto directory =
-      laghu::test::TemporaryDirectory::create("file-transfer-mapped-truncate");
-  constexpr std::array payload{std::byte{'x'}, std::byte{'y'}};
+[[nodiscard]] bool check_direct_cancellation_and_interrupted_send() noexcept {
+#if defined(__linux__) && defined(O_DIRECT)
+  const auto directory = laghu::test::TemporaryDirectory::create(
+      "file-transfer-direct-injected");
+  alignas(4096) std::array<std::byte, 4096> payload{};
+  if (!directory) {
+    return false;
+  }
+  auto ordinary_file = make_file(*directory, payload);
+  std::array<char, laghu::test::fixture_path_capacity> path{};
+  if (!ordinary_file || !ordinary_file->close() ||
+      !fixture_file_path(*directory, path)) {
+    return false;
+  }
+  const int descriptor = ::open(path.data(), O_RDONLY | O_CLOEXEC | O_DIRECT);
+  if (descriptor < 0) {
+    return false;
+  }
+  auto direct_file = FileHandle::adopt(descriptor);
+  auto cancelled_sockets = make_socket_pair();
+  CancellationState cancelled_state;
+  CancellationSource cancelled_source{cancelled_state};
+  Injected cancelled{};
+  cancelled.cancel_after_read = &cancelled_source;
+  auto cancelled_operations = operations(cancelled);
+  if (!direct_file || !cancelled_sockets) {
+    return false;
+  }
+  const auto stopped = laghu::os::internal::FileTransferTestAccess::transfer(
+      direct_file->borrow(), cancelled_sockets->writer.borrow(),
+      FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
+      cancelled_source.token(), cancelled_operations);
+  if (stopped || stopped.error().code() != laghu::core::ErrorCode::cancellation ||
+      cancelled.pread_calls != 1U || cancelled.send_calls != 0U) {
+    return false;
+  }
+
+  auto retry_sockets = make_socket_pair();
+  CancellationState retry_state;
+  CancellationSource retry_source{retry_state};
+  Injected interrupted{};
+  interrupted.interrupted_sends = 1U;
+  auto interrupted_operations = operations(interrupted);
+  if (!retry_sockets) {
+    return false;
+  }
+  const auto retried = laghu::os::internal::FileTransferTestAccess::transfer(
+      direct_file->borrow(), retry_sockets->writer.borrow(),
+      FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
+      retry_source.token(), interrupted_operations);
+  return retried && retried->state == FileTransferState::progress &&
+         retried->path == FileTransferPath::direct &&
+         retried->bytes == payload.size() && interrupted.pread_calls == 1U &&
+         interrupted.send_calls == 2U && interrupted.interrupted_sends == 0U;
+#else
+  return true;
+#endif
+}
+
+[[nodiscard]] bool check_preparation_budget_accounting() noexcept {
+  const auto directory = laghu::test::TemporaryDirectory::create(
+      "file-transfer-preparation-budget");
+  constexpr std::array payload{std::byte{'x'}};
   if (!directory) {
     return false;
   }
@@ -349,20 +388,6 @@ struct Injected final {
   if (!file || !sockets) {
     return false;
   }
-  Injected truncated{};
-  truncated.prepare_calls = 1U;
-  truncated.truncate_before_read = true;
-  auto truncated_operations = operations(truncated);
-  const auto result = laghu::os::internal::FileTransferTestAccess::transfer(
-      file->borrow(), sockets->writer.borrow(),
-      FileTransferRequest{0, payload.size(), 5, FileTransferMode::mapped},
-      source.token(), truncated_operations);
-  if (!result || result->state != FileTransferState::end_of_file ||
-      result->path != FileTransferPath::mapped || result->syscalls != 4U ||
-      truncated.pread_calls != 1U || truncated.send_calls != 0U) {
-    return false;
-  }
-
   Injected exhausted{};
   exhausted.prepare_calls = 2U;
   auto exhausted_operations = operations(exhausted);
@@ -476,7 +501,7 @@ struct Injected final {
       FileTransferRequest{std::numeric_limits<std::uint64_t>::max(), 1, 1,
                           FileTransferMode::generic},
       source.token());
-  return capabilities.kernel_transfer && capabilities.mapped_files && !overflow &&
+  return capabilities.kernel_transfer && !overflow &&
          overflow.error().code() == laghu::core::ErrorCode::overflow;
 }
 
@@ -529,14 +554,14 @@ struct Injected final {
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"os.file_transfer.real_modes_offset_sparse", check_real_modes_and_offset},
-      laghu::test::TestCase{"os.file_transfer.mapped_fallback",
-                            check_mapped_fallback},
       laghu::test::TestCase{"os.file_transfer.direct_requirements",
                             check_direct_requirements},
       laghu::test::TestCase{"os.file_transfer.direct", check_direct_transfer},
+      laghu::test::TestCase{"os.file_transfer.direct_cancel_eintr",
+                            check_direct_cancellation_and_interrupted_send},
       laghu::test::TestCase{"os.file_transfer.fallback_cancellation", check_fallback_and_cancellation},
-      laghu::test::TestCase{"os.file_transfer.mapped_truncation_budget",
-                            check_mapped_truncation_and_budget_accounting},
+      laghu::test::TestCase{"os.file_transfer.preparation_budget",
+                            check_preparation_budget_accounting},
       laghu::test::TestCase{"os.file_transfer.large", check_large_transfer},
       laghu::test::TestCase{"os.file_transfer.bounds_capabilities", check_bounds_and_capabilities},
       laghu::test::TestCase{"os.file_transfer.kernel_destination_requirements",

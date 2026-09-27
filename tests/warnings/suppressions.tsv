@@ -2,4 +2,3 @@
 # source\twarning\tcompiler\ttechnical reason
 src/cli/main.cpp	-Wno-unsafe-buffer-usage	clang	The POSIX process-entry ABI and write(2) require bounded pointer interfaces unavailable as C++ span parameters.
 src/core/mapped_regions.cpp	-Wno-unsafe-buffer-usage	clang	POSIX mmap, msync, mprotect, and shm_open require raw address and C-string interfaces at the OS boundary.
-src/os/file_transfer.cpp	-Wno-unsafe-buffer-usage	clang	POSIX mmap returns a raw address whose checked mapped extent is represented explicitly before socket transfer.
