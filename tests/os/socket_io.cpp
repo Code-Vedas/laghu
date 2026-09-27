@@ -112,10 +112,11 @@ struct SocketPair final {
 }
 
 [[nodiscard]] bool check_half_close_and_broken_pipe() noexcept {
-  auto pair = make_pair();
-  if (!pair || !set_nonblocking(pair->first.native_handle()) ||
-      !set_nonblocking(pair->second.native_handle()) ||
-      !laghu::os::shutdown_socket_write(pair->first.borrow())) {
+  auto half_closed_pair = make_pair();
+  if (!half_closed_pair ||
+      !set_nonblocking(half_closed_pair->first.native_handle()) ||
+      !set_nonblocking(half_closed_pair->second.native_handle()) ||
+      !laghu::os::shutdown_socket_write(half_closed_pair->first.borrow())) {
     return false;
   }
   std::array<std::byte, 1> storage{};
@@ -123,15 +124,21 @@ struct SocketPair final {
   if (!output) {
     return false;
   }
-  const auto closed = laghu::os::read_socket(pair->second.borrow(), *output, {1, 1});
+  const auto closed = laghu::os::read_socket(
+      half_closed_pair->second.borrow(), *output, {1, 1});
   if (!closed || closed->state != SocketIoState::peer_closed) {
     return false;
   }
-  if (!pair->second.close()) {
+
+  auto peer_closed_pair = make_pair();
+  if (!peer_closed_pair ||
+      !set_nonblocking(peer_closed_pair->first.native_handle()) ||
+      !peer_closed_pair->second.close()) {
     return false;
   }
   const auto input = ByteView::from(storage);
-  const auto broken = laghu::os::write_socket(pair->first.borrow(), *input, {1, 1});
+  const auto broken = laghu::os::write_socket(
+      peer_closed_pair->first.borrow(), *input, {1, 1});
   return broken && broken->state == SocketIoState::broken_pipe;
 }
 
