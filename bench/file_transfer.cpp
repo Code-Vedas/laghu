@@ -109,17 +109,27 @@ laghu::core::Result<std::uint64_t> laghu::benchmark::internal::run_workload(
   core::CancellationSource cancellation_source{cancellation_state};
   std::array<std::byte, 4096> received{};
   for (std::uint64_t iteration = 0; iteration < operations_per_interval; ++iteration) {
-    const auto result = os::transfer_file(
-        file->borrow(), output->borrow(),
-        os::FileTransferRequest{0, payload.size(), 3,
-                                LAGHU_FILE_TRANSFER_MODE},
-        cancellation_source.token());
-    if (!result || result->bytes != payload.size() ||
-        !read_all(input->native_handle(), received.data(), received.size()) ||
-        !counters.record_laghu_syscall_events(result->syscalls)) {
-      return std::unexpected{core::Error{core::ErrorDomain::core,
-                                         core::ErrorCode::invalid_state, 0,
-                                         "file transfer benchmark failed"}};
+    std::size_t transferred{};
+    std::uint64_t offset{};
+    while (transferred < payload.size()) {
+      const std::size_t remaining = payload.size() - transferred;
+      const auto result = os::transfer_file(
+          file->borrow(), output->borrow(),
+          os::FileTransferRequest{offset, remaining, 3,
+                                  LAGHU_FILE_TRANSFER_MODE},
+          cancellation_source.token());
+      if (!result || result->state != os::FileTransferState::progress ||
+          result->bytes == 0 || result->bytes > remaining ||
+          result->next_offset != offset + result->bytes ||
+          !read_all(input->native_handle(), received.data() + transferred,
+                    result->bytes) ||
+          !counters.record_laghu_syscall_events(result->syscalls)) {
+        return std::unexpected{core::Error{core::ErrorDomain::core,
+                                           core::ErrorCode::invalid_state, 0,
+                                           "file transfer benchmark failed"}};
+      }
+      transferred += result->bytes;
+      offset = result->next_offset;
     }
     seed ^= std::to_integer<std::uint64_t>(received[iteration % received.size()]);
   }
