@@ -263,6 +263,7 @@ struct Injected final {
   int kernel_error{};
   std::size_t kernel_bytes{};
   std::uint32_t interrupted_sends{};
+  int send_error{};
   std::size_t maximum_send_bytes{};
   CancellationSource* cancel_after_read{};
 };
@@ -286,6 +287,10 @@ struct Injected final {
   if (state.interrupted_sends != 0U) {
     --state.interrupted_sends;
     errno = EINTR;
+    return -1;
+  }
+  if (state.send_error != 0) {
+    errno = state.send_error;
     return -1;
   }
   const std::size_t transferred = state.maximum_send_bytes == 0
@@ -361,6 +366,10 @@ struct Injected final {
       direct_file->borrow(), cancelled_sockets->writer.borrow(),
       FileTransferRequest{0, payload.size(), 8, FileTransferMode::direct},
       cancelled_source.token(), cancelled_operations);
+  if (!stopped && stopped.error().code() ==
+                      laghu::core::ErrorCode::unavailable_capability) {
+    return true;
+  }
   if (stopped || stopped.error().code() != laghu::core::ErrorCode::cancellation ||
       cancelled.pread_calls != 1U || cancelled.send_calls != 0U) {
     return false;
@@ -397,13 +406,86 @@ struct Injected final {
                           payload.size() - retried->bytes, 8,
                           FileTransferMode::direct},
       retry_source.token(), interrupted_operations);
-  return resumed && resumed->state == FileTransferState::progress &&
-         resumed->bytes == payload.size() - 17U &&
-         resumed->next_offset == payload.size() &&
-         interrupted.pread_calls == 2U && interrupted.send_calls == 3U;
+  if (!resumed || resumed->state != FileTransferState::progress ||
+      resumed->bytes != payload.size() - 17U ||
+      resumed->next_offset != payload.size() || interrupted.pread_calls != 2U ||
+      interrupted.send_calls != 3U) {
+    return false;
+  }
+
+  auto blocked_sockets = make_socket_pair();
+  Injected blocked{};
+  blocked.send_error = EAGAIN;
+  auto blocked_operations = operations(blocked);
+  if (!blocked_sockets) {
+    return false;
+  }
+  const auto backpressure =
+      laghu::os::internal::FileTransferTestAccess::transfer(
+          direct_file->borrow(), blocked_sockets->writer.borrow(),
+          FileTransferRequest{17, payload.size() - 17U, 8,
+                              FileTransferMode::direct},
+          retry_source.token(), blocked_operations);
+  return backpressure &&
+         backpressure->state == FileTransferState::would_block &&
+         backpressure->path == FileTransferPath::direct &&
+         backpressure->bytes == 0U && backpressure->next_offset == 17U &&
+         backpressure->syscalls >= 2U && backpressure->syscalls <= 8U &&
+         blocked.pread_calls == 1U && blocked.send_calls == 1U;
 #else
   return true;
 #endif
+}
+
+[[nodiscard]] bool check_backpressure() noexcept {
+  const auto directory =
+      laghu::test::TemporaryDirectory::create("file-transfer-backpressure");
+  constexpr std::array payload{std::byte{'x'}};
+  if (!directory) {
+    return false;
+  }
+  auto file = make_file(*directory, payload);
+  auto sockets = make_socket_pair();
+  CancellationState state;
+  CancellationSource source{state};
+  if (!file || !sockets) {
+    return false;
+  }
+
+  Injected generic{};
+  generic.send_error = EAGAIN;
+  auto generic_operations = operations(generic);
+  const auto generic_result =
+      laghu::os::internal::FileTransferTestAccess::transfer(
+          file->borrow(), sockets->writer.borrow(),
+          FileTransferRequest{0, 1, 2, FileTransferMode::generic},
+          source.token(), generic_operations);
+  if (!generic_result ||
+      generic_result->state != FileTransferState::would_block ||
+      generic_result->path != FileTransferPath::generic ||
+      generic_result->bytes != 0U || generic_result->next_offset != 0U ||
+      generic_result->syscalls != 2U || generic.pread_calls != 1U ||
+      generic.send_calls != 1U) {
+    return false;
+  }
+
+  for (const auto mode :
+       {FileTransferMode::kernel, FileTransferMode::automatic}) {
+    Injected kernel{};
+    kernel.kernel_error = EAGAIN;
+    auto kernel_operations = operations(kernel);
+    const auto result = laghu::os::internal::FileTransferTestAccess::transfer(
+        file->borrow(), sockets->writer.borrow(),
+        FileTransferRequest{0, 1, 1, mode}, source.token(), kernel_operations);
+    if (!result || result->state != FileTransferState::would_block ||
+        result->path != FileTransferPath::kernel || result->bytes != 0U ||
+        result->next_offset != 0U || result->syscalls != 1U ||
+        kernel.kernel_calls != 1U || kernel.pread_calls != 0U ||
+        kernel.send_calls != 0U) {
+      return false;
+    }
+  }
+  return true;
 }
 
 [[nodiscard]] bool check_preparation_budget_accounting() noexcept {
@@ -592,6 +674,7 @@ int main() {
       laghu::test::TestCase{"os.file_transfer.direct_cancel_eintr",
                             check_direct_cancellation_and_interrupted_send},
       laghu::test::TestCase{"os.file_transfer.fallback_cancellation", check_fallback_and_cancellation},
+      laghu::test::TestCase{"os.file_transfer.backpressure", check_backpressure},
       laghu::test::TestCase{"os.file_transfer.preparation_budget",
                             check_preparation_budget_accounting},
       laghu::test::TestCase{"os.file_transfer.large", check_large_transfer},
