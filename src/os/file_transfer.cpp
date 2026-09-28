@@ -314,7 +314,7 @@ constexpr std::size_t direct_buffer_size = 65536U;
     const internal::FileTransferOperations& operations,
     std::uint32_t prior_calls = 0,
     FileTransferPath path = FileTransferPath::generic) noexcept {
-  std::array<std::byte, generic_buffer_size> buffer{};
+  std::array<std::byte, generic_buffer_size> buffer;
   std::uint32_t calls = prior_calls;
   while (calls < request.maximum_syscalls) {
     if (const auto active = cancellation.require_active(); !active) {
@@ -438,7 +438,7 @@ constexpr std::size_t direct_buffer_size = 65536U;
         "direct file transfer alignment is unavailable")};
   }
   alignas(direct_buffer_alignment)
-      std::array<std::byte, direct_buffer_size> buffer{};
+      std::array<std::byte, direct_buffer_size> buffer;
   const std::size_t prefix = request.offset % offset_alignment;
   const std::uint64_t aligned_offset = request.offset - prefix;
   const std::size_t payload_size =
