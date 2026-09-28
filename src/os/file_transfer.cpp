@@ -259,6 +259,8 @@ constexpr std::size_t direct_buffer_size = 65536U;
       return FileTransferPath::generic;
     case FileTransferMode::direct:
       return FileTransferPath::direct;
+    case FileTransferMode::memory_mapped:
+      return FileTransferPath::generic;
     case FileTransferMode::automatic:
     case FileTransferMode::kernel:
       return FileTransferPath::kernel;
@@ -289,6 +291,7 @@ constexpr std::size_t direct_buffer_size = 65536U;
     case FileTransferMode::generic:
     case FileTransferMode::kernel:
     case FileTransferMode::direct:
+    case FileTransferMode::memory_mapped:
       return {};
   }
   return std::unexpected{invalid("file transfer mode is invalid")};
@@ -549,7 +552,8 @@ constexpr std::size_t direct_buffer_size = 65536U;
     return std::unexpected{core::Error::from_errno(
         errno, "file transfer destination preparation failed")};
   }
-  if (request.mode == FileTransferMode::generic) {
+  if (request.mode == FileTransferMode::generic ||
+      request.mode == FileTransferMode::memory_mapped) {
     return generic_transfer(source, destination, request, cancellation, operations,
                             calls);
   }
@@ -628,6 +632,7 @@ FileTransferCapabilities file_transfer_capabilities() noexcept {
 #else
       false,
 #endif
+      false,
 #if defined(__linux__) && defined(SOL_TLS)
       true,
 #else

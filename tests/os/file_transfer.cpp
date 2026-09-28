@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -615,8 +616,23 @@ struct Injected final {
       FileTransferRequest{std::numeric_limits<std::uint64_t>::max(), 1, 1,
                           FileTransferMode::generic},
       source.token());
-  return capabilities.kernel_transfer && !overflow &&
-         overflow.error().code() == laghu::core::ErrorCode::overflow;
+  if (!capabilities.kernel_transfer || capabilities.memory_mapped_transfer ||
+      overflow ||
+      overflow.error().code() != laghu::core::ErrorCode::overflow) {
+    return false;
+  }
+
+  const auto fallback = laghu::os::transfer_file(
+      file->borrow(), sockets->writer.borrow(),
+      FileTransferRequest{0, 1, 4, FileTransferMode::memory_mapped},
+      source.token());
+  std::array<std::byte, 1> received{};
+  return fallback && fallback->state == FileTransferState::progress &&
+         fallback->path == FileTransferPath::generic && fallback->bytes == 1U &&
+         fallback->next_offset == 1U && fallback->syscalls >= 3U &&
+         fallback->syscalls <= 4U &&
+         read_exact(sockets->reader.native_handle(), received) &&
+         received[0] == payload[0];
 }
 
 [[nodiscard]] bool check_kernel_destination_requirements() noexcept {

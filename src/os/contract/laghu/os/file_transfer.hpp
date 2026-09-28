@@ -16,14 +16,22 @@ class FileTransferTestAccess;
 
 // The destination socket must already be nonblocking. Direct mode additionally
 // requires an O_DIRECT source; Laghu performs filesystem-aligned reads around
-// the caller's logical offset and length.
+// the caller's logical offset and length. Memory-mapped transfer is an explicit
+// capability hook, but currently falls back to the generic path because a
+// concurrently truncated mapping cannot be read safely.
 enum class FileTransferMode : std::uint8_t {
   automatic,
   generic,
   kernel,
   direct,
+  memory_mapped,
 };
-enum class FileTransferPath : std::uint8_t { generic, kernel, direct };
+enum class FileTransferPath : std::uint8_t {
+  generic,
+  kernel,
+  direct,
+  memory_mapped,
+};
 enum class FileTransferState : std::uint8_t {
   progress,
   would_block,
@@ -34,6 +42,7 @@ enum class FileTransferState : std::uint8_t {
 struct FileTransferCapabilities final {
   bool kernel_transfer;
   bool direct_io;
+  bool memory_mapped_transfer;
   bool kernel_tls_hook;
 };
 
