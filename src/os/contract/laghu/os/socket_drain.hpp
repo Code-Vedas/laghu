@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
+#include <laghu/core/contract.hpp>
 #include <laghu/core/handles.hpp>
 #include <laghu/core/views.hpp>
 
@@ -29,12 +31,14 @@ enum class SocketDrainState : std::uint8_t {
   broken_pipe,
   resource_pressure,
   budget_exhausted,
+  failed,
 };
 
 struct SocketDrainResult final {
   std::size_t bytes;
   std::uint32_t operations;
   SocketDrainState state;
+  std::optional<core::Error> terminal_error{};
 };
 
 struct AcceptDrainBudget final {
@@ -47,6 +51,7 @@ struct AcceptDrainResult final {
   std::size_t accepted;
   std::uint32_t operations;
   SocketDrainState state;
+  std::optional<core::Error> terminal_error{};
 };
 
 // These helpers are Linux event-loop primitives. Other POSIX targets return

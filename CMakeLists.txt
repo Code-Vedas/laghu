@@ -901,7 +901,8 @@ set(laghu_verify_targets
   laghu_core_shared_offsets_test laghu_core_mapped_regions_test
   laghu_core_binary_envelope_test laghu_core_digest_primitives_test
   laghu_os_iovec_translation_test laghu_os_wakeup_test laghu_os_listener_test
-  laghu_os_socket_io_test laghu_os_file_transfer_test
+  laghu_os_socket_io_test laghu_os_file_transfer_test laghu_os_epoll_test
+  laghu_os_socket_drain_test
   laghu_runtime_event_backend_test laghu_runtime_event_batch_test
   laghu_runtime_worker_wakeup_test
   laghu_test_support laghu_test_faults laghu_test_time_entropy

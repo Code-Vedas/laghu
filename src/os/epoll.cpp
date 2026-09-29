@@ -123,10 +123,16 @@ core::Result<EpollWaitResult> EpollDispatcher::wait(
     return std::unexpected{invalid("epoll wait arguments are invalid")};
   }
   std::array<epoll_event, maximum_events> events;
+  const auto started = std::chrono::steady_clock::now();
   for (std::uint32_t call = 1; call <= maximum_wait_calls; ++call) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started);
+    const auto remaining = elapsed >= maximum_wait
+                               ? std::chrono::nanoseconds{0}
+                               : maximum_wait - elapsed;
     const int count = ::epoll_wait(descriptor_.native_handle(), events.data(),
                                    static_cast<int>(output.size()),
-                                   wait_milliseconds(maximum_wait));
+                                   wait_milliseconds(remaining));
     if (count < 0) {
       if (errno == EINTR) continue;
       return std::unexpected{core::Error::from_errno(errno, "epoll wait failed")};

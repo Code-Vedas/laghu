@@ -100,6 +100,20 @@ struct Fixture final {
          result->state == SocketDrainState::budget_exhausted;
 }
 
+[[nodiscard]] bool check_write_partial_terminal_error() noexcept {
+  auto socket = socket_handle();
+  constexpr std::array bytes{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+  const auto input = laghu::core::ByteView::from(bytes);
+  Fixture fixture{{2, -1}, {0, EIO}};
+  auto ops = operations(fixture);
+  const auto result = SocketDrainTestAccess::write(
+      socket->borrow(), *input, {3, 3, std::chrono::seconds{1}}, ops);
+  return result && result->bytes == 2U && result->operations == 2U &&
+         result->state == SocketDrainState::failed &&
+         result->terminal_error.has_value() &&
+         result->terminal_error->native_code() == EIO;
+}
+
 [[nodiscard]] bool check_time_and_accept_pressure() noexcept {
   auto socket = socket_handle();
   std::array<std::byte, 1> storage{};
@@ -138,14 +152,31 @@ struct Fixture final {
          result->state == SocketDrainState::would_block && accepted[0].is_valid();
 }
 
+[[nodiscard]] bool check_blocking_listener_rejected() noexcept {
+#if defined(__linux__)
+  auto listener = socket_handle();
+  if (!listener) return false;
+  std::array<laghu::core::SocketHandle, 1> accepted{};
+  const auto result = laghu::os::drain_accept(
+      listener->borrow(), accepted, {1, 1, std::chrono::seconds{1}});
+  return !result && result.error().code() == laghu::core::ErrorCode::invalid_input;
+#else
+  return true;
+#endif
+}
+
 }  // namespace
 
 int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"os.socket_drain.read", check_read_eintr_partial_eagain},
       laghu::test::TestCase{"os.socket_drain.write", check_write_partial_and_operation_budget},
+      laghu::test::TestCase{"os.socket_drain.write_terminal_error",
+                            check_write_partial_terminal_error},
       laghu::test::TestCase{"os.socket_drain.time_accept", check_time_and_accept_pressure},
       laghu::test::TestCase{"os.socket_drain.accept_progress", check_accept_progress_to_eagain},
+      laghu::test::TestCase{"os.socket_drain.blocking_listener",
+                            check_blocking_listener_rejected},
   };
   return laghu::test::run_tests(tests);
 }

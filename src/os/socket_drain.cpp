@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -101,7 +102,13 @@ template <class View, class Invoke>
   std::uint32_t calls{};
   while (transferred < limit && calls < budget.maximum_operations) {
     const auto timed_out = expired(*started, budget.maximum_duration, operations.clock);
-    if (!timed_out) return std::unexpected{timed_out.error()};
+    if (!timed_out) {
+      if (transferred == 0U && calls == 0U) {
+        return std::unexpected{timed_out.error()};
+      }
+      return SocketDrainResult{transferred, calls, SocketDrainState::failed,
+                               timed_out.error()};
+    }
     if (*timed_out) return SocketDrainResult{transferred, calls, SocketDrainState::budget_exhausted};
     ++calls;
     const auto remaining = bytes.span().subspan(transferred, limit - transferred);
@@ -120,7 +127,8 @@ template <class View, class Invoke>
     if (would_block(code)) return SocketDrainResult{transferred, calls, SocketDrainState::would_block};
     if (code == ECONNRESET) return SocketDrainResult{transferred, calls, SocketDrainState::peer_reset};
     if (code == EPIPE) return SocketDrainResult{transferred, calls, SocketDrainState::broken_pipe};
-    return std::unexpected{core::Error::from_errno(code, "socket drain failed")};
+    return SocketDrainResult{transferred, calls, SocketDrainState::failed,
+                             core::Error::from_errno(code, "socket drain failed")};
   }
   return SocketDrainResult{transferred, calls, SocketDrainState::budget_exhausted};
 }
@@ -158,7 +166,13 @@ template <class View, class Invoke>
   std::uint32_t calls{};
   while (accepted < budget.maximum_accepts && calls < budget.maximum_operations) {
     const auto timed_out = expired(*started, budget.maximum_duration, operations.clock);
-    if (!timed_out) return std::unexpected{timed_out.error()};
+    if (!timed_out) {
+      if (accepted == 0U && calls == 0U) {
+        return std::unexpected{timed_out.error()};
+      }
+      return AcceptDrainResult{accepted, calls, SocketDrainState::failed,
+                               timed_out.error()};
+    }
     if (*timed_out) return AcceptDrainResult{accepted, calls, SocketDrainState::budget_exhausted};
     ++calls;
     const int descriptor = operations.accept(operations.context, listener.native_handle());
@@ -166,7 +180,8 @@ template <class View, class Invoke>
       auto handle = core::SocketHandle::adopt(descriptor);
       if (!handle) {
         static_cast<void>(::close(descriptor));
-        return std::unexpected{handle.error()};
+        return AcceptDrainResult{accepted, calls, SocketDrainState::failed,
+                                 handle.error()};
       }
       output[accepted] = std::move(*handle);
       ++accepted;
@@ -178,7 +193,8 @@ template <class View, class Invoke>
     if (code == EMFILE || code == ENFILE) {
       return AcceptDrainResult{accepted, calls, SocketDrainState::resource_pressure};
     }
-    return std::unexpected{core::Error::from_errno(code, "accept drain failed")};
+    return AcceptDrainResult{accepted, calls, SocketDrainState::failed,
+                             core::Error::from_errno(code, "accept drain failed")};
   }
   return AcceptDrainResult{accepted, calls, SocketDrainState::budget_exhausted};
 }
@@ -206,6 +222,18 @@ core::Result<SocketDrainResult> drain_socket_write(core::BorrowedSocketHandle so
 core::Result<AcceptDrainResult> drain_accept(core::BorrowedSocketHandle listener,
     std::span<core::SocketHandle> output, AcceptDrainBudget budget) noexcept {
 #if defined(__linux__)
+  if (!listener.is_valid()) {
+    return std::unexpected{invalid("accept drain descriptor is invalid")};
+  }
+  const int flags = ::fcntl(listener.native_handle(), F_GETFL, 0);
+  if (flags < 0) {
+    return std::unexpected{
+        core::Error::from_errno(errno, "accept drain listener query failed")};
+  }
+  if ((flags & O_NONBLOCK) == 0) {
+    return std::unexpected{
+        invalid("accept drain listener must be nonblocking")};
+  }
   return accept_with_operations(listener, output, budget, internal::default_socket_drain_operations());
 #else
   static_cast<void>(listener); static_cast<void>(output); static_cast<void>(budget);
