@@ -820,6 +820,23 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     COMPILE_OPTIONS -Wno-unsafe-buffer-usage)
 endif()
 
+add_executable(laghu_os_epoll_test tests/os/epoll.cpp)
+laghu_apply_first_party_contract(laghu_os_epoll_test)
+laghu_configure_api_consumer(laghu_os_epoll_test os)
+target_include_directories(laghu_os_epoll_test PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/os/private")
+target_link_libraries(laghu_os_epoll_test PRIVATE laghu_os laghu_test_support)
+laghu_add_native_test(laghu.os.epoll laghu_os_epoll_test)
+
+add_executable(laghu_os_socket_drain_test tests/os/socket_drain.cpp)
+laghu_apply_first_party_contract(laghu_os_socket_drain_test)
+laghu_configure_api_consumer(laghu_os_socket_drain_test os)
+target_include_directories(laghu_os_socket_drain_test PRIVATE
+  "${CMAKE_SOURCE_DIR}/src/os/private")
+target_link_libraries(laghu_os_socket_drain_test PRIVATE
+  laghu_os laghu_test_support)
+laghu_add_native_test(laghu.os.socket_drain laghu_os_socket_drain_test)
+
 add_executable(laghu_runtime_event_backend_test tests/runtime/event_backend.cpp)
 laghu_apply_first_party_contract(laghu_runtime_event_backend_test)
 laghu_configure_api_consumer(laghu_runtime_event_backend_test runtime)
