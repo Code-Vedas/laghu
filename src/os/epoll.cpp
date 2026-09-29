@@ -124,7 +124,9 @@ core::Result<EpollWaitResult> EpollDispatcher::wait(
   }
   std::array<epoll_event, maximum_events> events;
   const auto started = std::chrono::steady_clock::now();
-  for (std::uint32_t call = 1; call <= maximum_wait_calls; ++call) {
+  std::uint32_t call{};
+  while (call < maximum_wait_calls) {
+    ++call;
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - started);
     const auto remaining = elapsed >= maximum_wait

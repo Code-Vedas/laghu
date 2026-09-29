@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <utility>
 
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -165,6 +167,91 @@ struct Fixture final {
 #endif
 }
 
+[[nodiscard]] bool check_public_read_write() noexcept {
+#if defined(__linux__)
+  int descriptors[2]{};
+  if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0,
+                   descriptors) != 0) {
+    return false;
+  }
+  auto first = laghu::core::SocketHandle::adopt(descriptors[0]);
+  auto second = laghu::core::SocketHandle::adopt(descriptors[1]);
+  if (!first || !second) return false;
+
+  constexpr std::array input{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+  if (::send(second->native_handle(), input.data(), input.size(), MSG_NOSIGNAL) !=
+      static_cast<ssize_t>(input.size())) {
+    return false;
+  }
+  std::array<std::byte, 8> received{};
+  const auto output = laghu::core::MutableByteView::from(received);
+  const auto read = laghu::os::drain_socket_read(
+      first->borrow(), *output, {received.size(), 4, std::chrono::seconds{1}});
+  if (!read || read->bytes != input.size() ||
+      read->state != SocketDrainState::would_block ||
+      received[0] != input[0] || received[1] != input[1] ||
+      received[2] != input[2]) {
+    return false;
+  }
+
+  const auto view = laghu::core::ByteView::from(input);
+  const auto written = laghu::os::drain_socket_write(
+      first->borrow(), *view, {input.size(), 2, std::chrono::seconds{1}});
+  std::array<std::byte, input.size()> peer_received{};
+  const ssize_t peer_bytes = ::recv(second->native_handle(), peer_received.data(),
+                                    peer_received.size(), 0);
+  return written && written->bytes == input.size() &&
+         written->state == SocketDrainState::budget_exhausted &&
+         peer_bytes == static_cast<ssize_t>(input.size()) && peer_received == input;
+#else
+  return true;
+#endif
+}
+
+[[nodiscard]] bool check_public_accept_flags() noexcept {
+#if defined(__linux__)
+  const int listener_descriptor =
+      ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+  if (listener_descriptor < 0) return false;
+  auto listener = laghu::core::SocketHandle::adopt(listener_descriptor);
+  if (!listener) return false;
+
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  if (::bind(listener->native_handle(), reinterpret_cast<const sockaddr*>(&address),
+             sizeof(address)) != 0 ||
+      ::listen(listener->native_handle(), 1) != 0) {
+    return false;
+  }
+  socklen_t address_size = sizeof(address);
+  if (::getsockname(listener->native_handle(), reinterpret_cast<sockaddr*>(&address),
+                    &address_size) != 0) {
+    return false;
+  }
+
+  const int client_descriptor = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (client_descriptor < 0) return false;
+  auto client = laghu::core::SocketHandle::adopt(client_descriptor);
+  if (!client ||
+      ::connect(client->native_handle(), reinterpret_cast<const sockaddr*>(&address),
+                sizeof(address)) != 0) {
+    return false;
+  }
+
+  std::array<laghu::core::SocketHandle, 1> accepted{};
+  const auto result = laghu::os::drain_accept(
+      listener->borrow(), accepted, {1, 2, std::chrono::seconds{1}});
+  if (!result || result->accepted != 1U || !accepted[0].is_valid()) return false;
+  const int status = ::fcntl(accepted[0].native_handle(), F_GETFL, 0);
+  const int descriptor_flags = ::fcntl(accepted[0].native_handle(), F_GETFD, 0);
+  return status >= 0 && (status & O_NONBLOCK) != 0 && descriptor_flags >= 0 &&
+         (descriptor_flags & FD_CLOEXEC) != 0;
+#else
+  return true;
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -177,6 +264,10 @@ int main() {
       laghu::test::TestCase{"os.socket_drain.accept_progress", check_accept_progress_to_eagain},
       laghu::test::TestCase{"os.socket_drain.blocking_listener",
                             check_blocking_listener_rejected},
+      laghu::test::TestCase{"os.socket_drain.public_read_write",
+                            check_public_read_write},
+      laghu::test::TestCase{"os.socket_drain.public_accept_flags",
+                            check_public_accept_flags},
   };
   return laghu::test::run_tests(tests);
 }
