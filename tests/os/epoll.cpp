@@ -98,6 +98,30 @@ struct Pair final {
 #endif
 }
 
+[[nodiscard]] bool check_writable_only_half_close() noexcept {
+#if defined(__linux__)
+  auto dispatcher = EpollDispatcher::create();
+  auto pair = make_pair();
+  if (!dispatcher || !pair ||
+      !dispatcher->add(pair->first.native_handle(), 55U,
+                       EpollInterests{EpollInterest::writable})) {
+    return false;
+  }
+  std::array<EpollEvent, 1> event{};
+  const auto writable = dispatcher->wait(event, std::chrono::milliseconds{50}, 2);
+  if (!writable || writable->event_count != 1U || event[0].token != 55U ||
+      !event[0].notifications.contains(EpollNotification::writable) ||
+      ::shutdown(pair->second.native_handle(), SHUT_WR) != 0) {
+    return false;
+  }
+  const auto closed = dispatcher->wait(event, std::chrono::milliseconds{50}, 2);
+  return closed && closed->event_count == 1U && event[0].token == 55U &&
+         event[0].notifications.contains(EpollNotification::hangup);
+#else
+  return true;
+#endif
+}
+
 [[nodiscard]] bool check_tcp_error_mapping() noexcept {
 #if defined(__linux__)
   const int listener = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -139,6 +163,8 @@ int main() {
   constexpr std::array tests{
       laghu::test::TestCase{"os.epoll.events_tokens", check_read_write_half_close_and_tokens},
       laghu::test::TestCase{"os.epoll.descriptor_reuse_churn", check_descriptor_reuse_and_churn},
+      laghu::test::TestCase{"os.epoll.writable_only_half_close",
+                            check_writable_only_half_close},
       laghu::test::TestCase{"os.epoll.tcp_error", check_tcp_error_mapping},
   };
   return laghu::test::run_tests(tests);

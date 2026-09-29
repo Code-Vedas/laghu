@@ -28,8 +28,8 @@ namespace {
 }
 
 [[nodiscard]] std::uint32_t native_interests(EpollInterests interests) noexcept {
-  std::uint32_t events = EPOLLET;
-  if (interests.contains(EpollInterest::readable)) events |= EPOLLIN | EPOLLRDHUP;
+  std::uint32_t events = EPOLLET | EPOLLRDHUP;
+  if (interests.contains(EpollInterest::readable)) events |= EPOLLIN;
   if (interests.contains(EpollInterest::writable)) events |= EPOLLOUT;
   return events;
 }
