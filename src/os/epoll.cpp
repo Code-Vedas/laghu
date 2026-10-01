@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include <laghu/os/internal/epoll.hpp>
+#include <laghu/os/event_dispatch.hpp>
 
 #include <array>
 #include <cerrno>
@@ -12,7 +12,7 @@
 #include <unistd.h>
 #endif
 
-namespace laghu::os::internal {
+namespace laghu::os {
 namespace {
 
 #if !defined(__linux__)
@@ -27,16 +27,16 @@ namespace {
   return {core::ErrorDomain::core, core::ErrorCode::invalid_input, 0, text};
 }
 
-[[nodiscard]] std::uint32_t native_interests(EpollInterests interests) noexcept {
+[[nodiscard]] std::uint32_t native_interests(EventInterests interests) noexcept {
   std::uint32_t events = EPOLLET | EPOLLRDHUP;
-  if (interests.contains(EpollInterest::readable)) events |= EPOLLIN;
-  if (interests.contains(EpollInterest::writable)) events |= EPOLLOUT;
+  if (interests.contains(EventInterest::readable)) events |= EPOLLIN;
+  if (interests.contains(EventInterest::writable)) events |= EPOLLOUT;
   return events;
 }
 
 [[nodiscard]] core::Result<void> control(int epoll_descriptor, int operation,
                                          int descriptor, std::uint64_t token,
-                                         EpollInterests interests) noexcept {
+                                         EventInterests interests) noexcept {
   if (descriptor < 0 || token == 0U) {
     return std::unexpected{invalid("epoll registration is invalid")};
   }
@@ -63,8 +63,12 @@ namespace {
 
 }  // namespace
 
-core::Result<EpollDispatcher> EpollDispatcher::create() noexcept {
+core::Result<EventDispatcher> EventDispatcher::create(
+    std::span<EventRegistration> registrations) noexcept {
 #if defined(__linux__)
+  if (registrations.empty()) {
+    return std::unexpected{invalid("event registration capacity must be nonzero")};
+  }
   const int descriptor = ::epoll_create1(EPOLL_CLOEXEC);
   if (descriptor < 0) {
     return std::unexpected{core::Error::from_errno(errno, "epoll creation failed")};
@@ -74,48 +78,93 @@ core::Result<EpollDispatcher> EpollDispatcher::create() noexcept {
     static_cast<void>(::close(descriptor));
     return std::unexpected{handle.error()};
   }
-  return EpollDispatcher{std::move(*handle)};
+  for (auto& registration : registrations) registration.clear();
+  return EventDispatcher{std::move(*handle), registrations};
 #else
+  static_cast<void>(registrations);
   return std::unexpected{unavailable()};
 #endif
 }
 
-core::Result<void> EpollDispatcher::add(int descriptor, std::uint64_t token,
-                                        EpollInterests interests) const noexcept {
+core::Result<void> EventDispatcher::add(int descriptor, std::uint64_t token,
+                                        EventInterests interests) noexcept {
 #if defined(__linux__)
-  return control(descriptor_.native_handle(), EPOLL_CTL_ADD, descriptor, token,
-                 interests);
-#else
-  static_cast<void>(descriptor); static_cast<void>(token); static_cast<void>(interests);
-  return std::unexpected{unavailable()};
-#endif
-}
-
-core::Result<void> EpollDispatcher::modify(int descriptor, std::uint64_t token,
-                                           EpollInterests interests) const noexcept {
-#if defined(__linux__)
-  return control(descriptor_.native_handle(), EPOLL_CTL_MOD, descriptor, token,
-                 interests);
-#else
-  static_cast<void>(descriptor); static_cast<void>(token); static_cast<void>(interests);
-  return std::unexpected{unavailable()};
-#endif
-}
-
-core::Result<void> EpollDispatcher::remove(int descriptor) const noexcept {
-#if defined(__linux__)
-  if (descriptor < 0) return std::unexpected{invalid("epoll removal is invalid")};
-  if (::epoll_ctl(descriptor_.native_handle(), EPOLL_CTL_DEL, descriptor, nullptr) != 0) {
-    return std::unexpected{core::Error::from_errno(errno, "epoll removal failed")};
+  if (descriptor < 0 || token == 0U) {
+    return std::unexpected{invalid("event registration is invalid")};
   }
+  EventRegistration* available{};
+  for (auto& registration : registrations_) {
+    if (registration.descriptor_matches(descriptor)) {
+      return std::unexpected{invalid("event descriptor is already registered")};
+    }
+    if (available == nullptr && registration.available()) available = &registration;
+  }
+  if (available == nullptr) {
+    return std::unexpected{core::Error{core::ErrorDomain::core,
+                                       core::ErrorCode::exhaustion, 0,
+                                       "event registration capacity exhausted"}};
+  }
+  const auto added = control(descriptor_.native_handle(), EPOLL_CTL_ADD,
+                             descriptor, token, interests);
+  if (!added) return std::unexpected{added.error()};
+  available->assign(descriptor, token);
   return {};
 #else
-  static_cast<void>(descriptor); return std::unexpected{unavailable()};
+  static_cast<void>(descriptor); static_cast<void>(token); static_cast<void>(interests);
+  return std::unexpected{unavailable()};
 #endif
 }
 
-core::Result<EpollWaitResult> EpollDispatcher::wait(
-    std::span<EpollEvent> output, std::chrono::nanoseconds maximum_wait,
+core::Result<void> EventDispatcher::modify(
+    int descriptor, std::uint64_t expected_token,
+    EventInterests interests) noexcept {
+#if defined(__linux__)
+  if (descriptor < 0 || expected_token == 0U) {
+    return std::unexpected{invalid("event registration is invalid")};
+  }
+  for (const auto& registration : registrations_) {
+    if (!registration.descriptor_matches(descriptor)) continue;
+    if (!registration.token_matches(expected_token)) {
+      return std::unexpected{invalid("event registration token does not match")};
+    }
+    return control(descriptor_.native_handle(), EPOLL_CTL_MOD, descriptor,
+                   expected_token, interests);
+  }
+  return std::unexpected{invalid("event descriptor is not registered")};
+#else
+  static_cast<void>(descriptor); static_cast<void>(expected_token);
+  static_cast<void>(interests);
+  return std::unexpected{unavailable()};
+#endif
+}
+
+core::Result<void> EventDispatcher::remove(
+    int descriptor, std::uint64_t expected_token) noexcept {
+#if defined(__linux__)
+  if (descriptor < 0 || expected_token == 0U) {
+    return std::unexpected{invalid("event registration is invalid")};
+  }
+  for (auto& registration : registrations_) {
+    if (!registration.descriptor_matches(descriptor)) continue;
+    if (!registration.token_matches(expected_token)) {
+      return std::unexpected{invalid("event registration token does not match")};
+    }
+    if (::epoll_ctl(descriptor_.native_handle(), EPOLL_CTL_DEL, descriptor,
+                    nullptr) != 0) {
+      return std::unexpected{core::Error::from_errno(errno, "epoll removal failed")};
+    }
+    registration.clear();
+    return {};
+  }
+  return std::unexpected{invalid("event descriptor is not registered")};
+#else
+  static_cast<void>(descriptor); static_cast<void>(expected_token);
+  return std::unexpected{unavailable()};
+#endif
+}
+
+core::Result<EventWaitResult> EventDispatcher::wait(
+    std::span<Event> output, std::chrono::nanoseconds maximum_wait,
     std::uint32_t maximum_wait_calls) const noexcept {
 #if defined(__linux__)
   if (output.empty() || output.size() > maximum_events || maximum_wait.count() < 0 ||
@@ -140,25 +189,25 @@ core::Result<EpollWaitResult> EpollDispatcher::wait(
       return std::unexpected{core::Error::from_errno(errno, "epoll wait failed")};
     }
     for (int index = 0; index < count; ++index) {
-      EpollNotifications notifications;
+      EventNotifications notifications;
       const std::uint32_t flags = events[static_cast<std::size_t>(index)].events;
-      if ((flags & EPOLLIN) != 0U) notifications.add(EpollNotification::readable);
-      if ((flags & EPOLLOUT) != 0U) notifications.add(EpollNotification::writable);
-      if ((flags & EPOLLERR) != 0U) notifications.add(EpollNotification::error);
+      if ((flags & EPOLLIN) != 0U) notifications.add(EventNotification::readable);
+      if ((flags & EPOLLOUT) != 0U) notifications.add(EventNotification::writable);
+      if ((flags & EPOLLERR) != 0U) notifications.add(EventNotification::error);
       if ((flags & (EPOLLHUP | EPOLLRDHUP)) != 0U) {
-        notifications.add(EpollNotification::hangup);
+        notifications.add(EventNotification::hangup);
       }
       output[static_cast<std::size_t>(index)] =
-          EpollEvent{events[static_cast<std::size_t>(index)].data.u64, notifications};
+          Event{events[static_cast<std::size_t>(index)].data.u64, notifications};
     }
-    return EpollWaitResult{static_cast<std::size_t>(count), call,
+    return EventWaitResult{static_cast<std::size_t>(count), call,
                            static_cast<std::size_t>(count) == output.size()};
   }
-  return EpollWaitResult{0, maximum_wait_calls, false};
+  return EventWaitResult{0, maximum_wait_calls, false};
 #else
   static_cast<void>(output); static_cast<void>(maximum_wait);
   static_cast<void>(maximum_wait_calls); return std::unexpected{unavailable()};
 #endif
 }
 
-}  // namespace laghu::os::internal
+}  // namespace laghu::os

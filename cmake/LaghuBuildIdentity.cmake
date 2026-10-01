@@ -92,12 +92,12 @@ function(laghu_build_identity_input_hashes output)
     src/os/socket_io.cpp
     src/os/socket_drain.cpp
     src/os/wakeup.cpp
+    src/os/contract/laghu/os/event_dispatch.hpp
     src/os/contract/laghu/os/listener.hpp
     src/os/contract/laghu/os/file_transfer.hpp
     src/os/contract/laghu/os/socket_io.hpp
     src/os/contract/laghu/os/socket_drain.hpp
     src/os/contract/laghu/os/wakeup.hpp
-    src/os/private/laghu/os/internal/epoll.hpp
     src/os/private/laghu/os/internal/listener.hpp
     src/os/private/laghu/os/internal/file_transfer.hpp
     src/os/private/laghu/os/internal/io_operations.hpp

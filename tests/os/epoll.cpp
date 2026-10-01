@@ -14,15 +14,16 @@
 #include "laghu_test_support.hpp"
 
 #include <laghu/core/handles.hpp>
-#include <laghu/os/internal/epoll.hpp>
+#include <laghu/os/event_dispatch.hpp>
 
 namespace {
 
-using laghu::os::internal::EpollDispatcher;
-using laghu::os::internal::EpollEvent;
-using laghu::os::internal::EpollInterest;
-using laghu::os::internal::EpollInterests;
-using laghu::os::internal::EpollNotification;
+using laghu::os::Event;
+using laghu::os::EventDispatcher;
+using laghu::os::EventInterest;
+using laghu::os::EventInterests;
+using laghu::os::EventNotification;
+using laghu::os::EventRegistration;
 
 #if defined(__linux__)
 struct Pair final {
@@ -45,30 +46,32 @@ struct Pair final {
 
 [[nodiscard]] bool check_read_write_half_close_and_tokens() noexcept {
 #if defined(__linux__)
-  auto dispatcher = EpollDispatcher::create();
+  std::array<EventRegistration, 2> registrations{};
+  auto dispatcher = EventDispatcher::create(registrations);
   auto pair = make_pair();
   if (!dispatcher || !pair) return false;
-  EpollInterests interests{EpollInterest::readable};
-  interests.add(EpollInterest::writable);
+  EventInterests interests{EventInterest::readable};
+  interests.add(EventInterest::writable);
   if (!dispatcher->add(pair->first.native_handle(), 41U, interests)) return false;
   constexpr std::byte byte{'x'};
   if (::send(pair->second.native_handle(), &byte, 1, MSG_NOSIGNAL) != 1) return false;
-  std::array<EpollEvent, 4> events{};
+  std::array<Event, 4> events{};
   const auto ready = dispatcher->wait(events, std::chrono::milliseconds{50}, 2);
   if (!ready || ready->event_count == 0U || events[0].token != 41U ||
-      !events[0].notifications.contains(EpollNotification::readable) ||
-      !events[0].notifications.contains(EpollNotification::writable)) return false;
-  if (!dispatcher->modify(pair->first.native_handle(), 42U,
-                          EpollInterests{EpollInterest::readable}) ||
+      !events[0].notifications.contains(EventNotification::readable) ||
+      !events[0].notifications.contains(EventNotification::writable)) return false;
+  if (!dispatcher->modify(pair->first.native_handle(), 41U,
+                          EventInterests{EventInterest::readable}) ||
       ::shutdown(pair->second.native_handle(), SHUT_WR) != 0) return false;
   std::array<std::byte, 1> drained{};
   if (::recv(pair->first.native_handle(), drained.data(), drained.size(), 0) != 1) return false;
   const auto closed = dispatcher->wait(events, std::chrono::milliseconds{50}, 2);
-  return closed && closed->event_count != 0U && events[0].token == 42U &&
-         events[0].notifications.contains(EpollNotification::hangup) &&
-         dispatcher->remove(pair->first.native_handle());
+  return closed && closed->event_count != 0U && events[0].token == 41U &&
+         events[0].notifications.contains(EventNotification::hangup) &&
+         dispatcher->remove(pair->first.native_handle(), 41U);
 #else
-  const auto dispatcher = EpollDispatcher::create();
+  std::array<EventRegistration, 1> registrations{};
+  const auto dispatcher = EventDispatcher::create(registrations);
   return !dispatcher && dispatcher.error().code() ==
                             laghu::core::ErrorCode::unavailable_capability;
 #endif
@@ -76,41 +79,54 @@ struct Pair final {
 
 [[nodiscard]] bool check_descriptor_reuse_and_churn() noexcept {
 #if defined(__linux__)
-  auto dispatcher = EpollDispatcher::create();
-  auto old_pair = make_pair();
-  if (!dispatcher || !old_pair) return false;
-  const int reused_descriptor = old_pair->first.native_handle();
-  const int retained_descriptor = ::dup(reused_descriptor);
-  if (retained_descriptor < 0) return false;
-  auto retained = laghu::core::SocketHandle::adopt(retained_descriptor);
-  if (!retained ||
-      !dispatcher->add(reused_descriptor, 101U,
-                       EpollInterests{EpollInterest::readable}) ||
-      !old_pair->first.close()) {
-    return false;
-  }
-  auto new_pair = make_pair();
-  if (!new_pair || new_pair->first.native_handle() != reused_descriptor ||
-      !dispatcher->add(reused_descriptor, 202U,
-                       EpollInterests{EpollInterest::readable})) {
-    return false;
-  }
-  constexpr std::byte reuse_byte{'x'};
-  if (::send(old_pair->second.native_handle(), &reuse_byte, 1, MSG_NOSIGNAL) != 1 ||
-      ::send(new_pair->second.native_handle(), &reuse_byte, 1, MSG_NOSIGNAL) != 1) {
-    return false;
-  }
-  std::array<EpollEvent, 2> reused_events{};
-  const auto reused = dispatcher->wait(
-      reused_events, std::chrono::milliseconds{50}, 2);
-  if (!reused || reused->event_count != reused_events.size()) return false;
-  const bool first_order = reused_events[0].token == 101U &&
-                           reused_events[1].token == 202U;
-  const bool second_order = reused_events[0].token == 202U &&
-                            reused_events[1].token == 101U;
-  if ((!first_order && !second_order) ||
-      !dispatcher->remove(new_pair->first.native_handle())) {
-    return false;
+  std::array<EventRegistration, 2> registrations{};
+  auto dispatcher = EventDispatcher::create(registrations);
+  if (!dispatcher) return false;
+  {
+    auto old_pair = make_pair();
+    if (!old_pair) return false;
+    const int reused_descriptor = old_pair->first.native_handle();
+    if (!dispatcher->add(reused_descriptor, 101U,
+                         EventInterests{EventInterest::readable})) {
+      return false;
+    }
+    constexpr std::byte old_byte{'o'};
+    if (::send(old_pair->second.native_handle(), &old_byte, 1, MSG_NOSIGNAL) != 1) {
+      return false;
+    }
+    std::array<Event, 1> old_event{};
+    const auto old_ready = dispatcher->wait(
+        old_event, std::chrono::milliseconds{50}, 2);
+    if (!old_ready || old_ready->event_count != 1U ||
+        old_event[0].token != 101U ||
+        !dispatcher->remove(reused_descriptor, 101U) ||
+        !old_pair->first.close()) {
+      return false;
+    }
+
+    auto new_pair = make_pair();
+    if (!new_pair || new_pair->first.native_handle() != reused_descriptor ||
+        !dispatcher->add(reused_descriptor, 202U,
+                         EventInterests{EventInterest::readable})) {
+      return false;
+    }
+    const auto stale_modify = dispatcher->modify(
+        reused_descriptor, 101U, EventInterests{EventInterest::writable});
+    const auto stale_remove = dispatcher->remove(reused_descriptor, 101U);
+    if (stale_modify || stale_remove) return false;
+
+    constexpr std::byte new_byte{'n'};
+    if (::send(new_pair->second.native_handle(), &new_byte, 1, MSG_NOSIGNAL) != 1) {
+      return false;
+    }
+    std::array<Event, 1> new_event{};
+    const auto new_ready = dispatcher->wait(
+        new_event, std::chrono::milliseconds{50}, 2);
+    if (!new_ready || new_ready->event_count != 1U ||
+        new_event[0].token != 202U || old_event[0].token != 101U ||
+        !dispatcher->remove(reused_descriptor, 202U)) {
+      return false;
+    }
   }
 
   constexpr std::size_t iterations = 512;
@@ -119,13 +135,13 @@ struct Pair final {
     if (!pair) return false;
     const std::uint64_t token = index + 1U;
     if (!dispatcher->add(pair->first.native_handle(), token,
-                         EpollInterests{EpollInterest::readable})) return false;
+                         EventInterests{EventInterest::readable})) return false;
     constexpr std::byte byte{'x'};
     if (::send(pair->second.native_handle(), &byte, 1, MSG_NOSIGNAL) != 1) return false;
-    std::array<EpollEvent, 1> event{};
+    std::array<Event, 1> event{};
     const auto ready = dispatcher->wait(event, std::chrono::milliseconds{50}, 2);
     if (!ready || ready->event_count != 1U || event[0].token != token ||
-        !dispatcher->remove(pair->first.native_handle())) return false;
+        !dispatcher->remove(pair->first.native_handle(), token)) return false;
   }
   return true;
 #else
@@ -135,23 +151,54 @@ struct Pair final {
 
 [[nodiscard]] bool check_writable_only_half_close() noexcept {
 #if defined(__linux__)
-  auto dispatcher = EpollDispatcher::create();
+  std::array<EventRegistration, 1> registrations{};
+  auto dispatcher = EventDispatcher::create(registrations);
   auto pair = make_pair();
   if (!dispatcher || !pair ||
       !dispatcher->add(pair->first.native_handle(), 55U,
-                       EpollInterests{EpollInterest::writable})) {
+                       EventInterests{EventInterest::writable})) {
     return false;
   }
-  std::array<EpollEvent, 1> event{};
+  std::array<Event, 1> event{};
   const auto writable = dispatcher->wait(event, std::chrono::milliseconds{50}, 2);
   if (!writable || writable->event_count != 1U || event[0].token != 55U ||
-      !event[0].notifications.contains(EpollNotification::writable) ||
+      !event[0].notifications.contains(EventNotification::writable) ||
       ::shutdown(pair->second.native_handle(), SHUT_WR) != 0) {
     return false;
   }
   const auto closed = dispatcher->wait(event, std::chrono::milliseconds{50}, 2);
   return closed && closed->event_count == 1U && event[0].token == 55U &&
-         event[0].notifications.contains(EpollNotification::hangup);
+         event[0].notifications.contains(EventNotification::hangup);
+#else
+  return true;
+#endif
+}
+
+[[nodiscard]] bool check_registration_bounds() noexcept {
+#if defined(__linux__)
+  std::array<EventRegistration, 1> registrations{};
+  auto dispatcher = EventDispatcher::create(registrations);
+  auto first = make_pair();
+  auto second = make_pair();
+  if (!dispatcher || !first || !second ||
+      !dispatcher->add(first->first.native_handle(), 301U,
+                       EventInterests{EventInterest::readable})) {
+    return false;
+  }
+  const auto duplicate = dispatcher->add(
+      first->first.native_handle(), 302U,
+      EventInterests{EventInterest::readable});
+  const auto exhausted = dispatcher->add(
+      second->first.native_handle(), 303U,
+      EventInterests{EventInterest::readable});
+  if (duplicate || duplicate.error().code() != laghu::core::ErrorCode::invalid_input ||
+      exhausted || exhausted.error().code() != laghu::core::ErrorCode::exhaustion ||
+      !dispatcher->remove(first->first.native_handle(), 301U) ||
+      !dispatcher->add(second->first.native_handle(), 303U,
+                       EventInterests{EventInterest::readable})) {
+    return false;
+  }
+  return dispatcher->remove(second->first.native_handle(), 303U).has_value();
 #else
   return true;
 #endif
@@ -174,19 +221,20 @@ struct Pair final {
   const int descriptor = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
   if (descriptor < 0) return false;
   auto socket = laghu::core::SocketHandle::adopt(descriptor);
-  auto dispatcher = EpollDispatcher::create();
+  std::array<EventRegistration, 1> registrations{};
+  auto dispatcher = EventDispatcher::create(registrations);
   if (!socket || !dispatcher ||
-      !dispatcher->add(descriptor, 77U, EpollInterests{EpollInterest::writable})) {
+      !dispatcher->add(descriptor, 77U, EventInterests{EventInterest::writable})) {
     return false;
   }
   const int connected = ::connect(descriptor,
                                   reinterpret_cast<const sockaddr*>(&address),
                                   sizeof(address));
   if (connected == 0 || (errno != EINPROGRESS && errno != ECONNREFUSED)) return false;
-  std::array<EpollEvent, 2> events{};
+  std::array<Event, 2> events{};
   const auto ready = dispatcher->wait(events, std::chrono::milliseconds{100}, 2);
   return ready && ready->event_count != 0U && events[0].token == 77U &&
-         events[0].notifications.contains(EpollNotification::error);
+         events[0].notifications.contains(EventNotification::error);
 #else
   return true;
 #endif
@@ -200,6 +248,8 @@ int main() {
       laghu::test::TestCase{"os.epoll.descriptor_reuse_churn", check_descriptor_reuse_and_churn},
       laghu::test::TestCase{"os.epoll.writable_only_half_close",
                             check_writable_only_half_close},
+      laghu::test::TestCase{"os.epoll.registration_bounds",
+                            check_registration_bounds},
       laghu::test::TestCase{"os.epoll.tcp_error", check_tcp_error_mapping},
   };
   return laghu::test::run_tests(tests);
