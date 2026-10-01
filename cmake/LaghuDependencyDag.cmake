@@ -158,11 +158,13 @@ function(laghu_declare_subsystem_graph)
   foreach(node IN ITEMS config os runtime protocol tls cache observability proxy control cli adapters)
     if(node STREQUAL "os")
       add_library(laghu_os STATIC
+        src/os/epoll.cpp
         src/os/file_transfer.cpp
         src/os/io_slices.cpp
         src/os/io_operations.cpp
         src/os/listener.cpp
         src/os/socket_io.cpp
+        src/os/socket_drain.cpp
         src/os/wakeup.cpp)
     elseif(node STREQUAL "runtime")
       add_library(laghu_runtime STATIC

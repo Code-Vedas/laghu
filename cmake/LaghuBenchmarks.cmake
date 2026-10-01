@@ -67,6 +67,17 @@ function(laghu_add_benchmark_targets)
     "${CMAKE_SOURCE_DIR}/bench/private")
   target_link_libraries(laghu_benchmark_event_batch PRIVATE laghu_core)
 
+  add_executable(laghu_benchmark_socket_drain EXCLUDE_FROM_ALL
+    bench/socket_drain.cpp
+    bench/runner.cpp)
+  laghu_apply_first_party_contract(laghu_benchmark_socket_drain)
+  laghu_configure_api_consumer(laghu_benchmark_socket_drain os)
+  target_include_directories(laghu_benchmark_socket_drain PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
+    "${CMAKE_SOURCE_DIR}/bench/private"
+    "${CMAKE_SOURCE_DIR}/src/os/private")
+  target_link_libraries(laghu_benchmark_socket_drain PRIVATE laghu_os laghu_core)
+
   foreach(file_transfer_mode IN ITEMS generic kernel)
     set(benchmark_target "laghu_benchmark_file_transfer_${file_transfer_mode}")
     add_executable("${benchmark_target}" EXCLUDE_FROM_ALL
@@ -87,7 +98,7 @@ function(laghu_add_benchmark_targets)
   endif()
 
   set(benchmark_registry
-    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\nevent-batch\tlaghu_benchmark_event_batch\t$<TARGET_FILE:laghu_benchmark_event_batch>\nfile-transfer-generic\tlaghu_benchmark_file_transfer_generic\t$<TARGET_FILE:laghu_benchmark_file_transfer_generic>\nfile-transfer-kernel\tlaghu_benchmark_file_transfer_kernel\t$<TARGET_FILE:laghu_benchmark_file_transfer_kernel>\n")
+    "# laghu-benchmarks-v1\n# workload\tcmake_target\texecutable\ncore-foundation\tlaghu_benchmark_core_foundation\t$<TARGET_FILE:laghu_benchmark_core_foundation>\nevent-batch\tlaghu_benchmark_event_batch\t$<TARGET_FILE:laghu_benchmark_event_batch>\nsocket-drain-batching\tlaghu_benchmark_socket_drain\t$<TARGET_FILE:laghu_benchmark_socket_drain>\nfile-transfer-generic\tlaghu_benchmark_file_transfer_generic\t$<TARGET_FILE:laghu_benchmark_file_transfer_generic>\nfile-transfer-kernel\tlaghu_benchmark_file_transfer_kernel\t$<TARGET_FILE:laghu_benchmark_file_transfer_kernel>\n")
   foreach(codec_feature codec_suffix IN ZIP_LISTS
       LAGHU_CODEC_BENCHMARK_FEATURES LAGHU_CODEC_BENCHMARK_SUFFIXES)
     list(FIND LAGHU_EFFECTIVE_FEATURES "${codec_feature}" codec_feature_index)
