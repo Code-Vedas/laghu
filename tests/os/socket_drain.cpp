@@ -154,6 +154,34 @@ struct Fixture final {
          result->state == SocketDrainState::would_block && accepted[0].is_valid();
 }
 
+[[nodiscard]] bool check_accept_pending_network_error() noexcept {
+#if defined(__linux__)
+  auto listener = socket_handle();
+  auto accepted_source = socket_handle();
+  if (!listener || !accepted_source) return false;
+  constexpr std::array errors{ENETDOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN,
+                              ENONET, EHOSTUNREACH, EOPNOTSUPP, ENETUNREACH};
+  for (const int error : errors) {
+    const int accepted_descriptor = ::dup(accepted_source->native_handle());
+    if (accepted_descriptor < 0) return false;
+    Fixture fixture{{-1, 1, -1}, {error, 0, EAGAIN}};
+    fixture.accepted_descriptor = accepted_descriptor;
+    auto ops = operations(fixture);
+    std::array<laghu::core::SocketHandle, 2> accepted{};
+    const auto result = SocketDrainTestAccess::accept(
+        listener->borrow(), accepted, {2, 3, std::chrono::seconds{1}}, ops);
+    if (!result || result->accepted != 1U || result->operations != 3U ||
+        result->state != SocketDrainState::would_block || !accepted[0].is_valid()) {
+      if (!accepted[0].is_valid()) static_cast<void>(::close(accepted_descriptor));
+      return false;
+    }
+  }
+  return true;
+#else
+  return true;
+#endif
+}
+
 [[nodiscard]] bool check_blocking_listener_rejected() noexcept {
 #if defined(__linux__)
   auto listener = socket_handle();
@@ -262,6 +290,8 @@ int main() {
                             check_write_partial_terminal_error},
       laghu::test::TestCase{"os.socket_drain.time_accept", check_time_and_accept_pressure},
       laghu::test::TestCase{"os.socket_drain.accept_progress", check_accept_progress_to_eagain},
+      laghu::test::TestCase{"os.socket_drain.accept_pending_network_error",
+                            check_accept_pending_network_error},
       laghu::test::TestCase{"os.socket_drain.blocking_listener",
                             check_blocking_listener_rejected},
       laghu::test::TestCase{"os.socket_drain.public_read_write",

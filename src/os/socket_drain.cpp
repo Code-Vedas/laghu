@@ -70,6 +70,17 @@ namespace {
       ;
 }
 
+[[nodiscard]] bool pending_accept_network_error(int code) noexcept {
+#if defined(__linux__)
+  return code == ENETDOWN || code == EPROTO || code == ENOPROTOOPT ||
+         code == EHOSTDOWN || code == ENONET || code == EHOSTUNREACH ||
+         code == EOPNOTSUPP || code == ENETUNREACH;
+#else
+  static_cast<void>(code);
+  return false;
+#endif
+}
+
 [[nodiscard]] core::Result<bool> expired(
     core::MonotonicInstant started, std::chrono::nanoseconds maximum_duration,
     const core::ClockOperations& clock) noexcept {
@@ -190,6 +201,7 @@ template <class View, class Invoke>
     const int code = errno;
     if (code == EINTR) continue;
     if (would_block(code)) return AcceptDrainResult{accepted, calls, SocketDrainState::would_block};
+    if (pending_accept_network_error(code)) continue;
     if (code == EMFILE || code == ENFILE) {
       return AcceptDrainResult{accepted, calls, SocketDrainState::resource_pressure};
     }
