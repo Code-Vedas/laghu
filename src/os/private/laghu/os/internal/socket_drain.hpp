@@ -12,12 +12,14 @@
 namespace laghu::os::internal {
 
 using DrainAcceptFunction = int (*)(void*, int) noexcept;
+using DrainGetFlagsFunction = int (*)(void*, int) noexcept;
 using DrainReadFunction = ssize_t (*)(void*, int, void*, std::size_t) noexcept;
 using DrainWriteFunction = ssize_t (*)(void*, int, const void*, std::size_t) noexcept;
 
 struct SocketDrainOperations final {
   void* context;
   DrainAcceptFunction accept;
+  DrainGetFlagsFunction get_flags;
   DrainReadFunction read;
   DrainWriteFunction write;
   core::ClockOperations clock;

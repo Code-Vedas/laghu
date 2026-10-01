@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -27,6 +28,7 @@ struct Fixture final {
 };
 
 [[nodiscard]] int accept_unused(void*, int) noexcept { errno = EAGAIN; return -1; }
+[[nodiscard]] int get_flags(void*, int) noexcept { return O_NONBLOCK; }
 [[nodiscard]] ssize_t read_chunk(void* context, int, void*, std::size_t size) noexcept {
   auto& fixture = *static_cast<Fixture*>(context);
   ++fixture.calls;
@@ -58,7 +60,7 @@ template <std::uint32_t Batch>
       laghu::core::ErrorDomain::core, laghu::core::ErrorCode::invalid_state}};
   Fixture fixture{64U};
   const laghu::os::internal::SocketDrainOperations operations{
-      &fixture, accept_unused, read_chunk, write_unused,
+      &fixture, accept_unused, get_flags, read_chunk, write_unused,
       {nullptr, now, realtime}};
   for (std::size_t iteration = 0; iteration < repetitions; ++iteration) {
     const auto result = laghu::os::internal::SocketDrainTestAccess::read(

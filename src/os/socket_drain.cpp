@@ -23,6 +23,9 @@ namespace {
   return ::accept(descriptor, nullptr, nullptr);
 #endif
 }
+[[nodiscard]] int system_get_flags(void*, int descriptor) noexcept {
+  return ::fcntl(descriptor, F_GETFL, 0);
+}
 [[nodiscard]] ssize_t system_read(void*, int descriptor, void* output,
                                   std::size_t size) noexcept {
   return ::recv(descriptor, output, size, MSG_DONTWAIT);
@@ -37,7 +40,7 @@ namespace {
 }
 
 const SocketDrainOperations default_operations{
-    nullptr, system_accept, system_read, system_write,
+    nullptr, system_accept, system_get_flags, system_read, system_write,
     core::system_clock_operations()};
 
 }  // namespace
@@ -72,9 +75,9 @@ namespace {
 
 [[nodiscard]] bool pending_accept_network_error(int code) noexcept {
 #if defined(__linux__)
-  return code == ENETDOWN || code == EPROTO || code == ENOPROTOOPT ||
-         code == EHOSTDOWN || code == ENONET || code == EHOSTUNREACH ||
-         code == EOPNOTSUPP || code == ENETUNREACH;
+  return code == ECONNABORTED || code == ENETDOWN || code == EPROTO ||
+         code == ENOPROTOOPT || code == EHOSTDOWN || code == ENONET ||
+         code == EHOSTUNREACH || code == EOPNOTSUPP || code == ENETUNREACH;
 #else
   static_cast<void>(code);
   return false;
@@ -168,13 +171,23 @@ template <class View, class Invoke>
   if (!listener.is_valid() || output.empty() || budget.maximum_accepts == 0U ||
       budget.maximum_accepts > output.size() || budget.maximum_operations == 0U ||
       budget.maximum_duration.count() <= 0 || operations.accept == nullptr ||
+      operations.get_flags == nullptr ||
       operations.clock.monotonic_now == nullptr) {
     return std::unexpected{invalid("accept drain arguments are invalid")};
   }
   const auto started = core::read_monotonic_clock(operations.clock);
   if (!started) return std::unexpected{started.error()};
   std::size_t accepted{};
-  std::uint32_t calls{};
+  std::uint32_t calls{1U};
+  const int flags = operations.get_flags(operations.context, listener.native_handle());
+  if (flags < 0) {
+    return AcceptDrainResult{accepted, calls, SocketDrainState::failed,
+                             core::Error::from_errno(
+                                 errno, "accept drain listener query failed")};
+  }
+  if ((flags & O_NONBLOCK) == 0) {
+    return std::unexpected{invalid("accept drain listener must be nonblocking")};
+  }
   while (accepted < budget.maximum_accepts && calls < budget.maximum_operations) {
     const auto timed_out = expired(*started, budget.maximum_duration, operations.clock);
     if (!timed_out) {
@@ -234,18 +247,6 @@ core::Result<SocketDrainResult> drain_socket_write(core::BorrowedSocketHandle so
 core::Result<AcceptDrainResult> drain_accept(core::BorrowedSocketHandle listener,
     std::span<core::SocketHandle> output, AcceptDrainBudget budget) noexcept {
 #if defined(__linux__)
-  if (!listener.is_valid()) {
-    return std::unexpected{invalid("accept drain descriptor is invalid")};
-  }
-  const int flags = ::fcntl(listener.native_handle(), F_GETFL, 0);
-  if (flags < 0) {
-    return std::unexpected{
-        core::Error::from_errno(errno, "accept drain listener query failed")};
-  }
-  if ((flags & O_NONBLOCK) == 0) {
-    return std::unexpected{
-        invalid("accept drain listener must be nonblocking")};
-  }
   return accept_with_operations(listener, output, budget, internal::default_socket_drain_operations());
 #else
   static_cast<void>(listener); static_cast<void>(output); static_cast<void>(budget);

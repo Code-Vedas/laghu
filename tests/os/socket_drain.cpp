@@ -55,6 +55,7 @@ struct Fixture final {
   if (result >= 0) return fixture.accepted_descriptor;
   return -1;
 }
+[[nodiscard]] int injected_get_flags(void*, int) noexcept { return O_NONBLOCK; }
 [[nodiscard]] laghu::core::Result<laghu::core::MonotonicInstant> now(
     void* context) noexcept {
   auto& fixture = *static_cast<Fixture*>(context);
@@ -65,7 +66,8 @@ struct Fixture final {
 [[nodiscard]] laghu::core::Result<laghu::core::RealtimeInstant> realtime(
     void*) noexcept { return 0; }
 [[nodiscard]] SocketDrainOperations operations(Fixture& fixture) noexcept {
-  return {&fixture, injected_accept, injected_read, injected_write,
+  return {&fixture, injected_accept, injected_get_flags, injected_read,
+          injected_write,
           {&fixture, now, realtime}};
 }
 
@@ -129,12 +131,36 @@ struct Fixture final {
   if (!timeout || timeout->operations != 0U ||
       timeout->state != SocketDrainState::budget_exhausted) return false;
 
+  Fixture accept_timed{};
+  accept_timed.step = 10;
+  auto accept_timed_ops = operations(accept_timed);
+  std::array<laghu::core::SocketHandle, 1> accepted{};
+  const auto accept_timeout = SocketDrainTestAccess::accept(
+      socket->borrow(), accepted, {1, 2, std::chrono::nanoseconds{5}},
+      accept_timed_ops);
+  if (!accept_timeout || accept_timeout->accepted != 0U ||
+      accept_timeout->operations != 1U ||
+      accept_timeout->state != SocketDrainState::budget_exhausted) {
+    return false;
+  }
+
+  Fixture accept_limited{{-1}, {EAGAIN}};
+  auto accept_limited_ops = operations(accept_limited);
+  const auto accept_limit = SocketDrainTestAccess::accept(
+      socket->borrow(), accepted, {1, 1, std::chrono::seconds{1}},
+      accept_limited_ops);
+  if (!accept_limit || accept_limit->accepted != 0U ||
+      accept_limit->operations != 1U ||
+      accept_limit->state != SocketDrainState::budget_exhausted ||
+      accept_limited.index != 0U) {
+    return false;
+  }
+
   Fixture pressure{{-1}, {EMFILE}};
   auto pressure_ops = operations(pressure);
-  std::array<laghu::core::SocketHandle, 1> accepted{};
   const auto result = SocketDrainTestAccess::accept(
       socket->borrow(), accepted, {1, 2, std::chrono::seconds{1}}, pressure_ops);
-  return result && result->accepted == 0U && result->operations == 1U &&
+  return result && result->accepted == 0U && result->operations == 2U &&
          result->state == SocketDrainState::resource_pressure;
 }
 
@@ -149,8 +175,8 @@ struct Fixture final {
   auto ops = operations(fixture);
   std::array<laghu::core::SocketHandle, 2> accepted{};
   const auto result = SocketDrainTestAccess::accept(
-      listener->borrow(), accepted, {2, 3, std::chrono::seconds{1}}, ops);
-  return result && result->accepted == 1U && result->operations == 2U &&
+      listener->borrow(), accepted, {2, 4, std::chrono::seconds{1}}, ops);
+  return result && result->accepted == 1U && result->operations == 3U &&
          result->state == SocketDrainState::would_block && accepted[0].is_valid();
 }
 
@@ -159,8 +185,9 @@ struct Fixture final {
   auto listener = socket_handle();
   auto accepted_source = socket_handle();
   if (!listener || !accepted_source) return false;
-  constexpr std::array errors{ENETDOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN,
-                              ENONET, EHOSTUNREACH, EOPNOTSUPP, ENETUNREACH};
+  constexpr std::array errors{ECONNABORTED, ENETDOWN,    EPROTO,
+                              ENOPROTOOPT,  EHOSTDOWN,   ENONET,
+                              EHOSTUNREACH, EOPNOTSUPP,  ENETUNREACH};
   for (const int error : errors) {
     const int accepted_descriptor = ::dup(accepted_source->native_handle());
     if (accepted_descriptor < 0) return false;
@@ -169,8 +196,8 @@ struct Fixture final {
     auto ops = operations(fixture);
     std::array<laghu::core::SocketHandle, 2> accepted{};
     const auto result = SocketDrainTestAccess::accept(
-        listener->borrow(), accepted, {2, 3, std::chrono::seconds{1}}, ops);
-    if (!result || result->accepted != 1U || result->operations != 3U ||
+        listener->borrow(), accepted, {2, 4, std::chrono::seconds{1}}, ops);
+    if (!result || result->accepted != 1U || result->operations != 4U ||
         result->state != SocketDrainState::would_block || !accepted[0].is_valid()) {
       if (!accepted[0].is_valid()) static_cast<void>(::close(accepted_descriptor));
       return false;
@@ -270,7 +297,8 @@ struct Fixture final {
   std::array<laghu::core::SocketHandle, 1> accepted{};
   const auto result = laghu::os::drain_accept(
       listener->borrow(), accepted, {1, 2, std::chrono::seconds{1}});
-  if (!result || result->accepted != 1U || !accepted[0].is_valid()) return false;
+  if (!result || result->accepted != 1U || result->operations != 2U ||
+      !accepted[0].is_valid()) return false;
   const int status = ::fcntl(accepted[0].native_handle(), F_GETFL, 0);
   const int descriptor_flags = ::fcntl(accepted[0].native_handle(), F_GETFD, 0);
   return status >= 0 && (status & O_NONBLOCK) != 0 && descriptor_flags >= 0 &&
